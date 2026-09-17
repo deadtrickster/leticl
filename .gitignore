@@ -1,0 +1,4 @@
+vendor/
+*.fasl
+*.core
+build/
