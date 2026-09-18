@@ -194,9 +194,11 @@ incidental.
 
 ## 11. Testing
 
-- `leticl/test` system, zero-dep harness in `tests/` (the Rust repo keeps its
+- `leticl/test` system, FiveAM suite in `tests/` (the Rust repo keeps its
   TUI tests in-file and asserts on rendered screens; we keep ours in `tests/`
-  and assert on cell buffers and emitted escape strings).
+  and assert on cell buffers and emitted escape strings). Every test names its
+  suite explicitly — `(:suite leticl)` — because fiveam's ambient `*suite*`
+  does not survive the compile/load split reliably.
 - Protocol goldens: exact JSON strings for every frame we send, and
   serde-shaped JSON for everything we decode. Goldens are written by hand from
   the serde semantics (field order is irrelevant to us; presence is not).

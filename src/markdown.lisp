@@ -1,0 +1,193 @@
+;;;; markdown.lisp — assistant text to styled lines. A compact port of the
+;;;; shapes crates/tui/src/markdown.rs renders: headings, fenced code, quotes,
+;;;; lists, GFM pipe tables, and the inline spans a code assistant actually
+;;;; meets (bold, italic, inline code). Not a full CommonMark implementation —
+;;;; the Rust file is equally explicit about what it skips.
+;;;;
+;;;; A LINE is a list of segments; a segment is (string . style-spec) where the
+;;;; spec is a plist for style-index. The renderer interns them.
+
+(in-package #:leticl)
+
+(defun appendf-attr (style key value)
+  (append style (list key value)))
+
+(defun %inline-spans (text style)
+  "Inline markdown to segments: `code`, **bold**, *italic*."
+  (let ((segs nil)
+        (buf (make-string-output-stream))
+        (n (length text))
+        (i 0))
+    (flet ((flush ()
+             (let ((s (get-output-stream-string buf)))
+               (when (plusp (length s))
+                 (push (cons s style) segs)))))
+      (loop while (< i n)
+            do (cond
+                 ((char= (char text i) #\`)
+                  (let ((end (position #\` text :start (1+ i))))
+                    (if end
+                        (progn (flush)
+                               (push (cons (subseq text (1+ i) end) '(:fg :cyan)) segs)
+                               (setf i (1+ end)))
+                        (progn (write-char #\` buf) (incf i)))))
+                 ((and (< i (1- n)) (char= (char text i) #\*) (char= (char text (1+ i)) #\*))
+                  (let ((end (search "**" text :start2 (+ i 2))))
+                    (if end
+                        (progn (flush)
+                               (push (cons (subseq text (+ i 2) end)
+                                           (appendf-attr style :bold t))
+                                     segs)
+                               (setf i (+ end 2)))
+                        (progn (write-char #\* buf) (incf i)))))
+                 ((char= (char text i) #\*)
+                  (let ((end (position #\* text :start (1+ i))))
+                    (if (and end (> end (1+ i)))
+                        (progn (flush)
+                               (push (cons (subseq text (1+ i) end)
+                                           (appendf-attr style :italic t))
+                                     segs)
+                               (setf i (1+ end)))
+                        (progn (write-char #\* buf) (incf i)))))
+                 (t (write-char (char text i) buf) (incf i))))
+      (flush))
+    (nreverse segs)))
+
+(defun markdown-lines (text &optional (base-style nil))
+  "TEXT to a list of lines, each a list of (string . style-spec) segments."
+  (let ((lines nil)
+        (in-code nil)
+        (code-lang "")
+        (table-rows nil))
+    (labels ((flush-table ()
+               (when table-rows
+                 (dolist (l (render-table (nreverse table-rows)))
+                   (push l lines))
+                 (setf table-rows nil))))
+      (dolist (line (uiop:split-string text :separator '(#\newline)))
+        (cond
+          ;; fenced code
+          ((and (>= (length line) 3) (string= (subseq line 0 3) "```"))
+           (flush-table)
+           (if in-code
+               (setf in-code nil)
+               (progn (setf in-code t
+                            code-lang (string-trim " `" (subseq line 3)))
+                      (push (list (cons (if (plusp (length code-lang))
+                                            (format nil "── ~a " code-lang)
+                                            "── ")
+                                        '(:fg :bright-black)))
+                            lines))))
+          (in-code
+           (flush-table)
+           (push (list (cons line '(:fg :bright-black))) lines))
+          ;; heading
+          ((and (plusp (length line)) (char= (char line 0) #\#))
+           (flush-table)
+           (let* ((level (position-if (lambda (c) (char/= c #\#)) line))
+                  (body (string-trim " #" line)))
+             (push (list (cons body
+                               (case (min (or level 1) 3)
+                                 (1 '(:bold t :underline t))
+                                 (2 '(:bold t))
+                                 (t '(:bold t :fg :bright-white)))))
+                   lines)))
+          ;; blockquote
+          ((and (plusp (length line)) (char= (char line 0) #\>))
+           (flush-table)
+           (push (list (cons "│ " '(:fg :bright-black))
+                       (cons (string-trim " " (subseq line 1))
+                             '(:italic t :fg :bright-black)))
+                 lines))
+          ;; table rows collect until the table ends
+          ((%table-row-p line) (push line table-rows))
+          ;; list item
+          ((and (> (length line) 1)
+                (member (char line 0) '(#\- #\*))
+                (char= (char line 1) #\space))
+           (flush-table)
+           (push (list (cons "• " '(:fg :bright-cyan))
+                       (cons (subseq line 2) base-style))
+                 lines))
+          ((and (> (length line) 2)
+                (digit-char-p (char line 0))
+                (string= (subseq line 1 (min 2 (length line))) ". "))
+           (flush-table)
+           (push (list (cons (subseq line 0 2) '(:fg :bright-cyan))
+                       (cons (subseq line 2) base-style))
+                 lines))
+          ;; blank
+          ((zerop (length (string-trim " " line)))
+           (flush-table)
+           (push nil lines))
+          ;; plain paragraph
+          (t
+           (flush-table)
+           (push (%inline-spans line base-style) lines))))
+    (flush-table)
+    (nreverse lines))))
+
+(defun %table-row-p (line)
+  "A GFM pipe row: has a pipe and is not a delimiter row (markdown.rs:476)."
+  (and (plusp (length line))
+       (find #\| line)
+       (not (every (lambda (c) (member c '(#\space #\- #\: #\|))) line))))
+
+(defun render-table (rows)
+  "Rows to aligned lines: header bold, columns padded to the widest cell.
+The column count is the header's; a row with more cells keeps them
+(render.rs:360 keeps them too)."
+  (when rows
+    (let* ((cells (mapcar #'split-cells rows))
+           (header (first cells))
+           (ncols (length header))
+           (widths (make-array ncols :initial-element 0)))
+      (loop for row in cells
+            do (loop for i from 0
+                     for c in row
+                     while (< i ncols)
+                     do (setf (aref widths i)
+                              (max (aref widths i) (string-width c)))))
+      (flet ((emit (row style)
+               (let ((segs nil))
+                 (loop for i from 0
+                       for c in row
+                       while (< i ncols)
+                       do (push (cons (pad-to c (aref widths i)) style) segs)
+                          (unless (= i (1- ncols))
+                            (push (cons " │ " '(:fg :bright-black)) segs)))
+                 (list (nreverse segs)))))
+        (append
+         (emit header '(:bold t))
+         (emit (make-list ncols :initial-element "") '(:fg :bright-black))
+         (loop for row in (rest cells)
+               append (emit row nil)))))))
+
+(defun split-cells (line)
+  "The cells of one table row, outer pipes dropped, \\| kept literal
+(markdown.rs:481)."
+  (let ((cells nil)
+        (cur (make-string-output-stream))
+        (n (length line)))
+    (let ((i 0))
+      (loop while (< i n)
+            do (cond
+                 ((and (char= (char line i) #\\) (< i (1- n)) (char= (char line (1+ i)) #\|))
+                  (write-char #\| cur) (incf i 2))
+                 ((char= (char line i) #\|)
+                  (push (get-output-stream-string cur) cells) (incf i))
+                 (t (write-char (char line i) cur) (incf i)))))
+    (push (get-output-stream-string cur) cells)
+    (setf cells (nreverse cells))
+    (when (and cells (zerop (length (string-trim " " (first cells)))))
+      (setf cells (rest cells)))
+    (when (and (> (length cells) 1)
+               (zerop (length (string-trim " " (first (last cells))))))
+      (setf cells (butlast cells)))
+    (mapcar (lambda (c) (string-trim " " c)) cells)))
+
+(defun pad-to (string width)
+  (let ((w (string-width string)))
+    (if (< w width)
+        (concatenate 'string string (make-string (- width w) :initial-element #\space))
+        string)))

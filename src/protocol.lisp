@@ -11,7 +11,12 @@
 
 (in-package #:leticl)
 
-(defparameter +protocol-version+ 18)
+(defparameter +protocol-version+ 20)
+;; 19 added WithdrawPrompts (a queued prompt can be taken back into the
+;; composer; consecutive queued messages merge daemon-side), 20 added Stop
+;; (the head asks whether the daemon goes too, instead of a second terminal
+;; and letibot --stop). Both are client frames, hence the ATTACH-time refusal
+;; that told us about the bump in the first place.
 
 ;;; Why a Rejected was sent — stable codes a head branches on (protocol.rs).
 (defparameter +reject-stale-seq+ "stale expected_seq")
@@ -81,6 +86,21 @@ not — there is deliberately no other way to obtain one (protocol.rs on Ack)."
         :client-request-id (next-request-id)
         :expected-seq expected-seq
         :reason reason))
+
+(defun make-withdraw-prompts (expected-seq)
+  "Take back what this head queued — the original leaves the daemon's queue so
+the operator can edit it rather than stack under it (protocol.rs, v19)."
+  (list :frame "withdraw_prompts"
+        :client-request-id (next-request-id)
+        :expected-seq expected-seq))
+
+(defun make-stop (expected-seq who)
+  "Stop the daemon, not just this head — one shutdown sequence, every head
+wakes with Closed (protocol.rs, v20)."
+  (list :frame "stop"
+        :client-request-id (next-request-id)
+        :expected-seq expected-seq
+        :who who))
 
 (defun make-answer (req-id option-id &optional pattern)
   "Grant or deny a permission, by option id. PATTERN is the operator's own

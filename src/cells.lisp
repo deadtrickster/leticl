@@ -220,3 +220,22 @@ styles are tracked across the whole frame so SGR is emitted only on change."
 
 (defun move-to (out row col)
   (format out "~C[~D;~DH" +esc+ (1+ row) (1+ col)))
+
+(defun screen-rows-ansi (screen)
+  "One string per row, escape codes included — the answer to ScreenRequested
+and the body of /cells: what this head actually drew, at its real size, not a
+description of it (protocol.rs on ClientFrame::Screen)."
+  (let ((out nil))
+    (dotimes (r (screen-rows screen))
+      (with-output-to-string (s)
+        (let ((last-style -1))
+          (dotimes (c (screen-cols screen))
+            (let ((cell (screen-cell screen r c)))
+              (unless (char= (cell-ch cell) +wide-cont+)
+                (when (/= (cell-style cell) last-style)
+                  (write-string (%sgr (cell-style cell)) s)
+                  (setf last-style (cell-style cell)))
+                (write-char (cell-ch cell) s))))
+          (write-string (format nil "~C[0m" +esc+) s))
+        (push (get-output-stream-string s) out)))
+    (nreverse out)))

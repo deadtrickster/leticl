@@ -16,6 +16,16 @@ written whole and flushed per frame (wire.rs:88)."
                                        :external-format :utf-8
                                        :buffering :none)))
 
+(defun wait-for-input (stream timeout-secs)
+  "T when STREAM can deliver input without blocking, waiting up to
+TIMEOUT-SECS (nil waits forever). listen answers only about bytes already
+inside the stream's buffer; the fd decides — a loop that polls listen alone
+gets one poll microseconds after its attach write, before the daemon has
+read anything, and concludes the peer is silent (smoke-head, measured)."
+  (or (listen stream)
+      (sb-sys:wait-until-fd-usable (sb-sys:fd-stream-fd stream)
+                                   :input timeout-secs)))
+
 (defun runtime-dir ()
   "Where leticl's own sockets live: $XDG_RUNTIME_DIR, falling back to
 /tmp/leticl-<uid> for contexts without it (PLAN.md §8)."

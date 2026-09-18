@@ -1,30 +1,26 @@
-;;;; tests/package.lisp
+;;;; tests/package.lisp — the suite, on FiveAM. The hand-rolled runner this
+;;;; replaces had one trick (count failures); FiveAM adds per-assertion
+;;;; continuation, selective re-runs, and for-all properties.
+
+(defpackage #:leticl/tests
+  (:documentation "FiveAM suite for the leticl head.")
+  (:use #:cl #:leticl)
+  ;; curated, not :use — fiveam also exports `run', which must stay leticl:run
+  (:import-from #:it.bese.fiveam
+                #:def-suite #:in-suite #:def-test #:is
+                #:signals #:finishes #:for-all
+                #:gen-integer #:gen-string #:gen-list #:gen-one-element
+                #:run!)
+  (:export #:leticl #:run-all))
 
 (in-package #:leticl/tests)
 
-(defparameter *tests* nil)
-(defparameter *failures* nil)
+(def-suite leticl
+    :description "Cell buffers, escape strings, protocol goldens, wire
+framing — everything that can be tested without a live daemon.")
 
-(defmacro deftest (name &body body)
-  `(progn
-     (pushnew ',name *tests*)
-     (defun ,name ()
-       (handler-case (progn ,@body (format t "  ok ~a~%" ',name))
-         (error (e)
-           (push (cons ',name (format nil "~a" e)) *failures*)
-           (format t "  FAIL ~a: ~a~%" ',name e))))))
-
-(defun check= (want got &optional (msg ""))
-  (unless (equal want got)
-    (error "~a: want ~s got ~s" msg want got)))
+(in-suite leticl)
 
 (defun run-all ()
-  "Run every deftest; print a line per test; return the failure count (0 is
-success). The asdf test-op wrapper signals when this is nonzero."
-  (setf *failures* nil)
-  (let ((count 0))
-    (dolist (name (reverse *tests*))
-      (incf count)
-      (funcall name))
-    (format t "~d tests, ~d failures~%" count (length *failures*))
-    (length *failures*)))
+  "Run the suite; return the failure count for run.lisp's exit code."
+  (if (run! 'leticl) 0 1))

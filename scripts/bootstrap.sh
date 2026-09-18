@@ -19,5 +19,9 @@ pin () {
 pin yason                  https://github.com/phmarek/yason.git                          0c84b29
 pin trivial-gray-streams   https://github.com/trivial-gray-streams/trivial-gray-streams.git 257d73e
 pin alexandria             https://gitlab.common-lisp.net/alexandria/alexandria.git      f283e25
+pin anaphora               https://github.com/spwhitton/anaphora.git                     bcf0f74
+pin fiveam                 https://github.com/lispci/fiveam.git                          e43d6c8
+pin asdf-flv               https://github.com/didierverna/asdf-flv.git                   3f1de41
+pin trivial-backtrace      https://github.com/gwkkwg/trivial-backtrace.git               7f90b4a
 
 echo "vendor ready"

@@ -10,6 +10,7 @@ through an eval socket and see the change on the next frame."
   :author "dead"
   :license "Apache-2.0"
   :depends-on (#:alexandria
+               #:anaphora
                #:trivial-gray-streams
                #:yason)
   :serial t
@@ -21,12 +22,18 @@ through an eval socket and see the change on the next frame."
                (:file "src/wire")
                (:file "src/protocol")
                (:file "src/socket")
+               (:file "src/session")
+               (:file "src/keys")
+               (:file "src/markdown")
+               (:file "src/render")
+               (:file "src/head")
+               (:file "src/hack")
                (:file "src/demo")))
 
 (asdf:defsystem #:leticl/test
-  :description "Tests for leticl — zero-dep harness, asserts on cell buffers
-and emitted escape strings (see PLAN.md §11)."
-  :depends-on (#:leticl)
+  :description "Tests for leticl — FiveAM suite: cell buffers, escape strings,
+protocol goldens, wire framing (see PLAN.md §11)."
+  :depends-on (#:leticl #:fiveam)
   :serial t
   :components ((:file "tests/package")
                (:file "tests/tests"))
