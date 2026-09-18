@@ -198,7 +198,57 @@
     "{\"frame\":\"screen\",\"req_id\":\"q1\",\"cols\":3,\"rows_n\":1,\"rows\":[\"abc\"]}"
     (encode-frame (make-screen-answer "q1" (list "abc"))))))
 
-;;; ---------------------------------------------------------- properties ;;;
+;;; ------------------------------------------------------------- keys ;;;
+
+(defconstant +esc+ (code-char 27)
+  "The ESC character, for building the key sequences the decoder must eat.")
+
+(defun key-from (string)
+  "One key event from a string stream — the decoder is transport-agnostic."
+  (read-key (make-string-input-stream string)))
+
+(def-test key-char-and-enter (:suite leticl)
+  (is (equal (key-from "a") (list :type :char :ch #\a)))
+  (is (equal (key-from (string #\return)) (list :type :enter)))
+  (is (equal (key-from (string #\tab)) (list :type :tab))))
+
+(def-test key-ctrl (:suite leticl)
+  (is (equal (key-from (string (code-char 3))) (list :type :ctrl :ch #\c))
+      "ctrl-c is the letter, not the control code"))
+
+(def-test key-csi-arrows (:suite leticl)
+  (is (equal (key-from (format nil "~C[A" +esc+)) (list :type :up)))
+  (is (equal (key-from (format nil "~C[B" +esc+)) (list :type :down)))
+  (is (equal (key-from (format nil "~C[C" +esc+)) (list :type :right)))
+  (is (equal (key-from (format nil "~C[D" +esc+)) (list :type :left))))
+
+(def-test key-csi-tildes (:suite leticl)
+  (is (equal (key-from (format nil "~C[1~~" +esc+)) (list :type :home)))
+  (is (equal (key-from (format nil "~C[3~~" +esc+)) (list :type :delete)))
+  (is (equal (key-from (format nil "~C[4~~" +esc+)) (list :type :end)))
+  (is (equal (key-from (format nil "~C[5~~" +esc+)) (list :type :page-up)))
+  (is (equal (key-from (format nil "~C[6~~" +esc+)) (list :type :page-down))))
+
+(def-test key-application-mode-arrows (:suite leticl)
+  (is (equal (key-from (format nil "~COA" +esc+)) (list :type :up))
+      "ESC O A — the application cursor keys"))
+
+(def-test key-lone-esc (:suite leticl)
+  (is (equal (key-from (string +esc+)) (list :type :esc))
+      "silence after ESC means ESC"))
+
+(def-test key-sgr-mouse (:suite leticl)
+  (is (equal (key-from (format nil "~C[<0;5;3M" +esc+))
+             (list :type :mouse :x 5 :y 3 :button 0 :kind :press))
+      "SGR press")
+  (is (equal (key-from (format nil "~C[<64;5;3M" +esc+))
+             (list :type :mouse :x 5 :y 3 :kind :wheel-up))
+      "SGR wheel"))
+
+(def-test key-bracketed-paste (:suite leticl)
+  (is (equal (key-from (format nil "~C[200~~hello~C[201~~" +esc+ +esc+))
+             (list :type :paste :text "hello"))
+      "the paste is one key event, terminator consumed"))
 
 (def-test markdown-structure (:suite leticl)
   (let ((lines (markdown-lines "# Title
@@ -223,3 +273,23 @@ plain")))
   (for-all ((i (gen-integer :min 32 :max 126)))
     (is (= 1 (char-width (code-char i)))
         "every printable ASCII char is one column")))
+
+;;; ------------------------------------------------------------- hack ;;;
+
+(def-test hack-eval-socket (:suite leticl)
+  (let ((head (%make-head)))
+    (hack-start head)
+    (unwind-protect
+         (let ((st (connect-unix (hack-socket-path))))
+           (write-line "eval (head-cols *head*)" st)
+           (force-output st)
+           (let ((reply (read-line st)))
+             (is (search "\"ok\":true" reply) "eval answered ok")
+             (is (search "80" reply) "the head's cols came back")
+             (is (head-dirty head) "the eval marked the head dirty"))
+           (write-line "bogus" st)
+           (force-output st)
+           (is (search "\"ok\":false" (read-line st))
+               "anything but eval is refused")
+           (ignore-errors (close st)))
+      (hack-stop head))))

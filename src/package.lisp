@@ -43,7 +43,7 @@
    #:markdown-lines #:wrap-segments #:top-border #:status-line
    #:decision-card-lines #:picker-lines #:help-lines *slash-commands*
    ;; head
-   #:run #:*head* #:head-session #:head-prefs #:head-dirty #:head-screen
+   #:%make-head #:run #:*head* #:head-session #:head-prefs #:head-dirty #:head-screen
    #:head-last-rows #:head-cols #:head-rows #:head-mode #:head-composer
    ;; hack
    #:hack-start #:hack-stop #:hack-socket-path #:list-live-heads #:hack-handle))

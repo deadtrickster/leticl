@@ -43,7 +43,12 @@ read nil as \"nothing came\"."
   "One CSI sequence to a key event, or nil when we do not know it. 200~ is
 bracketed paste's opener: the text follows, terminated by ESC[201~ — read it
 here, because the paste IS the key event."
-  (let ((nums (mapcar #'parse-integer-or-nil (uiop:split-string params :separator ";"))))
+  ;; SGR mouse params carry a leading < (ESC[<b;x;yM); strip it so the button
+  ;; parses as an integer rather than NIL.
+  (let* ((params (if (and (plusp (length params)) (char= (char params 0) #\<))
+                     (subseq params 1)
+                     params))
+         (nums (mapcar #'parse-integer-or-nil (uiop:split-string params :separator ";"))))
     (cond
       ((string= final "A") (list :type :up))
       ((string= final "B") (list :type :down))
@@ -71,24 +76,26 @@ here, because the paste IS the key event."
 (defun %read-paste (stream)
   "Everything up to ESC[201~, as one paste event. A nested ESC that is not the
 terminator is kept as content — a paste may contain anything."
-  (with-output-to-string (s)
-    (loop
-      for ch = (read-char stream nil nil)
-      while ch
-      do (if (char= ch +esc+)
-             (let ((next (%poll-char stream
-                                     (+ (get-internal-real-time)
-                                        (* *escape-wait-ms* (/ internal-time-units-per-second) 0.001)))))
-               (cond ((and next (char= next #\[))
-                      (let ((body (%read-csi stream)))
-                        (if (string= body "201~")
-                            (return)
-                            (progn (write-char ch s) (write-char next s)
-                                   (write-string body s)))))
-                     (t (write-char ch s)
-                        (when next (write-char next s)))))
-             (write-char ch s)))
-    (list :type :paste :text (get-output-stream-string s))))
+  ;; with-output-to-string returns the string, not the body's value — so the
+  ;; plist is built outside, around the captured text.
+  (let ((text (with-output-to-string (s)
+                (loop
+                  for ch = (read-char stream nil nil)
+                  while ch
+                  do (if (char= ch +esc+)
+                         (let ((next (%poll-char stream
+                                                 (+ (get-internal-real-time)
+                                                    (* *escape-wait-ms* (/ internal-time-units-per-second) 0.001)))))
+                           (cond ((and next (char= next #\[))
+                                  (let ((body (%read-csi stream)))
+                                    (if (string= body "201~")
+                                        (return)
+                                        (progn (write-char ch s) (write-char next s)
+                                               (write-string body s)))))
+                                (t (write-char ch s)
+                                   (when next (write-char next s)))))
+                         (write-char ch s))))))
+    (list :type :paste :text text)))
 
 (defun parse-integer-or-nil (s)
   (ignore-errors (parse-integer (string-trim " " s))))
@@ -99,9 +106,9 @@ terminator is kept as content — a paste may contain anything."
   (cond ((>= button 64)
          (list :type :mouse :x x :y y :kind (if (= button 64) :wheel-up :wheel-down)))
         ((>= button 32)
-         (list :type :mouse :x x :y y :kind :motion :button (- button 32)))
+         (list :type :mouse :x x :y y :button (- button 32) :kind :motion))
         (t
-         (list :type :mouse :x x :y y :kind kind :button button))))
+         (list :type :mouse :x x :y y :button button :kind kind))))
 
 (defun read-key (stream)
   "One key event from a raw terminal stream; :eof when the input closed."
