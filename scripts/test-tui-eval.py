@@ -181,6 +181,32 @@ assert balanced(body), "--all form must be one balanced line"
 r = run("--pid", str(MYPID), "--file", "/definitely/not/here.lisp")
 assert r.returncode == 2 and "no such file" in r.stderr, "a missing file is exit 2"
 
+# --tree reads leticl.asd for the file list, in the asd's order, and the asd
+# writes components WITHOUT the extension. Getting that wrong pushes 23
+# nonexistent paths, so assert the mapping rather than the count.
+ns = {"__name__": "tui_eval_test"}
+exec(open("scripts/tui-eval").read(), ns)
+asd = ns["asd_files"](os.getcwd())
+names = [os.path.basename(p) for p in asd]
+print("--tree files ->", " ".join(names))
+assert names[0] == "package.lisp", "the asd order starts at package, got " + names[0]
+assert all(n.endswith(".lisp") for n in names), "every component needs .lisp: " + str(names)
+assert all(os.path.isfile(p) for p in asd), "every path must exist: " + str(
+    [p for p in asd if not os.path.isfile(p)])
+# the order must match the asd's serial order, not a directory listing
+assert names.index("head.lisp") < names.index("render.lisp"), \
+    "head before render (render composes what head calls)"
+assert names.index("render.lisp") < names.index("editor.lisp"), \
+    "render before editor, per the asd"
+
+# --where: the generated form is one line and never NAMES the contrib package,
+# because that name is read before anything runs and a head without the contrib
+# would fail with a reader error rather than the message this prints.
+wf = ns["where_form"]("item-lines")
+assert "\n" not in wf, "--where form must be one line"
+assert "sb-introspect:" not in wf, "must not name the package at read time"
+assert "find-symbol" in wf and "funcall" in wf, "use find-symbol + funcall"
+
 # an unquoted multi-line FORM cannot travel the wire: the head reads ONE line.
 # Documented in HACKING.md; asserted here so the rule is not quietly lost.
 # --no-verify so exactly one request is sent and the assertion is unambiguous.

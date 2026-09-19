@@ -17,6 +17,13 @@
 (require :asdf)
 (require :sb-bsd-sockets)
 (require :sb-posix)
+;; sb-introspect is a CONTRIB, not part of SBCL's core image: without this
+;; require, (find-package :sb-introspect) is NIL and the head keeps no record of
+;; where a definition came from. `tui-eval --where` reads that record to answer
+;; "did my push land" — a pushed function has a null source and an image-baked
+;; one carries its .lisp path — and `require` is skipped by `--file`, so a
+;; running head cannot gain this by pushing. It has to be here.
+(require :sb-introspect)
 
 (defpackage :leticl/cli (:use :cl))
 (in-package :leticl/cli)

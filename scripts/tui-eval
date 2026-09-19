@@ -7,6 +7,8 @@ Usage:
   tui-eval --socket PATH FORM   eval FORM in the head at that socket
   tui-eval --file PATH          push a file's top-level forms, live
   tui-eval --file PATH --all    … including the ones skipped by default
+  tui-eval --tree [DIR]         push EVERY src file, in leticl.asd order
+  tui-eval --where SYMBOL       which file's definition is live, and from when
   tui-eval --screen             show what the head last drew, then exit
   tui-eval --no-verify          eval without the render gate
   tui-eval --list               print the pids of the live heads
@@ -17,6 +19,17 @@ paint: it pokes a repaint and checks the loop cleared it, that the head still
 has a stream to paint on, and that a full frame is on screen. Exit 3 means the
 eval RAN but left the head broken, and the message says what broke — recover
 with `--screen`, which prints what the head actually drew.
+
+**The gate checks that the head can paint, not that your change is loaded.**
+Those came apart the moment rendering moved into more than one file: editing
+`src/cards.lisp` and pushing `src/render.lisp` (the file that used to hold all
+of it) exits 0 with a green gate and leaves the old cards on the screen. So:
+
+  · `--tree` is how you make the head match disk. It pushes every file
+    `leticl.asd` lists, in that order, and stops at the first failure — the
+    whole tree or the failure, never a silent half.
+  · `--where SYMBOL` answers which definition is live, from SBCL's own record,
+    so "did that push land" is a measurement rather than a belief.
 
 That gate exists because this happened: `tui-eval --file src/head.lisp` ran
 `(defparameter *stdout* nil)` in a live head, and every frame afterwards was
@@ -48,6 +61,12 @@ skipped and reported unless --all:
 
 (Those change layout or definitions the running image already copied:
 re-evaluating a defstruct leaves existing instances on the old layout.)
+
+`--where` needs `sb-introspect`, which is a contrib rather than part of SBCL's
+core: it is in the frozen image (`freeze.lisp` requires it) and absent from a
+bare SBCL until `(require :sb-introspect)`. `require` is skipped by `--file`, so
+a running head cannot gain it by push — an image without it says so rather than
+failing obscurely.
 
 Trust: this is arbitrary code execution in the head's image, by design —
 the same trust a person at a REPL has. Per-user socket, mode 0600.
@@ -250,6 +269,106 @@ def strip_ansi(s):
     return re.sub(r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b[()][0-9A-B]", "", s)
 
 
+#; ------------------------------------------- --tree: make the head match disk ;;;
+
+ASD_COMPONENT = re.compile(r'\(:file\s+"(src/[^"]+)"\)')
+
+
+def asd_files(root):
+    """The src files `leticl.asd` lists, in load order.
+
+    Order matters: the asd is `:serial t`, so it is the order the head was built
+    in, and pushing them in any other order can evaluate a form before the thing
+    it calls exists. Reading the asd rather than globbing means a new file is
+    picked up by having been registered once, in the one place that already has
+    to know about it.
+    """
+    path = os.path.join(root, "leticl.asd")
+    text = open(path).read()
+    # the asd writes components WITHOUT the extension — ASDF appends ".lisp" —
+    # so "src/package" is the file "src/package.lisp". Adding it here is the
+    # whole difference between pushing the tree and pushing 23 nonexistent paths.
+    files = [f + ".lisp" for f in ASD_COMPONENT.findall(text)]
+    return [os.path.join(root, f) for f in files]
+
+
+def push_tree(pid, target, root, send_all=False, verbose=True):
+    """Push every src file in asd order. Returns (ok, results).
+
+    Stops at the FIRST failure. A half-pushed tree is the exact state --tree
+    exists to prevent — the head would hold a new `cards` beside an old
+    `render`, which is coherent enough to pass the gate and wrong on screen — so
+    a failure is loud and the caller sees how far it got.
+    """
+    results = []
+    for path in asd_files(root):
+        form = file_form(path, send_all)
+        try:
+            reply = eval_form(pid, form, target)
+            value = reply_value(reply)
+        except (OSError, ValueError, RuntimeError) as e:
+            results.append((path, "ERROR: {}".format(e)))
+            if verbose:
+                print("  {:26s} !! {}".format(os.path.basename(path), e))
+            return False, results
+        results.append((path, value))
+        if verbose:
+            print("  {:26s} {}".format(os.path.basename(path), value))
+        # the head reports failures per-form; a file whose every form failed is
+        # not a reason to stop, but a `:FAILED` list is worth showing
+        if isinstance(value, str) and ":FAILED NIL" not in value:
+            print("     !! forms failed in {}: {}".format(os.path.basename(path), value))
+    return True, results
+
+
+#; ------------------------------------------------ --where: which code is live ;;;
+
+# Needs sb-introspect, a CONTRIB: present in the frozen image (freeze.lisp
+# requires it), absent from a bare SBCL. Two traps this avoids, both measured:
+#
+#   · the package-qualified symbol `sb-introspect:find-definition-source` is
+#     read BEFORE anything is evaluated, so a guard inside the form never runs —
+#     the reader signals and the eval fails with a reader error. Hence
+#     find-symbol + funcall, which never names the package at read time.
+#   · `:sb-introspect` is NOT pushed onto *features*, even after the require, so
+#     a `#+sb-introspect` reader conditional would silently pick the wrong branch.
+#
+# The four symbols are external in that package, verified against this SBCL.
+WHERE_FORM = (
+    '(let ((pkg (find-package :sb-introspect))) '
+    '  (if (null pkg) :no-sb-introspect '
+    '    (let* ((sym (ignore-errors (read-from-string "{name}")))) '
+    '      (if (or (null sym) (not (fboundp sym))) :no-function '
+    '        (let ((s (ignore-errors (funcall (symbol-function '
+    '                     (find-symbol "FIND-DEFINITION-SOURCE" pkg)) '
+    '                     (symbol-function sym))))) '
+    '          (if (null s) :no-source '
+    '            (list :file (ignore-errors (namestring (funcall (symbol-function '
+    '                          (find-symbol "DEFINITION-SOURCE-PATHNAME" pkg)) s))) '
+    '                  :form-path (ignore-errors (funcall (symbol-function '
+    '                              (find-symbol "DEFINITION-SOURCE-FORM-PATH" pkg)) s)) '
+    '                  :char-offset (ignore-errors (funcall (symbol-function '
+    '                                (find-symbol "DEFINITION-SOURCE-CHARACTER-OFFSET" pkg)) s)) '
+    '                  :name (symbol-name sym))))))))'
+)
+
+
+def where_form(name):
+    """A form that reports where NAME's function was defined, per the head.
+
+    `find-definition-source` is the head's OWN record of where the function it
+    is currently running came from, so this answers "was my push applied" rather
+    than "does the file on disk say so". A definition pushed by `--file` was
+    EVAL'd, so it carries no pathname and reports `:no-source`; one baked into
+    the image carries its `.lisp` path. `:no-sb-introspect` means the image was
+    built without the contrib.
+    """
+    safe = name.replace("\\", "\\\\").replace('"', '\\"')
+    if "\n" in safe:
+        raise ValueError("a symbol name cannot contain a newline")
+    return WHERE_FORM.format(name=safe)
+
+
 # Forms that must not be re-evaluated into a live image: they change layout or
 # definitions the running image has already copied. See the module docstring.
 NOT_LIVE = ("DEFSTRUCT", "DEFCLASS", "DEFPACKAGE", "DEFCONSTANT",
@@ -296,6 +415,9 @@ def main(argv):
     sock = None
     do_screen = False
     verify = True
+    do_tree = False
+    root = None
+    do_where = None
     forms = []
     i = 0
     while i < len(args):
@@ -308,6 +430,19 @@ def main(argv):
             do_screen = True
         elif a == "--no-verify":
             verify = False
+        elif a == "--tree":
+            do_tree = True
+            # an optional DIR, but not if the next word is another flag or a form
+            if i + 1 < len(args) and not args[i + 1].startswith("-") \
+                    and os.path.isdir(args[i + 1]):
+                i += 1
+                root = args[i]
+        elif a == "--where":
+            i += 1
+            if i >= len(args):
+                print("--where needs a symbol", file=sys.stderr)
+                return 2
+            do_where = args[i]
         elif a == "--pid":
             i += 1
             if i >= len(args):
@@ -341,6 +476,11 @@ def main(argv):
             print("no such file: " + path, file=sys.stderr)
             return 2
         form = file_form(path, send_all)
+    elif do_tree or do_where is not None:
+        form = None                      # both have their own send loop
+        if do_tree and root is None:
+            # default: the repo this script lives in (scripts/ is beside src/)
+            root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     elif do_screen and not forms:
         form = None                      # --screen alone: just capture
     else:
@@ -362,6 +502,56 @@ def main(argv):
             return 1
 
     target = sock or find_socket(pid, sock)
+
+    if do_tree:
+        print("pushing the tree in leticl.asd order ({} files)".format(
+            len(asd_files(root))))
+        ok, results = push_tree(pid, target, root, send_all)
+        print("")
+        if not ok:
+            last, err = results[-1]
+            print("--tree STOPPED at {}: {}".format(os.path.basename(last), err),
+                  file=sys.stderr)
+            print("The tree is HALF PUSHED — the head holds the new files above "
+                  "and the old ones below. Fix and re-run --tree before "
+                  "believing anything on screen.", file=sys.stderr)
+            return 3
+        print("ok: {} files pushed".format(len(results)))
+
+    if do_where is not None:
+        try:
+            reply = eval_form(pid, where_form(do_where), target)
+        except OSError as e:
+            print("cannot reach {}: {}".format(target, e), file=sys.stderr)
+            return 1
+        try:
+            value = reply_value(reply)
+        except (ValueError, RuntimeError) as e:
+            print("--where {}: {}".format(do_where, e), file=sys.stderr)
+            return 1
+        if value == ":NO-SB-INTROSPECT":
+            print("this head has no sb-introspect, so it keeps no record of where "
+                  "a definition came from.\n"
+                  "It is a contrib: add (require :sb-introspect) to freeze.lisp "
+                  "and rebuild the image.", file=sys.stderr)
+            return 1
+        # The measured distinction: a definition from the image carries the
+        # .lisp path it was compiled from; one that came down the eval socket
+        # was EVAL'd, so its source is null. Say which, rather than printing a
+        # plist the caller has to interpret.
+        if isinstance(value, str) and value.startswith("(:FILE NIL"):
+            print("{}: PUSHED — came down the eval socket, not from the image "
+                  "(source is null)".format(do_where))
+        elif isinstance(value, str) and value.startswith("(:FILE"):
+            print("{}: from the IMAGE — {}".format(do_where, value))
+        elif value == ":NO-SOURCE":
+            print("{}: no source recorded (neither a file nor a push)".format(do_where))
+        elif value == ":NO-FUNCTION":
+            print("{}: not a function in this head (a variable, or not defined)"
+                  .format(do_where), file=sys.stderr)
+            return 1
+        else:
+            print("{}: {}".format(do_where, value))
 
     if form is not None:
         try:

@@ -159,24 +159,31 @@ commit rather than skipping silently.
 verification surface. For every feature:
 
 ```sh
-tui-eval --list                     # find the head's pid
-tui-eval --pid <PID> --file src/<the files you changed>.lisp
-#   exit 3 means the head is broken — the push RAN, so recover before going on
-tui-eval --pid <PID> --screen       # read what it actually drew
+tui-eval --list                       # find the head's pid
+tui-eval --pid <PID> --tree           # make the head match disk (every file)
+tui-eval --pid <PID> --where <SYM>    # prove it: PUSHED, not "from the IMAGE"
+tui-eval --pid <PID> --screen         # read what it actually drew
 ```
 
-The push must report `gate: stdout=ok rows=N/N cols=M/M`, and `--screen` must
-show the feature. **A feature that is not visible on the running head is not
-done**, however green the tests are — that is the whole premise of this rewrite
-(`PLAN.md` §1), and the render gate (`HACKING.md`) exists to make the claim
-checkable instead of hopeful.
+`--tree` is how a strand's work gets in, and **not `--file <one file>`**: the
+gate proves the head can *paint*, not that *your* file is loaded, and since S0
+rendering lives in six files. Pushing the wrong one exits 0 with a green gate and
+the old code on screen. `--tree` pushes every file `leticl.asd` lists, in that
+order, and stops at the first failure. `--where` then answers "is it in" from the
+head's own record — `PUSHED` versus `from the IMAGE` — which is the one thing a
+green gate cannot tell you.
+
+A feature that is **not visible on the running head is not done**, however green
+the tests are — that is the premise of this rewrite (`PLAN.md` §1), and these two
+commands exist to make the claim checkable instead of hopeful.
 
 ### The rules that keep the live head usable
 
 1. **The head is ONE shared resource; pushes serialize.** Two subagents pushing
    at the same time race, and the second overwrites the first's functions. Only
    the orchestrator pushes; a subagent prepares and hands over. Before any push,
-   `tui-eval --pid <PID> --screen` to see the state you are about to change.
+   `tui-eval --pid <PID> --screen` to see the state you are about to change, and
+   `--where <SYM>` to see what is currently loaded.
 2. **Nothing that holds running state may be `defparameter`** — `defvar`, or a
    live push re-initialises it mid-session. `HACKING.md` §"Live state models
    defvar" has the table; this is the injury that killed a head, not a style
@@ -184,8 +191,12 @@ checkable instead of hopeful.
 3. **A whole file is re-evaluated at load time**, so a push is not a patch. Keep
    new top-level bindings `defvar`; keep the file loadable on its own.
 4. **Recover, do not restart, after a bad push.** `tui-eval --screen` says what
-   it draws; re-push the file with the mistake fixed. Restart only for a
-   `defstruct`/`defclass` change, a toplevel change, or a dead paint loop.
+   it draws; re-push with the mistake fixed. A restart is for a **`defstruct`
+   change** (a changed struct layout is a hard error in this SBCL — *"redefine the
+   STRUCTURE-OBJECT class … incompatibly"*), a toplevel change, or a dead paint
+   loop. **`defclass` is not on this list**: a class redefinition propagates an
+   added slot to existing instances, which is why the head's own state wants to be
+   classes rather than structs.
 5. **New files need `leticl.asd`** (`:serial t`, add to `:components`) *and* a
    push — the `.asd` edit is one line and is a shared file: it is the
    orchestrator's, like `TODO.md` and `PARITY.md`.

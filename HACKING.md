@@ -60,6 +60,10 @@ tui-eval --socket PATH FORM     # eval FORM in the head at that socket
 tui-eval FORM                   # eval FORM in the only live head
 tui-eval --file PATH            # push a file's top-level forms, live
 tui-eval --file PATH --all      # … including the ones skipped by default
+tui-eval --tree                 # push EVERY src file, in leticl.asd order
+tui-eval --where SYMBOL         # which definition is live, and where it came from
+tui-eval --screen               # what the head last drew, ANSI stripped
+tui-eval --no-verify            # eval without the render gate
 ```
 
 `FORM` is one argument (quote it in the shell). Examples:
@@ -75,6 +79,64 @@ tui-eval '(setf (getf (head-prefs *head*) :show-reasoning) nil)'
 # change the status note (top of the status line)
 tui-eval '(setf (head-status-note *head*) "restyled by the model")'
 ```
+
+## `--tree`: make the head match disk
+
+**The gate checks that the head can *paint*, not that your change is *loaded*.**
+Those came apart as soon as rendering lived in more than one file: edit
+`src/cards.lisp`, push `src/render.lisp` (which used to hold all of it), and you
+get `exit 0` with a green gate and the old cards still on screen. A green gate
+means the head is healthy, never that your file is in it.
+
+```sh
+tui-eval --tree
+# pushing the tree in leticl.asd order (23 files)
+#   package.lisp   (:EVALUATED 0 :SKIPPED ("defpackage" "defpackage") :FAILED NIL)
+#   …
+# ok: 23 files pushed
+```
+
+It reads `leticl.asd` for the file list, so it pushes exactly what the system
+loads, **in the order the system loads them** — the asd is `:serial t`, and some
+other order can evaluate a form before the thing it calls exists. (The asd writes
+components without the extension, so `src/package` means `src/package.lisp`.)
+
+**It stops at the first failure**, and says so loudly, because the failure mode
+it guards is the quiet one: a half-pushed tree is a new `cards` beside an old
+`render` — coherent enough to pass the gate and wrong on the screen. Fix, re-run
+`--tree`, and only then believe what you see.
+
+## `--where`: which code is live
+
+```sh
+tui-eval --where item-lines
+# item-lines: from the IMAGE — (:FILE "/home/dead/Projects/leticl/src/cards.lisp" :FORM-PATH (4) …)
+
+tui-eval --tree
+tui-eval --where item-lines
+# item-lines: PUSHED — came down the eval socket, not from the image (source is null)
+```
+
+Two states, and it is the pair that answers "was that push applied": a definition
+**baked into the image** carries the `.lisp` path it was compiled from, and one
+that came down the eval socket was `EVAL`'d, so its source is null. Neither
+answer is derivable from the other — a green gate cannot tell you, and neither
+can the file's mtime.
+
+It reads the head's own record via `sb-introspect`, which is **a contrib, not
+part of SBCL's core**: `freeze.lisp` requires it, and a bare SBCL has no such
+package until `(require :sb-introspect)`. Two traps worth knowing if you touch
+this:
+
+- `sb-introspect:find-definition-source` is **read before anything is
+  evaluated**, so a guard inside the form never gets to run — a head without the
+  contrib fails with a *reader* error, not a helpful one. The form uses
+  `find-symbol` + `funcall` so the package is never named at read time.
+- `:sb-introspect` is **not pushed onto `*features*`** even after the require, so
+  a `#+sb-introspect` reader conditional silently picks the wrong branch. Do not
+  reach for one.
+
+A head built without the contrib says so, and says how to fix it.
 
 ## `--file`: patch a running head from the source
 
