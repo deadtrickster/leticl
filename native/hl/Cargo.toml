@@ -1,0 +1,14 @@
+[package]
+name = "leticl-hl"
+version = "0.1.0"
+edition = "2021"
+description = "C ABI over rano's tree-sitter highlighter, for the leticl head (see RANO.md)"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Operator-local, not published — the same absolute-path convention letibot's
+# crates/ui uses. rano's lib target exposes `syntax` (the highlighter) without
+# the editor, so this builds the tree-sitter engine + grammars, not the TUI.
+rano = { path = "/home/dead/Projects/rano/rano" }

@@ -25,6 +25,8 @@ through an eval socket and see the change on the next frame."
                (:file "src/session")
                (:file "src/keys")
                (:file "src/markdown")
+               (:file "src/highlight")
+               (:file "src/diff")
                (:file "src/render")
                (:file "src/head")
                (:file "src/hack")

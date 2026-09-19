@@ -377,6 +377,158 @@ plain")))
     (is (= 1 (char-width (code-char i)))
         "every printable ASCII char is one column")))
 
+;;; --------------------------------------------------------- highlight ;;;
+
+(def-test role-style-maps-indices (:suite leticl)
+  "The role index → style table; 0 and unknown are plain (nil)."
+  (is (null (role-style 0)) "plain")
+  (is (equal (role-style 1) '(:fg :bright-black)) "comment")
+  (is (equal (role-style 2) '(:fg :green)) "string")
+  (is (equal (role-style 3) '(:fg :bright-yellow)) "number")
+  (is (equal (role-style 4) '(:fg :cyan)) "type")
+  (is (equal (role-style 5) '(:fg :magenta)) "keyword")
+  (is (equal (role-style 6) '(:fg :bright-cyan)) "function")
+  (is (null (role-style 99)) "unknown is plain"))
+
+(def-test highlight-degrades-without-lang (:suite leticl)
+  "lang 0 gives one plain segment per line, shim or no shim."
+  (let* ((lines (highlight-lines "fn main() {}" 0))
+         (line (first lines))
+         (seg (first line)))
+    (is (= 1 (length lines)) "one line")
+    (is (= 1 (length line)) "one segment")
+    (is (string= "fn main() {}" (car seg)) "text intact")
+    (is (null (cdr seg)) "plain style")))
+
+(def-test highlight-rust-roles (:suite leticl)
+  "With the shim, a Rust snippet gets keyword/number/comment roles."
+  (unless (hl-available-p)
+    (skip "the rano shim is not built"))
+  (let* ((src (format nil "fn main() {~%    let x = 42; // c~%}"))
+         (lines (highlight-lines src (lang-for "a.rs"))))
+    (is (= 3 (length lines)) "three lines")
+    (is (some (lambda (s) (and (string= "fn" (car s))
+                               (equal (cdr s) '(:fg :magenta))))
+              (first lines)) "fn is a keyword")
+    (is (some (lambda (s) (and (string= "42" (car s))
+                               (equal (cdr s) '(:fg :bright-yellow))))
+              (second lines)) "42 is a number")
+    (is (some (lambda (s) (and (string= "// c" (car s))
+                               (equal (cdr s) '(:fg :bright-black))))
+              (second lines)) "// c is a comment")))
+
+;;; -------------------------------------------------------------- diff ;;;
+
+(defun diff-lines-text (lines)
+  "Segment lines to one string, for asserting on the rendered diff."
+  (format nil "~{~a~^~%~}"
+          (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l))) lines)))
+
+(defun diff-line-width (line)
+  "Display width of one segment line."
+  (reduce #'+ (mapcar (lambda (seg) (string-width (car seg))) line)))
+
+(def-test diff-identical-has-no-hunks (:suite leticl)
+  (let ((a (list "one" "two" "three")))
+    (let ((d (diff-lines a a)))
+      (is (null (hunks d 3)) "no hunks")
+      (is (every (lambda (op) (eq (first op) :equal)) (diff-ops d)) "all equal"))))
+
+(def-test diff-script-reconstructs-the-files (:suite leticl)
+  "The property that makes a diff trustworthy: apply it and you get `new`;
+delete the insertions and you get `old` back."
+  (let ((cases (list (list (list "a" "b" "c") (list "a" "x" "c"))
+                     (list (list "a" "b" "c") (list "a" "b" "c" "d"))
+                     (list nil (list "a" "b"))
+                     (list (list "a" "b") nil)
+                     (list (list "a" "b" "c" "d" "e") (list "e" "d" "c" "b" "a"))
+                     (list (list "one" "two") (list "one" "two")))))
+    (dolist (case cases)
+      (let* ((old (first case))
+             (new (second case))
+             (d (diff-lines old new)))
+        (is (equal (apply-diff-to-new (diff-ops d) (or new #())) new)
+            "apply gives the new file")
+        (is (equal (apply-diff-to-old (diff-ops d) (or old #())) old)
+            "the inverse gives the old file")))))
+
+(def-test diff-large-file-is-cheap-and-local (:suite leticl)
+  (let ((old (loop for i from 0 below 5000 collect (format nil "line ~a" i)))
+        (new (loop for i from 0 below 5000
+                   collect (if (= i 2500) "line 2500 CHANGED" (format nil "line ~a" i)))))
+    (let ((d (diff-lines old new)))
+      (is (not (diff-degraded d)) "not degraded")
+      (let ((hs (hunks d 3)))
+        (is (= 1 (length hs)) "one hunk")
+        (is (= 8 (length (getf (first hs) :rows))) "3 context each side plus - and +")))))
+
+(def-test diff-unrelated-files-degrade-not-stall (:suite leticl)
+  (let ((old (loop for i from 0 below 3000 collect (format nil "aaa ~a" i)))
+        (new (loop for i from 0 below 3000 collect (format nil "bbb ~a" (* i 7)))))
+    (let ((d (diff-lines-with old new 64)))
+      (is (diff-degraded d) "the cap must be reachable")
+      (is (= 6000 (length (diff-ops d))) "and it is still a valid script"))
+    (let ((out (render-diff old new :width 100)))
+      (is (search "gave up" (diff-lines-text out)) "the degradation is announced"))))
+
+(def-test diff-renamed-variable-highlights-only-the-name (:suite leticl)
+  (multiple-value-bind (os ns) (word-spans "    let total = a + b;" "    let sum = a + b;")
+    (is (not (null os)) "similar lines must pair")
+    (is (= 1 (length os)) "one span in the old line")
+    (is (string= "total" (subseq "    let total = a + b;"
+                                 (first (first os)) (second (first os))))
+        "the span is 'total'")
+    (is (string= "sum" (subseq "    let sum = a + b;"
+                               (first (first ns)) (second (first ns))))
+        "the span is 'sum'")))
+
+(def-test diff-unrelated-lines-are-not-word-highlighted (:suite leticl)
+  "Otherwise the whole line is emphasis, which is the same as none."
+  (multiple-value-bind (os ns) (word-spans "let total = a + b;" "impl Display for Widget {}")
+    (declare (ignore ns))
+    (is (null os) "not similar enough to pair")))
+
+(def-test diff-tabs-are-expanded-before-measuring (:suite leticl)
+  (is (string= "    if x {" (expand-tabs (format nil "~c~c~c~c~c~c~c"
+                                                 #\tab #\i #\f #\space #\x #\space #\{)
+                                         4))
+      "a leading tab to the first stop")
+  (is (string= "ab  c" (expand-tabs (format nil "~c~c~c~c" #\a #\b #\tab #\c) 4))
+      "a mid tab")
+  (is (= 5 (string-width (expand-tabs (format nil "~c~c~c" #\a #\tab #\b) 4)))
+      "width after expand"))
+
+(def-test diff-rendering-respects-width-and-row-cap (:suite leticl)
+  (let ((old (loop for i from 0 below 200 collect (format nil "old line number ~a" i)))
+        (new (loop for i from 0 below 200 collect (format nil "new line number ~a" i))))
+    (let ((out (render-diff old new :width 40 :max-rows 20)))
+      (dolist (l out)
+        (is (<= (diff-line-width l) 40) "no line over the width"))
+      (is (some (lambda (l) (search "more diff lines not shown"
+                                    (format nil "~{~a~}" (mapcar #'car l))))
+                out)
+          "the cap must disclose what it dropped"))))
+
+(def-test diff-painting-does-not-change-the-text (:suite leticl)
+  (let ((old (list "    let total = a + b;" "keep"))
+        (new (list "    let sum = a + b;" "keep")))
+    (let ((text (diff-lines-text (render-diff old new :width 200))))
+      (is (search "let total = a + b;" text) "the old line is intact")
+      (is (search "let sum = a + b;" text) "the new line is intact"))))
+
+(def-test diff-excerpt-is-numbered-from-where-it-starts (:suite leticl)
+  "An excerpt of lines 310..314 must be numbered 310..314, not 1..5: the pair
+a finished edit carries is a window, and a diff numbered from 1 tells the
+reader line 4 changed when it was line 313."
+  (let ((old (list "a" "b" "c"))
+        (new (list "a" "B" "c")))
+    (let ((text (diff-lines-text
+                 (render-diff old new :width 80 :context 1 :line-numbers t
+                              :intra-line nil :old-start 310 :new-start 310))))
+      (is (search "311     -b" text) "the removed line is numbered 311")
+      (is (search "    311 +B" text) "the added line is numbered 311")
+      (is (null (search " 1 " text)) "not numbered from 1"))))
+
 ;;; ------------------------------------------------------------- hack ;;;
 
 (def-test hack-eval-socket (:suite leticl)

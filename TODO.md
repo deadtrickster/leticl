@@ -98,8 +98,14 @@ T20/T21 need T14/T17; T22 needs T18.
 - [ ] **T20** diff/sidediff/highlight (port `ui/diff.rs`, `ui/sidediff.rs`,
   `ui/highlight.rs`). Deps: T14. **Deferred**: ~2400-line port (Myers O(ND)
   edit script, intra-line word diff, side-by-side, syntax highlight). The core
-  TUI renders edit tool calls as a byte count without it; pick up when the
-  review burden justifies the port.
+  TUI already dumps the daemon-bounded before/after lines
+  (`awhen-edit-lines`); the gap is hunk context, word-level highlight,
+  split view, syntax colour. Plan (D2 relaxed 2026-09-19): port `diff.rs` +
+  `sidediff.rs` + the hand-written `highlight.rs` lexer to Lisp; diff-panel
+  colouring via rano's `syntax` module behind a small Rust cdylib shim
+  (3-function C ABI, u8 role grid, caller-provided buffer) called with
+  sb-alien — the head's only native dependency, degrading to uncoloured when
+  the `.so` is absent.
 - [x] **T21** prefs/settings/peek/subagent rows/todos screens. Deps: T17.
 
 ## Phase 6 — hardening (M6)

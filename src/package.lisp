@@ -45,6 +45,11 @@
    #:decision-card-lines #:picker-lines #:help-lines *slash-commands*
    #:quit-card-lines #:secret-card-lines
    #:todos-lines #:repo-todo-lines
+   ;; highlight
+   #:hl-available-p #:lang-for #:class-grid #:role-style #:highlight-lines
+   ;; diff
+   #:diff-lines #:diff-lines-with #:hunks #:render-diff #:expand-tabs
+   #:word-spans #:apply-diff-to-new #:apply-diff-to-old #:diff-ops #:diff-degraded
    ;; head
    #:%make-head #:run #:*head* #:head-session #:head-prefs #:head-dirty #:head-screen
    #:head-last-rows #:head-cols #:head-rows #:head-mode #:head-composer

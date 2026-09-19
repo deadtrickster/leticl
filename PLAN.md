@@ -222,7 +222,10 @@ incidental.
 ## 13. Decisions so far
 
 - **D1** (2026-09-17): daemon untouched; head-only rewrite; protocol 18 as-is.
-- **D2**: SBCL builtins + vendored yason only; no quicklisp, no CFFI.
+- **D2**: SBCL builtins + vendored yason only; no quicklisp. (Relaxed
+  2026-09-19 for T20: the head may call exactly one native component — the
+  rano highlight shim, a Rust `cdylib` — via sb-alien (already in the tree
+  for termios) or CFFI if the ABI outgrows it. No other FFI, no quicklisp.)
 - **D3**: single package `:leticl` for live-hack ergonomics.
 - **D4**: frames as keyword plists at the boundary; typed views only if a hot
   path demands them.
