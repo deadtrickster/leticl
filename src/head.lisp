@@ -264,10 +264,9 @@ is a resume — the gap arrives as events, or a Resync does (§13.2)."
                            :session-id (session-session-id (head-session head))
                            :since-seq (session-seq (head-session head))
                            :identity "leticl"))
-              ;; and the settings again: a reconnect can land on a daemon whose
-              ;; session has moved, and the rows are what the header and the
-              ;; pickers read (§7.4)
-              (%send head (make-settings))
+              ;; The settings are NOT re-asked here: this ATTACH draws a
+              ;; `hello`, and the hello handler asks. Asking in both places put
+              ;; the frame on the wire twice per reconnect.
               ;; restart the reader: the old one died on the disconnect that
               ;; triggered this, and without a reader the fresh socket is
               ;; written to but never read — the head sits "connected" and
@@ -369,17 +368,15 @@ push ran `(defparameter *stdout* nil)` and the operator's head exited)."
     (screen-resize (head-screen head) (head-cols head) (head-rows head))
     (screen-resize (head-prev-screen head) (head-cols head) (head-rows head))
     ;; ATTACH is the first frame on every connection (server.rs:205); an empty
-    ;; session id means "the daemon's current session" (registry.rs:600)
+    ;; session id means "the daemon's current session" (registry.rs:600).
+    ;;
+    ;; The SETTINGS request is NOT sent here: the `hello` handler sends it, and
+    ;; asking in both places put the frame on the wire twice per attach — seen
+    ;; by witnessing the head's writes against a fake daemon. The hello hook is
+    ;; the right home because a `Switch` also lands as a hello, so one send
+    ;; covers attach, switch and reconnect.
     (%send head (make-attach :session-id (or session-id "")
                              :identity "leticl"))
-    ;; Then ASK FOR THE SETTINGS. `ServerFrame::Settings` is only ever sent in
-    ;; reply to a request — nothing pushes it — so a head that never asks has
-    ;; none, and its header falls back to the model `Hello` named, which is the
-    ;; value at attach and stays that value for ever. Measured on this head
-    ;; before the fix: the header said `qwen-3.8-27b` while the live turn was on
-    ;; `deepseek/deepseek-flash`. The rows are also what the mode and models
-    ;; pickers read, so without this they have nothing to list (§7.4).
-    (%send head (make-settings))
     (hack-start head)
     (setf (head-reader head)
           (sb-thread:make-thread (lambda () (%reader-loop head)) :name "leticl reader")
