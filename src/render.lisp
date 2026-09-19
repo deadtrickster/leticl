@@ -279,6 +279,7 @@ would show the answer twice."
     ("mode" . "NAME — move this session's project to a mode")
     ("jobs" . "the background-jobs pane")
     ("subagents" . "the subagent tree")
+    ("todos" . "the model's plan, and the repo's TODO.md read-only")
     ("cells" . "MESSAGE — send it with a copy of this screen")
     ("compact" . "summarise this session and fork it")
     ("reseat" . "rebuild the prompt from the tools seated now")
@@ -351,6 +352,72 @@ would show the answer twice."
                        (cons (format nil "  ~a" (getf s :kind)) '(:fg :bright-black))))
                (head-subagents head))
        (list (list (cons "  none" '(:fg :bright-black)))))))
+
+(defun repo-todo-lines (workspace)
+  "The repo's TODO.md, summarised by section (app.rs:6099). Read-only: the
+ pane never writes the file."
+  (if (not (plusp (length (or workspace ""))))
+      (list "    (no workspace in the wiring)")
+      (let ((path (format nil "~a/TODO.md" workspace)))
+        (if (probe-file path)
+            (let ((body (uiop:read-file-string path))
+                  (out nil)
+                  (section nil)
+                  (open 0)
+                  (done 0))
+              (flet ((flush ()
+                       (when section
+                         (push (format nil "    ~a — ~d open, ~d done"
+                                       section open done)
+                               out))))
+                (dolist (line (uiop:split-string body :separator '(#\newline)))
+                  (if (uiop:string-prefix-p "## " line)
+                      (progn
+                        (flush)
+                        (setf section (string-trim " " (subseq line 3))
+                              open 0 done 0))
+                      (let ((trimmed (string-trim " " line)))
+                        (cond ((uiop:string-prefix-p "- [ ]" trimmed) (incf open))
+                              ((or (uiop:string-prefix-p "- [x]" trimmed)
+                                   (uiop:string-prefix-p "- [X]" trimmed))
+                               (incf done))))))
+                (flush)
+                (if out
+                    (nreverse out)
+                    (list "    no sections found."))))
+            (list (format nil "    (no TODO.md in ~a)" workspace))))))
+
+(defun todos-lines (head cols)
+  "The todos pane: the session's plan (what the model writes with todo_write),
+ and the repo's TODO.md read-only (app.rs:4776)."
+  (declare (ignore cols))
+  (let* ((s (head-session head))
+         (todos (session-todos s))
+         (todo-lines (if todos
+                         (mapcar (lambda (todo)
+                                   (let ((mark (cond ((string= (getf todo :status) "in_progress") "[~]")
+                                                     ((string= (getf todo :status) "completed") "[x]")
+                                                     (t "[ ]"))))
+                                     (list (cons (format nil "    ~a ~a" mark
+                                                        (getf todo :content)) nil))))
+                                 todos)
+                         (list (list (cons "    none written yet. The model writes them with todo_write."
+                                           '(:fg :bright-black))))))
+         (repo-lines (mapcar (lambda (l) (list (cons l '(:fg :bright-black))))
+                             (repo-todo-lines (getf (session-wiring s) :workspace)))))
+    (append
+     (list (list (cons " todos " '(:bold t)))
+           nil
+           (list (cons "  this session — the model's plan, live:"
+                       '(:fg :bright-black))))
+     todo-lines
+     (list nil
+           (list (cons "  the repo's TODO.md — the operator's queue, read-only here:"
+                       '(:fg :bright-black))))
+     repo-lines
+     (list nil
+           (list (cons "  the file itself is in the workspace; this pane never writes it."
+                       '(:fg :bright-black)))))))
 
 (defun peek-lines (head cols)
   (let ((events (head-peeked head)))

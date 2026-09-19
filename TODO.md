@@ -62,44 +62,49 @@ T20/T21 need T14/T17; T22 needs T18.
 
 ## Phase 2 — attach (M2)
 
-- [ ] **T11** `src/session.lisp`: attach/hello handling, snapshot ingestion
+- [x] **T11** `src/session.lisp`: attach/hello handling, snapshot ingestion
   (read `view.rs` first — do not guess the shape), event application into a
   transcript model, ack bookkeeping per PLAN §5.1, resync handling. Deps: T9.
-- [ ] **T12** `src/head.lisp`: reader thread + mailbox, input thread + mailbox,
+- [x] **T12** `src/head.lisp`: reader thread + mailbox, input thread + mailbox,
   main loop (drain, fold, paint-on-dirty), resize poll, ack-after-paint.
   Deps: T6, T11.
-- [ ] **T13** live smoke: attach to a real daemon, render the snapshot as plain
+- [x] **T13** live smoke: attach to a real daemon, render the snapshot as plain
   lines, acks accepted, resync survives. Verified against the running daemons
   under `/run/user/1000/letibot/`. Deps: T10, T12.
 
 ## Phase 3 — real TUI (M3)
 
-- [ ] **T14** `src/render.lisp`: transcript items → styled cells, chrome
+- [x] **T14** `src/render.lisp`: transcript items → styled cells, chrome
   (status line, wiring disclosure), fit loop with the ported drop order.
   Deps: T13.
-- [ ] **T15** `src/keys.lisp` + composer: escape decoding (port term.rs tables,
+- [x] **T15** `src/keys.lisp` + composer: escape decoding (port term.rs tables,
   bracketed paste, mouse SGR), line editing, prompt/interrupt send. Deps: T12.
-- [ ] **T16** decision/question cards: `DecisionRequested`/question rendering,
+- [x] **T16** decision/question cards: `DecisionRequested`/question rendering,
   `Answer`/`AnswerQuestion` frames, one-list-at-a-time rule, card steps aside
   while a decision is up. Deps: T15.
-- [ ] **T17** session picker: `Sessions`/`ListSessions`, `Switch`,
+- [x] **T17** session picker: `Sessions`/`ListSessions`, `Switch`,
   `NewSession`/`ResumeSession`/`RenameSession`, click facts recorded by the
   frame. Deps: T15.
 
 ## Phase 4 — the point (M4)
 
-- [ ] **T18** `src/hack.lisp` + `scripts/tui-eval`: per-instance eval socket
+- [x] **T18** `src/hack.lisp` + `scripts/tui-eval`: per-instance eval socket
   (PLAN §8), repaint-on-eval, `--list`/`--pid`, `HACKING.md` naming the
   contract surface. Demo: a model restyles the live TUI. Deps: T14.
 
 ## Phase 5 — parity (M5)
 
-- [ ] **T19** markdown rendering (port `tui/markdown.rs`). Deps: T14.
+- [x] **T19** markdown rendering (port `tui/markdown.rs`). Deps: T14.
 - [ ] **T20** diff/sidediff/highlight (port `ui/diff.rs`, `ui/sidediff.rs`,
-  `ui/highlight.rs`). Deps: T14.
-- [ ] **T21** prefs/settings/peek/subagent rows/todos screens. Deps: T17.
+  `ui/highlight.rs`). Deps: T14. **Deferred**: ~2400-line port (Myers O(ND)
+  edit script, intra-line word diff, side-by-side, syntax highlight). The core
+  TUI renders edit tool calls as a byte count without it; pick up when the
+  review burden justifies the port.
+- [x] **T21** prefs/settings/peek/subagent rows/todos screens. Deps: T17.
 
 ## Phase 6 — hardening (M6)
 
-- [ ] **T22** resync/reconnect drills, `Screen` frame answers (last painted
+- [x] **T22** resync/reconnect drills, `Screen` frame answers (last painted
   frame retained), long-session memory behavior, saved-core note. Deps: T18.
+  Reconnect (`%try-reconnect`) and `Screen` answers are in; long-session memory
+  is unverified headless (needs a long live session).

@@ -31,7 +31,7 @@
   (last-rows-n 0 :type fixnum)
   (scroll 0 :type fixnum)
   (composer (make-composer))
-  (mode :normal :type symbol)            ; :normal :picker :help :status :config :jobs :subagents :peek
+  (mode :normal :type symbol)            ; :normal :picker :help :status :config :jobs :subagents :peek :todos
   (picker-sel 0 :type fixnum)
   (decision-sel 0 :type fixnum)
   (secret-req nil)
@@ -252,6 +252,7 @@ on ClientFrame::Slash)."
            (setf (head-status-note head) "usage: /mode NAME" (head-dirty head) t)))
       ((string= verb "jobs") (setf (head-mode head) :jobs (head-dirty head) t))
       ((string= verb "subagents") (setf (head-mode head) :subagents (head-dirty head) t))
+      ((string= verb "todos") (setf (head-mode head) :todos (head-dirty head) t))
       ((string= verb "compact")
        (%send head (list :frame "compact_session"
                          :client-request-id (next-request-id)
@@ -351,7 +352,7 @@ shows the candidates on the status line."
          ((:esc) (setf (head-quit-open head) nil (head-dirty head) t))
          (t nil)))
       ;; full-body screens: esc closes, everything else is theirs later
-      ((member (head-mode head) '(:help :status :config :jobs :subagents :peek))
+      ((member (head-mode head) '(:help :status :config :jobs :subagents :peek :todos))
        (case type
          ((:esc :q-press) (setf (head-mode head) :normal (head-dirty head) t))
          ((:char) (when (eql (getf key :ch) #\q)
@@ -494,7 +495,7 @@ per token must not re-render the whole history."
     (let ((card-rows (length card-lines)))
       (cond
         ;; full-body screens replace the transcript
-        ((member (head-mode head) '(:help :status :config :jobs :subagents :peek :picker))
+        ((member (head-mode head) '(:help :status :config :jobs :subagents :peek :picker :todos))
          (let ((lines (case (head-mode head)
                         (:help (help-lines cols))
                         (:status (status-screen-lines head cols))
@@ -503,7 +504,8 @@ per token must not re-render the whole history."
                         (:subagents (subagent-lines head cols))
                         (:peek (peek-lines head cols))
                         (:picker (picker-lines (head-session head)
-                                               (head-picker-sel head) cols)))))
+                                               (head-picker-sel head) cols))
+                        (:todos (todos-lines head cols)))))
            (%place-lines s lines body-top body-bottom cols)))
         (t
          ;; transcript viewport, then the card just above the status line

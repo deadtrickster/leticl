@@ -36,15 +36,19 @@
    ;; session
    #:make-session #:ingest-hello #:ingest-snapshot #:apply-event #:ack-frame
    #:session-seq #:session-expected-seq #:session-session-id #:session-items
+   #:session-todos #:session-wiring #:session-open-decisions #:session-sessions
    #:item-lines #:turn-lines #:outcome-name
    ;; keys
    #:read-key #:make-composer #:composer-buffer #:composer-cursor
    ;; render
    #:markdown-lines #:wrap-segments #:top-border #:status-line
    #:decision-card-lines #:picker-lines #:help-lines *slash-commands*
+   #:quit-card-lines #:secret-card-lines
+   #:todos-lines #:repo-todo-lines
    ;; head
    #:%make-head #:run #:*head* #:head-session #:head-prefs #:head-dirty #:head-screen
    #:head-last-rows #:head-cols #:head-rows #:head-mode #:head-composer
+   #:head-quit-open #:head-secret-req
    ;; hack
    #:hack-start #:hack-stop #:hack-socket-path #:list-live-heads #:hack-handle))
 
