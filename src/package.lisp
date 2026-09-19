@@ -42,6 +42,10 @@
    #:connect-unix #:discover-daemons #:wait-for-input
    ;; session
    #:make-session #:ingest-hello #:ingest-snapshot #:apply-event #:ack-frame
+   ;; prefs — the head's own choices, on disk
+   #:make-prefs #:default-prefs-path #:load-prefs #:save-prefs
+   #:prefs-diff #:prefs-thinking #:prefs-tools #:prefs-raw-calls #:prefs-path
+   #:load-prefs-into #:save-head-prefs #:head-into-prefs #:prefs-into-head
    #:session-seq #:session-expected-seq #:session-session-id #:session-items
    #:session-todos #:session-wiring #:session-open-decisions #:session-sessions
    #:item-lines #:turn-lines #:outcome-name #:edit-lines #:call-lines

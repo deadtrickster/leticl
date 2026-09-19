@@ -354,6 +354,12 @@ push ran `(defparameter *stdout* nil)` and the operator's head exited)."
                    (error "no daemon found — start one or pass :socket-path")))
          (head (%make-head))
          (stream (connect-unix path)))
+    ;; The head's own choices, read before the first frame: the folds and the
+    ;; diff shape should be what the operator left them, not the defaults, and
+    ;; reading here means the very first paint is already right (S5).
+    (dolist (note (load-prefs-into head))
+      (setf (head-status-note head)
+            (format nil "~a~@[ · ~a~]" note (head-status-note head))))
     (setf *head* head
           (head-stream head) stream
           (head-socket-path head) path

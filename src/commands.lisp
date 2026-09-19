@@ -66,13 +66,9 @@ on ClientFrame::Slash)."
       ((string= verb "help") (setf (head-mode head) :help (head-dirty head) t))
       ((string= verb "status") (setf (head-mode head) :status (head-dirty head) t))
       ((string= verb "think")
-       (setf (getf (head-prefs head) :show-reasoning)
-             (not (getf (head-prefs head) :show-reasoning))
-             (head-dirty head) t))
+       (%flip-fold head :show-reasoning))
       ((string= verb "tools")
-       (setf (getf (head-prefs head) :show-tools)
-             (not (getf (head-prefs head) :show-tools))
-             (head-dirty head) t))
+       (%flip-fold head :show-tools))
       ((string= verb "config")
        ;; Ask, and open the pane. The REPLY does not open it (a head asks for
        ;; settings on attach now, and a reply that opened the pane would pop

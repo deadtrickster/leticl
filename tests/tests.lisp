@@ -923,3 +923,135 @@ than an oversight."
               (member ctor answers-only :test #'string=))
           (format nil "~a is defined in protocol.lisp and called from nowhere — ~
 either send it, or name it in answers-only with the reason" ctor)))))
+
+;;; ------------------------------------------------- prefs ;;;
+
+(defun count-substring (needle haystack)
+  "How many times NEEDLE occurs in HAYSTACK, non-overlapping."
+  (let ((n 0) (i 0))
+    (loop for j = (search needle haystack :start2 i)
+          while j
+          do (incf n) (setf i (1+ j)))
+    n))
+
+(defun temp-prefs-path (tag)
+  "A unique path under the OS temp dir, so a test never touches the real file."
+  (merge-pathnames (format nil "leticl-test-~a-~a/head.toml" tag (random 1000000))
+                   (uiop:temporary-directory)))
+
+(def-test prefs-a-missing-file-is-the-defaults-not-an-error (:suite leticl)
+  "The first run of a head is not a failure."
+  (let* ((p (temp-prefs-path "missing"))
+         (prefs (load-prefs p)))
+    (is (string= "split" (prefs-diff prefs)) "the default diff is split")
+    (is (string= "folded" (prefs-thinking prefs)) "thinking starts folded")
+    (is (string= "folded" (prefs-tools prefs)) "tools start folded")
+    (is (null (prefs-raw-calls prefs)) "raw calls start hidden")))
+
+(def-test prefs-round-trip (:suite leticl)
+  "What is saved is what is loaded, for every key."
+  (let ((p (temp-prefs-path "roundtrip")))
+    (unwind-protect
+         (let ((out (make-prefs)))
+           (setf (prefs-diff out) "unified"
+                 (prefs-thinking out) "open"
+                 (prefs-tools out) "open"
+                 (prefs-raw-calls out) t)
+           (save-prefs out p)
+           (let ((back (load-prefs p)))
+             (is (string= "unified" (prefs-diff back)))
+             (is (string= "open" (prefs-thinking back)))
+             (is (string= "open" (prefs-tools back)))
+             (is (eq t (prefs-raw-calls back)))))
+      (ignore-errors (delete-file p)))))
+
+(def-test prefs-keeps-what-it-does-not-own (:suite leticl)
+  "A comment, a section, and a key from a NEWER build all survive a save.
+
+This is the property that makes the file the operator's rather than the head's:
+it is edited with vi, and a build that does not recognise a key must not delete
+it. The reference names the same rule, and the value a second `diff =` would be
+the bug — a file that grows one per change reads as a list of decisions rather
+than a set of settings."
+  (let ((p (temp-prefs-path "keep")))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist p)
+           (with-open-file (f p :direction :output :if-exists :supersede)
+             (write-line "# mine, hand-edited" f)
+             (write-line "diff = \"unified\"" f)
+             (write-line "future_key = \"x\"" f)
+             (write-line "[section]" f)
+             (write-line "thinking = \"sideways\"" f))
+           (multiple-value-bind (prefs notes) (load-prefs p)
+             (is (string= "unified" (prefs-diff prefs)) "a good value is read")
+             (is (string= "folded" (prefs-thinking prefs))
+                 "a bad value falls back to the default")
+             (is (some (lambda (n) (search "future_key" n)) notes)
+                 "an unknown key is NAMED, not swallowed")
+             (is (some (lambda (n) (search "sideways" n)) notes)
+                 "and a bad value is named too")
+             (setf (prefs-diff prefs) "split")
+             (save-prefs prefs p))
+           (let ((text (uiop:read-file-string p)))
+             (is (eql 0 (search "# mine, hand-edited" text))
+                 "the comment is still the first line")
+             (is (search "future_key = \"x\"" text) "the unknown key survives")
+             (is (search "[section]" text) "so does the section header")
+             (is (search "diff = \"split\"" text) "our key is rewritten")
+             (is (= 1 (count-substring "diff =" text))
+                 "and NOT duplicated — one key, not one per save")))
+      (ignore-errors (delete-file p)))))
+
+(def-test prefs-a-bad-bool-is-named-and-defaulted (:suite leticl)
+  (let ((p (temp-prefs-path "bool")))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist p)
+           (with-open-file (f p :direction :output :if-exists :supersede)
+             (write-line "raw_calls = maybe" f))
+           (multiple-value-bind (prefs notes) (load-prefs p)
+             (is (null (prefs-raw-calls prefs)) "the default is kept")
+             (is (some (lambda (n) (search "maybe" n)) notes) "and it is named")))
+      (ignore-errors (delete-file p)))))
+
+(def-test head-prefs-plist-and-the-file-agree (:suite leticl)
+  "The bridge both ways: a loaded file reaches the live plist, and the live plist
+is what a save writes."
+  (let ((head (%make-head))
+        (p (make-prefs)))
+    (setf (prefs-thinking p) "open" (prefs-tools p) "folded"
+          (prefs-raw-calls p) t (prefs-diff p) "unified")
+    (prefs-into-head head p)
+    (is (eq t (getf (head-prefs head) :show-reasoning)) "thinking → the plist")
+    (is (null (getf (head-prefs head) :show-tools)) "tools → the plist")
+    (is (eq t (getf (head-prefs head) :raw-calls)))
+    (is (string= "unified" (getf (head-prefs head) :diff)))
+    ;; and back
+    (setf (getf (head-prefs head) :show-tools) t)
+    (let ((back (head-into-prefs head)))
+      (is (string= "open" (prefs-thinking back)))
+      (is (string= "open" (prefs-tools back)) "the flip came back")
+      (is (string= "unified" (prefs-diff back))))))
+
+(def-test prefs-save-does-not-grow-the-file (:suite leticl)
+  "Saving twice writes the same bytes as saving once.
+
+Both ways this could grow: a key appended beside its existing self, and a
+trailing empty line carried in from the parse and written back. A file that
+grows on every change reads as a history of decisions rather than a set of
+settings, and it is the operator's file."
+  (let ((p (temp-prefs-path "grow")))
+    (unwind-protect
+         (let ((out (make-prefs)))
+           (setf (prefs-diff out) "unified")
+           (save-prefs out p)
+           (let ((first (uiop:read-file-string p))
+                 (fresh (load-prefs p)))
+             (save-prefs fresh p)
+             (let ((second (uiop:read-file-string p)))
+               (is (string= first second)
+                   "a second save is byte-identical to the first")
+               (is (= 1 (count-substring "diff =" second))
+                   "and still has exactly one diff key"))))
+      (ignore-errors (delete-file p)))))
