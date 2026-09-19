@@ -12,13 +12,16 @@ file:line citations. Read it before starting a parity item.
 
 | repo | commit | date |
 |---|---|---|
-| `letibot` (reference) | `82ff650e6c43502069ccabba9b8c0ed4afd40b19` | 2026-09-19 |
-| `leticl` (this) | `a12ee717640d99d745f44281c4b41403cbff7a6f` | 2026-09-19 |
+| `letibot` (reference) | `756441720c7b53d39eca045185ed9b4168d09cc1` | 2026-09-20 |
+| `leticl` (this) | `074bbf6` | 2026-09-20 |
 
-Every `PARITY.md` citation — `app.rs:806`, `sidediff.rs`, a line count — is a
-line number **in `82ff650`**. The reference is a live repo, so a citation is a
-pointer into a moving tree: **before acting on one, `git -C
-~/Projects/letibot/letibot log --oneline 82ff650..HEAD` and re-read the
+An earlier pass measured `letibot` @ `82ff650e` (2026-09-19); the 19 commits
+between the two are §7 of `PARITY.md`, and they added **P41–P46** below.
+
+Every `PARITY.md` citation is a line number in **that** commit (line numbers
+added before the §7 pass are in `82ff650`, and §7 says which). The reference is a
+live repo, so a citation is a pointer into a moving tree: **before acting on one,
+`git -C ~/Projects/letibot/letibot log --oneline <pinned>..HEAD` and re-read the
 function** rather than trusting the number. When a strand finishes, record the
 new reference HEAD it re-checked against; when the numbers no longer match, the
 right move is to re-measure `PARITY.md`, not to guess which line moved.
@@ -432,8 +435,11 @@ What is wrong rather than missing: `PARITY.md` §2.
   `session.lisp`.
 - [ ] **P2** the **dead frames**: `/resync` (the frame is never sent, so §M6's
   drills only test the daemon-initiated path), the **peek** command and its
-  unreachable `:peek` screen, `/todos`' `list_todos` bootstrap read, and
+  unreachable `:peek` screen, the `list_todos` bootstrap read, and
   `resume_session` from the picker. Files: `head.lisp`, `protocol.lisp`.
+- [ ] **P44** **settings on attach** — see the S6 section for the measurement;
+  listed here because it is the same defect as P1 and P2 (a frame the head owes
+  and never sends), and because its send site is `head.lisp`.
 
 **Live**: attach, `/resync`, gate green, `--screen` shows a fresh snapshot; a
 `tui-eval --pid <PID> '(list :seq (session-seq (head-session *head*)))'` before and
@@ -477,6 +483,22 @@ transcript row. The call id cannot be the key (it is round-positional — see th
 - [ ] **P13** the rest of the card vocabulary: raw-calls fold (`ctrl-x`),
   thinking header/reasoning decoration, turn footer (state/usage/timings), user
   timestamp, queued prompts rendered in the body.
+- [ ] **P45** `deny_and_tell` **can be told something** (`PARITY.md` §7.5). The
+  words ride after the option id the way a glob does after `allow_always`, travel
+  as their own `note`, and become the decision's basis — quoted and attributed,
+  because a sentence the model reads as the *harness's* reasoning is one it
+  argues with and one it reads as the *operator's* is an instruction. A
+  `deny_and_tell` with nothing typed says exactly that plus how to give one.
+  Today `make-answer` takes `(req-id option-id &optional pattern)` and the card
+  never says where words would go. Needs a `note` on the Answer frame (added,
+  defaulted — no protocol bump) and the card to name the affordance.
+- [ ] **P46** **a refusal says its reason once** (§7.6). Three places said the
+  same paragraph; two of them now check whether the text is already below them.
+  Two bounds, both of which matter: **short reasons are left alone** (cheap to
+  repeat, and a short string can match below by coincidence), and the card
+  compares on the reason's **first line**, because `why` is a paragraph while the
+  payload arrives pre-split — a whole-paragraph containment *"passes review and
+  never fires"*. Depends on P8–P10 having a place to put the reason.
 
 ### S4 — editor (no deps)
 
@@ -515,6 +537,58 @@ transcript row. The call id cannot be the key (it is round-positional — see th
 - [ ] **P27** **mouse click** picks the picker row under the pointer, guarded by
   the rows the frame actually drew.
 
+> **P44's rows are a prerequisite here.** The mode and models pickers (P22, P23)
+> read the settings rows, and today the head has none until `/config` is opened.
+> P44 lives in **S1** because its send site is `head.lisp`; S6 must not start the
+> pickers until it has landed.
+
+- [ ] **P41** **panes scroll** (`PARITY.md` §7.1). Every pane drew
+  `rows.truncate(room)` and the scroll keys were *swallowed* while one was open —
+  right that the view underneath must not move, and it left the pane itself unable
+  to move. `leticl`'s own TODO.md is 98 rows, so on a 40-row terminal most of it
+  is unreachable and the ↑↓ cursor can walk into rows never drawn. One scroll
+  offset for all panes (only one is open at a time), with the cursor scrolling
+  itself into view. **Two traps, both from the reference's own test:** the
+  polarity is the *opposite* of the transcript's (`head-scroll` counts back from
+  the **bottom**, a pane's offset counts hidden above the **top** — copying the
+  first makes PageDown a no-op that looks exactly like the bug it replaced), and
+  a pane's row indices and the repo's are **different lists** (the pane's starts
+  with a title and the model's live section).
+- [ ] **P42** **the todos pane, rewritten** (`PARITY.md` §7.2) — the largest item
+  in this strand, and every part of it is measured from the operator's own words
+  in the reference's commits. Ours draws the model's live list with marks, then
+  the repo file as **flat dim lines**: no nesting, no roll-up, no paint, no
+  detail, no re-read. The rewrite is of `todos-lines` and `repo-todo-lines`, both
+  already in `panes.lisp`:
+  - **items are drawn**, nested under their heading — the reference's pane drew
+    one line per `## ` heading and never showed the queue at all;
+  - **org's roll-up and org's cookie**: *every child done makes the parent done;
+    any child started makes it started; otherwise open* → `[x] Phase 0 — repo
+    [2/2]`. A heading with **no** checkboxes under it gets neither box nor cookie
+    (an empty section is one nobody has filled in, and in a real TODO.md that is
+    every prose heading — claiming it as finished work is a lie about the repo);
+    `###` owns its own items;
+  - **painted by state** — done green, doing yellow, **open left plain**, because
+    open is the majority and colouring the majority spends the signal the other
+    two carry;
+  - **detail kept, enter/tab unfolds** — the lines under a checkbox were being
+    *thrown away*, so a pinned-dependency item read as a sentence cut in half. A
+    folded item that has more says `···`; one that does not, does not;
+  - **re-read when the file changes** — `stat` per draw on `(mtime, len)`, not a
+    watcher (a descriptor, a thread and an event routed into a head whose design
+    is one loop over one channel, for a pane drawn only while open) and not mtime
+    alone (second granularity misses two writes in one second). This file is
+    edited exactly while somebody is looking at it.
+  - **Four traps** the reference hit, all of which we would hit too: the cursor
+    cannot key off *having a mark*, because a heading carries its roll-up as a
+    mark (the row needs an explicit `item`); the **indent must be separate from
+    the text**, because the indent belongs before the mark and the mark is what
+    gets painted (baked together it renders `[x]     Phase 0`); a **blank line
+    closes an item**, or prose attaches to the previous item and two items a blank
+    apart merge; and painting a box whose colour code is *empty* must not emit a
+    bare `ESC[0m` — on the most common row in the pane — so assert the **escapes**
+    in the test, not the glyphs, which is the only way that one is visible.
+
 ### S7 — commands (needs S6)
 
 `PARITY.md` §3.4. The first four are bindings onto what S6 built; the last three
@@ -539,6 +613,23 @@ a hint bar, and the body carries a gutter. This one draws `› `.
 - [ ] **P35** hint bar + the alarm line (only the counters that are not zero).
 - [ ] **P36** notice with a **TTL**, and **stall detection** (the head says when
   the daemon has gone quiet).
+- [ ] **P43** **the money meter** (`PARITY.md` §7.3). `Usage.cost_micros_usd` is
+  `Option<u64>` on the wire (`#[serde(default)]`, so an older daemon's frame still
+  reads) and we ignore it. The reference sums what it has watched finish and puts
+  the total **beside the token count in the header**, where "what is this costing
+  me" is already being asked:
+  ``` 
+  $0.0421   128k ctx · 51% cached · 32 tok/s
+  ```
+  Three rules, each a version of one this repo already holds: `None` adds nothing
+  **and lights nothing** (*"free and unpriced are both 'no number', and `$0.0000`
+  on every local header would be noise"*); a `spent_seen` flag distinguishes *free,
+  so nothing to show* from *metered, nothing finished yet* — the same "a number
+  nobody took" rule as the cache percentage; and **the total belongs to the
+  conversation, not the head**, so a session switch clears it, because carrying one
+  session's bill onto another's header is wrong in the direction that costs money.
+  A head that attached late shows only what it watched, and that is the honest
+  answer rather than a total that is quietly too low.
 
 ### S9 — bindings (needs S1, S3, S6, S8)
 

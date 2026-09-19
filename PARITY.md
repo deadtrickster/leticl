@@ -5,8 +5,13 @@ What the Rust TUI head (`crates/tui`, `crates/ui`) does that the Lisp head
 `PLAN.md` says what leticl is for, `TODO.md` says what is tracked, and this says
 what is actually missing.
 
-**Measured against `letibot` @ `82ff650e6c43502069ccabba9b8c0ed4afd40b19`
-(2026-09-19), from `leticl` @ `a12ee717640d99d745f44281c4b41403cbff7a6f`.**
+**Measured against `letibot` @ `756441720c7b53d39eca045185ed9b4168d09cc1`
+(2026-09-20), from `leticl` @ `074bbf6`.**
+
+An earlier pass measured `82ff650e` (2026-09-19); §7 is what the 19 commits
+between the two changed, and the gaps it added are `P41`–`P46` in `TODO.md`.
+Everything cited in §1–§6 that predates that pass still holds unless §7 says
+otherwise.
 
 Every line number below is a line in **that** reference commit. The reference is
 a live repo, so:
@@ -72,6 +77,11 @@ missing bindings.
 
 And the first finding is not a missing feature at all: **the head never sends an
 `Ack`** (§2.1).
+
+**§7 is newer than the rest**: 19 commits landed on the reference after the first
+pass, adding six things this head does not have (P41–P46) — pane scrolling, a
+rewritten todos pane, a money meter, the settings-on-attach bug, `deny_and_tell`'s
+note, and the refusal-dedup. Read it alongside §1–§3.
 
 ---
 
@@ -376,16 +386,19 @@ obligations.
    Everything typed goes through it, so it is worth doing before more panes.
 5. **Prefs** (`head.toml`) → **the config pane becomes editable** (§3.8, §3.5).
    Prefs first: the pane writes what the file holds.
-6. **The panes**: mode picker, models picker, subagent output view, job output,
-   promote (§3.5), mouse click (§3.2).
+6. **The panes**: settings on attach (P44 — *first*, the pickers read the rows it
+   fetches), then the mode picker, models picker, subagent output view, job
+   output, promote (§3.5), mouse click (§3.2), **pane scrolling (P41)**, and the
+   **todos rewrite (P42)** — §7.2 is the largest single item added by the second
+   pass, and it is two functions in a file this strand already owns.
 7. **The commands**: `/verbosity`, `/models`, `/default-model`, `/job`, then the
    environment-facing ones (`/gate`, `/supervise`, `/flowy`) — those are **L**
    each because they are features, not bindings: they need their own protocol
    surface and their own screens.
 8. **The chrome** (§3.6): the boxed composer, the gutter, the hint bar, the alarm
    line; then turn footer, stall detection, notice TTL, notes interleaved in the
-   transcript, queued lines in the body (§3.1, §3.5). The composer box is the
-   most visible single change in this document.
+   transcript, queued lines in the body (§3.1, §3.5), and **the money meter
+   (P43)**. The composer box is the most visible single change in this document.
 9. **Bindings** (§3.3) — cheap, but *after* the features they reach, or they
    bind to nothing.
 10. **Engines**: sidediff (two-panel), progress vocabulary, cluster-aware width
@@ -415,3 +428,214 @@ code (`markdown.lisp:56-128`). The real gaps are narrower — no nested-list
 indent, no links or strikethrough, no per-column table alignment (`:---:`), and
 code fences are not syntax-highlighted, which is §2.5 (the engine exists, unwired)
 rather than a markdown deficiency.
+
+---
+
+## 7. What the 19 commits since `82ff650` changed
+
+`82ff650..7564417` is 19 commits and **+1224 lines to `app.rs`**. Six of them
+add something this head does not have, and one of those is a bug rather than a
+gap. The rest are daemon-side (`Region::Scratch`, the oracle reading a script,
+the request id leaving the brief) or a plan for a future workstream
+(`docs/streaming-markdown-plan.md` — a tree-sitter streaming engine for rano,
+which will matter to §3.9 and to markdown when it lands, but adds no head
+feature today).
+
+**The `help_lines` diff was one changed row** (`ctrl-p`'s text) and no new slash
+commands — so §3.3's chord table and §3.4's command table stand unamended. These
+are not new commands; they are new *behaviour inside existing ones*.
+
+### 7.1 Panes could not scroll — now every one does (P41)
+
+Every pane drew `rows.truncate(room)` and the scroll keys were *swallowed* while
+one was open. Right that the view underneath must not move; it left the pane
+itself unable to move at all, and `leticl`'s own TODO.md renders 98 rows, so on a
+40-row terminal more than half was unreachable — and the ↑↓ cursor could walk
+into rows never drawn.
+
+One `pane_scroll` for all of them (only one pane is open at a time), with the
+cursor scrolling itself into view. Two bugs found by its own test, both worth
+knowing because the shape recurs:
+
+- **The polarity is the opposite of the transcript's.** `self.scroll` counts rows
+  back from the **bottom** (up increases it); `pane_scroll` counts rows hidden
+  above the **top** (down does). Copying the first makes PageDown a no-op that
+  looks exactly like the swallowing it replaced.
+- **`repo_sel` and `pane_scroll` count different things** — the repo's rows and
+  the pane's, which start with a title and the model's live list.
+
+**leticl**: panes are `:help :status :config :jobs :subagents :peek :todos` and
+none of them own a scroll offset; `head-scroll` moves the *transcript* only. Any
+pane taller than the body is clipped with no way to reach the rest, and
+`repo-todo-lines` walks the whole file. **P41.**
+
+### 7.2 The todos pane was rewritten: items, org roll-up, state paint, unfold (P42)
+
+Three commits, and they are one feature. Measured from the operator's own words
+in them: *"our todo pane doesnt render them - only section titles and sub todos
+count"*, then *"colors?"*, then *"if a todo has some associated text? should i be
+able to expand it somehow?"*.
+
+| what | before | now |
+|---|---|---|
+| **items** | one line per `## ` heading, items never drawn | heading + its items nested under it |
+| **roll-up** | `Phase 0 — repo — 0 open, 2 done` | org's rule and org's cookie: `[x] Phase 0 — repo  [2/2]` |
+| **state** | not painted | done green, doing yellow, **open left alone** |
+| **detail** | **dropped** — the lines under a checkbox were thrown away, so an item read as a sentence cut in half | kept; enter (or tab) unfolds, moving off folds |
+| **freshness** | read once at open | `stat` per draw on `(mtime, len)` |
+
+Org's rule, and the whole of it: *every child done makes the parent done; any
+child started makes it started; otherwise open.* A heading with **no** checkboxes
+under it gets neither box nor cookie — an empty section is one nobody has filled
+in, and in a real TODO.md that is every prose heading, which must not be claimed
+as finished work. `###` owns its own items, being a subsection in both org's
+outline and markdown's.
+
+Four traps the commits name, each a defect this head could reproduce:
+
+- the cursor landed on headings, because a heading carries a mark too (its
+  roll-up), so the mark cannot be what tells a row from a heading — the row is a
+  struct with an explicit `item` now;
+- the indent must be carried **separately from the text**, because the indent
+  belongs *before* the mark and the mark is what gets painted — baked together it
+  renders `[x]     Phase 0` with the colour in front of the whitespace;
+- `colour()` appends a RESET unconditionally, so painting an open box with an
+  empty code emits a bare `ESC[0m` after every one — on the most common row in
+  the pane. Asserting the *escapes* rather than the glyphs is the only way that
+  is visible;
+- a blank line closes an item, or the prose between a heading and its list
+  attaches to whatever came before and two items a blank apart merge.
+
+**Freshness**: one `stat` per draw rather than an inotify thread — a watcher
+means a descriptor, a thread, and an event routed into a head whose design is one
+loop over one channel, and the pane is drawn only while it is open. `(mtime, len)`
+rather than mtime alone, because second-granularity mtime misses two writes in one
+second.
+
+**leticl**: `todos-lines` (`panes.lisp`) draws the model's live list with marks
+and then the repo file as **flat `:bright-black` lines** via `repo-todo-lines` —
+no nesting, no roll-up, no paint, no detail, no re-read. This is a rewrite of
+two functions, both already in S6's file. **P42**, and it is the largest single
+item in this section.
+
+### 7.3 The money meter (P43)
+
+`Usage.cost_micros_usd` — `Option<u64>`, `#[serde(default)]` so an older daemon's
+frame still reads. The head sums what it has watched finish and puts the total
+**beside the token count in the header**, which is where the question "what is
+this costing me" is already being asked:
+
+```
+$0.0421   128k ctx · 51% cached · 32 tok/s
+```
+
+Three rules the commit is explicit about, and each is a version of a rule this
+repo already holds elsewhere:
+
+- `None` adds nothing **and lights nothing** — *"free and unpriced are both 'no
+  number', and `$0.0000` on every local header would be noise"*;
+- `spent_seen` distinguishes *free, so nothing to show* from *metered and nothing
+  has finished yet* — the same "a number nobody took" rule as the cache
+  percentage;
+- **the total belongs to the conversation, not the head** — a session switch
+  clears it, because carrying one session's bill onto another's header is wrong
+  in the direction that costs money. A head that attached late says so by having
+  only what it watched.
+
+The daemon had computed `micros_usd` and read it in exactly one place: the
+one-shot `--prompt` printer in `harnessd.rs`. It never went on the wire, so a
+session driven from a head never saw it.
+
+**leticl**: reads `:usage` as a plist and ignores the field entirely
+(`session.lisp` keeps the whole usage plist; `status-screen-lines` prints it
+raw), and the header (`top-border`, `chrome.lisp`) carries title, model and seq
+only. **P43.**
+
+### 7.4 Settings are asked for on attach (P44) — a bug, and it is on the screen
+
+`ServerFrame::Settings` is only ever sent in reply to `ClientFrame::Settings`;
+nothing pushes it. So a head that had not opened `/mode` or `/config` **had no
+settings at all**, and its header fell back to the model `Hello` named — which is
+exactly the operator's report: *"restarted the letibot - still qwen"*. The daemon
+knew; nothing had asked.
+
+Now the head asks **on attach, and again after a switch**.
+
+**leticl has this bug, measured on the operator's own head while writing this**
+(`pid 3567952`, 2026-09-20):
+
+```
+(head-settings *head*)                       -> NIL      ; never asked
+(getf (session-wiring …) :model)             -> "qwen-3.8-27b"        ; Hello, stale
+(getf (session-turn   …) :model)             -> "deepseek/deepseek-flash"  ; the truth
+--screen, row 0 -> " leticl · s-… · qwen-3.8-27b ─── … seq 7313 · 2 heads "
+```
+
+**The header names a model the session is not using.** `top-border`
+(`chrome.lisp`) reads `(getf (session-wiring s) :model)` — the Hello-time value,
+set once at attach — so a session whose model changed mid-life shows the old one
+for ever. The running turn's own `:model` is correct and is thrown away.
+
+So this is not "a feature we lack"; it is **a number on the operator's screen
+that is wrong**, which is the defect class this repo exists against. `(make-settings)`
+is sent from exactly one place — the `/config` command (`commands.lisp:73`).
+
+**Where the fix goes**: the *send* is `head.lisp` (`run`, and `%try-reconnect`),
+so it is S1's file; the *display* is `chrome.lisp`, S8's. It is therefore listed
+under **S1** (the wire the head owes) with the display half recorded here, and
+**S6's P22/P23 pickers are what consume the rows** — which is why the DAG wants
+it done before them either way.
+
+### 7.5 `deny_and_tell` can be told something (P45)
+
+The option read *"Deny, and tell the model why"* and **the why had nowhere to
+go** at any layer: no field on the head's `Action::Answer`, none on
+`ClientFrame::Answer`, none on `Reply::Permission`, and nothing branched on the
+id — the whole of what the model was told was `<who> chose deny_and_tell at the
+head`.
+
+Typing it was *actively refused*: `match_option` ended with
+`if id.kind != OptionKind::AllowAlways { return None; }`, so `deny_and_tell use
+the scratch dir` matched nothing, the line stayed in the composer, and **nothing
+was answered** — the ask sat open while the operator looked at their own
+sentence.
+
+Now the words ride after the option id the way a glob does after `allow_always`,
+travel as their own `note` field, and become the decision's basis:
+
+```
+deny_and_tell use the scratch dir, not /tmp
+-> deadtrickster chose `deny_and_tell` at the head: "use the scratch dir, not /tmp"
+```
+
+Quoted and attributed, because *"a sentence the model reads as the harness's own
+reasoning is one it will argue with, and one it reads as the operator's is an
+instruction."* A `deny_and_tell` with nothing typed is a denial with no reason
+and says exactly that plus how to give one. No `PROTOCOL_VERSION` bump — an
+added, defaulted field on an existing frame.
+
+**leticl**: `make-answer` takes `(req-id option-id &optional pattern)` and the
+card prints the options with no mention of where words would go
+(`cards.lisp`, `decision-card-lines`). **P45.**
+
+### 7.6 A refusal says its reason once (P46)
+
+From *"how many times is 'nothing ran' needed?"* — once; it was three, and the
+card was 21 lines for one refused command. A refusal's payload is already a
+complete explanation, and two other places said the same paragraph again: the
+envelope (`outcome_word` inlines the reason for `Failed`/`NotRun`) and the card
+(when `ctrl-t` was open it printed the entire `why` directly above the payload
+that is the same text).
+
+Both now check whether the text is already below them and say it only when it is
+not — because where the payload does *not* explain itself, that line is the only
+place the reason is said. Two bounds so the check cannot misfire: **short reasons
+are left alone** (cheap to repeat, and a short string can appear below by
+coincidence), and the card matches on the reason's **first line**, because `why`
+is a paragraph while the payload arrives already split into lines — a
+whole-paragraph containment could never have matched, *"the kind of check that
+passes review and never fires"*.
+
+**leticl**: `%outcome-style` and the `:tool_result` arm print the outcome word and
+a payload preview with no such check (`cards.lisp`). **P46**, and it depends on
+P8–P10 having somewhere to put the reason.
