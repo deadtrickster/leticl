@@ -217,11 +217,22 @@ Rust module into Lisp has done the work twice and got the worse half both times.
 
 Concretely, reach for:
 
-- **`defclass` + `defgeneric`/`defmethod`** where the reference has an enum and a
-  `match`. The existing `(case (intern (string-upcase …) :keyword) …)` over item
-  types (`render.lisp:125`, `session.lisp:313`) is Rust-in-Lisp: a class per item
-  type with a `render-lines` method is shorter, extensible from the eval socket,
-  and lets a model add a row type live.
+- **`defgeneric`/`defmethod` with `eql` specialisation** where the reference has
+  an enum and a `match`. The `(case (intern (string-upcase …) :keyword) …)` over
+  item types (`render.lisp:125`, `session.lisp:313`) should become
+
+  ```lisp
+  (defgeneric item-lines-for (kind item cols head)
+    (:documentation "One transcript row's lines. KIND is the wire type as a keyword."))
+
+  (defmethod item-lines-for ((kind (eql :tool-result)) item cols head) …)
+  ```
+
+  called as `(item-lines-for (%kind-keyword item) item cols head)`. Same
+  extensibility — a model defines a method for a row type this head has never
+  seen, from the eval socket, with no edit to a dispatcher — but **`item` is
+  still the wire plist**. See the boundary rule below: this is the one place the
+  class instinct would be actively wrong.
 - **`loop`** with real clauses (`for … in`, `collect`, `when`, `until`,
   `maximize`) instead of index arithmetic. The `dotimes`/`aref`/`incf` walks in
   `render.lisp` are hand-written loops that `loop` states in a line.
@@ -242,6 +253,23 @@ Concretely, reach for:
   has a `restart`-shaped opportunity in the render path: a bad row should be able
   to degrade to a placeholder rather than take the frame.
 
+**The boundary rule: wire-shaped state stays a plist.** `PLAN.md` D4 and §7, the
+`session.lisp` header and `HACKING.md`'s contract all say the same thing — what
+the daemon sent stays a keyword plist, so a model at the eval socket inspects
+*exactly* the raw frame. Migrating `session-items`, frames or decoded events to
+classes would trade that inspectability for dispatch, which is the wrong trade in
+a head whose whole premise is being inspectable while it runs.
+
+So the rule, stated plainly:
+
+| is the data | shape | why |
+|---|---|---|
+| a wire frame, snapshot, event, or transcript item | **plist** (unchanged) | D4; a model must see what the daemon sent |
+| the head's own state (`head`, `session`, a card cache, a pickset) | struct, or **class when a strand may need to grow it** | not on the wire; classes reshape live, structs do not |
+
+"Extensible from the eval socket" is satisfied by an `eql`-specialised method on
+the kind keyword — it does not require the *data* to be an instance.
+
 **Reshape as you go.** When a strand touches a piece of Rust-shaped Lisp, leave
 it idiomatic — but only the part the strand touches. A drive-by refactor of a
 file another strand is holding is how two agents collide. The `S0` strands below
@@ -261,9 +289,10 @@ head still gates green", so idiomatic is never allowed to cost behaviour.
   live object may still hold.
 
 So the idiomatic-Lisp advice above and the live-update rule agree: **classes can
-be reshaped while the head runs, structs cannot.** That is one more reason item
-type and card vocabularies want to be classes with methods, and it is a reason to
-prefer a class over a struct for anything a strand may need to grow.
+be reshaped while the head runs, structs cannot.** That is why the head's own
+state — the `head` struct, a card cache, a pickset — should be a class when a
+strand may need to grow it. It is *not* an argument for the item vocabulary: that
+is wire-shaped and stays a plist (see the boundary rule above).
 
 ### How a strand is run
 
@@ -326,8 +355,16 @@ screen in `render.lisp`. Two strands editing one file cannot run at the same
 time, so **as the tree stands today the "parallel" strands below all serialize
 on those two files** — the DAG would be a lie.
 
-**What.** Pure refactor, no behaviour change: carve each strand's area out into
-its own file, so a strand owns its file and the DAG is real.
+**What.** Pure refactor, **no behaviour change and no data-shape change**: carve
+each strand's area out into its own file, so a strand owns its file and the DAG is
+real. Function bodies move; nothing is rewritten, no dispatch is redesigned, and
+no wire-shaped value changes representation (see the boundary rule above).
+
+This is **not** a class migration. That is a separate, larger question — "should
+the head's own state be classes?" — and it belongs to whichever strand next needs
+to grow a piece of that state, not to the file carve. S0 keeps the distinction
+sharp precisely because it is the one change with a byte-identical acceptance
+test; bundling a redesign into it would make a failure ambiguous between the two.
 
 | new file | takes from | serves |
 |---|---|---|
@@ -339,7 +376,9 @@ its own file, so a strand owns its file and the DAG is real.
 | `src/prefs.lisp` | new | S5 |
 
 **Done when**: tests still 172/172, the live head still gates green, and
-`tui-eval --screen` is byte-identical to before the refactor.
+`tui-eval --screen` is **byte-identical** to before the refactor. Capture the
+before and after to files and `diff` them — this is the one strand where that is
+the whole acceptance test, so use it.
 
 **Tradeoff, stated honestly**: S0 is a day of unpicking with no visible feature,
 and it serializes the start. Skipping it does not block anything — every strand

@@ -348,6 +348,36 @@ A **line** is a list of **segments**; a segment is `(cons TEXT STYLE)` where
 :italic :underline :reverse :strikethrough :fg :bg`. Colors are a name
 (`:cyan`, `:bright-black`), an integer 0–255, or `(r . (g . b))`.
 
+### Wire state stays a plist — and that is the point
+
+**What the daemon sent is never converted to an object.** A frame, a snapshot
+item, an event — all keyword plists, exactly the keys the daemon wrote
+(`PLAN.md` D4 and §7). So an eval can read the raw truth:
+
+```sh
+tui-eval '(getf (aref (session-items (head-session *head*)) 0) :item)'
+# → the item as the daemon serialised it, not this head's opinion of it
+```
+
+If you are extending the render for a row type, **do not give the row a class**.
+Add a method specialised on the kind keyword and leave the data alone:
+
+```lisp
+;; the dispatch reads the wire type; the item stays a plist
+(defmethod item-lines-for ((kind (eql :tool_result)) item cols head)
+  (list (list (cons (format nil "  ~a" (getf item :name)) '(:bold t)))))
+```
+
+A model can therefore teach a running head a row type it has never seen, from
+the eval socket, without touching the dispatcher and without losing the ability
+to inspect what arrived. That is the trade this document exists to protect.
+
+What *does* become a class is the head's **own** state — a card cache, a
+pickset, anything this head invents that is not on the wire. Classes reshape
+live (an added slot reaches existing instances with its `:initform`); `defstruct`
+refuses a layout change outright (*"redefine the STRUCTURE-OBJECT class …
+incompatibly"*), which is why `--file` skips it.
+
 ## What is incidental
 
 Everything else in the package works today but is not promised: the `%`-
