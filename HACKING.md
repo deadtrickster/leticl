@@ -205,10 +205,26 @@ Anything in this tree that holds RUNNING state is `defvar` and must stay so:
 | variable | holds |
 |---|---|
 | `*head*`, `*stdout*` | the running head, and the stream it paints on |
-| `*styles*` (cells) | the style intern table — cells hold INDICES into it, so resetting it repaints the screen in wrong colours |
+| `*styles*`, `*style-sgrs*` (cells) | the style intern table and its SGR cache, which are **PARALLEL** — index N of one describes index N of the other. Cells hold indices into the pair, so resetting either repaints the screen in wrong colours or, worse, indexes the other past its end |
 | `*saved-termios*`, `*raw-termios*`, `*raw-fd*` (term) | the terminal state — lose the first and a head cannot put your terminal back |
 | `*hl-so*`, `*hl-attempted*` (highlight) | the loaded shim handle; resetting it silently turns highlighting off |
 | `*request-counter*` (protocol) | a monotonic id counter, which a rewind could repeat |
+| `*last-render-error*`, `*paint-lock*` (render) | the render failure flag and the paint/eval mutex |
+
+**The pairing is the trap, twice now.** `*styles*` was made a `defvar` and
+`*style-sgrs*` — the very next declaration in the same file — was not, because
+one looked like live state and the other looked like a cache. They are one piece
+of state in two vectors: a push reset the cache, cells kept the indices, and the
+next paint died with *"Invalid index 8 for (VECTOR T 8)"*. **When a table has a
+sibling, the sibling is live state too** — check what else is parallel to what
+you are changing. A head already carrying the split can be repaired in place
+(`rebuild-style-sgrs`) rather than restarted, which is the point of a head that
+can be patched while it runs.
+
+`tests/tests.lisp` has a check for this class (`live-state-tables-are-defvar`):
+it greps the sources for the declarations of every name in the table above and
+fails if one is a `defparameter`. Add your name to that list when you add one to
+this table — a rule in a document has already failed to prevent this once.
 
 Static data — colour-name tables, SGR strings, ranges, `*slash-commands*` — may
 stay `defparameter`; re-initialising it is harmless.

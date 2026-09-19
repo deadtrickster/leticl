@@ -24,9 +24,13 @@ through an eval socket and see the change on the next frame."
                (:file "src/protocol")
                (:file "src/socket")
                (:file "src/session")
-               (:file "src/markdown")
+               ;; The ENGINES come before the things that call them: markdown
+               ;; styles a fence with `highlight-lines`, and a card diffs an edit
+               ;; with `render-diff`. Order here is compile order, so a caller
+               ;; before its callee is a style-warning per call site.
                (:file "src/highlight")
                (:file "src/diff")
+               (:file "src/markdown")
                (:file "src/keys")
                ;; `head` defines the head STRUCT and the loop. It comes before
                ;; everything that reaches through it, so accessors resolve at

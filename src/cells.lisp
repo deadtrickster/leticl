@@ -23,7 +23,13 @@ terminal: the wide char before it advances the cursor over both columns.")
 (defvar *styles* (make-array 8 :adjustable t :fill-pointer 1 :initial-element nil)
   "Interned style specs. Index 0 is always the default (empty) style.")
 
-(defparameter *style-sgrs*
+;; *style-sgrs* is LIVE state for the same reason *styles* is, and it is
+;; PARALLEL to it: index N of one describes index N of the other. A push that
+;; reset only this one left the two out of step — cells held style indices the
+;; SGR table had no entry for, and the next paint died with "Invalid index 8 for
+;; (VECTOR T 8)". That is the same defect class as *styles*, missed because the
+;; table looked like static data and its twin did not.
+(defvar *style-sgrs*
   (make-array 8 :adjustable t :fill-pointer 1
               :initial-element (format nil "~C[0m" (code-char 27)))
   "Cached SGR sequences, parallel to *styles*. Index 0 is the plain reset —
@@ -70,6 +76,27 @@ between interned styles and never layers them."
                (:bg (format s ";~a" (%color-sgr v t)))
                (t (error "unknown style key ~s" k))))
     (write-char #\m s)))
+
+(defun rebuild-style-sgrs ()
+  "Recompute the SGR cache from the style SPECS, restoring parallelism.
+
+The two tables are parallel by construction — index N of `*style-sgrs*` is the
+SGR for index N of `*styles*` — so one can always be rebuilt from the other, and
+`*styles*` is the source of truth because it holds the specs.
+
+This exists because the pairing BROKE in a way the old code could not survive: a
+live push reset one table and not the other, cells kept style indices the SGR
+cache had no entry for, and the next paint died with \"Invalid index 8 for
+(VECTOR T 8)\". Both tables are `defvar` now so a push cannot do that again, but
+a head already carrying the desync can be repaired in place rather than
+restarted — which is the whole point of a head that can be patched while it
+runs. Idempotent, so calling it on a healthy head is a no-op in effect."
+  (let ((specs (coerce *styles* 'vector)))
+    (setf *style-sgrs*
+          (make-array (max 8 (length specs)) :adjustable t :fill-pointer 0))
+    (loop for spec across specs
+          do (vector-push-extend (%style-sgr spec) *style-sgrs*))
+    *style-sgrs*))
 
 (defun style-index (spec)
   "Intern a style spec plist (:fg :cyan :bold t …) into a small integer.

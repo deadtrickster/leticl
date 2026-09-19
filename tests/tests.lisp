@@ -620,3 +620,156 @@ exactly the restart this whole mechanism exists to avoid."
                "a frame that renders clears the stale error")
            (is (null (head-dirty head)) "and the tick completed"))
       (setf leticl::*last-render-error* nil))))
+
+;;; ------------------------------------------------- engines, wired ;;;
+
+(defun segs-text (lines)
+  "Segment lines to one string, for asserting on rendered output."
+  (format nil "~{~a~^~%~}"
+          (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l))) lines)))
+
+(def-test edit-card-renders-a-real-diff (:suite leticl)
+  "An edit card diffs the two sides — hunks, numbering, emphasis — instead of
+dumping every removed line and then every added one.
+
+That dump was the old `awhen-edit-lines`, and it is what the operator reported
+as \"nothing really shown\": unnumbered, unemphasised, with no context and no
+notion of what actually changed. `render-diff` had been written and called from
+nowhere for exactly this, so the test is that the card now routes to it."
+  (let* ((edit (list :path "src/thing.lisp" :created nil
+                     :before-start 310 :after-start 310
+                     :before-lines 400 :after-lines 400 :truncated nil
+                     :before (format nil "a~%b~%c")
+                     :after (format nil "a~%B~%c")))
+         (text (segs-text (edit-lines edit 80))))
+    (is (search "src/thing.lisp" text) "the path is labelled")
+    (is (search "311" text)
+        "the changed line is numbered 311 — line numbers come from before_start,
+so a diff of an excerpt does not claim line 1 changed when it was line 311")
+    (is (search "-b" text) "the removed line is shown")
+    (is (search "+B" text) "the added line is shown")
+    (is (not (search " 1 " text)) "never numbered from 1")))
+
+(def-test edit-card-is-not-worse-without-a-shim (:suite leticl)
+  "A fence with no highlighter renders dim, exactly as it did before P4.
+
+The point of `highlight-fence` is that wiring the engine cannot REGRESS a
+terminal with no syntax colour: an unknown language, or a shim that is not
+built, still gives one readable segment per line rather than dropping the code."
+  (let* ((lines (highlight-fence (list "let x = 1;" "let y = 2;") "some-unknown-language"))
+         (first-seg (first (first lines))))
+    (is (= 2 (length lines)) "one line per input line")
+    (is (equal "let x = 1;" (car first-seg)) "the text survives verbatim")
+    (is (equal '(:fg :bright-black) (cdr first-seg)) "and is dim, not dropped")))
+
+(def-test fence-language-names-map-to-the-highlighter (:suite leticl)
+  "A fence carries a NAME; the shim takes a PATH. Both spellings work."
+  (is (eq 0 (lang-for-fence "no-such-language")) "an unknown name is 0, not a guess")
+  (is (integerp (lang-for-fence "lisp")) "a known name answers an id")
+  (is (integerp (lang-for-fence "rust")) "and so does another"))
+
+;;; ------------------------------------------- live state is defvar, not defparameter ;;;
+
+(defun source-of (name)
+  "The text of one src file, so a test can assert on declarations."
+  (let ((p (merge-pathnames (format nil "src/~a.lisp" name)
+                            (uiop:pathname-directory-pathname
+                             (or *load-truename* #p"./")))))
+    (if (probe-file p)
+        (uiop:read-file-string p)
+        ;; the test system loads from the repo root, but be explicit
+        (uiop:read-file-string
+         (merge-pathnames (format nil "src/~a.lisp" name) #p"/home/dead/Projects/leticl/")))))
+
+(defparameter *symbol-chars*
+  "*+-_/0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+  "What may continue a symbol name, for `declared-with`'s boundary check.")
+
+(defun declared-with (text var)
+  "How VAR is declared in TEXT: :defvar, :defparameter, or NIL.
+
+The name may be followed by a newline rather than a space (`(defvar *styles*`
+then the initform on the next line), so the boundary is 'not a symbol character'
+rather than 'a space'. Two ways this helper was wrong before it worked: it
+required a space, and it built its delimiter set as `\" \\n\\t(\"` — which in Lisp
+is the literal characters backslash, n, backslash, t, NOT a newline and a tab,
+so a newline did not match."
+  (labels ((at (form)
+             (let ((i (search form text)))
+               (and i
+                    (let ((j (+ i (length form))))
+                      (or (>= j (length text))
+                          (not (find (char text j) *symbol-chars* :test #'char=))))))))
+    (cond ((at (format nil "(defvar ~a" var)) :defvar)
+          ((at (format nil "(defparameter ~a" var)) :defparameter)
+          (t nil))))
+
+(def-test live-state-tables-are-defvar (:suite leticl)
+  "The tables that hold RUNNING state must be `defvar`.
+
+`defvar` assigns only when unbound, so a live push leaves the value alone;
+`defparameter` assigns unconditionally, so a push RESETS it in a head that is
+mid-session. That has cost an operator their session twice now, so it is a test
+and not a rule in a document:
+
+  · this was measured on this box. `*style-sgrs*` was a defparameter next to a
+    defvar `*styles*`, and the two are PARALLEL — index N of one describes index
+    N of the other. A push reset one and not the other, so cells held style
+    indices the SGR cache had no entry for and the next paint died with
+    \"Invalid index 8 for (VECTOR T 8)\". The head SURVIVED it (the render paints
+    its own failure now) and said so in the gate; before that it would have quit.
+
+Every name here holds something a running head has indices into, or a live
+handle. If you add one, add it here."
+  (dolist (pair '(("cells" "*styles*")
+                  ("cells" "*style-sgrs*")   ; the one that bit
+                  ("head" "*head*")
+                  ("head" "*stdout*")
+                  ("render" "*last-render-error*")
+                  ("render" "*paint-lock*")
+                  ("term" "*saved-termios*")
+                  ("term" "*raw-termios*")
+                  ("term" "*raw-fd*")
+                  ("highlight" "*hl-so*")
+                  ("highlight" "*hl-attempted*")
+                  ("protocol" "*request-counter*")))
+    (let ((how (declared-with (source-of (first pair)) (second pair))))
+      (is (eq :defvar how)
+          (format nil "~a in src/~a.lisp must be defvar, not ~a — a push would ~
+reset it mid-session" (second pair) (first pair) how)))))
+
+(def-test style-tables-stay-parallel (:suite leticl)
+  "The style table and its SGR cache must be the same length.
+
+They are indexed by the same style index, so a length mismatch is a cell whose
+style has no SGR — which is how the desync above surfaced. Interning a style
+extends BOTH; this asserts the invariant directly rather than trusting the one
+function that maintains it. Growing the tables is harmless and additive, so the
+interned specs stay (a later test sees a bigger table, never a wrong one)."
+  (let ((before (length *styles*)))
+    (style-index '(:fg :yellow :underline t))
+    (style-index '(:fg :bright-magenta :bold t))
+    (is (= (length *styles*) (length *style-sgrs*))
+        "interning a style must extend the SGR cache with it")
+    (is (> (length *styles*) before) "…and it must have grown")))
+
+(def-test style-sgrs-can-be-rebuilt-from-the-specs (:suite leticl)
+  "The SGR cache is derivable from the style table, so a desync is repairable.
+
+This is the recovery path for the accident above: a head already carrying the
+mismatch can be fixed in place instead of restarted, which is the whole point of
+patching a running head. The rebuild is idempotent in effect, so running it on a
+healthy table changes nothing an assertion can see."
+  (let ((healthy (copy-seq *style-sgrs*)))
+    (rebuild-style-sgrs)
+    (is (= (length *styles*) (length *style-sgrs*))
+        "the two tables are parallel again")
+    (is (= (length healthy) (length *style-sgrs*))
+        "a healthy table is unchanged in length")
+    (is (equalp (coerce healthy 'vector) (coerce *style-sgrs* 'vector))
+        "and unchanged in content — the rebuild is a no-op when nothing is wrong")
+    ;; and a deliberately broken table is repaired
+    (setf *style-sgrs* (make-array 3 :adjustable t :fill-pointer 3))
+    (rebuild-style-sgrs)
+    (is (= (length *styles*) (length *style-sgrs*))
+        "a truncated cache is rebuilt from the specs")))

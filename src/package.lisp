@@ -18,6 +18,9 @@
    #:screen-cols #:screen-rows #:screen-cell #:screen-put #:screen-put-string
    #:cell-ch #:cell-style
    #:style-index #:paint-diff #:paint-full
+   ;; the two parallel style tables — a restyle may want to read or extend them,
+   ;; and the cache is derivable from the specs so it can be repaired in place
+   #:*styles* #:*style-sgrs* #:rebuild-style-sgrs
    ;; json
    #:json-decode #:json-encode-to-string
    ;; wire
@@ -37,7 +40,9 @@
    #:make-session #:ingest-hello #:ingest-snapshot #:apply-event #:ack-frame
    #:session-seq #:session-expected-seq #:session-session-id #:session-items
    #:session-todos #:session-wiring #:session-open-decisions #:session-sessions
-   #:item-lines #:turn-lines #:outcome-name
+   #:item-lines #:turn-lines #:outcome-name #:edit-lines #:call-lines
+   ;; engines a model may want to call directly while restyling
+   #:highlight-fence #:lang-for-fence
    ;; keys
    #:read-key #:make-composer #:composer-buffer #:composer-cursor
    ;; render

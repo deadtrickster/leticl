@@ -123,24 +123,53 @@ folded text, or the text unchanged when it holds no screen."
      ;; differs (event.rs:75) — the raw material of the diff view
      (awhen-edit-lines (getf (getf call :state) :edit) cols))))
 
-(defun awhen-edit-lines (edit cols)
-  "Both sides of an edit as a unified view: - before, + after."
+(defun %edit-lines-text (text)
+  "TEXT as a list of lines. An empty side is NO lines, not one empty line:
+a pure insertion has no `before`, and rendering that as a blank line claims a
+line was there (`ToolEditExcerpt::before` — \"empty when the side has no lines
+in the range\")."
+  (if (zerop (length text))
+      nil
+      (uiop:split-string text :separator '(#\newline))))
+
+(defun edit-lines (edit cols &key (folded nil))
+  "The diff of an EDIT, as segment lines.
+
+This is the twice-requested diff, and it is why `render-diff` exists: the edit
+carries both sides and the excerpt's place in each file, so the engine can show
+hunks with context, line numbers, and word-level emphasis inside a changed line.
+The old version printed every removed line and then every added line —
+unnumbered, unemphasised, no context and no notion of what actually changed —
+which is what the operator reported as *\"nothing really shown\"*.
+
+`before_start`/`after_start` are 1-based lines of the WHOLE file, so the gutter
+numbers the file and not the excerpt (\"a diff numbered from 1 tells the reader
+line 4 changed when it was line 313\")."
   (when edit
-    (let ((lines (list (list (cons (format nil "    ~a~a"
-                                         (getf edit :path)
-                                         (if (getf edit :created) " (new)" ""))
-                                   '(:bold t :fg :cyan))))))
-      (flet ((side (text prefix style)
-               (when (plusp (length text))
-                 (dolist (l (uiop:split-string text :separator '(#\newline)))
-                   (push (list (cons (format nil "    ~a " prefix) style)
-                               (cons l style))
-                         lines)))))
-        (side (getf edit :before) "-" '(:fg :red))
-        (side (getf edit :after) "+" '(:fg :green)))
-      (when (getf edit :truncated)
-        (push (list (cons "    … truncated" '(:fg :bright-black))) lines))
-      (nreverse lines))))
+    (let* ((path (getf edit :path))
+           (created (getf edit :created))
+           (head-line (list (list (cons (format nil "  ~a~a" path
+                                                (if created " (new)" ""))
+                                      '(:bold t :fg :cyan)))))
+           (body (render-diff (%edit-lines-text (or (getf edit :before) ""))
+                              (%edit-lines-text (or (getf edit :after) ""))
+                              :width (max 20 (- cols 4))
+                              :context 3
+                              :line-numbers t
+                              :intra-line t
+                              :max-rows (if folded 8 60)
+                              :old-start (or (getf edit :before-start) 1)
+                              :new-start (or (getf edit :after-start) 1)))
+           (tail (when (getf edit :truncated)
+                   (list (list (cons
+                                (format nil "  … the excerpt was capped; the file is ~a lines now"
+                                        (or (getf edit :after-lines) 0))
+                                '(:fg :bright-black)))))))
+      (append head-line body tail))))
+
+(defun awhen-edit-lines (edit cols)
+  "Both sides of an edit, as a real diff. See `edit-lines`."
+  (edit-lines edit cols))
 
 (defun turn-lines (turn cols prefs)
   "The running turn, live: reasoning, text, calls. A finished turn renders

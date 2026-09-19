@@ -53,24 +53,81 @@
       (flush))
     (nreverse segs)))
 
+(defun lang-for-fence (name)
+  "A fenced block's language, as the highlighter's id. 0 = none.
+
+`hl_detect` takes a PATH (rano's extension table), while a fence carries a NAME
+(`lisp`, `rust`, `sh`), so the name is dressed as a filename. The mapping is
+deliberately small and honest: a name not here, or a shim that is not built,
+gives 0 and the fence renders plain — which is what an unhighlighted terminal
+sees anyway and what `hl-available-p` is there to make cheap."
+  (let ((ext (cdr (assoc (string-downcase (string-trim " " name))
+                         '(("lisp" . "lisp") ("cl" . "lisp") ("common-lisp" . "lisp")
+                           ("emacs-lisp" . "el") ("elisp" . "el")
+                           ("rust" . "rs") ("rs" . "rs")
+                           ("python" . "py") ("py" . "py")
+                           ("sh" . "sh") ("shell" . "sh") ("bash" . "sh")
+                           ("zsh" . "sh") ("console" . "sh")
+                           ("c" . "c") ("h" . "h")
+                           ("cpp" . "cpp") ("c++" . "cpp") ("cc" . "cpp")
+                           ("json" . "json") ("toml" . "toml") ("yaml" . "yaml")
+                           ("yml" . "yaml") ("sql" . "sql")
+                           ("js" . "js") ("javascript" . "js")
+                           ("ts" . "ts") ("typescript" . "ts")
+                           ("go" . "go") ("java" . "java") ("ruby" . "rb")
+                           ("html" . "html") ("css" . "css")
+                           ("md" . "md") ("markdown" . "md"))
+                         :test #'string=))))
+    ;; 0, never NIL: `lang-for`'s contract is "0 = none", and a caller that
+    ;; arithmetic's the answer (`plusp`) must not get a type error for a fence
+    ;; whose language nobody knows. Measured — `(plusp nil)` is how this line
+    ;; first failed.
+    (if ext (lang-for (format nil "fence.~a" ext)) 0)))
+
+(defun highlight-fence (raw-lines lang)
+  "RAW-LINES (strings, oldest first) as styled segments, highlighted as LANG.
+
+Falls back to one dim segment per line when the shim is absent or does not know
+the language, so a fence is never WORSE than it was before highlighting
+existed: it used to render dim, and a plain `nil` style would be a regression
+in a terminal with no syntax colour."
+  (let* ((source (format nil "~{~a~^~%~}" raw-lines))
+         (id (lang-for-fence lang))
+         (styled (if (plusp id)
+                     (highlight-lines source id)
+                     nil)))
+    (if styled
+        styled
+        (mapcar (lambda (l) (list (cons l '(:fg :bright-black))))
+                raw-lines))))
+
 (defun markdown-lines (text &optional (base-style nil))
   "TEXT to a list of lines, each a list of (string . style-spec) segments."
   (let ((lines nil)
         (in-code nil)
         (code-lang "")
+        (code-buf nil)                  ; raw fence lines, newest first
         (table-rows nil))
     (labels ((flush-table ()
                (when table-rows
                  (dolist (l (render-table (nreverse table-rows)))
                    (push l lines))
-                 (setf table-rows nil))))
+                 (setf table-rows nil)))
+             (flush-code ()
+               ;; the fence is styled as a WHOLE when it closes, or when the
+               ;; message ends without one (a streaming turn is often mid-fence,
+               ;; and dropping the lines would blank the code on screen)
+               (when code-buf
+                 (dolist (l (highlight-fence (nreverse code-buf) code-lang))
+                   (push l lines))
+                 (setf code-buf nil))))
       (dolist (line (uiop:split-string text :separator '(#\newline)))
         (cond
           ;; fenced code
           ((and (>= (length line) 3) (string= (subseq line 0 3) "```"))
            (flush-table)
            (if in-code
-               (setf in-code nil)
+               (progn (flush-code) (setf in-code nil))
                (progn (setf in-code t
                             code-lang (string-trim " `" (subseq line 3)))
                       (push (list (cons (if (plusp (length code-lang))
@@ -80,7 +137,11 @@
                             lines))))
           (in-code
            (flush-table)
-           (push (list (cons line '(:fg :bright-black))) lines))
+           ;; ACCUMULATE the fence; do not emit yet. Highlighting is a
+           ;; whole-buffer operation (tree-sitter parses the source, and a
+           ;; multi-line string or comment only lexes correctly as a unit), so
+           ;; the fence is styled when it CLOSES — see `flush-code`.
+           (push line code-buf))
           ;; heading
           ((and (plusp (length line)) (char= (char line 0) #\#))
            (flush-table)
@@ -125,6 +186,10 @@
            (flush-table)
            (push (%inline-spans line base-style) lines))))
     (flush-table)
+    ;; an UNCLOSED fence still has to render: a streaming turn is often
+    ;; mid-fence, and the alternative is code that vanishes until the closing
+    ;; backticks arrive
+    (flush-code)
     (nreverse lines))))
 
 (defun %table-row-p (line)
