@@ -552,25 +552,28 @@ terminal: the newest content sat at row 1 and the oldest at row 57.)"
 
 (defun %render-and-paint (head)
   (%render head)
-  (if (head-full-repaint head)
-      (progn (paint-full (head-screen head) *stdout*)
-             (setf (head-full-repaint head) nil))
-      (paint-diff (head-prev-screen head) (head-screen head) *stdout*))
-  ;; keep the previous frame for the next diff, and the rows for Screen//cells
-  (replace (screen-cells (head-prev-screen head)) (screen-cells (head-screen head)))
-  (setf (head-last-rows head) (screen-rows-ansi (head-screen head))
-        (head-last-cols head) (head-cols head)
-        (head-last-rows-n head) (head-rows head))
-  ;; the cursor belongs at the end of the line being typed
-  (let* ((c (head-composer head))
-         (buf (composer-buffer c)))
-    (move-to *stdout* (1- (head-rows head))
-             (min (1- (head-cols head))
-                  (+ 2 (string-width
-                        (if (> (+ 2 (string-width buf)) (1- (head-cols head)))
-                            (subseq buf (max 0 (- (length buf)
-                                                  (- (1- (head-cols head)) 2))))
-                            buf))))))
+  ;; reacquire the stream if a live push clobbered it: a frame written to NIL
+  ;; is a type error in the main thread, which quits the head with no log
+  (let ((out (%open-stdout)))
+    (if (head-full-repaint head)
+        (progn (paint-full (head-screen head) out)
+               (setf (head-full-repaint head) nil))
+        (paint-diff (head-prev-screen head) (head-screen head) out))
+    ;; keep the previous frame for the next diff, and the rows for Screen//cells
+    (replace (screen-cells (head-prev-screen head)) (screen-cells (head-screen head)))
+    (setf (head-last-rows head) (screen-rows-ansi (head-screen head))
+          (head-last-cols head) (head-cols head)
+          (head-last-rows-n head) (head-rows head))
+    ;; the cursor belongs at the end of the line being typed
+    (let* ((c (head-composer head))
+           (buf (composer-buffer c)))
+      (move-to out (1- (head-rows head))
+               (min (1- (head-cols head))
+                    (+ 2 (string-width
+                          (if (> (+ 2 (string-width buf)) (1- (head-cols head)))
+                              (subseq buf (max 0 (- (length buf)
+                                                    (- (1- (head-cols head)) 2))))
+                              buf)))))))
   (setf (head-dirty head) nil))
 
 (defun %poll-resize (head)
@@ -634,11 +637,19 @@ is a resume — the gap arrives as events, or a Resync does (§13.2)."
 
 ;;; ------------------------------------------------------------- lifecycle ;;;
 
+(defun %open-stdout ()
+  "The head's stream on fd 1. Called at startup and RE-called whenever the
+stream has gone missing, so a clobbered *stdout* heals on the next paint instead
+of taking the head down — writing a frame to NIL is a type error in the MAIN
+thread, and in --disable-debugger mode that quits the process (measured: a live
+push ran `(defparameter *stdout* nil)` and the operator's head exited)."
+  (or *stdout*
+      (setf *stdout* (sb-sys:make-fd-stream 1 :output t :element-type 'character
+                                            :external-format :utf-8 :buffering :none))))
+
 (defun run (&key socket-path session-id)
   "Attach to a daemon and run until /quit or ctrl+d."
-  (unless *stdout*
-    (setf *stdout* (sb-sys:make-fd-stream 1 :output t :element-type 'character
-                                          :external-format :utf-8 :buffering :none)))
+  (%open-stdout)
   (unless (plusp (%isatty 1))
     (error "the head paints on the real terminal — run it on a tty, not a pipe"))
   (let* ((path (or socket-path

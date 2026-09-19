@@ -151,6 +151,19 @@ Anything in this tree that holds RUNNING state is `defvar` and must stay so:
 Static data — colour-name tables, SGR strings, ranges, `*slash-commands*` — may
 stay `defparameter`; re-initialising it is harmless.
 
+### The paint heals its own stream
+
+`*stdout*` going missing is a special case, because of what it does to the MAIN
+thread: `%render-and-paint` writes the frame there, and a write to `NIL` is a
+type error, which in `--disable-debugger` mode **quits the process**. So a
+clobbered stream did not just stop the rendering — it took the head down with
+nothing in any log.
+
+`%render-and-paint` therefore calls `%open-stdout`, which returns the live
+stream or opens fd 1 again. A clobbered `*stdout*` now costs one repaint, not
+the head; the gate still reports it, and the head keeps running so it can be
+fixed in place.
+
 ## The render gate
 
 **Every eval is gated on the render.** After the form runs, `tui-eval` captures
