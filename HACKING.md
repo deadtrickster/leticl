@@ -202,6 +202,100 @@ tui-eval --screen            # the drawn frame, ANSI stripped for reading
 `--no-verify` skips the gate. Use it for a deliberate eval that is expected to
 break the render (as the gate's own test does), never for a source push.
 
+## Injuries
+
+What the live surface has actually cost, so the next person recognises the shape
+before it happens to them. Each entry is a real accident against a real head,
+with what it did to the operator and what changed because of it.
+
+### A live `defparameter` clobbered the head's stream — the head died
+
+**How.** `tui-eval --file src/head.lisp`, pushing a whole file into a head that
+was mid-session. The file contains `(defparameter *stdout* nil)`, and
+`defparameter` assigns unconditionally, so the push re-initialised the running
+head's output stream to NIL at load time.
+
+**What the operator saw.** The screen tore: every frame after that was written
+nowhere, and the half-written frames left the terminal disagreeing with the
+head's cell buffer. Then it got worse — `%render-and-paint` writes the frame on
+the **main thread**, and a write to NIL is a type error, which in
+`--disable-debugger` mode **quits the process**. The head exited. Nothing in any
+log said why.
+
+**What changed.** Every variable in this tree that holds RUNNING state is
+`defvar` (see the table above), so a push cannot re-initialise it.
+`%render-and-paint` reacquires the stream through `%open-stdout`, so a clobbered
+`*stdout*` costs one repaint instead of the head. `tui-eval` grew the render
+gate, which names this exact failure and exits 3 — and `--screen`, which prints
+what the head did draw, so a torn screen can be read rather than described.
+
+### Resetting the style table repainted the frame in wrong colours
+
+**How.** The same push, `src/cells.lisp`, whose `*styles*` was then a
+`defparameter`.
+
+**What the operator saw.** Colour mangle across the whole render: cells hold
+**indices** into `*styles*`, so re-initialising the table (a fresh array with
+only the default) left every on-screen cell pointing at a style that was no
+longer there. Not a crash — a screen that was wrong in a way that looks like a
+rendering bug and is not one.
+
+**What changed.** `*styles*` is `defvar`. The rule generalised: a table whose
+entries are referenced by index from live state is live state.
+
+### A compile note painted over the render and desynced the screen
+
+**How.** An ordinary `tui-eval '(defun …)'` whose form compiled with a warning.
+The eval ran with `*standard-output*` bound to the head's own terminal stream,
+so SBCL's compile report was written **into the TUI**.
+
+**What the operator saw.** The report painted over the render. The damage that
+mattered was not the ugly frame but the desync: the terminal no longer matched
+the head's cell buffer, and `/cells` — which sends the cell buffer — therefore
+could not show what the operator was actually looking at, which is the one thing
+`/cells` exists to do.
+
+**What changed.** `hack-handle` binds `*standard-output*` and `*error-output*` to
+string streams and mutes `warning` and `style-warning` (`hack-mute`), so nothing
+an eval compiles or prints can reach the TUI. Note for whoever edits this: the
+binding must be **string streams, not NIL** — `*standard-output*` is declared
+type `stream`, and the compiler prints notes directly rather than through a
+condition handler, so NIL turns the leak into a `SIMPLE-TYPE-ERROR` at the worst
+moment.
+
+### A multi-line form was cut at its first line
+
+**How.** A `FORM` argument that contained a real newline — a `defun` written
+across lines and passed as one shell argument:
+
+```sh
+tui-eval '(defun status-line (head cols)
+           (list (cons "x" nil)))'
+```
+
+**What the operator saw.** Nothing — which is the trap. The protocol is
+line-based and the head reads one line, so it received an unbalanced form: no
+error anyone looks at, just a redefinition that did not happen.
+
+**What changed.** Documented loudly (see *A restyle, end to end*), and `--file`
+exists so a multi-line definition can be pushed as a whole form. The test suite
+asserts the cut is real, so the rule cannot quietly rot.
+
+### The wrong daemon, from a direct invocation
+
+**How.** Running `bin/leticl-head --session <id>` directly, without
+`~/bin/leticl` to set `$LETIBOT_SOCKET` from the working directory.
+
+**What the operator saw.** A fresh, empty session — the head had attached to
+another workspace's daemon, found by directory order. The session the operator
+named was never opened, and the daemon that did answer wasn't theirs.
+
+**What changed.** `discover-daemons` prefers the daemon whose `workspace`
+contains the current directory, and among matches the **longest** — `/home/dead`
+contains `/home/dead/Projects/leticl`, so a shorter match must not win. This is
+the one injury here that is not the live surface's fault, and it is recorded
+because the symptom (an empty screen) looks exactly like a render bug.
+
 ## The contract surface
 
 The package `:leticl` (nickname `:lt`) **is** the public API — one package on
