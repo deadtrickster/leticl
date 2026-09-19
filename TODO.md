@@ -4,6 +4,25 @@ Derived from `PLAN.md`. Status: `[ ]` open, `[~]` in progress, `[x]` done.
 Dependencies are explicit; **do not start an item before its deps are done**.
 This file is mirrored into the harness todo list; update both together.
 
+`PARITY.md` is the measurement this file's Phase 7 is derived from — what the
+reference head (`crates/tui`, `crates/ui`) does that this one does not, with
+file:line citations. Read it before starting a parity item.
+
+**The reference is pinned, and it moves.** Phase 7 was measured against:
+
+| repo | commit | date |
+|---|---|---|
+| `letibot` (reference) | `82ff650e6c43502069ccabba9b8c0ed4afd40b19` | 2026-09-19 |
+| `leticl` (this) | `a12ee717640d99d745f44281c4b41403cbff7a6f` | 2026-09-19 |
+
+Every `PARITY.md` citation — `app.rs:806`, `sidediff.rs`, a line count — is a
+line number **in `82ff650`**. The reference is a live repo, so a citation is a
+pointer into a moving tree: **before acting on one, `git -C
+~/Projects/letibot/letibot log --oneline 82ff650..HEAD` and re-read the
+function** rather than trusting the number. When a strand finishes, record the
+new reference HEAD it re-checked against; when the numbers no longer match, the
+right move is to re-measure `PARITY.md`, not to guess which line moved.
+
 ## Dependency graph
 
 ```
@@ -20,6 +39,10 @@ T2 ─┴─ T8 ─────────────┴─ T9 ─ T11 ─ T12
 Reading: T6 needs T4+T5; T9 needs T8; T11 needs T9; T12 needs T6+T11; T13
 needs T10+T12; T14 needs T13; T15 needs T12; T16/T17 need T15; T18 needs T14;
 T20/T21 need T14/T17; T22 needs T18.
+
+**Phase 7 (parity)** is a second graph, below its own heading, because its unit
+is a **strand** — a file-disjoint work package one subagent owns — rather than a
+task.
 
 ## Phase 0 — repo
 
@@ -92,7 +115,10 @@ T20/T21 need T14/T17; T22 needs T18.
   (PLAN §8), repaint-on-eval, `--list`/`--pid`, `HACKING.md` naming the
   contract surface. Demo: a model restyles the live TUI. Deps: T14.
 
-## Phase 5 — parity (M5)
+## Phase 5 — the ports (M5)
+
+The Rust→Lisp ports. Distinct from Phase 7, which closes the *feature* gap;
+these are the engines both heads need.
 
 - [x] **T19** markdown rendering (port `tui/markdown.rs`). Deps: T14.
 - [ ] **T20** diff/sidediff/highlight (port `ui/diff.rs`, `ui/sidediff.rs`,
@@ -114,3 +140,371 @@ T20/T21 need T14/T17; T22 needs T18.
   frame retained), long-session memory behavior, saved-core note. Deps: T18.
   Reconnect (`%try-reconnect`) and `Screen` answers are in; long-session memory
   is unverified headless (needs a long live session).
+
+## Phase 7 — parity
+
+Closing the gap `PARITY.md` measures. The unit of work here is a **strand**: a
+file-disjoint package that one subagent owns end to end. The DAG is the gates
+between strands, not a sequence — strands with no edge between them run at the
+same time.
+
+### The two gates every strand must pass
+
+**Gate 1 — source.** `sbcl --script run.lisp test` is **172/172 green** at the
+start of this phase; it must not go below that, and each strand adds checks for
+what it builds. A strand that cannot test something headless says so in its
+commit rather than skipping silently.
+
+**Gate 2 — the live head, and it is not optional.** The running head is the
+verification surface. For every feature:
+
+```sh
+tui-eval --list                     # find the head's pid
+tui-eval --pid <PID> --file src/<the files you changed>.lisp
+#   exit 3 means the head is broken — the push RAN, so recover before going on
+tui-eval --pid <PID> --screen       # read what it actually drew
+```
+
+The push must report `gate: stdout=ok rows=N/N cols=M/M`, and `--screen` must
+show the feature. **A feature that is not visible on the running head is not
+done**, however green the tests are — that is the whole premise of this rewrite
+(`PLAN.md` §1), and the render gate (`HACKING.md`) exists to make the claim
+checkable instead of hopeful.
+
+### The rules that keep the live head usable
+
+1. **The head is ONE shared resource; pushes serialize.** Two subagents pushing
+   at the same time race, and the second overwrites the first's functions. Only
+   the orchestrator pushes; a subagent prepares and hands over. Before any push,
+   `tui-eval --pid <PID> --screen` to see the state you are about to change.
+2. **Nothing that holds running state may be `defparameter`** — `defvar`, or a
+   live push re-initialises it mid-session. `HACKING.md` §"Live state models
+   defvar" has the table; this is the injury that killed a head, not a style
+   preference.
+3. **A whole file is re-evaluated at load time**, so a push is not a patch. Keep
+   new top-level bindings `defvar`; keep the file loadable on its own.
+4. **Recover, do not restart, after a bad push.** `tui-eval --screen` says what
+   it draws; re-push the file with the mistake fixed. Restart only for a
+   `defstruct`/`defclass` change, a toplevel change, or a dead paint loop.
+5. **New files need `leticl.asd`** (`:serial t`, add to `:components`) *and* a
+   push — the `.asd` edit is one line and is a shared file: it is the
+   orchestrator's, like `TODO.md` and `PARITY.md`.
+
+### Read the reference, do not guess from the citations
+
+`PARITY.md` gives file:line for every gap, and a line number is **a pointer, not
+a specification**. Before building anything, **fetch the actual source**:
+
+- The reference is local: `~/Projects/letibot/letibot/crates/…`. Read the whole
+  function, its tests, and the comments — the comments in `app.rs` are often the
+  best available spec, because they record what went wrong when the obvious
+  design was tried (`app.rs:806` on why the call id cannot key a map;
+  `app.rs:2428` on why the jobs chord is `ctrl-q` and not `ctrl-j`).
+- **`web_search` / `web_fetch` are available and should be used** for anything
+  the tree cannot answer: the Common Lisp spec or a library's documentation
+  (alexandria, `sb-concurrency`, `sb-ext`), a terminal escape-sequence
+  convention, a markdown/GFM rule, an algorithm's published description. Guessing
+  at a library's semantics is the same defect class as guessing at the wire.
+- Colour escapes, key tables and the protocol have their own truths in the tree
+  (`crates/ui/src/style.rs`, `crates/tui/src/term.rs`, `protocol.rs`) — read
+  them rather than inventing a parallel convention.
+
+### Write Common Lisp, not Rust in parentheses
+
+The reference is Rust and this is not. **Its structure is the wrong thing to
+copy**; its behaviour is the right thing to copy. A strand that transliterates a
+Rust module into Lisp has done the work twice and got the worse half both times.
+
+Concretely, reach for:
+
+- **`defclass` + `defgeneric`/`defmethod`** where the reference has an enum and a
+  `match`. The existing `(case (intern (string-upcase …) :keyword) …)` over item
+  types (`render.lisp:125`, `session.lisp:313`) is Rust-in-Lisp: a class per item
+  type with a `render-lines` method is shorter, extensible from the eval socket,
+  and lets a model add a row type live.
+- **`loop`** with real clauses (`for … in`, `collect`, `when`, `until`,
+  `maximize`) instead of index arithmetic. The `dotimes`/`aref`/`incf` walks in
+  `render.lisp` are hand-written loops that `loop` states in a line.
+- **`format`** instead of `concatenate` and `make-string`. `~{…~^…~}`,
+  `~v@a`, `~<`, `~:>`, `~[~;~]`, `~*` do layout and pluralisation without
+  helper functions.
+- **`defstruct`/`defclass` with a printed name, and `with-` macros** for paired
+  enter/exit (`with-tui-terminal`, `with-raw-mode` are the existing examples —
+  every new resource pair gets one).
+- **`&key`/`&optional`/`&rest` and multiple values** rather than tuples and out
+  parameters.
+- **`alexandria`** (`if-let`, `when-let`, `with-gensyms`, `lastcar`, `mappend`,
+  `assoc-value`, `define-constant`) and **`anaphora`** (`awhen`, `aif`, `alet`)
+  are already dependencies and are used in places; use them in the new code.
+- **`defmacro`** where a pattern repeats — but only where it removes repetition
+  rather than hiding it. One good macro beats ten clever ones.
+- **`handler-case` / `restart-case`** where Rust would return `Result`. The head
+  has a `restart`-shaped opportunity in the render path: a bad row should be able
+  to degrade to a placeholder rather than take the frame.
+
+**Reshape as you go.** When a strand touches a piece of Rust-shaped Lisp, leave
+it idiomatic — but only the part the strand touches. A drive-by refactor of a
+file another strand is holding is how two agents collide. The `S0` strands below
+are where wholesale reshaping belongs, and `S0`'s `Done when` includes "the live
+head still gates green", so idiomatic is never allowed to cost behaviour.
+
+**One caution, and it runs the OTHER way from the usual advice.** `defstruct` and
+`defclass` behave oppositely on a live redefinition, measured in this SBCL:
+
+- **`defstruct` refuses.** Adding a slot to a struct whose instances exist signals
+  *"attempt to redefine the STRUCTURE-OBJECT class … incompatibly with the current
+  definition"*. This is why `tui-eval --file` skips `defstruct`, and it means a
+  new slot on a struct is a **restart**, not a push.
+- **`defclass` redefines and propagates.** An added slot is present on existing
+  instances immediately (with its `:initform`); standard redefinition semantics
+  apply. A *removed* slot raises `missing-slot` when reached, so remove nothing a
+  live object may still hold.
+
+So the idiomatic-Lisp advice above and the live-update rule agree: **classes can
+be reshaped while the head runs, structs cannot.** That is one more reason item
+type and card vocabularies want to be classes with methods, and it is a reason to
+prefer a class over a struct for anything a strand may need to grow.
+
+### How a strand is run
+
+Each strand is one subagent, briefed with:
+
+1. **its `P` items from this file**, and the `PARITY.md` section that measured
+   them — not a restatement of the gap, the measurement;
+2. **the reference files to read** (pinned commit, path, symbol), with the
+   instruction to re-read the function rather than trust the line number;
+3. **the live-update protocol** above, quoted — S0's check, `defvar`, the gate —
+   because a subagent that has not read this file will restart the head;
+4. **the CL standard**: "behaviour from Rust, structure from Lisp", with the
+   concrete list, and the standing permission to use `web_search`/`web_fetch`
+   rather than guess at a library;
+5. **its file boundary**: the files it owns, and the files it must not touch
+   (`TODO.md`, `PARITY.md`, `leticl.asd`, and every other strand's files). A
+   subagent that needs a shared file edited **asks**, and the orchestrator makes
+   that one-line change;
+6. **the handover**: it returns the changed files, the `Gate 1` result, the
+   `Gate 2` plan (which files to push and what `--screen` should show), and any
+   deviation it had to make. It does **not** push the shared head — the
+   orchestrator serializes pushes.
+
+The orchestrator's job per strand: approve the brief, serialize the push, run
+Gate 2 on the live head, confirm `--screen` shows the feature, then mark the `P`
+items done here and in the harness todo list.
+
+### The DAG
+
+```
+S0  decomposition ─┬─────────────────────────────────────────────┐
+                   │  (without S0, every strand below serializes  │
+                   │   on head.lisp and render.lisp — see S0)     │
+                   ▼                                              │
+S1  wire        ─────────────────────────────────────┐            │
+S2  engines     ─┬─ S3  cards ───────────────────────┼─ S9 ── S10 │
+S4  editor      ─┘                                   │            │
+S5  prefs  ──────── S6  panes  ──── S7  commands ────┘            │
+S8  chrome      ─────────────────────────────────────┘            │
+S11 docs        (independent, no deps, no dependents)             │
+                                                                  ▼
+                                              all strands: Gate 1 + Gate 2
+```
+
+Reading: **S3 needs S2** (it renders with S2's engine). **S6 needs S5** (the
+config pane writes what prefs holds). **S7 needs S6** (the pickers are the
+commands' menus). **S9 needs S1+S3+S6+S8** (it binds chords to features that must
+already exist). **S10 needs S3+S8** (measuring a render path worth caching).
+**S1, S2, S4, S5, S8, S11** have no deps and are the parallel frontier.
+
+**The parallel frontier, in one line**: without S0 it is exactly one strand at a
+time; with S0 it is six (`S1, S2, S4, S5, S8, S11`), then the gates release the
+rest.
+
+### S0 — decomposition (do this first, or accept a serial plan)
+
+**Why.** `head.lisp` (687 lines) and `render.lisp` (552) are the files *every*
+strand must touch: ack and the key ladder live in `head.lisp`, every card and
+screen in `render.lisp`. Two strands editing one file cannot run at the same
+time, so **as the tree stands today the "parallel" strands below all serialize
+on those two files** — the DAG would be a lie.
+
+**What.** Pure refactor, no behaviour change: carve each strand's area out into
+its own file, so a strand owns its file and the DAG is real.
+
+| new file | takes from | serves |
+|---|---|---|
+| `src/cards.lisp` | `render.lisp` item/call/turn rendering | S3 |
+| `src/chrome.lisp` | `render.lisp` status/composer/border | S8 |
+| `src/panes.lisp` | `render.lisp` picker/help/status/config/jobs/subagents/peek/todos | S6, S7 |
+| `src/editor.lisp` | `keys.lisp` composer + `head.lisp` key ladder | S4 |
+| `src/commands.lisp` | `head.lisp` `%command` + `render.lisp` `*slash-commands*` | S7 |
+| `src/prefs.lisp` | new | S5 |
+
+**Done when**: tests still 172/172, the live head still gates green, and
+`tui-eval --screen` is byte-identical to before the refactor.
+
+**Tradeoff, stated honestly**: S0 is a day of unpicking with no visible feature,
+and it serializes the start. Skipping it does not block anything — every strand
+still lands — it only means the work is **one strand at a time** instead of six.
+That is the whole reason to do it, and the reason it is a decision rather than an
+assumption.
+
+---
+
+### S1 — honest wire (no deps)
+
+What is wrong rather than missing: `PARITY.md` §2.
+
+- [ ] **P1** the head never **acks**. `make-ack`/`ack-frame` exist and are called
+  from nowhere; `run-loop` does not ack. ack after painting, with a test that
+  fails without it (`PLAN.md` §5.1 says so in as many words). Files: `head.lisp`,
+  `session.lisp`.
+- [ ] **P2** the **dead frames**: `/resync` (the frame is never sent, so §M6's
+  drills only test the daemon-initiated path), the **peek** command and its
+  unreachable `:peek` screen, `/todos`' `list_todos` bootstrap read, and
+  `resume_session` from the picker. Files: `head.lisp`, `protocol.lisp`.
+
+**Live**: attach, `/resync`, gate green, `--screen` shows a fresh snapshot; a
+`tui-eval --pid <PID> '(list :seq (session-seq (head-session *head*)))'` before and
+after a resync shows the mark move.
+
+### S2 — engines (no deps)
+
+Ported and disconnected — `PARITY.md` §2.4, §2.5, §3.9.
+
+- [ ] **P3** `render-diff` **onto edit cards**: Myers hunks, context, line
+  numbers, word emphasis. 488 lines already written and called from nowhere; the
+  screen shows a naive before/after block instead. This is the diff the operator
+  asked for twice.
+- [ ] **P4** `highlight-lines` **into markdown code fences** (158 lines plus the
+  rano shim, called from nowhere, so fences are never coloured). Degrade to
+  uncoloured with no `.so`.
+- [ ] **P5** `sidediff.lisp` — two-panel before/after, on when the pane is wide
+  enough (`diff_split`).
+- [ ] **P6** `progress.lisp` — the rate/`thousands`/duration vocabulary.
+- [ ] **P7** cluster-aware `width.lisp` (ZWJ, combining, regional pairs).
+
+**Live**: push, then `--screen` on a session with an edit in it and read the diff
+out of the capture.
+
+### S3 — cards (needs S2; conflicts S8, S9 on `render.lisp`)
+
+The biggest visible gap — `PARITY.md` §3.1. Three of its rows are **one** project:
+a value keyed by **`item_id`** that survives the live card being taken over by the
+transcript row. The call id cannot be the key (it is round-positional — see the
+`call_targets` comment, `app.rs:806`).
+
+- [ ] **P8** `call-ms` (duration on a settled row) and `call-edits` (the diff
+  after the call settles), both seeded from the snapshot so a restart does not
+  lose the change.
+- [ ] **P9** `call-decisions` — the oracle's brief and reply on a settled row.
+- [ ] **P10** `call-targets` — the call's display target, replaced wholesale per
+  round, never keyed on the id alone.
+- [ ] **P11** settled decision rows rendered in the transcript.
+- [ ] **P12** warnings/notes **interleaved where they happened** (anchored to the
+  row count), not pinned to the bottom.
+- [ ] **P13** the rest of the card vocabulary: raw-calls fold (`ctrl-x`),
+  thinking header/reasoning decoration, turn footer (state/usage/timings), user
+  timestamp, queued prompts rendered in the body.
+
+### S4 — editor (no deps)
+
+`PARITY.md` §3.2; the reference's editor is 1,090 lines, this one ~70.
+
+- [ ] **P14** multi-line prompt (`alt+enter` — alt is decoded and unhandled).
+- [ ] **P15** kill ring + **yank** (`ctrl-y`); kills exist, yank does not.
+- [ ] **P16** **undo** (`ctrl-z`), word-batched, kills as their own steps.
+- [ ] **P17** **paste ledger** — ≥5 lines collapse to a marker, sent whole.
+- [ ] **P18** `esc esc` interrupts; a bare `esc` returns to following the stream.
+
+### S5 — prefs (no deps; S6 waits on it)
+
+`PARITY.md` §3.8. Folds and diff shape die with the process today.
+
+- [ ] **P19** `prefs.lisp` — `~/.config/leticl/head.toml`, the flat
+  `key = "value"` subset, unknown keys and comments survive a write.
+- [ ] **P20** folds + diff shape + raw-calls persisted, read at start.
+
+**Live**: `/think`, quit the head, restart, `/think` is still off.
+
+### S6 — panes (needs S5)
+
+`PARITY.md` §3.5.
+
+- [ ] **P21** the **config pane becomes editable in place** and writes prefs
+  (today it is read-only and says the daemon owns the list).
+- [ ] **P22** **mode picker** — a real list from `SettingRow::choices`, not a name
+  to copy.
+- [ ] **P23** **models picker** — same machinery.
+- [ ] **P24** **subagent output view** (Enter on a row), spilling to a file when
+  long.
+- [ ] **P25** **job output** (`/job`, `--offset N`) — the pane counts bytes and
+  cannot show them.
+- [ ] **P26** **promote** the running command to the background (`ctrl-o`).
+- [ ] **P27** **mouse click** picks the picker row under the pointer, guarded by
+  the rows the frame actually drew.
+
+### S7 — commands (needs S6)
+
+`PARITY.md` §3.4. The first four are bindings onto what S6 built; the last three
+are features with their own protocol surface and screens — **L each**, not
+binding work.
+
+- [ ] **P28** `/verbosity` (terse/normal/loud) and the filter counts behind it.
+- [ ] **P29** `/models` + `/default-model`.
+- [ ] **P30** `/gate` — the decisions, and ruling on them afterwards.
+- [ ] **P31** `/supervise` — the guard model answers before the operator does.
+- [ ] **P32** `/flowy` — the seat on the fabric.
+
+### S8 — chrome (no deps; conflicts S3/S6 on `render.lisp`)
+
+`PARITY.md` §3.6. The most visible structural difference: the reference's
+composer is a box with a title, the wiring on its bottom edge, an alarm line and
+a hint bar, and the body carries a gutter. This one draws `› `.
+
+- [ ] **P33** boxed composer (`╭╮╰╯`), title, wiring on the bottom edge, and the
+  unboxed fallback when the screen is too short.
+- [ ] **P34** the body gutter.
+- [ ] **P35** hint bar + the alarm line (only the counters that are not zero).
+- [ ] **P36** notice with a **TTL**, and **stall detection** (the head says when
+  the daemon has gone quiet).
+
+### S9 — bindings (needs S1, S3, S6, S8)
+
+`PARITY.md` §3.3. Cheap, but strictly **after** the features: a chord bound to
+nothing is worse than no chord.
+
+- [ ] **P37** `ctrl-r` `ctrl-t` `ctrl-x` `ctrl-s` `ctrl-p` `ctrl-g` `ctrl-q`
+  `ctrl-o` `ctrl-y` `ctrl-z`, `esc esc`, `alt+enter`, `esc`→follow, and the
+  completions line. Files: `head.lisp` only — which is why this is a **separate
+  strand**: it can only run once every other strand's `head.lisp` edits are in.
+
+### S10 — render architecture (needs S3, S8; measure first)
+
+`PARITY.md` §3.7. Every frame re-runs `item-lines` for the visible tail
+(`%viewport-lines`), where the reference keeps `hist_lines` + an invalidation
+mark because it *measured* 135 rebuilds of an 89-row session.
+
+- [ ] **P38** **measure it on the running head first** — a long session with a
+  streaming turn, `tui-eval` reading `hist_renders`-equivalent counts. Only build
+  the cache if the numbers say so; write the numbers down either way.
+
+### S11 — docs (independent)
+
+- [ ] **P39** `PLAN.md` says protocol **18** in four places and gives the eval
+  socket path wrong twice; the code is 20 and `$XDG_RUNTIME_DIR/tui-<pid>.sock`.
+  Fix the doc to the code, and say the frames v19/v20 added.
+- [ ] **P40** decide `PARITY.md`'s fate: keep it as the measurement, or fold the
+  done rows into `TODO.md` and delete it. (It is untracked as of writing.)
+
+---
+
+### What is deliberately NOT here
+
+`PARITY.md` §4. Do not "fix" these into line with the reference:
+
+- **`ctrl-c`'s meaning** — interrupt a turn, else the quit card, and `make-stop`
+  travels the wire rather than killing a pid. Built to an operator request on the
+  v20 shape; the help text must say so, which is P37's business, not a change.
+- **`/subagents` and `/todos` as commands** — typing is how a script and a model
+  drive a head. Add the chords (P37); keep the commands.
+- **The render gate, `--screen`, and the eval socket** — leticl is *ahead* here.
+  The reference cannot be patched while it runs.
