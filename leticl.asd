@@ -18,6 +18,7 @@ through an eval socket and see the change on the next frame."
                (:file "src/prefs")
                (:file "src/term")
                (:file "src/width")
+               (:file "src/progress")
                (:file "src/cells")
                (:file "src/json")
                (:file "src/wire")

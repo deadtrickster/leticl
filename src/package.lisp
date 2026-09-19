@@ -13,6 +13,10 @@
    #:sync-begin #:sync-end
    ;; width
    #:char-width #:string-width
+   ;; progress — the numbers a turn produces, said in a way a person reads
+   #:thousands #:duration #:spinner
+   #:prefill-fraction #:prefill-cached-fraction #:prefill-computed
+   #:prefill-rate #:prefill-eta-ms #:progress-bar #:prefill-line #:decode-line
    ;; cells
    #:make-screen #:screen-resize #:screen-clear
    #:screen-cols #:screen-rows #:screen-cell #:screen-put #:screen-put-string

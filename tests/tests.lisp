@@ -773,3 +773,94 @@ healthy table changes nothing an assertion can see."
     (rebuild-style-sgrs)
     (is (= (length *styles*) (length *style-sgrs*))
         "a truncated cache is rebuilt from the specs")))
+
+;;; ------------------------------------------------- progress ;;;
+
+(def-test thousands-shortens-and-never-separates (:suite leticl)
+  "A status line has no room for a separator, and `40.1k` reads faster than
+`40,132` when the digits past the first three are noise."
+  (is (equal "0" (thousands 0)))
+  (is (equal "9999" (thousands 9999)) "four digits stay exact")
+  (is (equal "12.3k" (thousands 12345)))
+  (is (equal "40.1k" (thousands 40082)))
+  (is (equal "1.23M" (thousands 1234567)))
+  (is (not (search "," (thousands 1234567))) "never a separator"))
+
+(def-test duration-reads-at-a-glance (:suite leticl)
+  (is (equal "840ms" (duration 840)))
+  (is (equal "2.5s" (duration 2500)))
+  (is (equal "1m05s" (duration 65000)))
+  (is (equal "1h05m" (duration 3900000))))
+
+(def-test spinner-follows-the-clock-not-a-counter (:suite leticl)
+  "It is a liveness indicator for the CLOCK, and the caller is expected to stop
+calling it when the turn stops rather than to read it as proof of progress."
+  (is (char= (spinner 0) (spinner 0)) "deterministic for one time")
+  (is (char= (spinner 0) (spinner 79)) "and holds for the first 80ms")
+  (is (not (char= (spinner 0) (spinner 80))) "and advances after it")
+  (is (= 10 (length (remove-duplicates
+                     (loop for ms from 0 below 800 by 80 collect (spinner ms)))))))
+
+(def-test prefill-measures-rate-over-computed-not-processed (:suite leticl)
+  "Dividing the CACHE HIT by the wall clock is not a speed, it is an artefact in
+the hundreds of thousands — so the rate is computed over what was actually
+computed this turn."
+  (let ((p (list :total 1000 :cache 900 :processed 950 :time-ms 1000)))
+    (is (= 50 (prefill-computed p)) "950 processed minus 900 cached")
+    (is (equal 50.0 (prefill-rate p)) "50 computed tokens in 1s is 50 tok/s")
+    (is (not (equal 950.0 (prefill-rate p))) "NOT the processed count over time")
+    (is (equal 0.9 (prefill-cached-fraction p)) "the cache fraction is the headline")
+    (is (equal 0.95 (prefill-fraction p)))
+    (is (equal 1000 (prefill-eta-ms p)) "50 left at 50 tok/s is a second")))
+
+(def-test prefill-refuses-a-number-it-did-not-measure (:suite leticl)
+  "No rate before there is enough elapsed time to divide by, and a cache
+reported larger than the prompt it cached is clamped — a bar past its own end
+is a lie about progress."
+  (is (null (prefill-rate (list :total 100 :cache 0 :processed 10 :time-ms 20)))
+      "under 50ms the divisor is noise, so there is no rate")
+  (is (null (prefill-rate (list :total 100 :cache 100 :processed 100 :time-ms 900)))
+      "all cached means nothing was computed, so there is no rate to divide")
+  (is (equal 1.0 (prefill-cached-fraction (list :total 10 :cache 999 :processed 999
+                                                :time-ms 100)))
+      "an over-reported cache is clamped to the prompt, never past it")
+  (is (equal 0.0 (prefill-fraction (list :total 0 :cache 0 :processed 0 :time-ms 0)))
+      "and no prompt is not a division by zero"))
+
+(def-test prefill-bar-carries-the-cache-split-in-glyphs (:suite leticl)
+  "Three runs, three GLYPHS, so the information survives a terminal with no
+colour and a pipe to a file."
+  (let* ((p (list :total 100 :cache 50 :processed 75 :time-ms 1000))
+         (bar (progress-bar p 22)))
+    (is (char= #\▐ (char bar 0)) "opens")
+    (is (char= #\▌ (char bar (1- (length bar)))) "and closes")
+    (is (= 22 (string-width bar)) "exactly the width asked for")
+    (is (find #\█ bar) "the cached run is drawn")
+    (is (find #\▓ bar) "the computed run is drawn, in a different glyph")
+    (is (find #\░ bar) "and the remainder is drawn")
+    ;; a zero prompt is still a bar, not an error
+    (is (= 8 (string-width (progress-bar (list :total 0) 8))))))
+
+(def-test prefill-line-drops-the-least-useful-field-first (:suite leticl)
+  "It never wraps: a status line that wraps scrolls the transcript by a row
+every frame, and that reads as flicker."
+  (let ((p (list :total 1000 :cache 800 :processed 900 :time-ms 1000)))
+    (let ((wide (prefill-line p 80)))
+      (is (search "prefill 90%" wide) "the percentage is never dropped")
+      (is (search "tok/s" wide) "a wide line keeps the rate")
+      (is (search "left" wide) "and the estimate"))
+    (dolist (cols '(80 40 24 16 8 4))
+      (is (<= (string-width (prefill-line p cols)) cols)
+          (format nil "at ~a columns the line fits" cols)))
+    (is (equal "prefill 90%" (prefill-line p 12))
+        "given room for the head alone, the head is what is left (it is 11 wide)")
+    (is (equal "prefil" (prefill-line p 6))
+        "and narrower than the head itself it truncates rather than wrapping")))
+
+(def-test decode-line-says-the-word-and-the-rate (:suite leticl)
+  (let ((s (decode-line 1200 3000 80)))
+    (is (search "generating" s) "the phase is named, so the wait has a shape")
+    (is (search "1200" s) "the count is there (thousands only shortens past 9999)")
+    (is (search "400.0 tok/s" s) "1200 tokens in 3s is 400 tok/s")
+    (is (search "3.0s" s) "and the elapsed time is there"))
+  (is (<= (string-width (decode-line 1200 3000 12)) 12) "and it truncates"))
