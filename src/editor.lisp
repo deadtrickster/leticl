@@ -103,30 +103,47 @@ shows the candidates on the status line."
                 (setf (head-running head) nil))))
          ((:esc) (setf (head-quit-open head) nil (head-dirty head) t))
          (t nil)))
-      ;; full-body screens: esc closes, everything else is theirs later
-      ((member (head-mode head) '(:help :status :config :jobs :subagents :peek :todos))
-       (case type
-         ((:esc :q-press) (setf (head-mode head) :normal (head-dirty head) t))
-         ((:char) (when (eql (getf key :ch) #\q)
-                    (setf (head-mode head) :normal (head-dirty head) t)))
-         (t nil)))
-      ((eq (head-mode head) :picker)
-       (case type
-         ((:esc) (setf (head-mode head) :normal (head-dirty head) t))
-         ((:up) (setf (head-picker-sel head)
-                      (max 0 (1- (head-picker-sel head)))
-                      (head-dirty head) t))
-         ((:down) (setf (head-picker-sel head)
-                        (min (max 0 (1- (length (session-sessions (head-session head)))))
-                             (1+ (head-picker-sel head)))
-                        (head-dirty head) t))
-         ((:enter)
-          (let ((hit (nth (head-picker-sel head)
-                          (session-sessions (head-session head)))))
-            (when hit
-              (%send head (make-switch (getf hit :session-id) 0))
-              (setf (head-mode head) :normal (head-dirty head) t))))
-         (t nil)))
+      ;; full-body screens. `esc`/`q` closes any of them; the LIST panes also
+      ;; take a cursor (up/down) and an enter, and they share ONE cursor —
+      ;; `head-picker-sel` — because only one pane is open at a time, which is
+      ;; the same argument the pane scroll offset will make. A per-pane cursor
+      ;; would be a `head` slot each, and a struct slot is a RESTART: the one
+      ;; thing this head must not need.
+      ((member (head-mode head) '(:help :status :config :jobs :subagents :peek :todos :picker))
+       (flet ((rows () (case (head-mode head)
+                         (:subagents (length (head-subagents head)))
+                         (:jobs (length (head-jobs head)))
+                         (:todos (length (session-todos (head-session head))))
+                         (:picker (length (session-sessions (head-session head))))
+                         (t 0))))
+         (case type
+           ((:esc :q-press) (setf (head-mode head) :normal (head-dirty head) t))
+           ((:up) (setf (head-picker-sel head) (max 0 (1- (head-picker-sel head)))
+                       (head-dirty head) t))
+           ((:down) (setf (head-picker-sel head)
+                          (min (max 0 (1- (rows))) (1+ (head-picker-sel head)))
+                          (head-dirty head) t))
+           ((:enter)
+            ;; The subagent pane's enter is the one the pane already advertises:
+            ;; read that subagent's scrollback without moving this session there.
+            ;; It is `peek`, the command that existed as a frame nobody sent.
+            (case (head-mode head)
+              (:subagents
+               (let ((row (nth (head-picker-sel head) (head-subagents head))))
+                 (awhen (and row (getf row :session-id))
+                   (%send head (make-peek it))
+                   (setf (head-status-note head)
+                         (format nil "peeking ~a…" it)))))
+              (:picker
+               (let ((hit (nth (head-picker-sel head)
+                               (session-sessions (head-session head)))))
+                 (when hit
+                   (%send head (make-switch (getf hit :session-id) 0))
+                   (setf (head-mode head) :normal)))))
+            (setf (head-dirty head) t))
+           ((:char) (when (eql (getf key :ch) #\q)
+                      (setf (head-mode head) :normal (head-dirty head) t)))
+           (t nil))))
       ;; :normal — the precedence ladder, gated on an empty composer
       (t
        (let ((composer-empty (zerop (length (composer-buffer (head-composer head)))))

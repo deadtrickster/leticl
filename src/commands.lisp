@@ -31,8 +31,11 @@
     ("mode" . "NAME — move this session's project to a mode")
     ("jobs" . "the background-jobs pane")
     ("subagents" . "the subagent tree")
-    ("todos" . "the model's plan, and the repo's TODO.md read-only")
     ("cells" . "MESSAGE — send it with a copy of this screen")
+    ("todos" . "the model's plan, and the repo's TODO.md — ask, then open it")
+    ("peek" . "SESSION-ID — read a subagent's output without leaving this session")
+    ("resync" . "throw this head's state away and take a fresh snapshot")
+    ("resume" . "SESSION-ID — bring a stored session back to life")
     ("compact" . "summarise this session and fork it")
     ("reseat" . "rebuild the prompt from the tools seated now")
     ("interrupt" . "stop the running turn")
@@ -85,7 +88,33 @@ on ClientFrame::Slash)."
            (setf (head-status-note head) "usage: /mode NAME" (head-dirty head) t)))
       ((string= verb "jobs") (setf (head-mode head) :jobs (head-dirty head) t))
       ((string= verb "subagents") (setf (head-mode head) :subagents (head-dirty head) t))
-      ((string= verb "todos") (setf (head-mode head) :todos (head-dirty head) t))
+      ((string= verb "todos")
+       ;; Ask for the list AND open the pane. The session's plan is carried by
+       ;; `todos_updated` events, so a head that attached after the model wrote
+       ;; them has none — the bootstrap read is what makes the pane honest about
+       ;; a plan written before this head existed.
+       (%send head (make-list-todos))
+       (setf (head-mode head) :todos (head-dirty head) t))
+      ((string= verb "peek")
+       ;; One subagent's output without leaving this session: the daemon answers
+       ;; with `Peeked`, and `%handle-frame` opens the pane from that. The screen
+       ;; existed and was unreachable — nothing sent the frame that fills it.
+       (if (plusp (length rest))
+           (%send head (make-peek rest))
+           (setf (head-status-note head) "usage: /peek SESSION-ID" (head-dirty head) t)))
+      ((string= verb "resync")
+       ;; Throw this head's state away and take a fresh snapshot. The frame was
+       ;; written in T9 and never sent, so the only resync this head ever saw was
+       ;; one the DAEMON initiated — which is the case that works and therefore
+       ;; the case that proves nothing.
+       (%send head (make-resync)))
+      ((string= verb "resume")
+       ;; Bring a session that is in the store but not in this daemon back to
+       ;; life. The daemon answers on the same `Sessions` reply a `/new` produces,
+       ;; so the picker's switch machinery is what lands it.
+       (if (plusp (length rest))
+           (%send head (make-resume-session rest))
+           (setf (head-status-note head) "usage: /resume SESSION-ID" (head-dirty head) t)))
       ((string= verb "compact")
        (%send head (list :frame "compact_session"
                          :client-request-id (next-request-id)

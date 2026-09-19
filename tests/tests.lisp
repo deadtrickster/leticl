@@ -864,3 +864,62 @@ every frame, and that reads as flicker."
     (is (search "400.0 tok/s" s) "1200 tokens in 3s is 400 tok/s")
     (is (search "3.0s" s) "and the elapsed time is there"))
   (is (<= (string-width (decode-line 1200 3000 12)) 12) "and it truncates"))
+
+;;; ------------------------------------------- every frame the head owes is sent ;;;
+
+(defun protocol-constructors ()
+  "The names of every `make-*` frame constructor in src/protocol.lisp."
+  (let* ((text (source-of "protocol"))
+         (names nil)
+         (i 0)
+         (tag "(defun make-"))
+    (loop
+      for j = (search tag text :start2 i)
+      while j
+      do (let* ((start (+ j (length "(defun ")))
+                (end (or (position-if (lambda (c) (member c '(#\space #\( #\))))
+                                      text :start start)
+                         (length text))))
+           (push (subseq text start end) names)
+           (setf i end)))
+    (nreverse names)))
+
+(def-test every-frame-constructor-is-actually-sent (:suite leticl)
+  "A frame the head defines and never sends is a feature that does not exist.
+
+This is P2's whole defect class, and it was four-fifths of the protocol:
+`make-ack`, `make-resync`, `make-peek`, `make-list-todos` and
+`make-resume-session` were all written in T9 and called from NOWHERE. The head
+never acked, the `:peek` screen was unreachable because nothing asked for the
+frame that fills it, `/todos` never asked for the list it drew, and a resync
+could only ever be one the DAEMON initiated — which is the case that works and
+so the case that proves nothing.
+
+A constructor may legitimately go unsent for one reason: a frame the head
+ANSWERS rather than asks. Those are named here, so silence is a decision rather
+than an oversight."
+  (let ((answers-only '("make-answer" "make-answer-question" "make-screen-answer"
+                        "make-attach" "make-detach" "make-prompt" "make-interrupt"
+                        "make-ack" "make-withdraw-prompts" "make-stop"
+                        "make-withdraw" "make-secret" "make-stop-daemon"))
+        (sent nil))
+    ;; every other src file, as one blob of text
+    (dolist (name '("head" "commands" "editor" "cards" "chrome" "panes" "render"
+                    "session" "hack" "keys" "prefs" "progress" "diff" "markdown"
+                    "highlight" "socket" "cells" "wire" "json" "width" "term"))
+      (ignore-errors (setf sent (concatenate 'string sent (source-of name)))))
+    (dolist (ctor (protocol-constructors))
+      ;; the call is `(ctor` followed by anything that is not a symbol
+      ;; character — a space, `)`, or a newline. Requiring a SPACE is the same
+      ;; bug twice: `(make-settings)` has no space after the name, so a rule
+      ;; that demanded one reported a live call as missing.
+      (is (or (loop for i = (search (format nil "(~a" ctor) sent) then
+                                  (search (format nil "(~a" ctor) sent :start2 (1+ i))
+                    while i
+                    thereis (let ((j (+ i 1 (length ctor))))
+                              (or (>= j (length sent))
+                                  (not (find (char sent j) *symbol-chars*
+                                             :test #'char=)))))
+              (member ctor answers-only :test #'string=))
+          (format nil "~a is defined in protocol.lisp and called from nowhere — ~
+either send it, or name it in answers-only with the reason" ctor)))))
