@@ -39,6 +39,15 @@
 (defun make-session ()
   (%make-session))
 
+(defun %items-vector (items)
+  "Items arrive as a list from yason. Make an adjustable fill-pointer vector
+so push-item can grow it and fill-item can fill rows in place. (coerce to
+'vector gives a FIXED vector with no fill pointer — vector-push-extend
+refuses it: 'not an array with a fill pointer'.)"
+  (let ((v (make-array (length items) :adjustable t :fill-pointer 0)))
+    (loop for item in items do (vector-push-extend item v))
+    v))
+
 (defun ingest-snapshot (session snapshot)
   "Replace state with SNAPSHOT's. Resync is a normal outcome, never an error
 — this is also the Resync-frame path."
@@ -52,12 +61,7 @@
         (session-settled-decisions session) (getf snapshot :settled-decisions)
         (session-warnings session) (getf snapshot :warnings)
         (session-heads session) (getf snapshot :heads)
-        (session-items session)
-        (coerce (getf snapshot :items) 'vector))
-  ;; items arrive as a list from yason; make it an adjustable vector so
-  ;; transcript_content can fill rows in place
-  (setf (session-items session)
-        (coerce (getf snapshot :items) 'vector))
+        (session-items session) (%items-vector (getf snapshot :items)))
   session)
 
 (defun ingest-hello (session hello)
@@ -131,7 +135,9 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
       ((:delta)
        (let ((turn (session-turn session)))
          (when turn
-           (case (getf env :target)
+           ;; target is a snake_case string on the wire (DeltaTarget,
+           ;; event.rs:52) — "tool_call" must become :tool-call to match.
+           (case (and (getf env :target) (%key-from-wire (getf env :target)))
              ((:text) (appendf-text turn :text (getf env :text)))
              ((:reasoning) (appendf-text turn :reasoning (getf env :text)))
              ((:tool-call) (appendf-text turn :raw-calls (getf env :text)))))
@@ -313,10 +319,10 @@ arrived renders as a placeholder, honestly (view.rs on SnapshotItem.item)."
           ((:user) (format nil "~{~a~}" (mapcar (lambda (p) (or (getf p :text) "")) (getf body :parts))))
           ((:reasoning) (getf body :text))
           ((:assistant) (getf body :text))
-          ((:tool-result)
+          ((:tool_result)
            (format nil "~a ~a → ~a" (getf body :name) (getf body :call-id)
                    (outcome-name (getf body :outcome))))
-          ((:segment-mark) "")          ; zero-width by design (lib.rs:55)
+          ((:segment_mark) "")          ; zero-width by design (lib.rs:55)
           (t "")))))
 
 (defun outcome-name (outcome)

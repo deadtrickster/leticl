@@ -29,7 +29,9 @@
 (defparameter +note-prompt-queued+ "queued as a user item")
 (defparameter +note-compact-queued+ "queued after the running turn")
 
-(defparameter *request-counter* 0)
+;; defvar: a monotonic counter a live push must not rewind, or request ids
+;; could repeat on a socket that is already open.
+(defvar *request-counter* 0)
 
 (defun next-request-id ()
   "Unique per head connection is all the daemon needs; monotonic across a
@@ -49,7 +51,15 @@ turns a precise complaint into a shrug."
   (json-encode-to-string frame))
 
 (defun frame-name (frame) (getf frame :frame))
-(defun event-name (event) (getf event :event))
+(defun event-name (event)
+  "The event tag as a keyword. The wire sends it as a snake_case string
+(event.rs:380, #[serde(tag = \"event\", rename_all = \"snake_case\")]) and the
+matchers in apply-event and %handle-frame speak keywords — \"turn_started\"
+must become :turn-started or no case arm ever matches and every live event is
+silently dropped (measured: seq climbed, nothing rendered, prompts stuck
+queued)."
+  (let ((s (getf event :event)))
+    (and s (%key-from-wire s))))
 
 ;;; ---------------------------------------------------------- constructors ;;;
 ;;; Field order follows protocol.rs so a diff against the Rust reads naturally.

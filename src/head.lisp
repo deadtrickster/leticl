@@ -14,8 +14,18 @@
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (require :sb-concurrency))
 
-(defparameter *head* nil
+;; defvar, not defparameter: these hold the RUNNING head's live state, and
+;; `tui-eval --file src/head.lisp` re-evaluates this file in a live image at
+;; load time. defparameter assigns unconditionally, so a live push would set
+;; *stdout* to nil in a head that was mid-session — measured: every paint
+;; afterwards wrote nowhere and tore the operator's screen. defvar assigns only
+;; when unbound, which is the meaning these need.
+(defvar *head* nil
   "The running head — the root a hack-socket eval reaches.")
+
+(defvar *stdout* nil
+  "The head's own stream on fd 1, bound in run. Declared here, before anything
+paints to it, and defvar for the same reason as *head*.")
 
 (defstruct (head (:constructor %make-head))
   (session (make-session))
@@ -148,8 +158,14 @@
            (head-dirty head) t
            (head-status-note head) (format nil "resync: ~a" (getf frame :reason))))
     ((string= (frame-name frame) "accepted")
-     (setf (head-status-note head) (getf frame :note)
-           (head-dirty head) t))
+     ;; Telling the person who just pressed enter that their prompt was
+     ;; accepted is not information — and the note sits on the status line for
+     ;; the rest of the session. Anything other than the routine acceptance
+     ;; still gets said (app.rs:1315, NOTE_PROMPT_QUEUED).
+     (let ((note (getf frame :note)))
+       (unless (and note (string= note +note-prompt-queued+))
+         (setf (head-status-note head) note
+               (head-dirty head) t))))
     ((string= (frame-name frame) "rejected")
      (setf (head-status-note head)
            (format nil "rejected: ~a (expected seq ~a, daemon at ~a)"
@@ -461,20 +477,25 @@ shows the candidates on the status line."
 
 (defun %viewport-lines (head cols want)
   "The conversation's last WANT lines (scrolled up by head-scroll), as
-segment lines oldest-first. Collection stops once enough exist — a delta
-per token must not re-render the whole history."
+segment lines oldest-first. The running turn is the newest thing there is, so
+its lines go at the END, after every committed row: reasoning, then the answer,
+then the calls — the bottom of the screen, just above the composer. (Building
+newest-first and reversing the slice put the live turn at the TOP of the
+viewport, above the user prompt it answers — measured on the operator's
+terminal: the newest content sat at row 1 and the oldest at row 57.)"
   (let* ((s (head-session head))
-         (nf nil)                              ; newest first
-         (need (+ (head-scroll head) want)))
-    (setf nf (reverse (turn-lines (session-turn s) cols (head-prefs head))))
+         (need (+ (head-scroll head) want))
+         (all (turn-lines (session-turn s) cols (head-prefs head))))
+    ;; prepend committed rows, newest first, until enough lines exist; the
+    ;; accumulator stays oldest-first because each older row goes in front
     (loop for i from (1- (length (session-items s))) downto 0
-          while (< (length nf) need)
+          while (< (length all) need)
           do (let ((il (item-lines (aref (session-items s) i) cols (head-prefs head))))
-               (setf nf (append (reverse il) nf))))
-    (let* ((n (length nf))
-           (start (max 0 (min n (head-scroll head))))
-           (end (max start (min n (+ start want)))))
-      (reverse (subseq nf start end)))))
+               (setf all (append il all))))
+    (let* ((n (length all))
+           (end (max 0 (- n (head-scroll head))))
+           (start (max 0 (- end want))))
+      (subseq all start end))))
 
 (defun %render (head)
   "State to the cell buffer."
@@ -541,8 +562,8 @@ per token must not re-render the whole history."
         (head-last-cols head) (head-cols head)
         (head-last-rows-n head) (head-rows head))
   ;; the cursor belongs at the end of the line being typed
-  (let ((c (head-composer head))
-        (buf (composer-buffer c)))
+  (let* ((c (head-composer head))
+         (buf (composer-buffer c)))
     (move-to *stdout* (1- (head-rows head))
              (min (1- (head-cols head))
                   (+ 2 (string-width
@@ -576,12 +597,25 @@ is a resume — the gap arrives as events, or a Resync does (§13.2)."
           (progn
             (ignore-errors (close (head-stream head)))
             (let ((stream (connect-unix (head-socket-path head))))
-              (setf (head-stream head) stream)
+              ;; connected before the send: %send refuses to write while
+              ;; disconnected, and this attach is the first frame on the fresh
+              ;; socket — gated on the old flag it would be dropped and the
+              ;; daemon would wait on an ATTACH that never comes (measured:
+              ;; one render, then silence).
+              (setf (head-stream head) stream
+                    (head-connected head) t)
               (%send head (make-attach
                            :session-id (session-session-id (head-session head))
                            :since-seq (session-seq (head-session head))
                            :identity "leticl"))
-              (setf (head-connected head) t)))
+              ;; restart the reader: the old one died on the disconnect that
+              ;; triggered this, and without a reader the fresh socket is
+              ;; written to but never read — the head sits "connected" and
+              ;; silent forever (measured: reader thread dead, stuck
+              ;; "detached — reconnecting…" with no frames arriving).
+              (setf (head-reader head)
+                    (sb-thread:make-thread (lambda () (%reader-loop head))
+                                           :name "leticl reader"))))
         (error (e)
           (setf (head-status-note head) (format nil "reconnect: ~a" e)))))))
 
@@ -600,8 +634,6 @@ is a resume — the gap arrives as events, or a Resync does (§13.2)."
 
 ;;; ------------------------------------------------------------- lifecycle ;;;
 
-(defparameter *stdout* nil)
-
 (defun run (&key socket-path session-id)
   "Attach to a daemon and run until /quit or ctrl+d."
   (unless *stdout*
@@ -617,6 +649,12 @@ is a resume — the gap arrives as events, or a Resync does (§13.2)."
     (setf *head* head
           (head-stream head) stream
           (head-socket-path head) path
+          ;; the socket is open, so we are connected: %send refuses to write
+          ;; while disconnected, and the ATTACH below is the first frame on
+          ;; this socket — gated on the initial nil it would be dropped and
+          ;; the daemon would wait on an ATTACH that never comes (measured:
+          ;; one render, then silence).
+          (head-connected head) t
           (head-cols head) (nth-value 0 (terminal-size 1))
           (head-rows head) (nth-value 1 (terminal-size 1)))
     (screen-resize (head-screen head) (head-cols head) (head-rows head))

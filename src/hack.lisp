@@ -58,9 +58,20 @@ the TUI works without it; only the live-modification is lost."
                (force-output stream)))))
     (ignore-errors (close conn))))
 
+(defun hack-mute (condition)
+  "Swallow a compiler note. The eval's reply travels the socket; *standard-output*
+ is the TUI, so a note printed there paints over the render and desyncs the
+ terminal from the cell buffer — and /cells, which sends the cell buffer, then
+ cannot show what the operator actually sees (measured: an eval with a typo put
+ SBCL's compile report on the operator's screen)."
+  (declare (ignore condition))
+  nil)
+
 (defun hack-handle (head line)
   "One request, one JSON reply. `eval <form>` — the rest of the line is one
-s-expression, read and evaluated in :leticl with *head* bound."
+s-expression, read and evaluated in :leticl with *head* bound. Compiler notes
+and print side-effects are swallowed: the reply goes to the socket, and a leak
+to *standard-output* would corrupt the TUI and desync it from the screen."
   (let ((start (get-internal-real-time)))
     (flet ((ms () (round (* 1000 (- (get-internal-real-time) start))
                          internal-time-units-per-second)))
@@ -69,7 +80,11 @@ s-expression, read and evaluated in :leticl with *head* bound."
             (unless (uiop:string-prefix-p "eval " line)
               (error "only `eval <form>` is spoken here"))
             (let* ((form (read-from-string (subseq line 5)))
-                   (value (eval form)))
+                   (value (let ((*standard-output* (make-string-output-stream))
+                                (*error-output* (make-string-output-stream)))
+                            (handler-bind ((style-warning #'hack-mute)
+                                           (warning #'hack-mute))
+                              (eval form)))))
               ;; visible immediately is a property of the loop: the eval marks
               ;; the head dirty, the loop repaints on its next tick
               (setf (head-dirty head) t)

@@ -21,10 +21,12 @@
       (c-cc (sb-alien:array cc-t 32))
       (c-ispeed speed-t) (c-ospeed speed-t)))
 
+;; glibc struct winsize is ROW-first, then col — the field order here must
+;; match or terminal-size returns swapped dimensions.
 (sb-alien:define-alien-type winsize
     (sb-alien:struct winsize
-      (ws-col (sb-alien:unsigned 16))
       (ws-row (sb-alien:unsigned 16))
+      (ws-col (sb-alien:unsigned 16))
       (ws-xpixel (sb-alien:unsigned 16))
       (ws-ypixel (sb-alien:unsigned 16))))
 
@@ -51,9 +53,18 @@
 (defconstant +tiocgwinsz+ #x5413)       ; Linux x86-64
 (defconstant +tcsadrain+ 1)             ; glibc: drain output, then apply
 
-(defparameter *saved-termios* (sb-alien:make-alien termios))
-(defparameter *raw-termios* (sb-alien:make-alien termios))
-(defparameter *raw-fd* nil)
+;; Allocated on first use, not at load: sb-alien:make-alien is a malloc, and
+;; malloc'd memory is not part of a save-lisp-and-die image, so a load-time
+;; allocation would be a stale pointer in a frozen head (memory fault in
+;; tcgetattr). See enter-raw.
+;;
+;; defvar, not defparameter: these are the RUNNING head's terminal state, and a
+;; live push of this file must not clobber them. Losing *saved-termios* would
+;; leave a head unable to put the operator's terminal back; losing *raw-* would
+;; strand the fd mid-raw-mode.
+(defvar *saved-termios* nil)
+(defvar *raw-termios* nil)
+(defvar *raw-fd* nil)
 
 (defun %copy-termios (from to)
   (dolist (s '(c-iflag c-oflag c-cflag c-lflag c-line c-ispeed c-ospeed))
@@ -64,7 +75,11 @@
 
 (defun enter-raw (fd)
   "Raw mode with TCSADRAIN. cfmakeraw clears flags with &= on c_cflag, so it
-needs the saved state copied in first — a zeroed c_cflag is not CS8."
+needs the saved state copied in first — a zeroed c_cflag is not CS8. The
+termios aliens are malloc'd on first use (see *saved-termios*), never at load."
+  (unless *saved-termios*
+    (setf *saved-termios* (sb-alien:make-alien termios)
+          *raw-termios* (sb-alien:make-alien termios)))
   (when (minusp (%tcgetattr fd *saved-termios*))
     (error "tcgetattr failed on fd ~d — not a terminal?" fd))
   (%copy-termios *saved-termios* *raw-termios*)
@@ -82,10 +97,15 @@ needs the saved state copied in first — a zeroed c_cflag is not CS8."
   `(unwind-protect (progn (enter-raw ,fd) ,@body) (leave-raw)))
 
 (defun terminal-size (fd)
-  "Values cols rows; 80x24 when the ioctl fails (pipe, file, broken tty)."
+  "Values cols rows; 80x24 when the ioctl fails OR reports a zero size —
+a pipe, a file, a broken tty, or a pty with no winsize set."
   (sb-alien:with-alien ((ws winsize))
     (if (zerop (%ioctl fd +tiocgwinsz+ (sb-alien:addr ws)))
-        (values (sb-alien:slot ws 'ws-col) (sb-alien:slot ws 'ws-row))
+        (let ((cols (sb-alien:slot ws 'ws-col))
+              (rows (sb-alien:slot ws 'ws-row)))
+          (if (or (zerop cols) (zerop rows))
+              (values 80 24)
+              (values cols rows)))
         (values 80 24))))
 
 (defun make-tty-streams ()

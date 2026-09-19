@@ -45,18 +45,42 @@ XDG_RUNTIME_DIR (measured, PLAN.md §4)."
         (merge-pathnames "letibot/"
                          (pathname (format nil "/run/user/~d/" (sb-posix:getuid)))))))
 
+(defun %in-workspace (ws cwd)
+  "T when CWD is WS or inside it (a path-boundary match, so /a/b does not
+claim /a/bc). (subseq + string= rather than string-prefixp: the latter does
+not resolve to CL in the frozen image and dies as LETICL::STRING-PREFIXP.)"
+  (and ws
+       (<= (length ws) (length cwd))
+       (string= (subseq cwd 0 (length ws)) ws)
+       (or (= (length ws) (length cwd))
+           (char= (char cwd (length ws)) #\/))))
+
 (defun discover-daemons ()
   "Every daemon this user runs, as decoded plists of their .json files, the
 one named by $LETIBOT_SOCKET first when set — that is the daemon of the folder
-the calling context belongs to. Read-only; a file that does not parse is
-skipped, not fatal — a half-written json from a daemon that is starting up
-must not take a head down."
+the calling context belongs to. Without $LETIBOT_SOCKET (a head run directly,
+not via ~/bin/leticl) the daemon whose workspace contains the current
+directory comes first, so the head finds its own daemon, not the first one in
+the run dir. Read-only; a file that does not parse is skipped, not fatal — a
+half-written json from a daemon that is starting up must not take a head down."
   (let* ((plists (loop for f in (ignore-errors
                                  (directory (merge-pathnames "*.json" (daemon-dir))))
                        for plist = (ignore-errors (json-decode (uiop:read-file-string f)))
                        when plist collect plist))
          (mine (uiop:getenv "LETIBOT_SOCKET")))
-    (if mine
-        (let ((hit (find mine plists :key (lambda (p) (getf p :socket)) :test #'string=)))
-          (if hit (cons hit (remove hit plists)) plists))
-        plists)))
+    (cond
+      (mine
+       (let ((hit (find mine plists :key (lambda (p) (getf p :socket)) :test #'string=)))
+         (if hit (cons hit (remove hit plists)) plists)))
+      (t
+       (let* ((cwd (namestring (uiop:getcwd)))
+              ;; the MOST SPECIFIC workspace wins: /home/dead matches a head in
+              ;; /home/dead/Projects/leticl too (that path is inside it), and
+              ;; picking the shorter one attaches to the wrong daemon — measured,
+              ;; an empty screen and a fresh session in the parent folder.
+              (hit (first (sort (remove-if-not
+                                 (lambda (p) (%in-workspace (getf p :workspace) cwd))
+                                 plists)
+                                #'>
+                                :key (lambda (p) (length (getf p :workspace)))))))
+         (if hit (cons hit (remove hit plists)) plists))))))

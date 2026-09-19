@@ -29,8 +29,11 @@
   (out (* hl-u8))
   (out-cap hl-size))
 
-(defparameter *hl-so* nil "The loaded shim, or NIL when uncoloured.")
-(defparameter *hl-attempted* nil)
+;; defvar: *hl-so* is the handle of the RUNNING head's loaded shim, and a live
+;; push of this file would otherwise set it back to nil and silently turn
+;; highlighting off (measured: pushing this file did exactly that).
+(defvar *hl-so* nil "The loaded shim, or NIL when uncoloured.")
+(defvar *hl-attempted* nil)
 
 (defun hl-so-path ()
   "Where the shim lives: $LETICL_HL_SO, else the build outputs, in order."

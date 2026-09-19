@@ -15,7 +15,12 @@ terminal: the wide char before it advances the cursor over both columns.")
 
 ;;; ---------------------------------------------------------------- styles ;;;
 
-(defparameter *styles* (make-array 8 :adjustable t :fill-pointer 1 :initial-element nil)
+;; The style intern table is LIVE state: cells hold indices into it, so a
+;; redefinition that reset it would repaint the whole screen with wrong colours
+;; (measured: a live push of this file did exactly that). defvar assigns only
+;; when unbound, so a push leaves a running head's table — and its indices —
+;; alone.
+(defvar *styles* (make-array 8 :adjustable t :fill-pointer 1 :initial-element nil)
   "Interned style specs. Index 0 is always the default (empty) style.")
 
 (defparameter *style-sgrs*

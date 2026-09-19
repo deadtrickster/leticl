@@ -140,7 +140,7 @@ folded text, or the text unchanged when it holds no screen."
                     (wrap-segments
                      (list (cons (getf body :text) '(:italic t :fg :bright-black)))
                      (max 2 (- cols 2))))))
-         ((:tool-result)
+         ((:tool_result)
           (let* ((name (getf body :name))
                  (outcome (getf body :outcome))
                  (payload (getf body :payload))

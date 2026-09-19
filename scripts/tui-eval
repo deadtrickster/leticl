@@ -4,13 +4,50 @@
 Usage:
   tui-eval FORM                 eval FORM in the (only) live head
   tui-eval --pid PID FORM       eval FORM in the head with that pid
+  tui-eval --socket PATH FORM   eval FORM in the head at that socket
+  tui-eval --file PATH          push a file's top-level forms, live
+  tui-eval --file PATH --all    … including the ones skipped by default
+  tui-eval --screen             show what the head last drew, then exit
+  tui-eval --no-verify          eval without the render gate
   tui-eval --list               print the pids of the live heads
+
+**Every eval is gated on the render.** After the form runs, this captures the
+head's own state and refuses to call it a success if the head can no longer
+paint: it pokes a repaint and checks the loop cleared it, that the head still
+has a stream to paint on, and that a full frame is on screen. Exit 3 means the
+eval RAN but left the head broken, and the message says what broke — recover
+with `--screen`, which prints what the head actually drew.
+
+That gate exists because this happened: `tui-eval --file src/head.lisp` ran
+`(defparameter *stdout* nil)` in a live head, and every frame afterwards was
+written nowhere. The head stayed alive and answered evals while the operator's
+screen tore, with no error in any log. The source is `defvar` there now, and no
+future change of that kind gets to announce itself only on the operator's
+terminal.
 
 A head listens on <runtime-dir>/tui-<pid>.sock, where runtime-dir is
 $XDG_RUNTIME_DIR, falling back to /tmp/leticl-<uid> (src/socket.lisp
-runtime-dir). The line protocol is one request per line, `eval <form>`;
-the reply is one JSON line {"ok":true,"value":"…","ms":N} or
-{"ok":false,"error":"…"}.
+runtime-dir). That is the environment of the shell that STARTED the head,
+which need not be the caller's — an agent context with no XDG_RUNTIME_DIR
+reaching a head started from a real terminal is the normal case, so the
+caller's dir, /run/user/<uid>, and the fallback are all searched, and
+--socket skips the search entirely. The line protocol is one request per
+line, `eval <form>`; the reply is one JSON line
+{"ok":true,"value":"…","ms":N} or {"ok":false,"error":"…"}.
+
+--file is why this exists. Editing src/head.lisp and wanting the running
+head to have it should be one command, not a restart. The file is NOT
+parsed here: the head opens it and evals each top-level form in order, in
+its own image, with its own packages and reader — so alexandria's `alet`,
+the `leticl` package, and every reader macro behave exactly as they do at
+load time. Forms that cannot safely be re-evaluated into a live image are
+skipped and reported unless --all:
+
+  defstruct  defclass  defpackage  defconstant  define-symbol-macro
+  eval-when  require   in-package
+
+(Those change layout or definitions the running image already copied:
+re-evaluating a defstruct leaves existing instances on the old layout.)
 
 Trust: this is arbitrary code execution in the head's image, by design —
 the same trust a person at a REPL has. Per-user socket, mode 0600.
@@ -18,9 +55,11 @@ the same trust a person at a REPL has. Per-user socket, mode 0600.
 import glob
 import json
 import os
+import re
 import socket
 import sys
 import tempfile
+import time
 
 
 def runtime_dir():
@@ -29,27 +68,67 @@ def runtime_dir():
         tempfile.gettempdir(), "leticl-{}".format(os.getuid()))
 
 
+def runtime_dirs():
+    """Every place a head's socket may be, most likely first.
+
+    A head's socket lives wherever the head's own XDG_RUNTIME_DIR pointed, and
+    that is the environment of the shell that STARTED it — not necessarily the
+    caller's. An agent context with no XDG_RUNTIME_DIR calling a head started
+    from a real terminal (which has one) would otherwise look in
+    /tmp/leticl-<uid> and find nothing. So search the caller's dir, then the
+    standard login-session dir, then the fallback; --socket skips the search.
+    """
+    dirs = []
+    xdg = os.environ.get("XDG_RUNTIME_DIR")
+    if xdg:
+        dirs.append(xdg)
+    for cand in ("/run/user/{}".format(os.getuid()),
+                 os.path.join(tempfile.gettempdir(),
+                              "leticl-{}".format(os.getuid()))):
+        if cand not in dirs:
+            dirs.append(cand)
+    return dirs
+
+
 def socket_path(pid):
     return os.path.join(runtime_dir(), "tui-{}.sock".format(pid))
 
 
+def find_socket(pid, explicit=None):
+    """The socket for PID: an explicit path, or the first candidate dir that
+    holds a tui-<pid>.sock. Falls back to the caller's own runtime dir."""
+    if explicit:
+        return explicit
+    for d in runtime_dirs():
+        p = os.path.join(d, "tui-{}.sock".format(pid))
+        if os.path.exists(p):
+            return p
+    return socket_path(pid)
+
+
 def list_heads():
-    """The pids of the live heads, from the tui-<pid>.sock files."""
-    pids = []
-    for path in sorted(glob.glob(os.path.join(runtime_dir(), "tui-*.sock"))):
-        name = os.path.basename(path)
-        try:
-            pids.append(int(name[4:-5]))  # strip 'tui-' and '.sock'
-        except ValueError:
-            pass
-    return pids
+    """The pids of the LIVE heads, from the tui-<pid>.sock files in every
+    candidate runtime dir (deduped, sorted). A stale socket whose process is
+    gone is left out: a head that crashed without unlink would otherwise look
+    like a head you can talk to."""
+    seen = set()
+    for d in runtime_dirs():
+        for path in sorted(glob.glob(os.path.join(d, "tui-*.sock"))):
+            name = os.path.basename(path)
+            try:
+                pid = int(name[4:-5])  # strip 'tui-' and '.sock'
+            except ValueError:
+                continue
+            if os.path.isdir("/proc/{}".format(pid)):
+                seen.add(pid)
+    return sorted(seen)
 
 
-def eval_form(pid, form):
+def eval_form(pid, form, path=None):
     """Send `eval <form>` to the head and return the reply line."""
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
-        s.connect(socket_path(pid))
+        s.connect(path or socket_path(pid))
         s.sendall(("eval " + form + "\n").encode("utf-8"))
         buf = b""
         while not buf.endswith(b"\n"):
@@ -62,22 +141,191 @@ def eval_form(pid, form):
         s.close()
 
 
+#; ------------------------------------------------- the gate after every eval ;;;
+
+# The head prints its reply with prin1, so a string value arrives wrapped in
+# quotes with Lisp escaping. Undo just enough of it to read our own control
+# strings back (they hold only ASCII and newlines).
+def unquote_lisp(s):
+    if len(s) >= 2 and s.startswith('"') and s.endswith('"'):
+        body = s[1:-1]
+        out = []
+        i = 0
+        while i < len(body):
+            if body[i] == "\\" and i + 1 < len(body):
+                nxt = body[i + 1]
+                out.append({"n": "\n", "t": "\t", '"': '"', "\\": "\\"}.get(nxt, nxt))
+                i += 2
+            else:
+                out.append(body[i])
+                i += 1
+        return "".join(out)
+    return s
+
+
+def reply_value(line):
+    """The `value` of a reply line, as a Python object; raises on an error reply."""
+    j = json.loads(line)
+    if not j.get("ok"):
+        raise RuntimeError(j.get("error", "the eval failed"))
+    return j.get("value")
+
+
+# Health in ONE string, so the reply is trivial to read back.
+HEALTH_FORM = (
+    '(format nil "stdout=~a rows=~d/~d cols=~d/~d rows-n=~d" '
+    '(if *stdout* "ok" "NIL") (length (head-last-rows *head*)) (head-rows *head*) '
+    '(head-last-cols *head*) (head-cols *head*) (head-last-rows-n *head*))'
+)
+
+# The screen exactly as the head drew it: rows with their ANSI, newline-joined.
+SCREEN_FORM = '(format nil "~{~a~%~}" (head-last-rows *head*))'
+
+# Poke a repaint. The loop clears `dirty` when it paints, so reading it back
+# after a beat is a liveness probe: a head that stopped painting leaves it T.
+POKE_FORM = '(progn (setf (head-dirty *head*) t) (head-dirty *head*))'
+
+
+def check_health(pid, target, settle=0.5):
+    """Prove the head can still paint, and say what it drew. Returns problems.
+
+    This is the gate the eval surface needs: a live redefinition can leave the
+    head alive and answering evals while unable to paint — a clobbered *stdout*
+    did exactly that, and the operator saw a torn screen with no error anywhere.
+    Checks, in order:
+      - the paint loop is running: poke `dirty`, and it must be cleared by the
+        next tick (a dead loop leaves it T forever);
+      - the head has a stream to paint on (*stdout* non-nil);
+      - a FULL frame is on screen (rows == the terminal's rows).
+    """
+    problems = []
+    try:
+        eval_form(pid, POKE_FORM, target)
+        time.sleep(settle)
+        dirty = reply_value(eval_form(pid, "(head-dirty *head*)", target))
+        if dirty == "T":
+            problems.append(
+                "the paint loop did not clear `dirty` — the head is not repainting "
+                "(its render thread is stuck or dead)")
+        health = unquote_lisp(reply_value(eval_form(pid, HEALTH_FORM, target)))
+    except FileNotFoundError:
+        problems.append(
+            "the head is GONE: no socket at {}. It exited (or was closed) — "
+            "nothing is listening to paint. Start a head before patching "
+            "one.".format(target))
+        return problems, None
+    except (OSError, ValueError, RuntimeError) as e:
+        problems.append("could not read the head's state: {}".format(e))
+        return problems, None
+
+    fields = {}
+    for kv in health.split():
+        if "=" in kv:
+            k, v = kv.split("=", 1)
+            fields[k] = v
+    if not fields:
+        problems.append(
+            "could not read the head's health: it answered {!r}, not the "
+            "stdout=/rows=/cols= line this asks for".format(health[:80]))
+        return problems, health
+    if fields.get("stdout") != "ok":
+        problems.append(
+            "*stdout* is {} — the head has no stream to paint on; every frame is "
+            "being written nowhere (a live `defparameter` can clobber it)".format(
+                fields.get("stdout")))
+    rows, rows_want = fields.get("rows", "?/?").split("/")
+    if rows != rows_want:
+        problems.append(
+            "the screen holds {} of {} rows — the last frame did not paint "
+            "fully".format(rows, rows_want))
+    return problems, health
+
+
+def capture_screen(pid, target):
+    """What the head last drew, as one string (rows joined by newline, ANSI in)."""
+    return unquote_lisp(reply_value(eval_form(pid, SCREEN_FORM, target)))
+
+
+def strip_ansi(s):
+    return re.sub(r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b[()][0-9A-B]", "", s)
+
+
+# Forms that must not be re-evaluated into a live image: they change layout or
+# definitions the running image has already copied. See the module docstring.
+NOT_LIVE = ("DEFSTRUCT", "DEFCLASS", "DEFPACKAGE", "DEFCONSTANT",
+            "DEFINE-SYMBOL-MACRO", "EVAL-WHEN", "REQUIRE", "IN-PACKAGE")
+
+
+def lisp_string(s):
+    """S as a Lisp string literal, so a path with a quote or backslash survives."""
+    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def file_form(path, send_all):
+    """One form that makes the HEAD load PATH's top-level forms into itself.
+
+    The head does the reading, so the forms are read with the head's own
+    *package* (:leticl) and its reader — alexandria's `alet` resolves the way
+    it does at load time, which a second reader in this process could not
+    promise. Each form is evaluated in order; a form that errors is reported
+    and the rest are still tried, so one bad defun does not hold the file
+    hostage. On the wire this is a single line, as the protocol requires.
+    """
+    skip = () if send_all else NOT_LIVE
+    return (
+        "(let ((path %s) (skip '(%s)) (ok 0) (skipped nil) (failed nil)) "
+        "(with-open-file (in path) "
+        "(loop for form = (read in nil :eof) until (eq form :eof) do "
+        "(let ((h (and (consp form) (symbol-name (car form))))) "
+        "(cond ((and h (member h skip :test #'string=)) "
+        "(push (string-downcase h) skipped)) "
+        "(t (handler-case (progn (eval form) (incf ok)) "
+        "(error (e) (push (format nil \"~a ~a\" (or h \"?\") e) failed)))))))) "
+        "(list :evaluated ok :skipped (nreverse skipped) "
+        ":failed (nreverse failed)))"
+        % (lisp_string(path), " ".join('"%s"' % s for s in skip))
+    )
+
+
 def main(argv):
     args = argv[1:]
     pid = None
     do_list = False
+    do_file = None
+    send_all = False
+    sock = None
+    do_screen = False
+    verify = True
     forms = []
     i = 0
     while i < len(args):
         a = args[i]
         if a == "--list":
             do_list = True
+        elif a == "--all":
+            send_all = True
+        elif a == "--screen":
+            do_screen = True
+        elif a == "--no-verify":
+            verify = False
         elif a == "--pid":
             i += 1
             if i >= len(args):
                 print("--pid needs a value", file=sys.stderr)
                 return 2
             pid = int(args[i])
+        elif a == "--socket":
+            i += 1
+            if i >= len(args):
+                print("--socket needs a path", file=sys.stderr)
+                return 2
+            sock = args[i]
+        elif a == "--file":
+            i += 1
+            if i >= len(args):
+                print("--file needs a path", file=sys.stderr)
+                return 2
+            do_file = args[i]
         else:
             forms.append(a)
         i += 1
@@ -87,32 +335,67 @@ def main(argv):
             print(p)
         return 0
 
-    form = " ".join(forms).strip()
-    if not form:
-        print(__doc__.strip(), file=sys.stderr)
-        return 2
+    if do_file is not None:
+        path = os.path.abspath(do_file)
+        if not os.path.isfile(path):
+            print("no such file: " + path, file=sys.stderr)
+            return 2
+        form = file_form(path, send_all)
+    elif do_screen and not forms:
+        form = None                      # --screen alone: just capture
+    else:
+        form = " ".join(forms).strip()
+        if not form:
+            print(__doc__.strip(), file=sys.stderr)
+            return 2
 
-    if pid is None:
+    if pid is None and sock is None:
         heads = list_heads()
         if len(heads) == 1:
             pid = heads[0]
         elif not heads:
-            print("no live leticl heads under " + runtime_dir(), file=sys.stderr)
+            print("no live leticl heads under " + " or ".join(runtime_dirs()),
+                  file=sys.stderr)
             return 1
         else:
             print("multiple heads {}; use --pid".format(heads), file=sys.stderr)
             return 1
 
-    try:
-        reply = eval_form(pid, form)
-    except OSError as e:
-        print("cannot reach head {}: {}".format(pid, e), file=sys.stderr)
-        return 1
+    target = sock or find_socket(pid, sock)
 
-    try:
-        print(json.dumps(json.loads(reply), indent=2))
-    except ValueError:
-        print(reply)
+    if form is not None:
+        try:
+            reply = eval_form(pid, form, target)
+        except OSError as e:
+            print("cannot reach {}: {}".format(target, e), file=sys.stderr)
+            return 1
+        try:
+            print(json.dumps(json.loads(reply), indent=2))
+        except ValueError:
+            print(reply)
+
+    # The gate. Every eval can leave the head unable to paint while still
+    # answering evals, so prove it painted before this command returns.
+    if verify:
+        problems, health = check_health(pid, target)
+        if health:
+            print("gate: " + health, file=sys.stderr)
+        if problems:
+            print("", file=sys.stderr)
+            print("GATE FAILED — the head is not rendering correctly:", file=sys.stderr)
+            for p in problems:
+                print("  · " + p, file=sys.stderr)
+            print("", file=sys.stderr)
+            print("The eval above DID run; the head is in the state it left it. "
+                  "Recover with `tui-eval --screen` to see what it draws, and "
+                  "re-push the definition that broke it.", file=sys.stderr)
+            return 3
+
+    if do_screen:
+        screen = capture_screen(pid, target)
+        print("--- what the head last drew (ANSI stripped) ---")
+        print(strip_ansi(screen).rstrip("\n"))
+        print("--- end ---")
     return 0
 
 
