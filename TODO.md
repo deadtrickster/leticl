@@ -322,69 +322,92 @@ items done here and in the harness todo list.
 
 ### The DAG
 
+**S0 is done**, so the graph below is live and the frontier is really six.
+
 ```
-S0  decomposition ─┬─────────────────────────────────────────────┐
-                   │  (without S0, every strand below serializes  │
-                   │   on head.lisp and render.lisp — see S0)     │
-                   ▼                                              │
-S1  wire        ─────────────────────────────────────┐            │
-S2  engines     ─┬─ S3  cards ───────────────────────┼─ S9 ── S10 │
-S4  editor      ─┘                                   │            │
-S5  prefs  ──────── S6  panes  ──── S7  commands ────┘            │
-S8  chrome      ─────────────────────────────────────┘            │
-S11 docs        (independent, no deps, no dependents)             │
-                                                                  ▼
-                                              all strands: Gate 1 + Gate 2
+S1  wire        ─────────────────────────────────────┐
+S2  engines     ─┬─ S3  cards ───────────────────────┼─ S9 ── S10
+S4  editor      ─┘                                   │
+S5  prefs  ──────── S6  panes  ──── S7  commands ────┘
+S8  chrome      ─────────────────────────────────────┘
+S11 docs        (independent, no deps, no dependents)
+                                       all strands: Gate 1 + Gate 2
 ```
 
 Reading: **S3 needs S2** (it renders with S2's engine). **S6 needs S5** (the
 config pane writes what prefs holds). **S7 needs S6** (the pickers are the
 commands' menus). **S9 needs S1+S3+S6+S8** (it binds chords to features that must
 already exist). **S10 needs S3+S8** (measuring a render path worth caching).
-**S1, S2, S4, S5, S8, S11** have no deps and are the parallel frontier.
 
-**The parallel frontier, in one line**: without S0 it is exactly one strand at a
-time; with S0 it is six (`S1, S2, S4, S5, S8, S11`), then the gates release the
-rest.
+**The parallel frontier, in one line**: `S1, S2, S4, S5, S8, S11` — six strands
+with no deps between them and, since S0, no shared file either. The gates then
+release the rest.
 
-### S0 — decomposition (do this first, or accept a serial plan)
+**File ownership is what makes that true**, so it is a rule and not a hope: a
+strand edits the files S0 assigned it and no others. Crossing a boundary is how
+two agents overwrite each other's work — the shared files (`TODO.md`,
+`PARITY.md`, `leticl.asd`, `package.lisp`) are the orchestrator's, and a strand
+that needs one changed asks for it.
 
-**Why.** `head.lisp` (687 lines) and `render.lisp` (552) are the files *every*
-strand must touch: ack and the key ladder live in `head.lisp`, every card and
+### S0 — decomposition ✅ **done** (2026-09-19)
+
+**Why.** `head.lisp` (687 lines) and `render.lisp` (552) were the files *every*
+strand must touch: ack and the key ladder lived in `head.lisp`, every card and
 screen in `render.lisp`. Two strands editing one file cannot run at the same
-time, so **as the tree stands today the "parallel" strands below all serialize
-on those two files** — the DAG would be a lie.
+time, so **as the tree stood the "parallel" strands below all serialized on
+those two files** — the DAG would have been a lie.
 
-**What.** Pure refactor, **no behaviour change and no data-shape change**: carve
-each strand's area out into its own file, so a strand owns its file and the DAG is
-real. Function bodies move; nothing is rewritten, no dispatch is redesigned, and
-no wire-shaped value changes representation (see the boundary rule above).
+**What was done.** A pure carve: **no behaviour change and no data-shape change**.
+Function forms moved between files byte-exactly (verified: 77 forms in, 77 out,
+identical), nothing was rewritten, no dispatch redesigned, and no wire-shaped
+value changed representation.
 
-This is **not** a class migration. That is a separate, larger question — "should
+This was **not** a class migration. That is a separate, larger question — "should
 the head's own state be classes?" — and it belongs to whichever strand next needs
-to grow a piece of that state, not to the file carve. S0 keeps the distinction
-sharp precisely because it is the one change with a byte-identical acceptance
-test; bundling a redesign into it would make a failure ambiguous between the two.
+to grow a piece of that state.
 
-| new file | takes from | serves |
+**Where things are now** — the strand briefs depend on this table:
+
+| file | now owns | strand |
 |---|---|---|
-| `src/cards.lisp` | `render.lisp` item/call/turn rendering | S3 |
-| `src/chrome.lisp` | `render.lisp` status/composer/border | S8 |
-| `src/panes.lisp` | `render.lisp` picker/help/status/config/jobs/subagents/peek/todos | S6, S7 |
-| `src/editor.lisp` | `keys.lisp` composer + `head.lisp` key ladder | S4 |
-| `src/commands.lisp` | `head.lisp` `%command` + `render.lisp` `*slash-commands*` | S7 |
-| `src/prefs.lisp` | new | S5 |
+| `src/head.lisp` (687→292) | the `head` struct, threads, the loop, frame handling, reconnect, lifecycle | S1 |
+| `src/render.lisp` (552→178) | the frame **engine**: segment/wrap machinery, `%viewport-lines`, `%render`, `%place-lines`, `%render-and-paint` | S10 |
+| `src/cards.lisp` (new, 221) | `item-lines`, `call-lines`, `turn-lines`, `awhen-edit-lines`, `%fold-cells`, `%outcome-style`, and the decision/quit/secret cards | S3 |
+| `src/chrome.lisp` (new, 44) | `top-border`, `status-line`, `composer-line` | S8 |
+| `src/panes.lisp` (new, 190) | the nine full-body screens (picker, help, status, config, jobs, subagents, repo-todos, todos, peek) | S6, S7 |
+| `src/editor.lisp` (new, 273) | the composer (from `keys.lisp`) + the key ladder (`%handle-key`, `%normal-key`, `%submit-line`, `%complete`, `%open-decision`, `%answer-decision`) | S4 |
+| `src/commands.lisp` (new, 103) | `*slash-commands*` (from `render.lisp`), `%command`, `%prompt`, `%cells`, `%interrupt`, and the `*cells-*` delimiters | S7 |
+| `src/keys.lisp` (219→137) | the terminal **decoder** only (term.rs's tables) | — |
+| `src/prefs.lisp` (new, header only) | nothing yet — S5 fills it | S5 |
 
-**Done when**: tests still 172/172, the live head still gates green, and
-`tui-eval --screen` is **byte-identical** to before the refactor. Capture the
-before and after to files and `diff` them — this is the one strand where that is
-the whole acceptance test, so use it.
+`leticl.asd` orders them so accessors resolve at compile time: `head` comes after
+everything it does not need and before everything that reaches through it; `render`
+comes after the files it composes.
 
-**Tradeoff, stated honestly**: S0 is a day of unpicking with no visible feature,
-and it serializes the start. Skipping it does not block anything — every strand
-still lands — it only means the work is **one strand at a time** instead of six.
-That is the whole reason to do it, and the reason it is a decision rather than an
-assumption.
+**Acceptance, as measured** (not asserted):
+
+- **Gate 1**: `sbcl --script run.lisp test` — **172/172**, unchanged.
+- **Gate 2**: every carved file pushed to the running head
+  (`pid 3567952`), `gate: stdout=ok rows=63/63 cols=210/210` after each, **0
+  failures**.
+- **Byte-identical**: a battery of 27 pure render calls against fixed inputs
+  (wrap, markdown, every `item-lines` kind, `call-lines`, `turn-lines`,
+  `help-lines`, the panes, the chrome, the composer, the command registry) —
+  **26 identical, 0 real diffs**. The one difference is `status-screen-lines`,
+  which reads the *live* session (seq/items/usage moved between captures) and is
+  expected to; `--screen` itself cannot be byte-compared because the transcript
+  grows during the test.
+- **Warnings went 5 → 3** (the survivors are vendored `yason`'s and a
+  pre-existing `type` shadow), because the new order resolves `*slash-commands*`
+  and `*stdout*` at compile time.
+
+**Follow-ups S0 surfaced, for whichever strand touches them:**
+
+- `%normal-key` binds a variable named `type`, shadowing `cl:type` (the remaining
+  `TYPE` warning). A one-word rename; left alone here because S0 moves code and
+  does not edit it.
+- `eval-when`/`require` stay skipped by `--file`, so `sb-concurrency` must be in
+  the image already — true for `bin/leticl-head`, and noted for a fresh image.
 
 ---
 

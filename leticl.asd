@@ -15,6 +15,7 @@ through an eval socket and see the change on the next frame."
                #:yason)
   :serial t
   :components ((:file "src/package")
+               (:file "src/prefs")
                (:file "src/term")
                (:file "src/width")
                (:file "src/cells")
@@ -23,12 +24,25 @@ through an eval socket and see the change on the next frame."
                (:file "src/protocol")
                (:file "src/socket")
                (:file "src/session")
-               (:file "src/keys")
                (:file "src/markdown")
                (:file "src/highlight")
                (:file "src/diff")
-               (:file "src/render")
+               (:file "src/keys")
+               ;; `head` defines the head STRUCT and the loop. It comes before
+               ;; everything that reaches through it, so accessors resolve at
+               ;; compile time; the few functions it calls forward
+               ;; (%render-and-paint, %handle-key, make-composer) are runtime
+               ;; calls and warn rather than fail.
                (:file "src/head")
+               (:file "src/commands")
+               (:file "src/cards")
+               (:file "src/chrome")
+               (:file "src/panes")
+               ;; `render` is the frame engine: it composes the screen out of
+               ;; the cards, chrome and panes above, and owns the segment and
+               ;; viewport machinery.
+               (:file "src/render")
+               (:file "src/editor")
                (:file "src/hack")
                (:file "src/demo")))
 

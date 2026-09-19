@@ -1,10 +1,13 @@
-;;;; keys.lisp — terminal input decoding and the composer.
+;;;; keys.lisp — terminal input decoding.
 ;;;;
 ;;;; The decoder mirrors crates/tui/src/term.rs's tables: CSI sequences,
 ;;;; application cursor keys, SGR mouse (?1006) and bracketed paste (?2004) —
 ;;;; the modes enter-tui switches on. A lone ESC is disambiguated by a short
-;;;; wait: a terminal sends a sequence in one write, so silence after ESC
-;;;; means ESC.
+;;;; wait: a terminal sends a sequence in one write, so silence after ESC means
+;;;; ESC.
+;;;;
+;;;; The composer and the key ladder are in `editor.lisp`. This file turns bytes
+;;;; into key plists and knows nothing about what a key means.
 
 (in-package #:leticl)
 
@@ -14,7 +17,6 @@
 ;;; Key events are plists: (:type :char :ch #\a), (:type :enter),
 ;;; (:type :ctrl :ch #\c), (:type :up), (:type :paste :text "…"),
 ;;; (:type :mouse :x 3 :y 7 :button 0 :kind :press) …
-
 (defun %poll-char (stream deadline)
   "One char when one is available before DEADLINE (internal-time units).
 Waits on the fd rather than polling listen — the same race wait-for-input
@@ -144,76 +146,4 @@ terminator is kept as content — a paste may contain anything."
        (list :type :ctrl :ch (code-char (+ 96 (char-code ch)))))
       (t (list :type :char :ch ch)))))
 
-;;; ------------------------------------------------------------ composer ;;;
 
-(defstruct (composer (:constructor make-composer ()))
-  (buffer "" :type string)
-  (cursor 0 :type fixnum)
-  (history (make-array 0 :adjustable t :fill-pointer 0) :type vector)
-  (hist-pos 0 :type fixnum))
-
-(defun composer-insert (c string)
-  (setf (composer-buffer c)
-        (concatenate 'string
-                     (subseq (composer-buffer c) 0 (composer-cursor c))
-                     string
-                     (subseq (composer-buffer c) (composer-cursor c))))
-  (incf (composer-cursor c) (length string)))
-
-(defun composer-delete-backward (c)
-  (when (plusp (composer-cursor c))
-    (setf (composer-buffer c)
-          (concatenate 'string
-                       (subseq (composer-buffer c) 0 (1- (composer-cursor c)))
-                       (subseq (composer-buffer c) (composer-cursor c))))
-    (decf (composer-cursor c))))
-
-(defun composer-delete-forward (c)
-  (when (< (composer-cursor c) (length (composer-buffer c)))
-    (setf (composer-buffer c)
-          (concatenate 'string
-                       (subseq (composer-buffer c) 0 (composer-cursor c))
-                       (subseq (composer-buffer c) (1+ (composer-cursor c)))))))
-
-(defun composer-move (c key)
-  (case key
-    (:left (setf (composer-cursor c) (max 0 (1- (composer-cursor c)))))
-    (:right (setf (composer-cursor c) (min (length (composer-buffer c))
-                                           (1+ (composer-cursor c)))))
-    (:home (setf (composer-cursor c) 0))
-    (:end (setf (composer-cursor c) (length (composer-buffer c))))))
-
-(defun composer-kill-to-end (c)
-  (setf (composer-buffer c) (subseq (composer-buffer c) 0 (composer-cursor c))))
-
-(defun composer-kill-line (c)
-  (setf (composer-buffer c) (subseq (composer-buffer c) (composer-cursor c))
-        (composer-cursor c) 0))
-
-(defun composer-kill-word (c)
-  "Ctrl+W: back to the start of the word before the cursor."
-  (let ((i (composer-cursor c))
-        (buf (composer-buffer c)))
-    (loop while (and (plusp i) (char= (char buf (1- i)) #\space)) do (decf i))
-    (loop while (and (plusp i) (char/= (char buf (1- i)) #\space)) do (decf i))
-    (setf (composer-buffer c) (concatenate 'string (subseq buf 0 i) (subseq buf (composer-cursor c)))
-          (composer-cursor c) i)))
-
-(defun composer-push-history (c line)
-  (vector-push-extend line (composer-history c))
-  (setf (composer-hist-pos c) (length (composer-history c))))
-
-(defun composer-history-step (c delta)
-  "Up/Down through sent lines. The in-progress line is kept at position
-`length`, so leaving history restores what was half-typed."
-  (let* ((n (length (composer-history c)))
-         (target (+ (composer-hist-pos c) delta)))
-    (when (<= 0 target n)
-      (when (= (composer-hist-pos c) n)
-        (setf (get 'composer :draft) (composer-buffer c)))
-      (setf (composer-hist-pos c) target)
-      (setf (composer-buffer c)
-            (if (= target n)
-                (or (get 'composer :draft) "")
-                (aref (composer-history c) target)))
-      (setf (composer-cursor c) (length (composer-buffer c))))))
