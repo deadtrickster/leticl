@@ -350,12 +350,12 @@ S11 docs        (independent, no deps, no dependents)
 
 Reading: **S3 needs S2** (it renders with S2's engine). **S6 needs S5** (the
 config pane writes what prefs holds). **S7 needs S6** (the pickers are the
-commands' menus). **S9 needs S1+S3+S6+S8** (it binds chords to features that must
-already exist). **S10 needs S3+S8** (measuring a render path worth caching).
+commands' menus). **S9 needs S3+S6+S8** — S1 is done (it binds chords to features that
+must already exist). **S10 needs S3+S8** (measuring a render path worth caching).
 
-**The parallel frontier, in one line**: `S1, S2, S4, S5, S8, S11` — six strands
-with no deps between them and, since S0, no shared file either. The gates then
-release the rest.
+**The parallel frontier, in one line**: `S2, S4, S5, S8, S11` — five strands
+with no deps between them and, since S0, no shared file either. **S1 is done**, so
+S9 no longer waits on it (`S9` needs `S3+S6+S8` now).
 
 **File ownership is what makes that true**, so it is a rule and not a hope: a
 strand edits the files S0 assigned it and no others. Crossing a boundary is how
@@ -425,25 +425,49 @@ comes after the files it composes.
 
 ---
 
-### S1 — honest wire (no deps)
+### S1 — honest wire ✅ **done** (2026-09-20, commits `164475a`, `42fead7`)
 
-What is wrong rather than missing: `PARITY.md` §2.
+What was wrong rather than missing: `PARITY.md` §2.
 
-- [ ] **P1** the head never **acks**. `make-ack`/`ack-frame` exist and are called
-  from nowhere; `run-loop` does not ack. ack after painting, with a test that
-  fails without it (`PLAN.md` §5.1 says so in as many words). Files: `head.lisp`,
-  `session.lisp`.
-- [ ] **P2** the **dead frames**: `/resync` (the frame is never sent, so §M6's
-  drills only test the daemon-initiated path), the **peek** command and its
-  unreachable `:peek` screen, the `list_todos` bootstrap read, and
-  `resume_session` from the picker. Files: `head.lisp`, `protocol.lisp`.
-- [ ] **P44** **settings on attach** — see the S6 section for the measurement;
-  listed here because it is the same defect as P1 and P2 (a frame the head owes
-  and never sends), and because its send site is `head.lisp`.
+- [x] **P1** **the head acks.** `run-loop` drains, classifies each frame
+  (`:rendered` / `:filtered` / `:control`, the disposition `driver.rs:31` uses),
+  **paints**, and then acks the last seq **read** with the counts. The seq is the
+  last one read and never the last one drawn — that is what lets a head filter
+  freely: it acknowledges what it consumed. `%handle-frame` returns the
+  disposition; `apply-event`'s `:dirty` is the classifier for events.
+  **Witnessed on the wire** (`{"frame":"ack","seq":2,"rendered":2,"filtered":0}`)
+  by acting as the daemon — the head's writes are otherwise unobservable: we
+  cannot ptrace it and the daemon does not log frames.
+- [x] **P44** **settings on attach.** `ServerFrame::Settings` is only ever sent in
+  reply to a request, so a head that never asked had none and the header fell
+  back to the `Hello` model for ever. Sent from the **hello handler**, which
+  covers attach, switch and reconnect with one send — a `Switch` lands as a
+  hello. The reply no longer opens the pane (or `/config` would pop up at every
+  attach), so `/config` asks *and* opens.
+- [ ] **P2** the **dead frames**: `/resync` (never sent, so §M6's drills only test
+  the daemon-initiated path), the **peek** command and its unreachable `:peek`
+  screen, the `list_todos` bootstrap read, and `resume_session` from the picker.
+  Files: `head.lisp`, `protocol.lisp`. **Not done** — carried to the next pass.
 
-**Live**: attach, `/resync`, gate green, `--screen` shows a fresh snapshot; a
-`tui-eval --pid <PID> '(list :seq (session-seq (head-session *head*)))'` before and
-after a resync shows the mark move.
+**Two more bugs of the same shape were found by measuring while doing P44**, both
+now fixed: `config-lines` read `:name` where `SettingRow` carries `key`
+(protocol.rs:214), so the config pane printed `NIL` as every setting's label;
+and `%model-name` read the *global* `*head*` instead of the session handed to it,
+which the new test caught.
+
+**And the reason a push kept killing the head.** A render error runs on the MAIN
+thread, where `--disable-debugger` means *quit*, so one bad row cost the session.
+Three doors closed: `%render-and-paint` is guarded (a failure paints itself, and
+a good frame clears the flag, so a fix needs no restart); a **paint lock** that a
+push holds for the whole eval and a frame holds for the whole frame, so a
+definition cannot land under an in-flight call; and `--tree` pushes the
+lock-defining files **first** (`render`, then `hack`), because a mechanism cannot
+protect a head that does not have it yet. Verified on a purpose-built old image —
+lock `UNBOUND` → push → `BOUND`, `render=ok`, survived.
+
+**Live**: the header on the operator's head now reads `deepseek/deepseek-flash`
+(the truth) instead of `qwen-3.8-27b`; `head-settings` holds 38 rows; the paint
+lock is bound; `gate: render=ok`. Tests 176 → 178.
 
 ### S2 — engines (no deps)
 
