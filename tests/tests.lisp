@@ -548,3 +548,75 @@ reader line 4 changed when it was line 313."
                "anything but eval is refused")
            (ignore-errors (close st)))
       (hack-stop head))))
+
+;;; ------------------------------------------------- render resilience ;;;
+
+(def-test render-error-does-not-kill-the-head (:suite leticl)
+  "A broken RENDER must not take the head down.
+
+This is the guarantee that makes `tui-eval --file` usable. The render runs on
+the MAIN thread, and with --disable-debugger an unhandled error there quits the
+process rather than printing and carrying on — so one bad row, or a push that
+half-landed, used to cost the operator the head, the session and the screen.
+Measured twice; this is the test that says it cannot happen again.
+
+`*stdout*` is bound to a string stream so the failure frame is painted into the
+test rather than onto the terminal it is running in. The functions under test
+are internals (`%render-and-paint`, `%paint-failure`), reached as
+`leticl::name` on purpose: exporting them would promise a contract this test is
+not asking for, and the guarantee is about the WHOLE call, so testing a piece
+of it would be testing something else."
+  (let ((leticl::*stdout* (make-string-output-stream))
+        (leticl::*last-render-error* nil)
+        (head (leticl::%make-head))
+        (real (symbol-function 'top-border)))
+    (unwind-protect
+         (progn
+           (screen-resize (head-screen head) 40 8)
+           (screen-resize (head-prev-screen head) 40 8)
+           (setf (head-cols head) 40
+                 (head-rows head) 8
+                 (head-dirty head) t
+                 (symbol-function 'top-border)
+                 (lambda (h c) (declare (ignore h c)) (error "deliberate break")))
+           ;; the whole point: this RETURNS. It used to quit the process.
+           (leticl::%render-and-paint head)
+           (is (typep leticl::*last-render-error* 'error)
+               "the failure is remembered, so the gate can report it")
+           (let ((rows (format nil "~{~a~}" (head-last-rows head))))
+             (is (search "render failed" rows)
+                 "the failure is DRAWN: a silent swallow would leave the gate
+green with a wrong screen, which is the defect this file's neighbours exist
+against")
+             (is (= 8 (length (head-last-rows head)))
+                 "a full frame is still there, so the gate's row check holds")
+             (is (null (head-dirty head))
+                 "the loop's tick completed, so the next pass can run")))
+      (setf (symbol-function 'top-border) real)
+      (setf leticl::*last-render-error* nil))))
+
+(def-test render-recovers-when-the-cause-is-fixed (:suite leticl)
+  "The error flag clears on the next GOOD frame, so a fix needs no restart.
+
+The stale error is what a push leaves behind when it was broken and the next
+push fixed it. A head whose render works must go back to green on its own:
+otherwise a fixed head stays marked FAILED until it is restarted, which is
+exactly the restart this whole mechanism exists to avoid."
+  (let ((leticl::*stdout* (make-string-output-stream))
+        (leticl::*last-render-error* (make-condition 'simple-error
+                                                     :format-control "stale"))
+        (head (leticl::%make-head)))
+    (unwind-protect
+         (progn
+           ;; the minimum a real head has before run-loop: a session to render
+           ;; and a frame's worth of geometry. Without these the render itself
+           ;; errors, which is a different case (and is the OTHER test).
+           (setf (head-session head) (make-session))
+           (setf (head-cols head) 40 (head-rows head) 8)
+           (screen-resize (head-screen head) 40 8)
+           (screen-resize (head-prev-screen head) 40 8)
+           (leticl::%render-and-paint head)
+           (is (null leticl::*last-render-error*)
+               "a frame that renders clears the stale error")
+           (is (null (head-dirty head)) "and the tick completed"))
+      (setf leticl::*last-render-error* nil))))

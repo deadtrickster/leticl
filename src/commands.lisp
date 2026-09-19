@@ -70,7 +70,12 @@ on ClientFrame::Slash)."
        (setf (getf (head-prefs head) :show-tools)
              (not (getf (head-prefs head) :show-tools))
              (head-dirty head) t))
-      ((string= verb "config") (%send head (make-settings)))
+      ((string= verb "config")
+       ;; Ask, and open the pane. The REPLY does not open it (a head asks for
+       ;; settings on attach now, and a reply that opened the pane would pop
+       ;; `/config` at every attach), so the command owns both halves.
+       (%send head (make-settings))
+       (setf (head-mode head) :config (head-dirty head) t))
       ((string= verb "mode")
        (if (plusp (length rest))
            (%send head (list :frame "mode"

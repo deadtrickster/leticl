@@ -114,12 +114,24 @@ paints to it, and defvar for the same reason as *head*.")
         (when (eq (getf key :type) :eof) (return))))))
 
 ;;; ------------------------------------------------------------ frames ;;;
+;;;
+;;; `%handle-frame` returns a DISPOSITION, which is what the ack counts
+;;; (driver.rs:31 classifies each frame the same three ways):
+;;;
+;;;   :rendered  something visible changed
+;;;   :filtered  consumed, nothing to draw (a head at terse renders little and
+;;;              must still advance, or it rereads its own output forever)
+;;;   :control   not session content: hello, ack-of-our-own, settings, bye
+;;;
+;;; The ack itself is sent by the loop, after painting, from the last seq READ
+;;; — never from this function, which does not know whether the frame went out.
 (defun %handle-frame (head frame)
   (cond
     ((and (consp frame) (eq (car frame) :disconnected))
      (setf (head-connected head) nil
            (head-status-note head) "detached — reconnecting…"
-           (head-dirty head) t))
+           (head-dirty head) t)
+     :control)
     ((and (consp frame) (string= (frame-name frame) "warning")
           (getf frame :code) (member (getf frame :code)
                                      '("malformed-frame" "read-error")
@@ -127,13 +139,20 @@ paints to it, and defvar for the same reason as *head*.")
      ;; our own transport warnings, not session events
      (setf (head-status-note head)
            (format nil "~a: ~a" (getf frame :code) (getf frame :detail))
-           (head-dirty head) t))
+           (head-dirty head) t)
+     :control)
     ((string= (frame-name frame) "hello")
      (ingest-hello (head-session head) frame)
      (setf (head-connected head) t
            (head-status-note head) nil
            (head-full-repaint head) t
-           (head-dirty head) t))
+           (head-dirty head) t)
+     ;; A `Switch` lands as a Hello on the new session, so asking here covers
+     ;; attach AND switch with one send (§7.4). Without it the header keeps the
+     ;; old session's model, and the rows a picker would read are another
+     ;; session's.
+     (%send head (make-settings))
+     :control)
     ((string= (frame-name frame) "event")
      (let* ((env frame)
             (name (event-name env)))
@@ -148,19 +167,22 @@ paints to it, and defvar for the same reason as *head*.")
                 (head-secret-buf head) ""
                 (head-dirty head) t))
          (t))
-       (when (eq (apply-event (head-session head) env) :dirty)
-         (setf (head-dirty head) t))
        ;; a queued prompt's row has landed: stop announcing it (app.rs:3018)
        (when (and (eq name :transcript-appended)
                   (string= (getf env :kind) "user")
                   (head-queued head))
          (pop (head-queued head))
-         (setf (head-dirty head) t))))
+         (setf (head-dirty head) t))
+       ;; apply-event is the classifier: :dirty means something visible moved.
+       (if (eq (apply-event (head-session head) env) :dirty)
+           (progn (setf (head-dirty head) t) :rendered)
+           :filtered)))
     ((string= (frame-name frame) "resync")
      (ingest-snapshot (head-session head) (getf frame :snapshot))
      (setf (head-full-repaint head) t
            (head-dirty head) t
-           (head-status-note head) (format nil "resync: ~a" (getf frame :reason))))
+           (head-status-note head) (format nil "resync: ~a" (getf frame :reason)))
+     :control)
     ((string= (frame-name frame) "accepted")
      ;; Telling the person who just pressed enter that their prompt was
      ;; accepted is not information — and the note sits on the status line for
@@ -169,33 +191,43 @@ paints to it, and defvar for the same reason as *head*.")
      (let ((note (getf frame :note)))
        (unless (and note (string= note +note-prompt-queued+))
          (setf (head-status-note head) note
-               (head-dirty head) t))))
+               (head-dirty head) t)))
+     :control)
     ((string= (frame-name frame) "rejected")
      (setf (head-status-note head)
            (format nil "rejected: ~a (expected seq ~a, daemon at ~a)"
                    (getf frame :reason) (getf frame :expected-seq)
                    (getf frame :actual-seq))
-           (head-dirty head) t))
+           (head-dirty head) t)
+     :control)
     ((string= (frame-name frame) "sessions")
      (setf (session-sessions (head-session head)) (getf frame :sessions)
            (head-picker-sel head) 0
-           (head-dirty head) t))
+           (head-dirty head) t)
+     :control)
     ((string= (frame-name frame) "todos")
      (setf (session-todos (head-session head)) (getf frame :todos)
-           (head-dirty head) t))
+           (head-dirty head) t)
+     :control)
     ((string= (frame-name frame) "settings")
+     ;; STORE the rows and stop there. Opening the pane is the COMMAND's act,
+     ;; not the reply's: the head asks for settings on attach now (they are only
+     ;; ever sent in reply to a request, §7.4), and a reply that opened the pane
+     ;; would pop `/config` at every attach.
      (setf (head-settings head) (getf frame :rows)
-           (head-mode head) :config
-           (head-dirty head) t))
+           (head-dirty head) t)
+     :control)
     ((string= (frame-name frame) "peeked")
      (setf (head-peeked head) (getf frame :events)
            (head-mode head) :peek
-           (head-dirty head) t))
+           (head-dirty head) t)
+     :control)
     ((string= (frame-name frame) "bye")
      (setf (head-connected head) nil
            (head-status-note head) (format nil "bye: ~a" (getf frame :reason))
-           (head-dirty head) t))
-    (t nil)))
+           (head-dirty head) t)
+     :control)
+    (t :control)))
 
 (defun %poll-resize (head)
   (multiple-value-bind (cols rows) (terminal-size 1)
@@ -207,6 +239,7 @@ paints to it, and defvar for the same reason as *head*.")
             (head-dirty head) t))))
 
 ;;; ------------------------------------------------------------- the loop ;;;
+
 (defun %drain (mailbox)
   (sb-concurrency:receive-pending-messages mailbox))
 
@@ -231,6 +264,10 @@ is a resume — the gap arrives as events, or a Resync does (§13.2)."
                            :session-id (session-session-id (head-session head))
                            :since-seq (session-seq (head-session head))
                            :identity "leticl"))
+              ;; and the settings again: a reconnect can land on a daemon whose
+              ;; session has moved, and the rows are what the header and the
+              ;; pickers read (§7.4)
+              (%send head (make-settings))
               ;; restart the reader: the old one died on the disconnect that
               ;; triggered this, and without a reader the fresh socket is
               ;; written to but never read — the head sits "connected" and
@@ -242,18 +279,60 @@ is a resume — the gap arrives as events, or a Resync does (§13.2)."
         (error (e)
           (setf (head-status-note head) (format nil "reconnect: ~a" e)))))))
 
+;;; ------------------------------------------------- the loop and its parts ;;;
+;;;
+;;; The order of three operations is the whole of it (driver.rs:1):
+;;;
+;;;   1. drain every frame that has arrived, classifying each
+;;;   2. draw
+;;;   3. ack the last seq READ, with (rendered, filtered)
+;;;
+;;; Step 3 comes after step 2, always — §13.2b, *"a crash then costs a
+;;; duplicate, never a silence"* — and the seq acked is the last one **read** in
+;;; step 1, never the last one drawn. That distinction is the reason a head may
+;;; filter freely: it acknowledges what it consumed, so nothing is reread and
+;;; nothing is lost, and a head that renders almost nothing still advances.
+
 (defun run-loop (head)
   (loop while (head-running head)
-        do (dolist (frame (%drain (head-frames head)))
-             (%handle-frame head frame))
-           (dolist (key (%drain (head-keys head)))
-             (%handle-key head key))
-           (%poll-resize head)
-           (unless (head-connected head)
-             (%try-reconnect head))
-           (if (head-dirty head)
-               (%render-and-paint head)
-               (sleep 0.03))))
+        do (let ((rendered 0)
+                 (filtered 0)
+                 (last-seq 0))            ; the read mark, from step 1 only
+             ;; 1. drain. An error while FOLDING a frame must not kill the loop
+             ;; either: a frame this head cannot handle is one bad frame, not a
+             ;; reason to lose the session. The failure is remembered so the
+             ;; gate can say so, and the loop reads the next one.
+             (dolist (frame (%drain (head-frames head)))
+               (when (and (consp frame) (string= (frame-name frame) "event")
+                          (getf frame :seq))
+                 (setf last-seq (getf frame :seq)))
+               (handler-case
+                   (case (%handle-frame head frame)
+                     (:rendered (incf rendered))
+                     (:filtered (incf filtered))
+                     (t nil))
+                 (error (e)
+                   (setf *last-render-error* e
+                         (head-dirty head) t))))
+             (dolist (key (%drain (head-keys head)))
+               (handler-case (%handle-key head key)
+                 (error (e) (ignore-errors (setf (head-status-note head)
+                                                 (format nil "key error: ~a" e))))))
+             (handler-case (%poll-resize head)
+               (error (e) (ignore-errors (setf (head-status-note head)
+                                               (format nil "resize error: ~a" e)))))
+             (unless (head-connected head)
+               (%try-reconnect head))
+             ;; 2. draw (guarded in %render-and-paint: a render error paints
+             ;; itself and the loop carries on, so the operator can see what
+             ;; broke and re-push instead of losing the head)
+             (if (head-dirty head)
+                 (%render-and-paint head)
+                 (sleep 0.03))
+             ;; 3. ack, and only when a frame was actually read this pass: an
+             ;; idle tick has no seq to report and must not invent one
+             (when (plusp last-seq)
+               (%send head (make-ack last-seq rendered filtered))))))
 
 ;;; ------------------------------------------------------------- lifecycle ;;;
 (defun %open-stdout ()
@@ -293,6 +372,14 @@ push ran `(defparameter *stdout* nil)` and the operator's head exited)."
     ;; session id means "the daemon's current session" (registry.rs:600)
     (%send head (make-attach :session-id (or session-id "")
                              :identity "leticl"))
+    ;; Then ASK FOR THE SETTINGS. `ServerFrame::Settings` is only ever sent in
+    ;; reply to a request — nothing pushes it — so a head that never asks has
+    ;; none, and its header falls back to the model `Hello` named, which is the
+    ;; value at attach and stays that value for ever. Measured on this head
+    ;; before the fix: the header said `qwen-3.8-27b` while the live turn was on
+    ;; `deepseek/deepseek-flash`. The rows are also what the mode and models
+    ;; pickers read, so without this they have nothing to list (§7.4).
+    (%send head (make-settings))
     (hack-start head)
     (setf (head-reader head)
           (sb-thread:make-thread (lambda () (%reader-loop head)) :name "leticl reader")

@@ -152,30 +152,119 @@ terminal: the newest content sat at row 1 and the oldest at row 57.)"
       (put-segments screen r 0 line)
       (incf r))))
 
+(defvar *last-render-error* nil
+  "The last error the RENDER path raised, or nil.
+
+A defvar and not a slot on `head`, deliberately: adding a slot is a struct
+LAYOUT change, which this SBCL refuses to redefine (\"STRUCTURE-OBJECT class …
+incompatibly\") and which therefore needs a restart — the one thing a live push
+must not need. A global costs nothing here because there is one head per
+process, and it can be introduced by the same push that uses it.")
+
+(defvar *paint-lock* nil
+  "Serialises PAINTING against a live redefinition.
+
+Without it a push races the frame: the hack thread evals a `defun` while the
+main thread is halfway through `%render-and-paint`, so an in-flight call can
+reach a function whose definition just changed under it — an arity or type
+mismatch in the MAIN thread, which with `--disable-debugger` quits the process.
+That is what killed the operator's head twice while `--tree` pushed, at a
+different file each time: the signature of a race, not of a bad file.
+
+So a push takes this lock for the whole eval and the paint takes it for the
+whole frame. A push therefore waits for the frame in flight to finish, and a
+frame waits for the push. Lazy so that it can be introduced by a push itself —
+a mutex made at load time is not in a frozen image's heap the same way.
+
+**An eval must not paint.** Taking this lock inside an eval deadlocks, which is
+the one thing a hack surface must never do.")
+
+(defun paint-lock ()
+  "The paint/redefinition mutex, made on first use. See `*paint-lock*`."
+  (or *paint-lock*
+      (setf *paint-lock* (sb-thread:make-mutex :name "leticl paint"))))
+
+(defun %paint-failure (head condition)
+  "Draw the failure instead of dying of it.
+
+Everything here runs on the MAIN thread, and with `--disable-debugger` an error
+in the main thread QUITS the process. So one bad row — a plist that changed
+shape, a push that half-landed — is not a wrong frame, it is a dead head: the
+operator loses the session, the screen, and the value of the whole exercise.
+
+A head that can be restyled while it runs must survive being restyled wrongly.
+So a render error becomes a frame that says so, and the loop carries on: the
+mistake is visible on the screen it broke, and `tui-eval --tree` after a fix
+repairs it in place. Never silent — a swallowed error would put the head back
+in the state where the gate says green and the screen is wrong, which is the
+defect this file's neighbours exist against."
+  (ignore-errors
+    (let ((out (%open-stdout))
+          (lines (list (list (cons " render failed — the head is alive; fix and re-push "
+                                   '(:bold t :fg :red)))
+                       (list (cons (format nil "  ~a" (type-of condition))
+                                   '(:fg :yellow)))
+                       (list (cons (format nil "  ~a" condition) '(:fg :bright-black))))))
+      ;; a minimal frame drawn by hand: the cell buffer cannot be trusted to
+      ;; render the failure of rendering itself
+      (ignore-errors
+        (screen-clear (head-screen head))
+        (%place-lines (head-screen head) lines 0
+                      (max 0 (- (head-rows head) 3)) (head-cols head))
+        (paint-full (head-screen head) out))
+      (ignore-errors
+        (setf (head-last-rows head) (screen-rows-ansi (head-screen head))
+              (head-last-cols head) (head-cols head)
+              (head-last-rows-n head) (head-rows head)))
+      (ignore-errors
+        (replace (screen-cells (head-prev-screen head))
+                 (screen-cells (head-screen head)))))))
+
 (defun %render-and-paint (head)
-  (%render head)
-  ;; reacquire the stream if a live push clobbered it: a frame written to NIL
-  ;; is a type error in the main thread, which quits the head with no log
-  (let ((out (%open-stdout)))
-    (if (head-full-repaint head)
-        (progn (paint-full (head-screen head) out)
-               (setf (head-full-repaint head) nil))
-        (paint-diff (head-prev-screen head) (head-screen head) out))
-    ;; keep the previous frame for the next diff, and the rows for Screen//cells
-    (replace (screen-cells (head-prev-screen head)) (screen-cells (head-screen head)))
-    (setf (head-last-rows head) (screen-rows-ansi (head-screen head))
-          (head-last-cols head) (head-cols head)
-          (head-last-rows-n head) (head-rows head))
-    ;; the cursor belongs at the end of the line being typed
-    (let* ((c (head-composer head))
-           (buf (composer-buffer c)))
-      (move-to out (1- (head-rows head))
-               (min (1- (head-cols head))
-                    (+ 2 (string-width
-                          (if (> (+ 2 (string-width buf)) (1- (head-cols head)))
-                              (subseq buf (max 0 (- (length buf)
-                                                    (- (1- (head-cols head)) 2))))
-                              buf)))))))
+  "Render and paint, and do not die of it.
+
+The whole body is guarded because this is the MAIN thread: with
+`--disable-debugger` an unhandled error here does not print a backtrace and
+carry on, it quits. A live push that leaves one bad row therefore costs the
+head — measured, twice — which makes `--file` unusable as a way to work. A
+failure now paints itself and the loop continues.
+
+And it holds `paint-lock` for the whole frame, so a live redefinition cannot
+land in the middle of one. Without that, a push races the paint and an
+in-flight call reaches a function that changed under it — an error in the main
+thread, which is a dead head. `--tree` takes the same lock per file."
+  (sb-thread:with-mutex ((paint-lock))
+    (handler-case
+        (progn
+          (%render head)
+          ;; reacquire the stream if a live push clobbered it: a frame written to
+          ;; NIL is a type error in the main thread, which quits the head
+          (let ((out (%open-stdout)))
+            (if (head-full-repaint head)
+                (progn (paint-full (head-screen head) out)
+                       (setf (head-full-repaint head) nil))
+                (paint-diff (head-prev-screen head) (head-screen head) out))
+            (replace (screen-cells (head-prev-screen head)) (screen-cells (head-screen head)))
+            (setf (head-last-rows head) (screen-rows-ansi (head-screen head))
+                  (head-last-cols head) (head-cols head)
+                  (head-last-rows-n head) (head-rows head))
+            ;; the cursor belongs at the end of the line being typed
+            (let* ((c (head-composer head))
+                   (buf (composer-buffer c)))
+              (move-to out (1- (head-rows head))
+                       (min (1- (head-cols head))
+                            (+ 2 (string-width
+                                  (if (> (+ 2 (string-width buf)) (1- (head-cols head)))
+                                      (subseq buf (max 0 (- (length buf)
+                                                            (- (1- (head-cols head)) 2))))
+                                      buf)))))))
+          ;; a GOOD frame clears the flag, so a fixed head goes green again
+          ;; without a restart — which is the whole point of pushing a fix
+          (setf *last-render-error* nil))
+      (error (e)
+        ;; remember it (the gate reads this) AND draw it (the operator reads it)
+        (setf *last-render-error* e)
+        (%paint-failure head e))))
   (setf (head-dirty head) nil))
 
 

@@ -84,7 +84,19 @@ to *standard-output* would corrupt the TUI and desync it from the screen."
                                 (*error-output* (make-string-output-stream)))
                             (handler-bind ((style-warning #'hack-mute)
                                            (warning #'hack-mute))
-                              (eval form)))))
+                              ;; **Hold the paint lock for the whole eval.** The
+                              ;; push is what makes this surface usable, and
+                              ;; without serialisation it races the frame: a
+                              ;; `defun` can land while `%render-and-paint` is
+                              ;; halfway through, so an in-flight call reaches a
+                              ;; function whose definition just changed — an
+                              ;; error in the MAIN thread, which quits the head.
+                              ;; Measured twice, at a different file each time.
+                              ;;
+                              ;; An eval must NOT paint: taking this lock again
+                              ;; inside one deadlocks. Nothing here does.
+                              (sb-thread:with-mutex ((paint-lock))
+                                (eval form))))))
               ;; visible immediately is a property of the loop: the eval marks
               ;; the head dirty, the loop repaints on its next tick
               (setf (head-dirty head) t)

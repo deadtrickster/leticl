@@ -192,9 +192,12 @@ def reply_value(line):
 
 # Health in ONE string, so the reply is trivial to read back.
 HEALTH_FORM = (
-    '(format nil "stdout=~a rows=~d/~d cols=~d/~d rows-n=~d" '
+    '(format nil "stdout=~a rows=~d/~d cols=~d/~d rows-n=~d render=~a" '
     '(if *stdout* "ok" "NIL") (length (head-last-rows *head*)) (head-rows *head*) '
-    '(head-last-cols *head*) (head-cols *head*) (head-last-rows-n *head*))'
+    '(head-last-cols *head*) (head-cols *head*) (head-last-rows-n *head*) '
+    '(if (boundp (quote *last-render-error*)) '
+    '    (if *last-render-error* "FAILED" "ok") '
+    '    "n/a"))'
 )
 
 # The screen exactly as the head drew it: rows with their ANSI, newline-joined.
@@ -257,6 +260,15 @@ def check_health(pid, target, settle=0.5):
         problems.append(
             "the screen holds {} of {} rows — the last frame did not paint "
             "fully".format(rows, rows_want))
+    # A render error is the head telling us it could not draw: it stays ALIVE
+    # (render.lisp paints the failure instead of quitting) and says so here, so
+    # the gate fails rather than reporting a healthy head with a broken frame.
+    if fields.get("render") == "FAILED":
+        problems.append(
+            "the RENDER raised an error — the head painted a failure frame "
+            "instead of the session (it is alive, and `--screen` shows the "
+            "error it drew). Read the message there, fix the definition, and "
+            "re-push; clearing `*last-render-error*` is not the fix.")
     return problems, health
 
 
@@ -292,6 +304,33 @@ def asd_files(root):
     return [os.path.join(root, f) for f in files]
 
 
+# **The safety files go in FIRST.** A push is not atomic against a frame unless
+# the head already serialises the two, and that serialisation lives in
+# `render.lisp` (the paint lock) and `hack.lisp` (the eval taking it) — files 20
+# and 22 of 23. Pushing in asd order to a head built before that mechanism
+# existed therefore races: the push lands mid-frame, an in-flight call reaches a
+# function that just changed, and the main thread dies. Measured twice on the
+# operator's head, at a different file each time — cells.lisp once, json.lisp
+# the next, a signature of timing rather than of a bad file.
+#
+# So these two are pushed ahead of the rest, in this order: `render` defines the
+# lock and the guarded paint, `hack` makes an eval hold it. After them the rest
+# of the tree is safe to push in the order it was built.
+SAFETY_FIRST = ("src/render.lisp", "src/hack.lisp")
+
+
+def asd_files_safely_first(root):
+    """`asd_files` with the lock-defining files hoisted to the front."""
+    files = asd_files(root)
+    head, rest = [], []
+    for f in files:
+        rel = "/".join(f.split(os.sep)[-2:])
+        (head if rel in SAFETY_FIRST else rest).append(f)
+    # keep SAFETY_FIRST's own order (render before hack), then the asd order
+    head.sort(key=lambda f: SAFETY_FIRST.index("/".join(f.split(os.sep)[-2:])))
+    return head + rest
+
+
 def push_tree(pid, target, root, send_all=False, verbose=True):
     """Push every src file in asd order. Returns (ok, results).
 
@@ -299,9 +338,17 @@ def push_tree(pid, target, root, send_all=False, verbose=True):
     exists to prevent — the head would hold a new `cards` beside an old
     `render`, which is coherent enough to pass the gate and wrong on screen — so
     a failure is loud and the caller sees how far it got.
+
+    **No gate between files, and no forced repaint.** `tui-eval --tree` used to
+    verify after every push, and the verify POKES a repaint — so the loop started
+    painting a frame while the next file was being evaluated, and a redefinition
+    landed mid-frame. That killed the operator's head twice, at a different file
+    each time, which is what a race looks like. The files now go back to back and
+    `main` gates ONCE at the end; the head's own paint lock keeps a push out of a
+    frame in flight, and this keeps us from inviting one.
     """
     results = []
-    for path in asd_files(root):
+    for path in asd_files_safely_first(root):
         form = file_form(path, send_all)
         try:
             reply = eval_form(pid, form, target)

@@ -73,16 +73,25 @@
        (list (row "denials" (length (session-denials s))))))))
 
 (defun config-lines (settings cols)
+  "One row per setting. `SettingRow` is `key`/`value`/`source`/`editable`
+(protocol.rs:214) — NOT `name`, which this read for a while and therefore
+printed `NIL` for every row's label. `source` says where the value came from
+(a flag, a project store, `permission.json`); `editable` names the slash verb
+that changes it, or is empty for one that needs a restart."
   (declare (ignore cols))
   (append
    (list (list (cons " settings " '(:bold t))
                (cons "  (the daemon owns this list; it ships with the setting)"
                      '(:fg :bright-black))))
    (mapcar (lambda (r)
-             (list (cons (format nil "  ~a" (getf r :name)) '(:bold t))
+             (list (cons (format nil "  ~a" (getf r :key)) '(:bold t))
                    (cons (format nil "  ~a" (getf r :value)) '(:fg :bright-white))
-                   (when (getf r :choices)
-                     (cons (format nil "  of ~{~a~^|~}" (getf r :choices))
+                   (awhen (getf r :source)
+                     (cons (format nil "  ~a" it) '(:fg :bright-black)))
+                   (awhen (and (getf r :editable) (plusp (length it)))
+                     (cons (format nil "  ~a" it) '(:fg :cyan)))
+                   (awhen (getf r :choices)
+                     (cons (format nil "  of ~{~a~^|~}" it)
                            '(:fg :bright-black)))))
            settings)))
 
