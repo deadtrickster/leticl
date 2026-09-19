@@ -1055,3 +1055,111 @@ settings, and it is the operator's file."
                (is (= 1 (count-substring "diff =" second))
                    "and still has exactly one diff key"))))
       (ignore-errors (delete-file p)))))
+
+;;; ------------------------------------------------- editor (S4) ;;;
+
+(defun %composer-with (text &optional (cursor nil))
+  (let ((c (make-composer)))
+    (composer-insert c text)
+    (when cursor (setf (composer-cursor c) cursor))
+    c))
+
+(def-test kill-ring-keeps-more-than-the-last-kill (:suite leticl)
+  "`ctrl-k` then some editing then `ctrl-y` is the common shape, and a single
+slot loses the first kill the moment you make a second one."
+  (let ((*kill-ring* nil)
+        (c (%composer-with "one two")))
+    (setf (composer-cursor c) 3)
+    (composer-kill-to-end c)
+    (is (equal "one" (composer-buffer c)) "the kill cut to the end")
+    (is (equal (list " two") *kill-ring*) "and it landed in the ring")
+    ;; a SECOND kill, from a fresh buffer, must not lose the first
+    (let ((c2 (%composer-with "abc")))
+      (composer-kill-line c2)              ; cursor is at the end, so 0..3
+      (is (equal "abc" (car *kill-ring*)) "the newer kill is at the head")
+      (is (member " two" *kill-ring* :test #'string=)
+          "and the older one is still in the ring")))
+  ;; and the ring is bounded — one nobody can exhaust is a leak
+  (let ((*kill-ring* nil)
+        (c (make-composer)))
+    (dotimes (i 30)
+      (composer-insert c (format nil "kill~a" i))
+      (composer-kill-line c))
+    (is (<= (length *kill-ring*) *kill-ring-max*) "the ring stays bounded")))
+
+(def-test yank-inserts-the-head-of-the-ring (:suite leticl)
+  (let ((*kill-ring* (list "yanked" "older"))
+        (c (%composer-with "ab")))
+    (is (eq t (composer-yank c)) "the yank reported it did something")
+    (is (equal "abyanked" (composer-buffer c)) "at the cursor")
+    (is (null (composer-yank (progn (setf *kill-ring* nil) c)))
+        "and with an empty ring it says so rather than inserting nothing silently")))
+
+(def-test undo-takes-back-a-step (:suite leticl)
+  "Snapshots, and the caller decides the granule — a per-character undo makes you
+hold the key and hope."
+  (let ((*undo-stack* nil)
+        (c (%composer-with "hello")))
+    (leticl::%undo-push c)
+    (composer-insert c " world")
+    (is (equal "hello world" (composer-buffer c)))
+    (is (eq t (composer-undo c)) "undo reported it worked")
+    (is (equal "hello" (composer-buffer c)) "and took back the insertion")
+    (is (null (composer-undo c)) "with nothing left it says so")))
+
+(def-test undo-does-not-push-a-duplicate-snapshot (:suite leticl)
+  "Two pushes of the same buffer would make ctrl-z take two presses to undo one
+edit — a key that sometimes does nothing is a key nobody trusts."
+  (let ((*undo-stack* nil)
+        (c (%composer-with "same")))
+    (leticl::%undo-push c)
+    (leticl::%undo-push c)
+    (leticl::%undo-push c)
+    (is (= 1 (length *undo-stack*)) "one snapshot, not three")))
+
+(def-test a-long-paste-becomes-a-marker-and-still-sends-whole (:suite leticl)
+  "The operator sees a marker, the model receives the paste. Both halves matter:
+a three-thousand-line paste as composer text is a buffer nobody can see the end
+of, and a paste that arrives truncated is worse than one that is awkward."
+  (let ((*paste-ledger* nil)
+        (c (make-composer))
+        (big (format nil "~{~a~%~}" (loop for i from 1 to 300 collect (format nil "line ~a" i)))))
+    (is (eq 300 (leticl::%paste-lines big)) "300 lines counted")
+    (composer-insert-paste c big)
+    (is (search "pasted 300 lines" (composer-buffer c))
+        "the composer shows a marker, not 300 lines")
+    (is (< (length (composer-buffer c)) 100) "and the marker is short")
+    (is (string= big (expand-pastes (composer-buffer c)))
+        "and it expands back to exactly the paste, byte for byte")))
+
+(def-test a-short-paste-is-inserted-as-itself (:suite leticl)
+  "Below five lines the marker costs more than it saves."
+  (let ((*paste-ledger* nil)
+        (c (make-composer)))
+    (composer-insert-paste c (format nil "a~%b~%c~%d"))
+    (is (equal (format nil "a~%b~%c~%d") (composer-buffer c))
+        "four lines go in as they are")
+    (is (null *paste-ledger*) "and nothing was remembered")))
+
+(def-test expanding-a-paste-leaves-other-text-alone (:suite leticl)
+  (let ((*paste-ledger* nil)
+        (c (make-composer)))
+    (composer-insert-paste c (format nil "~{~a~%~}" (loop for i from 1 to 10 collect "x")))
+    (composer-insert c " before")
+    (setf (composer-buffer c)
+          (concatenate 'string "prefix " (composer-buffer c) " suffix"))
+    (let ((out (expand-pastes (composer-buffer c))))
+      (is (eql 0 (search "prefix " out)) "the text before is untouched")
+      (is (search "suffix" out) "and the text after")
+      (is (not (search "pasted" out)) "and no marker is left")))
+  ;; the same marker twice expands in both places
+  (let ((*paste-ledger* nil)
+        (c (make-composer))
+        (body (format nil "~{~a~%~}" (loop for i from 1 to 6 collect "y"))))
+    (composer-insert-paste c body)
+    (let ((marker (composer-buffer c)))
+      (setf (composer-buffer c) (concatenate 'string marker " and " marker))
+      (let ((out (expand-pastes (composer-buffer c))))
+        (is (not (search "pasted" out)) "every occurrence is expanded")
+        (is (= 2 (count-substring body out))
+            "both of them — the whole paste, twice")))))

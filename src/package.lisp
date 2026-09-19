@@ -53,6 +53,13 @@
    #:highlight-fence #:lang-for-fence
    ;; keys
    #:read-key #:make-composer #:composer-buffer #:composer-cursor
+   ;; the editor's windows (S4): the kill ring, undo, the paste ledger
+   #:composer-insert #:composer-delete-backward #:composer-delete-forward
+   #:composer-move #:composer-kill-to-end #:composer-kill-line #:composer-kill-word
+   #:composer-push-history #:composer-history-step
+   #:composer-undo #:composer-yank #:composer-kill-region #:composer-insert-paste
+   #:expand-pastes #:*kill-ring* #:*kill-ring-max* #:*undo-stack*
+   #:*paste-ledger* #:*esc-at* #:*esc-double-ms*
    ;; render
    #:markdown-lines #:wrap-segments #:top-border #:status-line
    #:decision-card-lines #:picker-lines #:help-lines *slash-commands*

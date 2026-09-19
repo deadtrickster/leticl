@@ -32,9 +32,16 @@
 
 (defun %submit-line (head)
   "Enter on the composer: a slash command, or a prompt. Queued as a follow-up
-user item by the daemon when a turn runs — never rejected (§13.2)."
-  (let ((line (composer-buffer (head-composer head))))
-    (composer-push-history (head-composer head) line)
+user item by the daemon when a turn runs — never rejected (§13.2).
+
+Paste markers are EXPANDED here, at the last moment before the text leaves: the
+composer shows `[⋮ pasted 312 lines ⋮]` and the daemon receives the 312 lines.
+History keeps what was typed, so an Up recalls the marker and not a wall of
+text — which is what makes the ledger safe to forget about."
+  (let* ((typed (composer-buffer (head-composer head)))
+         (line (expand-pastes typed)))
+    (composer-push-history (head-composer head) typed)
+    (%undo-push (head-composer head))
     (setf (composer-buffer (head-composer head)) ""
           (composer-cursor (head-composer head)) 0)
     (cond
@@ -171,9 +178,23 @@ shows the candidates on the status line."
 (defun %normal-key (head key)
   (let ((c (head-composer head)))
     (case (getf key :type)
-      ((:char) (composer-insert c (string (getf key :ch)))
-               (setf (head-dirty head) t))
-      ((:paste) (composer-insert c (getf key :text)) (setf (head-dirty head) t))
+      ((:char)
+       ;; one undo snapshot per word: push when the character before the cursor
+       ;; ends a word, so ctrl-z takes back a word rather than a letter
+       (let ((before (composer-buffer c))
+             (i (composer-cursor c)))
+         (when (or (zerop i)
+                   (let ((prev (char before (1- i))))
+                     (and (or (char= prev #\space) (char= prev #\newline))
+                          (not (char= (getf key :ch) #\space))
+                          (not (char= (getf key :ch) #\newline)))))
+           (%undo-push c)))
+       (composer-insert c (string (getf key :ch)))
+       (setf (head-dirty head) t))
+      ((:paste)
+       (%undo-push c)
+       (composer-insert-paste c (getf key :text))
+       (setf (head-dirty head) t))
       ((:backspace) (composer-delete-backward c) (setf (head-dirty head) t))
       ((:delete) (composer-delete-forward c) (setf (head-dirty head) t))
       ((:enter) (%submit-line head))
@@ -181,6 +202,27 @@ shows the candidates on the status line."
       ((:left :right :home :end) (composer-move c type) (setf (head-dirty head) t))
       ((:up) (composer-history-step c -1) (setf (head-dirty head) t))
       ((:down) (composer-history-step c 1) (setf (head-dirty head) t))
+      ((:alt)
+       ;; alt+enter is a newline inside the prompt. Any other alt chord is not
+       ;; the composer's, and must not become text — an unhandled chord that
+       ;; inserts its own letter is how a prompt grows a stray `x`.
+       (when (and (getf key :ch) (char= (getf key :ch) #\return))
+         (%undo-push c)
+         (composer-insert c (string #\newline))
+         (setf (head-dirty head) t)))
+      ((:esc)
+       ;; `esc esc` interrupts — twice within the gesture window. A single esc
+       ;; does nothing yet; it MAY become "return to the following the stream",
+       ;; and the double tap has to be decided first or the two fight.
+       (let ((now (get-internal-real-time))
+             (ms (/ internal-time-units-per-second 1000.0)))
+         (if (and *esc-at* (< (- now *esc-at*) (* *esc-double-ms* ms)))
+             (progn (setf *esc-at* nil)
+                    (when (and (session-turn (head-session head))
+                               (string= (turn-state-name (session-turn (head-session head)))
+                                        "running"))
+                      (%interrupt head "interrupted with esc esc")))
+             (setf *esc-at* now))))
       ((:page-up) (incf (head-scroll head) (max 1 (- (head-rows head) 3)))
                   (setf (head-dirty head) t))
       ((:page-down) (setf (head-scroll head) (max 0 (- (head-scroll head)
@@ -215,18 +257,19 @@ shows the candidates on the status line."
                       (butlast (head-queued head)))
                 (composer-insert c (or text ""))
                 (setf (head-dirty head) t))
-              (progn (composer-kill-line c) (setf (head-dirty head) t))))
-         ((#\k) (composer-kill-to-end c) (setf (head-dirty head) t))
-         ((#\w) (composer-kill-word c) (setf (head-dirty head) t))
+              (progn (%undo-push c) (composer-kill-line c)
+                     (setf (head-dirty head) t))))
+         ((#\k) (%undo-push c) (composer-kill-to-end c) (setf (head-dirty head) t))
+         ((#\w) (%undo-push c) (composer-kill-word c) (setf (head-dirty head) t))
+         ((#\y) (when (composer-yank c) (setf (head-dirty head) t)))
+         ((#\z) (when (composer-undo c) (setf (head-dirty head) t)))
          ((#\a) (composer-move c :home) (setf (head-dirty head) t))
          ((#\e) (composer-move c :end) (setf (head-dirty head) t))
          ((#\l) (setf (head-full-repaint head) t (head-dirty head) t)))
        ;; a ctrl chord that means nothing here must not become text
        )
-      ((:esc) nil)
       (t nil))))
 
-;;; ------------------------------------------------------------ composer ;;;
 (defstruct (composer (:constructor make-composer ()))
   (buffer "" :type string)
   (cursor 0 :type fixnum)
@@ -265,20 +308,20 @@ shows the candidates on the status line."
     (:end (setf (composer-cursor c) (length (composer-buffer c))))))
 
 (defun composer-kill-to-end (c)
-  (setf (composer-buffer c) (subseq (composer-buffer c) 0 (composer-cursor c))))
+  "Ctrl+K: cut from the cursor to the end, into the kill ring."
+  (composer-kill-region c (composer-cursor c) (length (composer-buffer c))))
 
 (defun composer-kill-line (c)
-  (setf (composer-buffer c) (subseq (composer-buffer c) (composer-cursor c))
-        (composer-cursor c) 0))
+  "Ctrl+U: cut from the start to the cursor, into the kill ring."
+  (composer-kill-region c 0 (composer-cursor c)))
 
 (defun composer-kill-word (c)
-  "Ctrl+W: back to the start of the word before the cursor."
+  "Ctrl+W: cut back to the start of the word before the cursor, into the ring."
   (let ((i (composer-cursor c))
         (buf (composer-buffer c)))
     (loop while (and (plusp i) (char= (char buf (1- i)) #\space)) do (decf i))
     (loop while (and (plusp i) (char/= (char buf (1- i)) #\space)) do (decf i))
-    (setf (composer-buffer c) (concatenate 'string (subseq buf 0 i) (subseq buf (composer-cursor c)))
-          (composer-cursor c) i)))
+    (composer-kill-region c i (composer-cursor c))))
 
 (defun composer-push-history (c line)
   (vector-push-extend line (composer-history c))
@@ -300,3 +343,135 @@ shows the candidates on the status line."
       (setf (composer-cursor c) (length (composer-buffer c))))))
 
 
+
+;;; ------------------------------------------------------------------ S4 ;;;
+;;;
+;;; The editor's windows, and every one of them is a GLOBAL rather than a
+;;; `composer` slot. A defstruct layout change is a hard error in this SBCL, so a
+;;; slot would mean a restart — the one thing a live head must not need. There is
+;;; one composer per process, so a defvar each costs nothing and pushes.
+
+(defvar *kill-ring* nil
+  "Killed text, newest first. `ctrl-y` yanks the head of it.
+
+A ring rather than a single slot: `ctrl-k` then some editing then `ctrl-y` is
+the common shape, and a single slot loses the first kill the moment you make a
+second one.")
+(defparameter *kill-ring-max* 16
+  "How many kills to keep. A ring nobody can exhaust is a leak.")
+
+(defvar *undo-stack* nil
+  "Snapshots of the composer buffer, newest first, for `ctrl-z`.
+
+Snapshots rather than an operation log: a buffer is a string and a string is
+cheap, while replaying operations has to get every one of them right. Batched at
+WORD granularity by the caller, so `ctrl-z` undoes a word rather than a
+character — a per-character undo makes you hold the key and hope.")
+(defparameter *undo-max* 400
+  "How many snapshots to keep before dropping the oldest.")
+
+(defvar *paste-ledger* nil
+  "Alist of MARKER → the text that marker stands for.
+
+A paste of five lines or more collapses to a marker in the composer and the full
+text is remembered here, then SUBSTITUTED BACK on submit. The point is that a
+three-thousand-line paste is one visible token while you are typing and still
+arrives whole — the operator sees a marker, the model receives the paste.")
+
+(defvar *esc-at* nil
+  "When the last bare ESC arrived, for the double-tap interrupt.
+
+Kept next to the key handler rather than in the head, because it is about the
+KEY STREAM and not about the session.")
+(defparameter *esc-double-ms* 5000
+  "How long a second `esc` still counts as the same gesture. The reference's
+number: a double tap is one intent, and five seconds is the width of a hesitation
+rather than a second thought.")
+
+(defun composer-buffer-set (c text)
+  "Replace the buffer wholesale, for undo."
+  (setf (composer-buffer c) text
+        (composer-cursor c) (length text)))
+
+(defun %undo-push (c)
+  "Snapshot the buffer, unless it already matches the newest snapshot."
+  (unless (and *undo-stack* (string= (car *undo-stack*) (composer-buffer c)))
+    (push (composer-buffer c) *undo-stack*)
+    (when (> (length *undo-stack*) *undo-max*)
+      (setf *undo-stack* (butlast *undo-stack*)))))
+
+(defun composer-undo (c)
+  "Undo one snapshot. T when something was undone.
+
+Undo is BATCHED by the caller — a kill pushes its own snapshot, and a run of
+characters pushes one at the start of the word — so this pops whatever is there
+rather than trying to decide how much to take back."
+  (when *undo-stack*
+    (composer-buffer-set c (pop *undo-stack*))
+    t))
+
+(defun composer-kill-region (c start end)
+  "Cut [START, END) into the kill ring, newest first."
+  (let ((buf (composer-buffer c)))
+    (when (< start end)
+      (push (subseq buf start end) *kill-ring*)
+      (when (> (length *kill-ring*) *kill-ring-max*)
+        (setf *kill-ring* (butlast *kill-ring*)))
+      (setf (composer-buffer c) (concatenate 'string
+                                             (subseq buf 0 start)
+                                             (subseq buf end))
+            (composer-cursor c) start)
+      t)))
+
+(defun composer-yank (c)
+  "Insert the head of the kill ring at the cursor. T when it did."
+  (when *kill-ring*
+    (composer-insert c (first *kill-ring*))
+    t))
+
+(defun %paste-lines (text)
+  "How many lines TEXT holds, as a person would count them.
+
+`(1+ (count #\\newline text))` — the obvious formula — gives 301 for 300 lines
+each ending in a newline, because it counts the empty tail as a line. A paste
+whose marker says `301 lines` when the operator pasted 300 is a small lie in the
+one number the marker exists to carry, so the final newline does not start a
+line."
+  (let ((n (count #\newline text)))
+    (if (and (plusp n) (char= (char text (1- (length text))) #\newline))
+        n
+        (1+ n))))
+
+(defun %paste-marker (n)
+  (format nil "[⋮ pasted ~a lines ⋮]" n))
+
+(defun composer-insert-paste (c text)
+  "Insert TEXT, or a marker standing for it when it is five lines or more.
+
+A three-thousand-line paste as three thousand lines of composer is a buffer
+nobody can see the end of; as a marker it is one visible token that still sends
+whole. The marker is opaque and the ledger holds the text, so nothing is lost by
+rounding."
+  (if (< (%paste-lines text) 5)
+      (progn (composer-insert c text) nil)
+      (let ((marker (%paste-marker (%paste-lines text))))
+        (push (cons marker text) *paste-ledger*)
+        (composer-insert c marker)
+        marker)))
+
+(defun expand-pastes (text)
+  "Replace every paste marker in TEXT with the text it stands for."
+  (let ((out text))
+    (dolist (pair *paste-ledger*)
+      (when (search (car pair) out)
+        (setf out (with-output-to-string (s)
+                    (let ((i 0)
+                          (marker (car pair))
+                          (full (cdr pair)))
+                      (loop for j = (search marker out :start2 i)
+                            while j
+                            do (write-string (subseq out i j) s)
+                               (write-string full s)
+                               (setf i (+ j (length marker))))
+                      (write-string (subseq out i) s))))))
+    out))
