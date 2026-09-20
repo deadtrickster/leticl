@@ -402,7 +402,11 @@ push ran `(defparameter *stdout* nil)` and the operator's head exited)."
     (error "the head paints on the real terminal — run it on a tty, not a pipe"))
   (let* ((path (or socket-path
                    (getf (first (discover-daemons)) :socket)
-                   (error "no daemon found — start one or pass :socket-path")))
+                   (let ((mine (uiop:getenv "LETIBOT_SOCKET")))
+                     (error (if mine
+                                (format nil "no daemon for this folder: nothing listens at ~a.~%leticl is a head only — start the daemon here first (leticode or letibot in this directory), or point LETIBOT_SOCKET at another folder's daemon to attach to it on purpose."
+                                        mine)
+                                "no daemon found — start one or pass :socket-path")))))
          (head (%make-head))
          (stream (connect-unix path)))
     ;; The head's own choices, read before the first frame: the folds and the

@@ -1191,18 +1191,35 @@ first and was drawn that way."
                 body))
         (nreverse body)))))
 
+(defun quit-choices (head)
+  "The two ways out and what each does to the daemon — `quit_choices`. The second
+names how many OTHER heads will be told, from the session's own head list."
+  (let ((others (max 0 (1- (length (session-heads (head-session head)))))))
+    (list (cons "leave this head"
+                "the daemon keeps running: the session stays warm and `letibot` reattaches to it")
+          (cons "leave and stop the daemon"
+                (case others
+                  (0 "the session is written to disk and `letibot --continue` reopens it — but its prompt leaves the model server's cache, so the next turn prefills cold")
+                  (1 "one other head is attached and will be told. The session is on disk; the next turn after reopening prefills cold")
+                  (t (format nil "~d other heads are attached and will be told. The session is on disk; the next turn after reopening prefills cold" others)))))))
+
 (defun quit-card-lines (head cols)
-  (declare (ignore cols))
-  (flet ((row (i label)
-           (let ((chosen (= i (head-quit-sel head))))
-             (list (cons (format nil " ~a ~a" (if chosen "❯" " ") label)
-                         (if chosen '(:reverse t :bold t) nil))))))
-    (list (list (cons " quit " '(:bold t :fg :yellow))
-                (cons " the turn runs in the daemon: closing this window does not stop it"
-                      '(:dim t)))
-          (row 0 "leave — the head detaches, the daemon keeps going")
-          (row 1 "leave and stop the daemon")
-          (list (cons " enter chooses · esc takes it back" '(:dim t))))))
+  "The quit card, to the reference's shape (`quit_card_lines`): a bold title, each
+choice as `▸  1  name` with its consequence wrapped dim under it at eight in."
+  (let ((w (max 20 cols))
+        (sel (min 1 (head-quit-sel head))))
+    (append
+     (list (list (cons "leave — and what happens to the daemon" '(:bold t))))
+     (loop for (name . why) in (quit-choices head)
+           for i from 0
+           for picked = (= i sel)
+           append (cons (%truncate-segs
+                         (list (cons (format nil "~a ~2d  " (if picked "▸" " ") (1+ i)) nil)
+                               (cons name (if picked '(:bold t) nil)))
+                         w)
+                        (mapcar (lambda (l) (cons (cons "       " nil)
+                                                  (mapcar (lambda (seg) (cons (car seg) '(:dim t))) l)))
+                                (wrap-segments (list (cons why nil)) (max 4 (- w 8)))))))))
 
 (defun secret-card-lines (head cols)
   (declare (ignore cols))

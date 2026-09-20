@@ -329,9 +329,15 @@ scrolls the transcript by a row every keystroke.
            (%place-lines s wait (+ body-top skip) body-bottom cols)))
         (t
          ;; transcript viewport, then the card just above the chrome
+         ;; THE QUIT CARD'S OWN HEIGHT. `card-rows` above is the decision
+         ;; card's, which is NIL when ctrl-c opens this one — so the quit card was
+         ;; placed at `body-bottom + 1`, off the body, while `want` still gave up
+         ;; the rows for it: the operator saw the transcript step up and three
+         ;; blank rows where the card should be (*"Cc doesnt work"*).
          (let* ((card-lines (if (head-quit-open head)
                                 (quit-card-lines head cols)
                                 card-lines))
+                (card-rows (length card-lines))
                 (want (max 1 (- body-bottom body-top (if card-lines (+ 2 card-rows) 0))))
                 (lines (%viewport-lines head cols want)))
            (%place-lines s lines body-top (+ body-top (length lines) -1) cols)

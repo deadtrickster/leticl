@@ -166,20 +166,35 @@ shows the candidates on the status line."
        (setf (head-dirty head) t))
       ;; the quit card: leave, or leave and stop the daemon (v20)
       ((head-quit-open head)
-       (case type
-         ((:up) (setf (head-quit-sel head) 0 (head-dirty head) t))
-         ((:down) (setf (head-quit-sel head) 1 (head-dirty head) t))
-         ((:enter)
-          (if (zerop (head-quit-sel head))
-              (setf (head-running head) nil)
-              (progn
-                ;; the answer that stops the daemon travels over the protocol,
-                ;; not around it to a pid (protocol.rs, v20)
-                (%send head (make-stop (session-expected-seq (head-session head))
-                                       "leticl"))
-                (setf (head-running head) nil))))
-         ((:esc) (setf (head-quit-open head) nil (head-dirty head) t))
-         (t nil)))
+       (flet ((leave (choice)
+                (setf (head-quit-open head) nil)
+                (unless (zerop choice)
+                  ;; the answer that stops the daemon travels over the protocol,
+                  ;; not around it to a pid (protocol.rs, v20)
+                  (%send head (make-stop (session-expected-seq (head-session head))
+                                         "leticl")))
+                (setf (head-running head) nil)))
+         (case type
+           ;; two rows: up and down both flip
+           ((:up :down) (setf (head-quit-sel head) (- 1 (min 1 (head-quit-sel head)))
+                              (head-dirty head) t))
+           ((:enter) (leave (head-quit-sel head)))
+           ;; `1` and `2` choose, as the hint bar says, when there is nothing typed
+           ((:char)
+            (let ((d (digit-char-p (getf key :ch))))
+              (when (and d (<= 1 d 2)
+                         (zerop (length (composer-buffer (head-composer head)))))
+                (leave (1- d)))))
+           ;; esc — and a THIRD ctrl-c — close the card. The reference's hint bar
+           ;; used to say "ctrl+c again to exit", which stopped being true the
+           ;; moment the second press started opening a card: the habitual double
+           ;; press must not leave.
+           ((:esc) (setf (head-quit-open head) nil (head-dirty head) t)
+                   (say head "staying"))
+           ((:ctrl) (when (eql (getf key :ch) #\c)
+                      (setf (head-quit-open head) nil (head-dirty head) t)
+                      (say head "staying")))
+           (t nil))))
       ;; A CLICK in a list pane selects the row under the pointer.
       ;;
       ;; Before the text keys, because a click is unambiguous about what it

@@ -69,9 +69,16 @@ half-written json from a daemon that is starting up must not take a head down."
                        when plist collect plist))
          (mine (uiop:getenv "LETIBOT_SOCKET")))
     (cond
+      ;; **A named socket that is not there is NO daemon, not "any daemon".**
+      ;; This returned the whole list when `$LETIBOT_SOCKET` matched nothing, so
+      ;; `leticl` run in a folder with no daemon attached to whichever daemon the
+      ;; run dir listed first and drew ITS current session — the operator opened
+      ;; leticl in an unrelated directory and was put in the latest leticl
+      ;; conversation. The launcher names the folder's socket precisely so the
+      ;; head can refuse when it is not there.
       (mine
        (let ((hit (find mine plists :key (lambda (p) (getf p :socket)) :test #'string=)))
-         (if hit (cons hit (remove hit plists)) plists)))
+         (and hit (cons hit (remove hit plists)))))
       (t
        (let* ((cwd (namestring (uiop:getcwd)))
               ;; the MOST SPECIFIC workspace wins: /home/dead matches a head in

@@ -394,11 +394,13 @@ mode - subtodos shown, when all subtodos checked section becomes also checked\"*
                            lines))))
     (let ((head (%make-head)))
       (setf (head-quit-open head) t)
-      (let ((lines (quit-card-lines head 80)))
-        (is (= 4 (length lines)) "header, two options, footer")
-        (is (search "leave" (lines-text lines)) "the leave option is shown")
-        (is (search "stop the daemon" (lines-text lines))
-            "the stop option is shown")))))
+      (let* ((lines (quit-card-lines head 80))
+             (text (lines-text lines)))
+        ;; the reference's shape: a title, then each choice over its consequence
+        (is (search "leave — and what happens to the daemon" text) "the title")
+        (is (search "▸  1  leave this head" text) "the first choice, picked")
+        (is (search "   2  leave and stop the daemon" text) "the second, not")
+        (is (search "the daemon keeps running" text) "and what each does, under it")))))
 
 (def-test secret-card (:suite leticl)
   (flet ((lines-text (lines)
@@ -3204,3 +3206,53 @@ reasoning stays out, and the empty case says what it means."
       (is (search "subagent output — " (first text)) "the title names the subagent")
       (is (some (lambda (l) (search "neither an answer nor tool output" l)) text)
           "and the empty case says what it means, not \"no tool output\""))))
+
+
+(def-test ctrl-c-draws-the-quit-card-and-a-second-press-stays (:suite leticl)
+  "The operator: *\"Cc doesnt work - scrolls up one line, status shows 1/2 and
+nothing\"*. `%render` measured the card's height from the DECISION card — NIL when
+ctrl-c opens this one — so the quit card was placed a row below the body while the
+transcript still gave up the rows for it. And the reference's second ctrl-c CLOSES
+the card (its hint bar stopped promising \"again to exit\" the day a card started
+opening); ours left."
+  (let* ((*stdout* (make-string-output-stream))
+         (h (%on-head :cols 80 :rows 24)))
+    (leticl::%handle-key h (list :type :ctrl :ch #\c))
+    (is (head-quit-open h) "ctrl-c opens the card")
+    (leticl::%render h)
+    (let ((text (%screen-text h)))
+      (is (search "leave — and what happens to the daemon" text) "and the card is ON the screen")
+      (is (search "▸  1  leave this head" text) "with its first choice picked"))
+    (leticl::%handle-key h (list :type :ctrl :ch #\c))
+    (is (not (head-quit-open h)) "a second ctrl-c closes it")
+    (is (leticl::head-running h) "and the head stays")
+    (leticl::%handle-key h (list :type :ctrl :ch #\c))
+    (leticl::%handle-key h (list :type :down))
+    (is (= 1 (leticl::head-quit-sel h)) "down picks the second choice")
+    (leticl::%handle-key h (list :type :char :ch #\1))
+    (is (not (leticl::head-running h)) "and a digit chooses: 1 leaves")))
+
+
+(def-test a-socket-that-is-not-there-is-no-daemon (:suite leticl)
+  "The operator: *\"why when I opened leticl in a folder that doesnt belong to any
+running or known project it brought me to the latest leticl conversation?\"*.
+`discover-daemons` answered the WHOLE run dir when `$LETIBOT_SOCKET` matched
+nothing, and `run` took the first daemon listed. A named socket that is not there
+is no daemon."
+  (let ((dir (uiop:ensure-directory-pathname
+              (format nil "/tmp/claude-1000/-home-dead-Projects-leticl/3603a50c-c42f-4b18-87ce-b917064534c9/scratchpad/daemons-~d/" (random 100000)))))
+    (ensure-directories-exist dir)
+    (with-open-file (o (merge-pathnames "abc.json" dir) :direction :output :if-exists :supersede)
+      (write-string "{\"socket\":\"/run/x/abc.sock\",\"workspace\":\"/home/dead/Projects/other\"}" o))
+    (let ((real (symbol-function 'leticl::daemon-dir)))
+      (unwind-protect
+           (progn
+             (setf (symbol-function 'leticl::daemon-dir) (lambda () dir))
+             (setf (uiop:getenv "LETIBOT_SOCKET") "/run/x/nothing-here.sock")
+             (is (null (discover-daemons))
+                 "a socket nobody listens at is no daemon — not the first one in the run dir")
+             (setf (uiop:getenv "LETIBOT_SOCKET") "/run/x/abc.sock")
+             (is (equal "/run/x/abc.sock" (getf (first (discover-daemons)) :socket))
+                 "and the one that is there is found"))
+        (setf (symbol-function 'leticl::daemon-dir) real)
+        (setf (uiop:getenv "LETIBOT_SOCKET") "")))))
