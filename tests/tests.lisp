@@ -2948,3 +2948,173 @@ heading with no mark is `{pad}{cursor}{text}` in one dim run."
       (is (= 1 (length line)) "one segment")
       (is (string= "      Empty" (car (first line))) "pad and cursor, then the text")
       (is (equal '(:dim t) (cdr (first line))) "dim"))))
+
+;;; ------------------------------------- the fast render path (2026-09-20) ;;;
+;;;
+;;; `string-width` and `screen-put-string` stopped going through `clusters` on
+;;; the common case (measured: 56% of the frame), `char-width` became a table
+;;; lookup, and the painter stopped calling `format`. Each of these is a second
+;;; spelling of a rule that already had one, so each is held to the first.
+
+(defparameter *tricky-strings*
+  (list (cons "empty" "")
+        (cons "spaces" "   ")
+        (cons "ascii" "hello world")
+        (cons "box glyphs" "┌─ lisp · ▸ Ran │")
+        (cons "cjk" (format nil "a~C~Cb" (%ch #x4e2d) (%ch #x6587)))
+        (cons "family" (format nil "~C~C~C~C~C" (%ch #x1f468) (%ch #x200d)
+                               (%ch #x1f469) (%ch #x200d) (%ch #x1f467)))
+        (cons "two families" (format nil "~C~C~C ~C~C~C" (%ch #x1f468) (%ch #x200d)
+                                     (%ch #x1f469) (%ch #x1f468) (%ch #x200d) (%ch #x1f467)))
+        (cons "flag" (format nil "~C~C" (%ch #x1f1ec) (%ch #x1f1e7)))
+        (cons "three indicators" (format nil "~C~C~C" (%ch #x1f1ec) (%ch #x1f1e7) (%ch #x1f1fa)))
+        (cons "combining" (format nil "e~Cx" (%ch #x301)))
+        (cons "leading combining" (format nil "~Ce" (%ch #x301)))
+        (cons "zwj after a letter" (format nil "a~C~Cb" (%ch #x200d) (%ch #x1f468)))
+        (cons "newline" (format nil "a~%b"))
+        (cons "control then mark" (format nil "a~C~Cb" (code-char 7) (%ch #x301)))
+        (cons "escapes" (format nil "~C[0;1;36mred~C[0m" (%ch 27) (%ch 27)))
+        (cons "trailing escape" (format nil "ab~C[0m" (%ch 27)))
+        (cons "unterminated escape" (format nil "ab~C[3" (%ch 27)))
+        (cons "osc" (format nil "~C]8;;http://x~Cx~C]8;;~C" (%ch 27) (code-char 7) (%ch 27) (code-char 7)))
+        (cons "astral cjk" (format nil "~C" (%ch #x20000)))
+        (cons "variation supplement" (format nil "a~C" (%ch #xe0100)))
+        (cons "mixed" (format nil "abc 列宽度 🙂 терминал ~C~C z" (%ch #x1f1fa) (%ch #x1f1e6))))
+  "Strings that exercise every rule the one-pass width walker mirrors.")
+
+(def-test string-width-agrees-with-clusters (:suite leticl)
+  "`clusters` is the definition of a cluster; `string-width` walks the same rules
+without consing one. If they ever disagree the border lands inside the text."
+  (dolist (case *tricky-strings*)
+    (let ((text (cdr case)))
+      (is (= (reduce #'+ (mapcar #'cluster-cols (clusters text)))
+             (string-width text))
+          (format nil "~a: clusters say ~a, string-width says ~a" (car case)
+                  (reduce #'+ (mapcar #'cluster-cols (clusters text)))
+                  (string-width text))))))
+
+(def-test string-width-bounds-measure-a-prefix-in-place (:suite leticl)
+  "The bounded form is what lets `wrap-segments` measure a word without its
+trailing space and without copying it; it must say what the copy would."
+  (let ((cjk (format nil "ab~C~C  " (%ch #x4e2d) (%ch #x6587))))
+    (is (= 8 (string-width cjk)) "the whole: 2 + 4 + 2")
+    (is (= 6 (string-width cjk :end 4)) "to the end of the wide pair")
+    (is (= 4 (string-width cjk :end 3)) "a wide char at the boundary counts whole")
+    (is (= (string-width (subseq cjk 2 4)) (string-width cjk :start 2 :end 4)) "start and end")
+    (is (= 0 (string-width cjk :start 3 :end 3)) "an empty range is zero")
+    (is (= 0 (string-width cjk :start 5 :end 2)) "an inverted range is zero, not an error")
+    (is (= 8 (string-width cjk :end 100)) "an end past the string is clamped")
+    (is (= 0 (string-width "")) "an empty string is zero")
+    (is (= 3 (string-width (make-array 3 :element-type 'character :adjustable t
+                                         :fill-pointer 3 :initial-element #\x)))
+        "a non-simple string is measured, not refused")))
+
+(def-test char-width-past-the-table-still-answers (:suite leticl)
+  "The byte table stops at #x20000; above it the binary search answers, and the
+two must agree at the seam."
+  (is (= 1 (char-width (%ch #x1ffff))) "the last table entry")
+  (is (= 2 (char-width (%ch #x20000))) "the first code past it, CJK extension B")
+  (is (= 2 (char-width (%ch #x3fffd))) "the end of the wide range")
+  (is (= 1 (char-width (%ch #x3fffe))) "and one past it")
+  (is (= 0 (char-width (%ch #xe0100))) "the variation selector supplement is zero-width")
+  (is (= 1 (char-width (%ch #x10ffff))) "the last code point is one column"))
+
+(def-test plain-columns-decides-the-fast-path-honestly (:suite leticl)
+  "The painter places a string one cell per character only when every character
+is one plain column. Anything that could join, pair, extend or hide must say no."
+  (is (leticl::plain-columns-p "hello ┌─ ▸ ·") "letters and box glyphs")
+  (is (leticl::plain-columns-p "") "an empty string, vacuously")
+  (is (not (leticl::plain-columns-p (format nil "a~Cb" (%ch #x4e2d)))) "a wide char")
+  (is (not (leticl::plain-columns-p (format nil "e~C" (%ch #x301)))) "a combining mark")
+  (is (not (leticl::plain-columns-p (format nil "~C[1mx" (%ch 27)))) "an escape")
+  (is (not (leticl::plain-columns-p (format nil "a~%b"))) "a control")
+  (is (not (leticl::plain-columns-p (format nil "~C~C" (%ch #x1f1ec) (%ch #x1f1e7)))) "a flag"))
+
+(def-test placement-agrees-with-measurement-on-every-tricky-string (:suite leticl)
+  "The property `measurement-and-placement-count-the-same-thing` states, over the
+whole tricky corpus, on both of the painter's paths."
+  (dolist (case *tricky-strings*)
+    (let* ((text (cdr case))
+           (s (make-screen 80 1))
+           (end (screen-put-string s 0 0 text)))
+      (is (= (string-width text) end)
+          (format nil "~a: measured ~a, placed ~a" (car case) (string-width text) end)))))
+
+(def-test a-wide-char-at-the-last-column-degrades-to-a-space (:suite leticl)
+  "A two-column glyph that does not fit becomes a space, not a wrap; the cell
+after it is untouched."
+  (let ((s (make-screen 3 1)))
+    (is (= 3 (screen-put-string s 0 0 (format nil "ab~C" (%ch #x4e2d))))
+        "the wide char at column 2 of 3 takes the one column left")
+    (is (char= #\space (cell-ch (screen-cell s 0 2))) "as a space"))
+  (let ((s (make-screen 4 1)))
+    (is (= 4 (screen-put-string s 0 0 (format nil "ab~C" (%ch #x4e2d)))) "with room it is two cells")
+    (is (char= (%ch #x4e2d) (cell-ch (screen-cell s 0 2))) "the glyph")
+    (is (char= leticl::+wide-cont+ (cell-ch (screen-cell s 0 3))) "and the continuation")))
+
+(def-test split-words-keeps-every-space-and-drops-nothing-else (:suite leticl)
+  "`%split-words` went from a string stream to `subseq`; re-joining the words
+must give the text back exactly, and no chunk may be empty."
+  (dolist (text (list "" " " "a" "a b" "a  b" " a" "a " "a b " "  " "one two  three   four "))
+    (let ((words (leticl::%split-words text)))
+      (is (string= text (apply #'concatenate 'string words))
+          (format nil "~s re-joins to itself" text))
+      (is (notany (lambda (w) (zerop (length w))) words)
+          (format nil "~s has no empty chunk" text)))))
+
+(def-test wrap-measures-the-visible-word-in-place (:suite leticl)
+  "The visible width of a word is measured without the trimmed copy; the
+break decisions must not move."
+  (flet ((texts (lines) (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l))) lines)))
+    ;; words that fit exactly: the trailing space is not counted against the width
+    (is (equal '("abc def" "ghi") (texts (wrap-segments (list (cons "abc def ghi" nil)) 7)))
+        "a row whose words fit exactly is not broken early")
+    ;; an over-wide word hard-breaks on its VISIBLE part: the trailing space is
+    ;; not a chunk (the chunks' row shape is the old one and not asserted here)
+    (is (equal "abcdefx" (apply #'concatenate 'string
+                                (texts (wrap-segments (list (cons "abcdef x" nil)) 4))))
+        "every visible character survives the hard break and the space is gone")
+    ;; wide characters count two per cell on both measurements
+    (let ((cjk (format nil "~C~C ~C~C" (%ch #x4e2d) (%ch #x6587) (%ch #x4e2d) (%ch #x6587))))
+      (is (= 2 (length (wrap-segments (list (cons cjk nil)) 5)))
+          "two wide pairs and a space do not fit in five columns")
+      (is (= 1 (length (wrap-segments (list (cons cjk nil)) 9))) "but do in nine"))
+    (is (equal (list (list (cons "a b" nil))) (wrap-segments (list (cons "a b" nil)) 0))
+        "zero columns returns the segments as one line, unchanged")
+    (is (null (wrap-segments nil 10)) "no segments, no rows")
+    (is (null (wrap-segments (list (cons "" nil)) 10)) "an empty segment, no rows")))
+
+(def-test the-painter-writes-decimals-like-format (:suite leticl)
+  "`%write-decimal` replaced `~D` in the cursor move; the bytes must not change."
+  (dolist (n '(0 1 7 9 10 11 63 99 100 210 999 1000 12345))
+    (is (string= (format nil "~D" n)
+                 (with-output-to-string (o) (leticl::%write-decimal n o)))
+        (format nil "~d" n)))
+  (is (string= (format nil "~C[64;211H" (code-char 27))
+               (with-output-to-string (o) (leticl::%move-to o 63 210)))
+      "a move is 1-based in both coordinates"))
+
+(def-test the-viewport-blank-test-matches-the-text-it-replaced (:suite leticl)
+  "`%line-blank-p` answers what `(zerop (length (string-trim \" \" (segs-text-of l))))`
+did, without the copies."
+  (dolist (line (list nil
+                      (list (cons "" nil))
+                      (list (cons "   " nil) (cons "" '(:bold t)))
+                      (list (cons " " nil) (cons "x" nil))
+                      (list (cons "▌" '(:fg :blue)))
+                      (list (cons "  " nil) (cons "  " nil))))
+    (is (eq (zerop (length (string-trim " " (leticl::segs-text-of line))))
+            (and (leticl::%line-blank-p line) t))
+        (format nil "~s" line))))
+
+(def-test a-nil-text-is-still-an-empty-row-not-a-render-failure (:suite leticl)
+  "A wire plist with a key missing puts NIL in a segment (`secret-card-lines`
+and `(getf req :command)`). `clusters` took `(length nil)` and drew nothing; the
+typed entries must keep that, or a missing key becomes a red frame."
+  (is (= 0 (string-width nil)) "NIL measures zero")
+  (is (null (clusters nil)) "and has no clusters")
+  (let ((s (make-screen 10 1)))
+    (is (= 3 (screen-put-string s 0 3 nil)) "and places nothing, returning the column it was given")
+    (is (char= #\space (cell-ch (screen-cell s 0 3))) "with the cell untouched"))
+  (is (null (leticl::%split-words nil)) "NIL splits to no words")
+  (is (null (wrap-segments (list (cons nil '(:dim t))) 10)) "and wraps to no rows"))
