@@ -444,36 +444,35 @@ ever on a number that is zero."
 
 ;;; --------------------------------------------------------------- hint bar ;;;
 
+(defun %armed-p (at window-ms)
+  "Is a two-tap gesture still within its window? NIL when it was never started."
+  (and at (< (- (get-internal-real-time) at)
+             (* window-ms (/ internal-time-units-per-second 1000.0)))))
+
 (defun hint-bar (head cols)
   "The line under the composer that says what the keys do HERE.
 
-The reference's `hint_bar`, row for row: the composer's own hint first (`enter
-send · ctrl+c exit`, or the interrupt/clear pair while a turn runs, or `esc again
-to interrupt` while esc is armed), then ` · ` and the context's tail — a key that
-closes a card is not the key that interrupts a turn, and a hint that names the
-wrong key is worse than no hint at all. The quit card stands alone: its second
-ctrl-c closes it, so the prefix's `ctrl+c exit` would be a lie there. Measured
-against letibot's row 63 with the mode picker up: ours had dropped the prefix."
+The reference's `hint_bar`: ONE constant string per context — a key that closes
+a card is not the key that interrupts a turn, and a hint that names the wrong key
+is worse than no hint at all."
   (declare (ignore cols))
-  (let* ((running (and (session-turn (head-session head))
-                       (string= (turn-state-name (session-turn (head-session head))) "running")))
-         (prefix (cond ((head-quit-open head) nil)
-                       ((and *esc-at*
-                             (< (- (get-internal-real-time) *esc-at*)
-                                (* *esc-double-ms* (/ internal-time-units-per-second 1000.0))))
-                        (cons "esc again to interrupt" '(:bold t :fg :yellow)))
-                       ;; the other half of the same mechanism: a first ctrl-c on
-                       ;; an empty composer arms and SAYS it armed, because a
-                       ;; double tap nobody is told about is a double tap nobody
-                       ;; finds (editor.rs:827-835)
-                       ((and *ctrlc-at*
-                             (< (- (get-internal-real-time) *ctrlc-at*)
-                                (* *ctrlc-window-ms* (/ internal-time-units-per-second 1000.0))))
-                        (cons "ctrl+c again to exit" '(:bold t :fg :yellow)))
-                       (running (cons "esc interrupt · ctrl+c clear" '(:dim t)))
-                       ((zerop (length (composer-buffer (head-composer head))))
-                        (cons "enter send · ctrl+c exit" '(:dim t)))
-                       (t (cons "enter send · alt+enter newline · ctrl+c clear" '(:dim t)))))
+  ;; **ONE CONSTANT STRING, no prefix.** It used to open with the keys that
+  ;; change — `enter send` idle, `esc interrupt` while a turn runs — and those
+  ;; are three different lengths in front of the same tail, so the line moved
+  ;; sideways whenever a turn started or the first character was typed. The
+  ;; reference deleted exactly that and says so at app.rs:5001-5004; this head
+  ;; had copied the prefix from an older commit of it, and the 1:1 rig caught
+  ;; the row on every frame of all ten fixtures.
+  (let* ((armed (cond
+                  ;; the ARMED warnings stay: `Editor::hint` still returns these
+                  ;; two and nothing else (editor.rs:820-834), because a gesture
+                  ;; half-made is the one thing the bottom row must say.
+                  ((head-quit-open head) nil)
+                  ((%armed-p *esc-at* *esc-double-ms*)
+                   (cons "esc again to interrupt" '(:bold t :fg :yellow)))
+                  ((%armed-p *ctrlc-at* *ctrlc-window-ms*)
+                   (cons "ctrl+c again to exit" '(:bold t :fg :yellow)))
+                  (t nil)))
          (tail (cond
                  ((head-quit-open head) "1/2 or ↑↓ then enter · esc stays")
                  ((member (head-mode head) '(:help :status)) "esc closes this")
@@ -487,8 +486,8 @@ against letibot's row 63 with the mode picker up: ours had dropped the prefix."
                  ((head-secret-req head) "enter submits · esc refuses the password")
                  ((%open-decision head) "a row number answers · ↑↓ then enter · or type an option · /help")
                  (t "ctrl-s sessions · ctrl-p todos · ctrl-g subagents · ctrl-r thinking · ctrl-t tool output · ctrl-q jobs · tab completes /commands · /help"))))
-    (if prefix
-        (list prefix (cons (format nil " · ~a" tail) '(:dim t)))
+    (if armed
+        (list armed (cons (format nil " · ~a" tail) '(:dim t)))
         (list (cons tail '(:dim t))))))
 
 (defun turn-status (head &optional (cols 40))

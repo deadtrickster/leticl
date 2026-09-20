@@ -6277,3 +6277,48 @@ and the search read."
     (is (string= "look at [image image/png] [file src/f.lisp] and say"
                  (leticl::item-display-text item))
         "each part named, joined with a space")))
+
+(def-test the-hint-bar-does-not-move-sideways (:suite leticl)
+  "**I made this worse this morning, from a stale commit.** The reference's
+`hint_bar` opens with `Editor::hint`, which — at `8af671e` — returns the empty
+string unless a two-tap gesture is armed (editor.rs:820-834). It used to return
+`enter send · ctrl+c exit` idle and `esc interrupt · ctrl+c clear` while a turn
+ran, and the reference DELETED that with its reason at app.rs:5001-5004: three
+different lengths in front of one tail make the line move sideways whenever a
+turn starts or the first character is typed. I read the older shape and copied
+it, and the 1:1 rig found the row differing on every frame of all ten fixtures."
+  (let* ((*stdout* (make-string-output-stream))
+         (h (%on-head :cols 100 :rows 24))
+         (text (lambda () (format nil "~{~a~}" (mapcar #'car (hint-bar h 100))))))
+    (let ((idle (funcall text)))
+      (is (uiop:string-prefix-p "ctrl-s sessions" idle)
+          "idle, the row opens with the constant tail: ~s" idle)
+      (is (not (search "enter send" idle)) "and not with the keys that change")
+      ;; a turn starting must not move it
+      (setf (session-turn (head-session h))
+            (list :turn-id "t" :state (list :state "running")))
+      (is (string= idle (funcall text)) "a turn starting moves nothing")
+      ;; nor does typing
+      (composer-insert (head-composer h) "half a thought")
+      (is (string= idle (funcall text)) "nor does the first character"))
+    ;; but an ARMED gesture still says so, which is what the reference kept
+    (let ((leticl::*esc-at* (get-internal-real-time)))
+      (is (uiop:string-prefix-p "esc again to interrupt" (funcall text))
+          "a gesture half-made is the one thing the bottom row must say"))))
+
+(def-test a-unix-timestamp-is-not-a-universal-time (:suite leticl)
+  "Every prompt was stamped an hour early all summer. The epochs differ by
+2 208 988 800 seconds — a whole number of days — so H:M:S survived the mistake
+while the DATE landed in 1956, and the local offset was then taken for 1956 (CET,
+no summer time) instead of 2026 (CEST). Measured against letibot on the same row:
+`15:00:08` against `14:00:08`."
+  (let* ((ts 1789639478000)                     ; 2026-09-17, in epoch ms
+         (shown (leticl::%clock-time ts)))
+    (multiple-value-bind (s m h) (decode-universal-time (+ (floor ts 1000) 2208988800))
+      (is (string= (format nil "~2,'0d:~2,'0d:~2,'0d" h m s) shown)
+          "the clock reads the local time of THAT instant: ~a" shown))
+    (multiple-value-bind (ignore-s ignore-m ignore-h date month year)
+        (decode-universal-time (+ (floor ts 1000) 2208988800))
+      (declare (ignore ignore-s ignore-m ignore-h date month))
+      (is (= 2026 year) "and the instant is in 2026, not 1956")))
+  (is (string= "" (leticl::%clock-time nil)) "no timestamp is no time, not midnight"))

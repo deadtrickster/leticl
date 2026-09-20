@@ -1674,6 +1674,13 @@ midnight is a time nobody took — the same rule the duration on a card follows.
       ;; explicit 0 here is UTC, and the stamp then read 11:53:34 on a screen whose
       ;; clock said 13:53:34 — a timestamp that is wrong by the offset is worse
       ;; than no timestamp, because it looks like a measurement.
-      (multiple-value-bind (s m h) (decode-universal-time (floor ts 1000))
+      ;; **A UNIX timestamp is not a universal time.** The epochs differ by
+      ;; 2 208 988 800 seconds (25 567 days), and because that is a whole number
+      ;; of days the H:M:S survived the mistake while the DATE landed in 1956 —
+      ;; so the local offset was taken for 1956 (CET, no summer time) instead of
+      ;; 2026 (CEST), and every prompt was stamped an hour early all summer.
+      ;; Measured against letibot on the same row: `15:00:08` against `14:00:08`.
+      (multiple-value-bind (s m h)
+          (decode-universal-time (+ (floor ts 1000) 2208988800))
         (format nil "~2,'0d:~2,'0d:~2,'0d" h m s))
       ""))
