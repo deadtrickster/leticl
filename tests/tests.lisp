@@ -3467,3 +3467,519 @@ preferences file locking them out of the tool."
       (is (string= "split" (prefs-diff p)) "with the defaults kept")
       (is (some (lambda (n) (search "cannot be read" n)) notes)
           "and says so once, rather than refusing to start"))))
+
+;;; ------------------- the protocol surface, measured (docs/parity/wire.md) ;;;
+;;;
+;;; Every test below is one finding from `docs/parity/wire.md` — the frames, the
+;;; events, the session fold and the exchange, each cited on both sides against
+;;; letibot at 8af671e. A fold that writes nowhere and a frame that does not
+;;; survive contact with the daemon look identical from inside this head: the
+;;; state is simply not there. These are the assertions that tell them apart.
+
+(defun %fake-daemon (head)
+  "Put a string stream where HEAD's socket would be, and answer a reader of
+every frame it has written since, decoded, NEWEST FIRST.
+
+The pattern the picker tests use (`tests.lisp:1772`): the assertion is what went
+out ON THE WIRE, not what a function returned, because a frame that is built and
+never sent is the defect this whole document is about."
+  (let ((wire (make-string-output-stream)))
+    (setf (leticl::head-stream head) wire (head-connected head) t)
+    (lambda ()
+      (nreverse (mapcar #'json-decode
+                        (remove "" (uiop:split-string (get-output-stream-string wire)
+                                                      :separator '(#\newline))
+                                :test #'string=))))))
+
+(defun %repo-file (relative)
+  "One file from the repo root, for a test that greps a source rather than
+trusting a rule in a document."
+  (let ((p (merge-pathnames relative (or *load-truename* #p"./"))))
+    (if (probe-file p)
+        (uiop:read-file-string p)
+        (uiop:read-file-string (merge-pathnames relative #p"/home/dead/Projects/leticl/")))))
+
+(def-test a-hello-with-no-snapshot-is-a-resume-not-a-crash (:suite leticl)
+  "**No reconnect and no resume had ever worked.** `%try-reconnect` re-attaches
+with `since_seq = session-seq`, which is nonzero, so the daemon serves the gap
+from its ring and answers `Hello { snapshot: null, resumed_from: N }`
+(hub.rs:628-652). `ingest-hello` called `ingest-snapshot` unconditionally, which
+assigned `session-session-id` to \"\" and then `(getf nil :seq)` = NIL into a
+`:type fixnum` slot and signalled a TYPE-ERROR — swallowed by `run-loop` into
+`*last-render-error*`, so the head neither crashed nor recovered. Measured:
+`RESUME-ERROR: TYPE-ERROR` against `SNAPSHOT-OK` for the same Hello with a
+snapshot. What follows the raise is the whole of the injury: the id already
+wiped, `head_id`/`wiring`/`sessions`/title/`resumed_from` never read, the
+settings never asked for, and `*attach-started-ms*` never cleared — the attach
+cat walking forever over a head folding a backlog into a session whose id it had
+just forgotten."
+  (let* ((line "{\"frame\":\"hello\",\"protocol_version\":21,\"session_id\":\"s-1\",\"head_id\":\"h1\",\"dropped\":2,\"snapshot\":null,\"resumed_from\":42,\"scrubbed\":{\"deltas\":3,\"tool_progress\":1},\"wiring\":{\"model\":\"deepseek/deepseek-flash\",\"role\":\"main\"},\"sessions\":[{\"session_id\":\"s-1\",\"title\":\"the resumed one\"}]}")
+         (hello (json-decode line))
+         (s (make-session))
+         (*scrubbed-total* 0)
+         (leticl::*turn-started-ms* nil))
+    (finishes (ingest-hello s hello))
+    (is (string= "s-1" (session-session-id s)) "the id is the Hello's own, not the empty string")
+    (is (= 42 (session-seq s)) "the mark is where we asked to resume from")
+    (is (= 42 (session-expected-seq s)) "and so is what the next command carries")
+    (is (string= "h1" (session-head-id s)) "the head id is read")
+    (is (equal "deepseek/deepseek-flash" (getf (session-wiring s) :model)) "the wiring is read")
+    (is (string= "the resumed one" (session-title s)) "and the title, out of the session list")
+    (is (= 2 (session-dropped s)) "the dropped count is taken")
+    (is (= 4 *scrubbed-total*) "and the scrub report is summed")
+    ;; and at the head: connected, the cat stood down, and the settings asked for
+    (let* ((h (%make-head))
+           (sent (%fake-daemon h))
+           (*attach-started-ms* 1234))
+      (leticl::%handle-frame h hello)
+      (is (eq t (head-connected h)) "the head is attached")
+      (is (null *attach-started-ms*) "the attach clock is cleared")
+      (is (member "settings" (mapcar (lambda (f) (getf f :frame)) (funcall sent))
+                  :test #'equal)
+          "and the settings the `hello` arm owes are on the wire"))))
+
+(def-test a-started-tool-is-running-not-proposed (:suite leticl)
+  "`ensure-call` was `(or (leticl::call-view …) (push …))`, so a call that already
+existed as `proposed` was returned UNCHANGED: measured,
+`CALL-STATE-AFTER-STARTED = \"proposed\"`, and the card drew `○ … · proposed`
+for the whole run instead of `◐ … · 1.4s`. The reference sets Running, restarts
+the clock and clears the note (app.rs:2356-2400, view.rs:523-536)."
+  (let ((s (make-session))
+        (leticl::*turn-started-ms* nil) (*call-facts* nil) (*call-started-ms* nil)
+        (*call-targets* nil))
+    (apply-event s (list :seq 1 :event "turn_started" :turn-id "t1" :model "m"))
+    (apply-event s (list :seq 2 :event "tool_call_proposed" :turn-id "t1"
+                         :call-id "c1" :name "bash" :args-digest "d" :target "ls"))
+    (apply-event s (list :seq 3 :event "tool_started" :turn-id "t1"
+                         :call-id "c1" :name "bash"))
+    (let ((call (leticl::call-view (session-turn s) "c1")))
+      (is (equal "running" (getf (getf call :state) :state))
+          "the proposed row MOVED to running")
+      (is (equal "ls" (getf call :target)) "and kept the target only the proposal carried"))
+    (is (= 1 (length (getf (session-turn s) :calls))) "one row, not two")
+    ;; a call whose proposal this head never saw still gets a row
+    (apply-event s (list :seq 4 :event "tool_started" :turn-id "t1"
+                         :call-id "c2" :name "read"))
+    (is (equal "running" (getf (getf (leticl::call-view (session-turn s) "c2") :state) :state))
+        "a call first seen as started is created, running")))
+
+(def-test a-progress-note-lands-on-the-call-in-the-turn (:suite leticl)
+  "`(setf (getf call :progress-note) …)` on a LOCAL holding a plist whose key is
+ABSENT conses a new head and assigns the local — the list inside `turn.calls` is
+never touched. Measured: `PROGRESS-NOTE-AFTER-FINISH = NIL`. Every tool-progress
+note this head had ever folded went nowhere, with the card's slot for it
+(cards.lisp:942) permanently empty. Read back off the TURN, never off the return
+value of the setter."
+  (let ((s (make-session))
+        (leticl::*turn-started-ms* nil) (*call-facts* nil) (*call-started-ms* nil)
+        (*call-targets* nil))
+    (apply-event s (list :seq 1 :event "turn_started" :turn-id "t1" :model "m"))
+    (apply-event s (list :seq 2 :event "tool_call_proposed" :turn-id "t1"
+                         :call-id "c1" :name "bash" :args-digest "d" :target "ls"))
+    (apply-event s (list :seq 3 :event "tool_progress" :turn-id "t1"
+                         :call-id "c1" :note "asking the guard"))
+    (is (equal "asking the guard"
+               (getf (leticl::call-view (session-turn s) "c1") :progress-note))
+        "the note is on the call the TURN holds")
+    ;; and the note a call collects while PROPOSED is about the decision, so the
+    ;; run clears it: a stale one cost an operator an hour (app.rs:2365-2386)
+    (apply-event s (list :seq 4 :event "tool_started" :turn-id "t1"
+                         :call-id "c1" :name "bash"))
+    (is (null (getf (leticl::call-view (session-turn s) "c1") :progress-note))
+        "starting the tool clears the note that was about the decision")
+    (apply-event s (list :seq 5 :event "tool_progress" :turn-id "t1"
+                         :call-id "c1" :note "12 of 40"))
+    (apply-event s (list :seq 6 :event "tool_finished" :turn-id "t1"
+                         :call-id "c1" :outcome "ok" :inline-bytes 3 :full-bytes 3))
+    (is (null (getf (leticl::call-view (session-turn s) "c1") :progress-note))
+        "and finishing clears it: the note measured a moment that has passed")))
+
+(def-test the-token-counter-is-taken-not-assigned (:suite leticl)
+  "`setf` walks the counter BACKWARDS on a reordered or duplicated frame —
+measured, `50` then `10` left `10`. Both the reference and the view use `max`
+for exactly that (app.rs:2281, view.rs:419)."
+  (let ((s (make-session)) (leticl::*turn-started-ms* nil))
+    (apply-event s (list :seq 1 :event "turn_started" :turn-id "t1" :model "m"))
+    (apply-event s (list :seq 2 :event "tokens_generated" :turn-id "t1" :tokens 50))
+    (apply-event s (list :seq 3 :event "tokens_generated" :turn-id "t1" :tokens 10))
+    (is (= 50 (getf (session-turn s) :tokens)) "the counter cannot move backwards")
+    (apply-event s (list :seq 4 :event "tokens_generated" :turn-id "t1" :tokens 188))
+    (is (= 188 (getf (session-turn s) :tokens)) "and still climbs")))
+
+(def-test a-finished-turn-has-no-progress (:suite leticl)
+  "*\"A progress frame is true only while it is happening\"* (view.rs:254-256).
+Nothing cleared it, so a finished turn kept the prefill bar of the prompt it had
+already answered: measured, `:progress` still held `(:TOTAL 10 …)` after
+`turn_finished`. All three terminal arms clear it on both sides (app.rs:2565,
+2596, 2619; view.rs:572, 588, 608)."
+  (dolist (ending '("turn_finished" "turn_interrupted" "turn_failed"))
+    (let ((s (make-session)) (leticl::*turn-started-ms* nil))
+      (apply-event s (list :seq 1 :event "turn_started" :turn-id "t1" :model "m"))
+      (apply-event s (list :seq 2 :event "prompt_progress" :turn-id "t1"
+                           :total 10 :cache 2 :processed 4 :time-ms 90))
+      (is (consp (getf (session-turn s) :progress)) "while it runs, the progress is there")
+      (apply-event s (list :seq 3 :event ending :turn-id "t1" :finish-reason "stop"))
+      (is (null (getf (session-turn s) :progress))
+          (format nil "~a clears the progress" ending)))))
+
+(def-test the-rows-a-turn-published-are-recorded-in-order (:suite leticl)
+  "`turn.appended` was initialised at `turn_started` and written by NOTHING, so
+the field was dead — measured, `:appended` was NIL before and after.
+`view.rs:246-253` says what it is for: *\"a head shows a running turn from
+text/reasoning and a finished one from the transcript, and it needs to know which
+rows are the finished form or it renders the answer twice\"* (app.rs:2650-2651)."
+  (let ((s (make-session)) (leticl::*turn-started-ms* nil))
+    (apply-event s (list :seq 1 :event "turn_started" :turn-id "t1" :model "m"))
+    (apply-event s (list :seq 2 :event "transcript_appended" :item-id "i1" :kind "assistant"))
+    (apply-event s (list :seq 3 :event "transcript_appended" :item-id "i2" :kind "tool_result"))
+    (is (equal '("i1" "i2") (getf (session-turn s) :appended))
+        "both ids, in the order they landed")))
+
+(def-test a-frame-from-another-turn-is-consumed-and-not-folded (:suite leticl)
+  "Measured: a `delta` carrying `turn_id \"OTHER\"` appended to the CURRENT
+turn's text and reported `:dirty`. The reference and the view both require the id
+to match before folding and return Filtered when it does not (app.rs:2278-2297,
+view.rs:406-419). Benign on one turn at a time, load-bearing the moment
+concurrent subagents publish on one hub — and the seq still advances, because a
+filtered frame is consumed."
+  (let ((s (make-session)) (leticl::*turn-started-ms* nil))
+    (apply-event s (list :seq 1 :event "turn_started" :turn-id "t1" :model "m"))
+    (apply-event s (list :seq 2 :event "delta" :turn-id "t1" :target "text" :text "mine"))
+    (is (eq :quiet (apply-event s (list :seq 3 :event "delta" :turn-id "OTHER"
+                                        :target "text" :text " stranger")))
+        "a stranger's delta is filtered")
+    (is (equal "mine" (getf (session-turn s) :text)) "and nothing of it is folded")
+    (is (= 3 (session-seq s)) "but it IS consumed: the read mark advanced")
+    (is (eq :quiet (apply-event s (list :seq 4 :event "tokens_generated"
+                                        :turn-id "OTHER" :tokens 999))))
+    (is (= 0 (getf (session-turn s) :tokens)) "tokens_generated the same")
+    (is (eq :quiet (apply-event s (list :seq 5 :event "prompt_progress"
+                                        :turn-id "OTHER" :total 9))))
+    (is (null (getf (session-turn s) :progress)) "prompt_progress the same")
+    (is (eq :quiet (apply-event s (list :seq 6 :event "turn_finished"
+                                        :turn-id "OTHER" :finish-reason "stop"))))
+    (is (equal "running" (leticl::turn-state-name (session-turn s)))
+        "and a stranger's ending does not end this turn")
+    ;; an EMPTY turn_id is not a stranger: a turn can fail before it ever
+    ;; published a TurnStarted (view.rs:595-606)
+    (is (eq :dirty (apply-event s (list :seq 7 :event "turn_failed" :turn-id ""
+                                        :error "boom")))
+        "an empty id is folded, not filtered")))
+
+(def-test a-switch-does-not-carry-the-old-sessions-state (:suite leticl)
+  "`ingest-snapshot` cleared nothing a snapshot does not carry, so a `/switch`
+arrived wearing the last conversation's clothes — `app.rs:1902-1934` clears each
+of these with a measured reason, the loudest being *\"1 subagent running\" on the
+composer of the very subagent being looked at*. The running turn's clock went
+with them: nothing cleared `leticl::*turn-started-ms*`, so the previous session's start
+time kept walking under the new session's composer."
+  (let ((s (make-session))
+        (leticl::*turn-started-ms* nil) (*call-facts* nil) (*call-started-ms* nil))
+    (ingest-snapshot s (list :session-id "s-1" :seq 1 :dropped 0 :items-dropped 0
+                             :items nil :turn nil))
+    (apply-event s (list :seq 2 :event "turn_started" :turn-id "t1" :model "m"))
+    (apply-event s (list :seq 3 :event "subagent" :subagent-id "sa1" :state "running"))
+    (apply-event s (list :seq 4 :event "job_settled" :job "j1" :state "exited 0"))
+    (apply-event s (list :seq 5 :event "denial_raised" :request-id "d1" :tool "bash"))
+    (apply-event s (list :seq 6 :event "command_issued" :head-id "other"
+                         :identity "someone" :command "/mode" :note "ok"))
+    (is (consp (session-subagents s)) "the old session had a subagent tree")
+    (is (consp (session-jobs s)) "and job settlements")
+    (is (consp (session-denials s)) "and denials")
+    (is (consp (leticl::session-notices s)) "and notices")
+    (is (numberp leticl::*turn-started-ms*) "and a running turn's clock")
+    ;; the same session again: a resync is not a switch
+    (ingest-snapshot s (list :session-id "s-1" :seq 7 :dropped 0 :items-dropped 0
+                             :items nil :turn nil))
+    (is (consp (session-subagents s)) "a resync of the SAME session keeps what it has")
+    ;; a different one: none of it belongs here
+    (ingest-snapshot s (list :session-id "s-2" :seq 8 :dropped 0 :items-dropped 0
+                             :items nil :turn nil))
+    (is (null (session-subagents s)) "the subagent tree is the PARENT's fact")
+    (is (null (session-jobs s)) "the job rows are the old session's ids")
+    (is (null (session-denials s)) "the denials were about another conversation")
+    (is (null (leticl::session-notices s)) "and so were the notices")
+    (is (null leticl::*turn-started-ms*) "and the turn clock is not this session's")))
+
+(def-test a-hello-filters-subagents-and-adds-up-its-dropped (:suite leticl)
+  "Three findings on one frame. Subagents are not sessions a picker lists — the
+reference filters `parent_session_id` before STORING, on both frames that carry
+the list (app.rs:1668-1671, 1732-1735). `dropped` accumulates, and was assigned,
+so a reattach reset this head's running count of what it will never see. And
+`head_id` was stored and read by nothing, so this head announced its OWN commands
+back to itself — *\"seeing who did what is the point, and seeing yourself do what
+you just did is not\"* (app.rs:2815)."
+  (let ((s (make-session)) (*scrubbed-total* 0) (leticl::*turn-started-ms* nil)
+        (leticl::*verbosity* :normal))
+    (ingest-hello s (list :session-id "s-1" :head-id "h1" :dropped 2
+                          :sessions (list (list :session-id "s-1" :title "mine")
+                                          (list :session-id "sa-9" :title "a subagent"
+                                                :parent-session-id "s-1"))))
+    (is (= 1 (length (session-sessions s))) "the subagent row is not in the list")
+    (is (equal "s-1" (getf (first (session-sessions s)) :session-id)) "the session is")
+    (is (equal "mine" (session-title s)) "and the title is still found")
+    (is (= 2 (session-dropped s)) "the first Hello's dropped")
+    (ingest-hello s (list :session-id "s-1" :head-id "h1" :dropped 2 :sessions nil))
+    (is (= 4 (session-dropped s)) "the second ADDS to it rather than replacing it")
+    (is (eq :quiet (apply-event s (list :seq 9 :event "command_issued" :head-id "h1"
+                                        :identity "leticl" :command "/mode"
+                                        :note "ok")))
+        "our own command is not said back to us")
+    (is (null (leticl::session-notices s)) "and not kept as a notice either")
+    (apply-event s (list :seq 10 :event "command_issued" :head-id "h2"
+                         :identity "someone else" :command "/mode" :note "ok"))
+    (is (= 1 (length (leticl::session-notices s))) "another head's is")))
+
+(def-test a-settled-decision-keeps-the-advice-and-the-call (:suite leticl)
+  "Three things are read off the open decision BEFORE it is removed, because the
+answer event carries only the `req_id` (app.rs:2503-2524, view.rs:494-516): the
+summary, the call to put the outcome on, and the oracle's ADVICE. The last is the
+one the answer can never carry — its `basis` is the DECIDER's — so dropping it
+here was the loss *\"nothing downstream can recover\"*."
+  (let ((s (make-session)) (*call-facts* nil) (*call-started-ms* nil))
+    (apply-event s (list :seq 1 :event "decision_requested" :req-id "r1"
+                         :kind "permission" :call-id "c1" :summary "rm -rf /tmp/x"
+                         :advice "the oracle says this is outside the workspace"
+                         :options nil :ts 5))
+    (apply-event s (list :seq 2 :event "decision_answered" :req-id "r1"
+                         :outcome "allow_once" :by "deadtrickster" :basis "operator"
+                         :late nil))
+    (let ((settled (first (leticl::session-settled-decisions s))))
+      (is (consp settled) "the answer settles the decision")
+      (is (equal "c1" (getf settled :call-id)) "the call it gated is kept")
+      (is (equal "the oracle says this is outside the workspace" (getf settled :advice))
+          "and so is the advice, which nothing else carries")
+      (is (equal "rm -rf /tmp/x" (getf settled :summary)) "with the summary")
+      (is (null (session-open-decisions s)) "and the open one is gone"))))
+
+(def-test a-new-session-is-seated-where-this-head-is (:suite leticl)
+  "`NewSession.workspace` was always the empty string, and `protocol.rs:599-607`
+records what that costs: the daemon seats the new session's read-only tools at
+its OWN directory, *\"and every path in it resolved, so the only symptom was
+answers about the wrong tree\"*. The reference sends its cwd (driver.rs:147-150)."
+  (let* ((h (%make-head)) (sent (%fake-daemon h)))
+    (leticl::%send h (make-new-session "a name" ""))
+    (let ((f (first (funcall sent))))
+      (is (equal "new_session" (getf f :frame)))
+      (is (plusp (length (getf f :workspace))) "the workspace is not empty")
+      (is (equal (leticl::%cwd-string) (getf f :workspace))
+          "and it is where this head is running")
+      (is (not (uiop:string-suffix-p (getf f :workspace) "/"))
+          "written the way a path is written"))))
+
+(def-test a-created-session-is-the-one-you-end-up-in (:suite leticl)
+  "`Sessions.current` and `.created` were both dropped, so `/new` and
+`--new TITLE` created a session and left the operator in the old one — a command
+whose effect is invisible. The reference sets `session_id = current` and, when
+`created` answers a request THIS head made, queues a Switch to it
+(app.rs:1736-1744)."
+  (let* ((h (%make-head)) (sent (%fake-daemon h)))
+    ;; this head asks for one
+    (leticl::%send h (make-new-session "fresh" ""))
+    (is (eq t (head-want-new h)) "the ask is remembered by the sender")
+    (funcall sent)                      ; drain the new_session frame
+    (leticl::%handle-frame h (list :frame "sessions" :current "s-1" :created "s-2"
+                                   :sessions (list (list :session-id "s-1")
+                                                   (list :session-id "s-2"))))
+    (let ((f (first (funcall sent))))
+      (is (equal "switch" (getf f :frame)) "a switch went out")
+      (is (equal "s-2" (getf f :session-id)) "to the session that was just created"))
+    (is (null (head-want-new h)) "and the ask is spent, not standing")
+    (is (equal "s-1" (session-session-id (head-session h)))
+        "`current` is read: it is the daemon's word for where this connection is")
+    ;; a plain listing moves nothing
+    (leticl::%handle-frame h (list :frame "sessions" :current "s-1"
+                                   :sessions (list (list :session-id "s-1")
+                                                   (list :session-id "sa-1"
+                                                         :parent-session-id "s-1"))))
+    (is (null (funcall sent)) "a listing with no `created` sends nothing")
+    (is (= 1 (length (session-sessions (head-session h))))
+        "and the subagent row is filtered out of the picker's list here too")))
+
+(def-test a-landed-row-retires-the-prompt-it-echoes (:suite leticl)
+  "The queue was retired by `pop` on `transcript_appended` — the NEWEST entry,
+for a row that is almost certainly the OLDEST prompt — so with two queued prompts
+of different text the wrong one came off first. The transcript takes the words
+over by BEING them, so the row's TEXT is the match (app.rs:4685-4703, 4744-4751),
+one row per entry, with the prefix rule for the daemon's coalescing."
+  (let ((h (%make-head)))
+    (setf (head-queued h) (list "second" "first"))   ; newest first, as sent
+    (leticl::%handle-frame
+     h (list :frame "event" :seq 1 :event "transcript_content" :item-id "i1"
+             :item (list :type "user" :parts (list (list :text "first")))))
+    (is (equal '("second") (head-queued h))
+        "the row that landed retired ITS prompt, not the newest one")
+    ;; the coalesced case: one row is the front piece of a merged echo
+    (setf (head-queued h) (list (format nil "a~%b")))
+    (leticl::%handle-frame
+     h (list :frame "event" :seq 2 :event "transcript_content" :item-id "i2"
+             :item (list :type "user" :parts (list (list :text "a")))))
+    (is (equal (list "b") (head-queued h))
+        "a row that is the front of a coalesced echo strips itself off it")
+    ;; and a row nobody queued retires nothing
+    (setf (head-queued h) (list "only"))
+    (leticl::%handle-frame
+     h (list :frame "event" :seq 3 :event "transcript_content" :item-id "i3"
+             :item (list :type "user" :parts (list (list :text "somebody else's")))))
+    (is (equal '("only") (head-queued h)) "another head's prompt retires nothing")))
+
+(def-test a-bye-is-the-end-of-the-conversation (:suite leticl)
+  "The daemon writes a `Bye` and returns; the reference's pump stops on it and
+the head leaves (client.rs:548, app.rs:1886-1889). This head only dropped
+`connected`, so `%try-reconnect` re-attached every two seconds forever — a
+refusal the daemon meant as final became a loop, and a version skew became
+unreadable AND unescapable."
+  (let* ((h (%make-head)) (sent (%fake-daemon h)))
+    (leticl::%handle-frame h (list :frame "bye"
+                                   :reason "protocol version 21, this daemon speaks 22"))
+    (is (null (leticl::head-running h)) "the head is leaving")
+    (is (null (head-connected h)) "and not attached")
+    (is (search "speaks 22" (head-status-note h)) "with the daemon's own sentence kept")
+    (funcall sent)
+    (setf (leticl::head-last-reconnect h) 0)
+    (leticl::%try-reconnect h)
+    (is (null (funcall sent)) "and no further attach goes out, however long we wait")))
+
+(def-test a-protocol-skew-stops-the-head-and-names-both-numbers (:suite leticl)
+  "*\"A silent version skew looks like a bug in the other half, forever\"*
+(server.rs:332-342). Nothing read `Hello.protocol_version`, and the stale
+`protocol 18` headers in `src/protocol.lisp` and `leticl.asd` said a number that
+was not the constant — a comment, not a fact. The grep half is the same shape as
+`live-state-tables-are-defvar`: a rule in a document has already failed to
+prevent this once."
+  (let ((h (%make-head)) (*attach-started-ms* nil))
+    (leticl::%handle-frame h (list :frame "hello" :protocol-version 99
+                                   :session-id "s-1" :snapshot nil))
+    (is (null (leticl::head-running h)) "a head that cannot be understood stops")
+    (is (search (format nil "~d" +protocol-version+) (head-status-note h))
+        "the note names what we speak")
+    (is (search "99" (head-status-note h)) "and what the daemon speaks")
+    (is (equal "" (session-session-id (head-session h)))
+        "and nothing of the frame is folded"))
+  ;; the headers say the number the constant says
+  (is (search (format nil "protocol version ~d" +protocol-version+)
+              (source-of "protocol"))
+      "src/protocol.lisp's header names the version it sends")
+  (is (search (format nil "protocol ~d" +protocol-version+) (%repo-file "leticl.asd"))
+      "and so does the system definition"))
+
+(def-test a-question-answer-can-carry-a-typed-reply (:suite leticl)
+  "Only `{\"option\":N}` was ever built. `QuestionAnswer` has `note` and `free`
+too (question.rs:55-65), and `free` is the half the requirement names —
+*\"opencode style free user reply input\"* (question.rs:10-20) — so a typed answer
+to a question was unreachable."
+  (is (equal '(:free "no, use the other branch")
+             (question-answer :free "no, use the other branch"))
+      "a typed reply alone")
+  (is (equal '(:option 2 :note "because it is read-only")
+             (question-answer :option 2 :note "because it is read-only"))
+      "an option and a note together")
+  (is (equal '(:option 0) (question-answer :option 0)) "an option alone")
+  (is (null (question-answer)) "and nothing is not an answer: deferring is not sending")
+  (let ((line (encode-frame (make-answer-question "r1" (question-answer :free "yes")))))
+    (is (search "\"answer\":{\"free\":\"yes\"}" line)
+        (format nil "and it goes out as the payload: ~a" line))))
+
+(def-test the-screen-answer-is-the-frame-that-was-just-drawn (:suite leticl)
+  "The one frame whose whole point is *what the operator is looking at right
+now* was answered during the drain, from `head-last-rows` — the PREVIOUS frame.
+The reference queues the id and answers after `screen()` with the rows it just
+put on the terminal (driver.rs:93-99, app.rs:2723-2732)."
+  (let* ((leticl::*stdout* (make-string-output-stream))
+         (h (%on-head :cols 80 :rows 24))
+         (sent (%fake-daemon h)))
+    (setf (head-last-rows h) (list "the frame before"))
+    (leticl::%handle-frame h (list :frame "event" :seq 1 :event "screen_requested"
+                                   :req-id "q1"))
+    (is (equal '("q1") (head-screen-reqs h)) "the id is queued, not answered")
+    (is (null (funcall sent)) "nothing is on the wire yet")
+    (is (eq t (head-dirty h)) "and a frame is owed, so one is drawn")
+    (leticl::%render-and-paint h)
+    (leticl::%answer-screen-requests h)
+    (let ((f (first (funcall sent))))
+      (is (equal "screen" (getf f :frame)) "the answer goes out after the paint")
+      (is (equal "q1" (getf f :req-id)) "for the id that asked")
+      (is (not (equal (list "the frame before") (getf f :rows)))
+          "and it is NOT the frame before")
+      (is (= 24 (getf f :rows-n)) "it is this head's real size")
+      (is (equal (head-last-rows h) (getf f :rows)) "and the rows it just painted"))
+    (is (null (head-screen-reqs h)) "the queue is spent")))
+
+(def-test a-resync-adds-its-dropped-and-its-scrubbed (:suite leticl)
+  "Both counts travel on the `Resync` frame and both were discarded on that path,
+so `/status`'s `dropped` and `scrubbed` under-reported after a resync — which is
+exactly when they are worth reading (app.rs:1843-1845)."
+  (let* ((h (%make-head))
+         (*scrubbed-total* 0) (*resyncs* 0) (leticl::*turn-started-ms* nil))
+    (setf (session-dropped (head-session h)) 1
+          (session-session-id (head-session h)) "s-1")
+    (leticl::%handle-frame h (list :frame "resync" :reason "the daemon lost our place"
+                                   :dropped 3
+                                   :scrubbed (list :deltas 2 :reasoning 1 :tool-progress 1)
+                                   :snapshot (list :session-id "s-1" :seq 9 :dropped 0
+                                                   :items-dropped 0 :items nil :turn nil)))
+    (is (= 4 (session-dropped (head-session h))) "the frame's dropped is added to ours")
+    (is (= 4 *scrubbed-total*) "and its ScrubReport is summed in")
+    (is (= 1 *resyncs*) "the resync is counted, as it was")
+    (is (= 9 (session-seq (head-session h))) "and the snapshot still lands")))
+
+(def-test a-settled-secret-takes-the-card-down (:suite leticl)
+  "`SecretSettled` reached nothing — measured, disposition `:QUIET` and no other
+effect — so the masked field stayed up over a `sudo` another head had already
+answered. The daemon's own `secret_late` warning, which would explain it, is a
+`Warning`, which this head does not draw either (app.rs:2750-2765)."
+  (let ((h (%make-head)))
+    (setf (head-secret-req h) (list :req-id "r1" :prompt "password:")
+          (leticl::head-secret-buf h) "half-typed")
+    (leticl::%handle-frame h (list :frame "event" :seq 1 :event "secret_settled"
+                                   :req-id "r2" :given t :by "another head"))
+    (is (consp (head-secret-req h)) "a settlement for ANOTHER ask leaves this one up")
+    (is (equal "half-typed" (leticl::head-secret-buf h)) "and does not drop the keystrokes")
+    (leticl::%handle-frame h (list :frame "event" :seq 2 :event "secret_settled"
+                                   :req-id "r1" :given t :by "claude-host"))
+    (is (null (head-secret-req h)) "ours comes down when it is answered")
+    (is (equal "" (leticl::head-secret-buf h)) "with nothing left in the field")
+    (is (search "claude-host" (head-status-note h)) "and it says who answered")))
+
+(def-test a-settled-job-updates-the-row-the-pane-draws (:suite leticl)
+  "`JobSettled` was pushed to `session-jobs`, which nothing draws: the pane draws
+`head-jobs`, which is only ever the `Jobs` reply. So an open pane showed
+`running` for a job that had exited until `/jobs` was run again — the exact lie
+event.rs:857-864 says the event exists to prevent. Folded into the row the daemon
+gave us and NEVER invented: a settlement for a job this head has not been told
+about arrives with the next `ListJobs` (app.rs:2176-2195)."
+  (let ((h (%make-head)))
+    (leticl::%handle-frame h (list :frame "jobs" :session-id "s-1"
+                                   :jobs (list (list :id "j1" :command "cargo test"
+                                                     :how "bash" :state "running"
+                                                     :running t :produced 12
+                                                     :elapsed-ms 0))))
+    (is (eq t (getf (first (head-jobs h)) :running)) "the reply's row is running")
+    (leticl::%handle-frame h (list :frame "event" :seq 1 :event "job_settled"
+                                   :job "j1" :state "exited 0" :produced 4096
+                                   :elapsed-ms 3400))
+    (let ((row (first (head-jobs h))))
+      (is (null (getf row :running)) "the settlement stops it running")
+      (is (equal "exited 0" (getf row :state)) "with the state the daemon named")
+      (is (= 4096 (getf row :produced)) "the bytes it produced")
+      (is (= 3400 (getf row :elapsed-ms)) "and how long it ran")
+      (is (equal "cargo test" (getf row :command)) "keeping what only the reply knows"))
+    (leticl::%handle-frame h (list :frame "event" :seq 2 :event "job_settled"
+                                   :job "j9" :state "exited 1" :produced 0 :elapsed-ms 1))
+    (is (= 1 (length (head-jobs h))) "a settlement for an unknown job invents no row")))
+
+(def-test there-is-one-way-to-build-an-ack (:suite leticl)
+  "`protocol.rs:717-720`: the ack's seq comes from the batch, *\"and there is
+deliberately no other way to obtain one\"*. Two ways existed here, and the unused
+one was the bug the rule names — `ack-frame` read `session-seq`, the last seq
+FOLDED, where `run-loop` reads `last-seq`, the last seq READ. They disagree on
+every batch that ends in a frame this head filtered, which is every batch at
+terse. Deleted rather than fixed, and pinned here so it cannot come back."
+  (let ((s (find-symbol "ACK-FRAME" :leticl)))
+    (is (or (null s) (not (fboundp s)))
+        "there is no second spelling of the ack in the image"))
+  (is (search "(make-ack last-seq" (source-of "head"))
+      "the loop acks the last seq it READ")
+  (dolist (name '("session" "commands" "editor" "cards" "chrome" "panes" "render"))
+    (is (not (search "(make-ack" (source-of name)))
+        (format nil "and src/~a.lisp does not build one of its own" name))))

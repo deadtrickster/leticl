@@ -37,7 +37,7 @@
    #:+protocol-version+
    #:make-attach #:make-ack #:make-prompt #:make-interrupt #:make-answer
    #:match-option
-   #:make-answer-question #:make-list-sessions #:make-list-todos #:make-list-jobs
+   #:make-answer-question #:question-answer #:make-list-sessions #:make-list-todos #:make-list-jobs
    #:make-new-session #:make-resume-session #:make-rename-session
    #:make-switch #:make-peek #:make-settings #:make-detach #:make-resync
    #:make-screen-answer
@@ -46,7 +46,7 @@
    ;; socket
    #:connect-unix #:discover-daemons #:no-daemon #:no-daemon-socket #:wait-for-input
    ;; session
-   #:make-session #:ingest-hello #:ingest-snapshot #:apply-event #:ack-frame
+   #:make-session #:ingest-hello #:ingest-snapshot #:apply-event
    ;; prefs — the head's own choices, on disk
    #:make-prefs #:default-prefs-path #:load-prefs #:save-prefs
    #:prefs-diff #:prefs-thinking #:prefs-tools #:prefs-raw-calls #:prefs-path
@@ -121,7 +121,7 @@
    #:head-prev-screen
    #:head-last-rows #:head-cols #:head-rows #:head-mode #:head-composer
    #:head-quit-open #:head-secret-req #:head-connected #:head-status-note
-   #:head-settings #:head-queued #:head-scroll
+   #:head-settings #:head-queued #:head-scroll #:head-screen-reqs #:head-want-new
    #:head-jobs #:head-subagents #:head-peeked #:head-picker-sel
    ;; hack
    #:hack-start #:hack-stop #:hack-socket-path #:list-live-heads #:hack-handle))

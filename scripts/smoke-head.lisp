@@ -68,7 +68,7 @@
            ;; a head paints when dirty and acks after painting, never on receipt
            (when (plusp dirty)
              (%render head)
-             (write-frame (encode-frame (ack-frame session dirty 0)) stream)
+             (write-frame (encode-frame (make-ack (session-seq session) dirty 0)) stream)
              (incf acks)
              (setf dirty 0)))
          ;; final render, shown escape-stripped
@@ -80,6 +80,6 @@
          (dolist (r (screen-rows-ansi (head-screen head)))
            (format t "|~a~%" (%strip-ansi r)))
          ;; one clean ack for everything consumed since
-         (write-frame (encode-frame (ack-frame session 0 0)) stream))
+         (write-frame (encode-frame (make-ack (session-seq session) 0 0)) stream))
     (ignore-errors (write-frame (encode-frame (make-detach)) stream))
     (ignore-errors (close stream)))) 
