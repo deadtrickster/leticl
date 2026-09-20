@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+"""compare-heads — both heads' screens, the same instant, compared WITH escapes.
+
+Usage:
+  compare-heads                       # byobu windows named `letibot` and `leticl`
+  compare-heads --lb 1:3 --lc 1:7     # explicit tmux targets
+  compare-heads --rows 19-63          # only these rows (1-based, inclusive)
+  compare-heads --plain               # compare the text, not the escapes
+
+The method is letibot's own `docs/tui-testing.md`: `tmux capture-pane -p -e` is a
+screenshot you can diff, and `-e` is not optional — a bold title and a dim path
+look IDENTICAL to an all-bold header in a plain capture, and that was one of the
+differences a plain diff had been reading straight past.
+
+Two heads on the same session at the same size should be byte-identical row for
+row, escapes included, except where a number was measured by the head itself: its
+own cost since attach, its own call durations, its own `dropped` count. Anything
+else in the output below is a rendering difference, and the row is the finding.
+Compare round 3 (2026-09-20) started at 42 of 45 shared rows differing and ended
+at 60 of 63 identical, and every row it printed was a fix.
+"""
+import argparse
+import re
+import subprocess
+import sys
+
+SGR = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def windows():
+    out = subprocess.run(
+        ["tmux", "list-windows", "-a", "-F", "#{session_name}:#{window_index} #{window_name}"],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    named = {}
+    for line in out.splitlines():
+        target, _, name = line.partition(" ")
+        named.setdefault(name, target)
+    return named
+
+
+def capture(target, escapes):
+    args = ["tmux", "capture-pane", "-p", "-t", target]
+    if escapes:
+        args.insert(3, "-e")
+    return subprocess.run(args, capture_output=True, text=True, check=True).stdout.split("\n")
+
+
+def visible(s):
+    return SGR.sub("", s)
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--lb", help="tmux target of the letibot window")
+    ap.add_argument("--lc", help="tmux target of the leticl window")
+    ap.add_argument("--rows", help="1-based inclusive row range, e.g. 19-63")
+    ap.add_argument("--plain", action="store_true", help="compare visible text only")
+    ap.add_argument("--width", type=int, default=200, help="columns of each row to print")
+    a = ap.parse_args(argv[1:])
+
+    named = windows()
+    lb = a.lb or named.get("letibot")
+    lc = a.lc or named.get("leticl")
+    if not lb or not lc:
+        print("no window named letibot/leticl; name them (byobu: F8) or pass --lb/--lc", file=sys.stderr)
+        print("windows:", ", ".join(f"{t} {n}" for n, t in named.items()), file=sys.stderr)
+        return 2
+
+    # the two captures back to back: the closest to "the same moment" a shell gets
+    esc = not a.plain
+    b = capture(lb, esc)
+    c = capture(lc, esc)
+    n = min(len(b), len(c))
+    lo, hi = 1, n
+    if a.rows:
+        lo, hi = (int(x) for x in a.rows.split("-"))
+    same = 0
+    for r in range(lo - 1, min(hi, n)):
+        x, y = b[r].rstrip(), c[r].rstrip()
+        if x == y:
+            same += 1
+            continue
+        print(f"--- row {r + 1}")
+        print(f" lb: {x[:a.width]!r}")
+        print(f" lc: {y[:a.width]!r}")
+        if not a.plain and visible(x) == visible(y):
+            print("     (same text — the escapes differ)")
+    total = min(hi, n) - lo + 1
+    print(f"identical rows {lo}..{min(hi, n)}: {same} of {total}"
+          f"{'' if esc else ' (text only)'}")
+    return 0 if same == total else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

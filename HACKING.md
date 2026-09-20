@@ -51,6 +51,24 @@ and would look in `/tmp/leticl-<uid>`. `scripts/tui-eval` searches both, and
 bound to the running head. The reply's `value` is the printed result, JSON-
 encoded; `ms` is the eval's wall time.
 
+## Seeing both heads: `scripts/compare-heads`
+
+```sh
+compare-heads                     # byobu windows named `letibot` and `leticl`
+compare-heads --lb 1:3 --lc 1:7   # explicit tmux targets
+compare-heads --rows 19-63        # only these rows
+compare-heads --plain             # text only, no escapes
+```
+
+Captures both windows back to back with `tmux capture-pane -e` and prints every
+row that differs, **escapes included**. The `-e` is the point: a bold title over a
+dim path and an all-bold header are the same plain text, and a plain diff had been
+reading that difference straight past for two rounds. Two heads on the same
+session at the same size should be byte-identical except where a number was
+measured by the head itself (its own cost since attach, its own call durations,
+its own `dropped`); every other row it prints is a rendering difference, and the
+row is the finding. Exit 0 when every row matched.
+
 ## The CLI: `scripts/tui-eval`
 
 ```
