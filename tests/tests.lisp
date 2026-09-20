@@ -265,10 +265,15 @@ plain")))
     (is (= 6 (length lines)) "one line in, one line out per construct")))
 
 (def-test todos-screen (:suite leticl)
+  "The pane draws the ITEMS, rolls them up the way org does, and reports the
+cursor's line.
+
+It used to draw one line per `## ` heading and stop — `Phase 0 — repo — 0 open,
+2 done` — and the items are the queue. The operator: *\"our todo pane doesnt
+render them - only section titles and sub todos count. make sure it follows org
+mode - subtodos shown, when all subtodos checked section becomes also checked\"*."
   (flet ((line-text (line)
-           (if (null line)
-               ""
-               (format nil "~{~a~}" (mapcar #'car line)))))
+           (if (null line) "" (format nil "~{~a~}" (mapcar #'car line)))))
     (let* ((dir-pathname (make-pathname :name nil :type nil
                                         :directory '(:absolute "tmp" "leticl-todos-test")))
            (dir "/tmp/leticl-todos-test")
@@ -279,31 +284,78 @@ plain")))
            (progn
              (ensure-directories-exist dir-pathname)
              (with-open-file (out path :direction :output
-                                   :if-does-not-exist :create :if-exists :supersede)
-               (format out "# TODO~%~%~%## Alpha~%~%~%- [ ] one~%~%- [x] two~%~%~%## Beta~%~%~%- [ ] three~%~%"))
-             ;; repo-todo-lines: two sections, counted
-             (let ((lines (repo-todo-lines dir)))
-               (is (= 2 (length lines)) "two sections")
-               (is (string= (first lines) "    Alpha — 1 open, 1 done") "alpha counts")
-               (is (string= (second lines) "    Beta — 1 open, 0 done") "beta counts"))
-             ;; todos-lines: the session's plan, with marks, and the repo's TODO.md
+                                  :if-does-not-exist :create :if-exists :supersede)
+               (format out "# TODO~%~%## Alpha~%~%~%- [ ] one~%~%- [x] two~%~%~%## Beta~%~%~%- [x] three~%~%- [x] four~%~%~%## Empty~%~%Some prose and no checkboxes.~%"))
+             ;; the reader: items nested under their heading, with org's roll-up
+             (let ((rows (read-todo-md (uiop:read-file-string path))))
+               (flet ((find-row (needle)
+                        (find-if (lambda (r) (search needle (getf r :text))) rows)))
+                 (let ((alpha (find-row "Alpha")))
+                   (is (not (null alpha)) "the heading is a row")
+                   (is (eq :doing (getf alpha :mark))
+                       "1 of 2 done is STARTED, not done — org's rule")
+                   (is (search "[1/2]" (getf alpha :text)) "with org's cookie")
+                   (is (null (getf alpha :item)) "a heading is not an item"))
+                 (let ((beta (find-row "Beta")))
+                   (is (eq :done (getf beta :mark))
+                       "every child done makes the parent done")
+                   (is (search "[2/2]" (getf beta :text))))
+                 (let ((empty (find-row "Empty")))
+                   (is (not (null empty)) "a section with no checkboxes is still a row")
+                   (is (null (getf empty :mark))
+                       "and gets NO mark — an empty section is one nobody filled in")
+                   (is (not (search "[" (getf empty :text)))
+                       "and no cookie, so it cannot read as finished work"))
+                 (is (not (null (find-row "one"))) "the items are drawn")
+                 (is (eq :open (getf (find-row "one") :mark)))
+                 (is (eq :done (getf (find-row "two") :mark)))
+                 (is (getf (find-row "one") :item)
+                     "an item is an ITEM — the mark cannot tell them apart, since a heading carries its roll-up as one")
+                 (is (= 8 (getf (find-row "one") :indent))
+                     "an item is indented under its heading")))
+             ;; `###` owns its own items, being a subsection in org's outline
+             (let ((rows (read-todo-md (format nil "## Top~%~%- [x] t~%~%### Sub~%~%- [ ] s~%"))))
+               (is (eq :done (getf (find-if (lambda (r) (search "Top" (getf r :text))) rows) :mark))
+                   "Top is done by its own one item")
+               (is (eq :open (getf (find-if (lambda (r) (search "Sub" (getf r :text))) rows) :mark))
+                   "and Sub is open by ITS own, not folded into Top"))
+             ;; an item's DETAIL is kept, which it used to be thrown away
+             (let ((rows (read-todo-md (format nil "## S~%~%- [ ] item one~%    pin: abc123~%    Deps: T2~%~%- [ ] item two~%"))))
+               (let ((one (find-if (lambda (r) (search "item one" (getf r :text))) rows)))
+                 (is (= 2 (length (getf one :body)))
+                     "the indented lines under an item are its detail")
+                 (is (search "pin: abc123" (first (getf one :body)))
+                     "kept whole, not cut off at the first line"))
+               (let ((two (find-if (lambda (r) (search "item two" (getf r :text))) rows)))
+                 (is (null (getf two :body)) "and an item without detail has none")))
+             ;; a BLANK line closes an item, so prose does not attach to it
+             (let ((rows (read-todo-md (format nil "## S~%~%- [ ] item~%~%prose at column zero~%"))))
+               (is (null (getf (find-if (lambda (r) (search "item" (getf r :text))) rows) :body))
+                   "column-zero prose is not an item's detail"))
+             ;; the pane itself: the plan, marks, and the repo below it
              (setf (session-todos (head-session head))
                    (list (list :content "first" :status "pending")
                          (list :content "second" :status "in_progress")
                          (list :content "third" :status "completed"))
                    (session-wiring (head-session head))
-                   (list :workspace dir)))
-             (let ((lines (todos-lines head 80)))
-               (is (string= (line-text (first lines)) " todos ") "header")
+                   (list :workspace dir))
+             (multiple-value-bind (lines sel-line) (todos-lines head 80)
+               (is (search "todos" (line-text (first lines)))
+                   "the pane names itself, and its hint, on the first row")
                (is (some (lambda (l) (search "[ ] first" (line-text l))) lines)
                    "pending mark")
                (is (some (lambda (l) (search "[~] second" (line-text l))) lines)
                    "in-progress mark")
                (is (some (lambda (l) (search "[x] third" (line-text l))) lines)
                    "completed mark")
-               (is (some (lambda (l) (search "Alpha — 1 open, 1 done" (line-text l))) lines)
-                   "the repo's TODO.md is in the pane")))
-           (ignore-errors (delete-file path)))))
+               (is (some (lambda (l) (search "Alpha" (line-text l))) lines)
+                   "the repo's TODO.md is in the pane")
+               (is (some (lambda (l) (search "one" (line-text l))) lines)
+                   "and so are its ITEMS, which is the whole of P42")
+               (is (integerp sel-line) "and the cursor's line comes back")
+               (is (search "first" (line-text (nth sel-line lines)))
+                   "pointing at the selected session todo")))
+        (ignore-errors (delete-file path))))))
 
 (def-test decision-card (:suite leticl)
   (flet ((lines-text (lines)
@@ -1540,3 +1592,73 @@ the wrong place — the reference found this in its own test."
       (is (< sel-line (length lines)) "and it is a line that exists")
       (is (search "sub-2" (format nil "~{~a~}" (mapcar #'car (nth sel-line lines))))
           "the line it names is the row the cursor is on"))))
+
+;;; ---------------------------------------------------- the todos pane (P42) ;;;
+
+(def-test a-todo-is-painted-by-its-state-and-open-is-left-alone (:suite leticl)
+  "The operator, on seeing the items finally drawn: *\"colors?\"* — they were not
+painted at all, while the jobs pane two keys away had been painting the same
+three states the whole time.
+
+An OPEN item is left alone on purpose: it is the default state and the majority
+of any list, and colouring the majority spends the signal the other two carry."
+  (let ((done (leticl::%todo-row-lines (list :indent 4 :mark :done :text "d" :body nil :item t)))
+        (doing (leticl::%todo-row-lines (list :indent 4 :mark :doing :text "g" :body nil :item t)))
+        (open (leticl::%todo-row-lines (list :indent 4 :mark :open :text "o" :body nil :item t))))
+    (is (equal '(:fg :green) (cdr (second (first done)))) "done is green")
+    (is (equal '(:fg :yellow) (cdr (second (first doing)))) "doing is yellow")
+    (is (null (cdr (second (first open)))) "and open is left plain")))
+
+(def-test the-indent-is-its-own-segment-so-the-colour-lands-on-the-box (:suite leticl)
+  "Baked into the text, an indented row painted as `[x]     Phase 0` — the colour
+in front of the whitespace rather than on the box. So the indent is carried and
+emitted as its own segment, BEFORE the mark."
+  (let* ((row (list :indent 8 :mark :done :text "Phase 0" :body nil :item t))
+         (line (first (leticl::%todo-row-lines row))))
+    (is (equal "        " (car (first line))) "the indent is its own segment, first")
+    (is (equal "[x]" (car (second line))) "then the mark")
+    (is (equal '(:fg :green) (cdr (second line))) "and the mark carries the colour")
+    (is (equal " Phase 0" (car (third line))) "then the text")))
+
+(def-test painting-an-open-box-emits-no-bare-reset (:suite leticl)
+  "A colour helper that appends a RESET unconditionally emits a bare `ESC[0m`
+after the most common row in the pane — an escape that closes nothing.
+
+Asserting the GLYPHS is not enough for this one: both the box and the escape come
+out looking right until you count the escapes, which is the only way it is
+visible. The reference caught it exactly this way."
+  (let ((open (format nil "~{~a~}" (mapcar #'car (first (leticl::%todo-row-lines
+                                                         (list :indent 4 :mark :open
+                                                               :text "x" :body nil :item t))))))
+        (done (format nil "~{~a~}" (mapcar #'car (first (leticl::%todo-row-lines
+                                                         (list :indent 4 :mark :done
+                                                               :text "x" :body nil :item t)))))))
+    (is (search "[ ]" open) "an open box renders as an empty box")
+    (is (not (search (string (code-char 27)) open))
+        "and carries NO escape at all, because its style is empty")
+    (is (search "[x]" done) "a done box renders checked")))
+
+(def-test a-folded-item-that-has-more-says-so (:suite leticl)
+  "A folded item with detail marks itself `···`; one without does not — so the mark
+means \"there is more\" rather than \"this is an item\"."
+  (let ((*todos-open* nil))
+    (let* ((with (first (leticl::%todo-row-lines (list :indent 4 :mark :open :text "x"
+                                               :body (list "detail") :item t))))
+           (without (first (leticl::%todo-row-lines (list :indent 4 :mark :open :text "y"
+                                                  :body nil :item t)))))
+      (is (search "···" (format nil "~{~a~}" (mapcar #'car with)))
+          "an item with detail says there is more")
+      (is (not (search "···" (format nil "~{~a~}" (mapcar #'car without))))
+          "and one without stays quiet"))))
+
+(def-test an-unfolded-item-shows-its-detail (:suite leticl)
+  "The operator: *\"if a todo has some associated text? should i be able to expand
+it somehow?\"*. Unfolded, the detail is drawn under the row."
+  (let ((*todos-open* (list "item one")))
+    (let* ((row (list :indent 4 :mark :open :text "item one"
+                      :body (list "pin: abc123" "Deps: T2") :item t))
+           (lines (leticl::%todo-row-lines row))
+           (text (format nil "~{~a~^~%~}" (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l))) lines))))
+      (is (= 3 (length lines)) "the row, and both detail lines")
+      (is (search "pin: abc123" text) "the detail is drawn")
+      (is (search "Deps: T2" text) "all of it, in file order"))))

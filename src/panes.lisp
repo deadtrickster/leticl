@@ -147,71 +147,299 @@ the wrong place, which is how the reference found this in its own test."
                  (list (list (cons "  none" '(:fg :bright-black))))))
      (+ (length header) sel))))
 
-(defun repo-todo-lines (workspace)
-  "The repo's TODO.md, summarised by section (app.rs:6099). Read-only: the
- pane never writes the file."
+;;;; The repo's TODO.md, read the way org reads it.
+;;;;
+;;;; Three commits in the reference are one feature here, and each is measured
+;;;; from the operator's own words in them:
+;;;;
+;;;;   *"our todo pane doesnt render them - only section titles and sub todos
+;;;;    count. make sure it follows org mode - subtodos shown, when all subtodos
+;;;;    checked section becomes also checked"*
+;;;;   *"colors?"*
+;;;;   *"if a todo has some associated text? should i be able to expand it
+;;;;    somehow?"*
+
+(defparameter +todo-marks+
+  '(("x" . :done) ("X" . :done) (" " . :open) ("~" . :doing) ("-" . :open))
+  "The marks this file's own legend defines and `todo_write` uses, so both halves
+of the pane read alike. `-` counts as open: it is a bullet nobody has picked up.")
+
+(defun %todo-mark-of (line)
+  "LINE as a checkbox, or NIL.
+
+A checkbox is `- [x] …`, `- [ ] …` or a bare `[x] …` — markdown's list bullet is
+optional, because a TODO.md written by hand does not always carry one."
+  (let ((trimmed (string-left-trim " " line)))
+    (when (>= (length trimmed) 3)
+      (let ((body (cond ((and (>= (length trimmed) 6)
+                              (or (uiop:string-prefix-p "- [" trimmed)
+                                  (uiop:string-prefix-p "* [" trimmed)))
+                         ;; strip the bullet AND its space: `- [x] one` → `[x] one`
+                         ;; at offset 2. At 3 the body starts `] one` and nothing
+                         ;; matches, which is how the first version read every
+                         ;; checkbox as prose.
+                         (subseq trimmed 2))
+                        ((char= (char trimmed 0) #\[) trimmed)
+                        (t nil))))
+        (when (and body (>= (length body) 3) (char= (char body 0) #\[)
+                   (char= (char body 2) #\]))
+          (let ((mark (cdr (assoc (string (char body 1)) +todo-marks+ :test #'string=))))
+            (when mark
+              (values mark (string-left-trim " " (subseq body 4))))))))))
+
+(defun strip-todo-markup (text)
+  "`**T1** git init` -> `T1 git init`. Backticks go too; nothing else is
+interpreted, because this is a reader and not a renderer."
+  (let ((out text))
+    (dolist (marker '("**" "`"))
+      (loop for i = (search marker out)
+            while i
+            do (setf out (concatenate 'string (subseq out 0 i) (subseq out (+ i (length marker)))))))
+    out))
+
+(defun %todo-rollup (marks)
+  "Org's rule for a parent, and the whole of it: every child done makes the parent
+done; any child started makes it started; otherwise open."
+  (cond ((every (lambda (m) (eq m :done)) marks) :done)
+        ((some (lambda (m) (not (eq m :open))) marks) :doing)
+        (t :open)))
+
+(defun read-todo-md (body)
+  "BODY (a TODO.md) to a list of `todo-row` plists.
+
+Each row: `:indent` (columns before the mark), `:mark` (`:open`/`:doing`/`:done`
+or NIL for a heading with no checkboxes under it), `:text`, `:body` (the detail
+lines under an item) and `:item` (T for a checkbox row, NIL for a heading).
+
+The indent is carried rather than baked into the text, because it belongs BEFORE
+the mark and the mark is the part that gets painted — pre-indented it renders as
+`[x]     Phase 0` with the colour in front of the whitespace instead of on the
+box. And `:item` exists because a heading carries a mark TOO (its roll-up), so
+the mark cannot be what tells a row from a heading."
+  (let ((out nil)
+        (section nil)
+        (items nil)                     ; newest first: mark, head, body
+        (collecting nil))
+    (labels ((flush ()
+               (when section
+                 (if (null items)
+                     ;; no box and no cookie: an empty section is one nobody has
+                     ;; filled in, and org does not mark it done either
+                     (push (list :indent 4 :mark nil :text section :body nil
+                                 :item nil)
+                           out)
+                     (let ((marks (mapcar #'first items)))
+                       (push (list :indent 4
+                                   :mark (%todo-rollup marks)
+                                   :text (format nil "~a  [~a/~a]"
+                                                 section
+                                                 (count :done marks)
+                                                 (length items))
+                                   :body nil :item nil)
+                             out)
+                       ;; oldest first under the heading
+                       (dolist (it (reverse items))
+                         (push (list :indent 8 :mark (first it) :text (second it)
+                                     :body (third it) :item t)
+                               out))))))
+             (end-item () (setf collecting nil)))
+      (dolist (line (uiop:split-string body :separator '(#\newline)))
+        (cond
+          ;; `##` and deeper. `###` is a subsection and owns its own items, which
+          ;; is what org's outline says too.
+          ((or (uiop:string-prefix-p "## " line)
+               (uiop:string-prefix-p "### " line))
+           (flush)
+           (let ((n (if (uiop:string-prefix-p "### " line) 4 3)))
+             (setf section (string-trim " " (subseq line n))
+                   items nil
+                   collecting nil)))
+          (t
+           (multiple-value-bind (mark text) (%todo-mark-of line)
+             (cond
+               (mark
+                (push (list mark (strip-todo-markup text) nil) items)
+                (setf collecting t))
+               ((zerop (length (string-trim " " line)))
+                ;; a blank line CLOSES an item: two items a blank apart would
+                ;; otherwise merge, and the prose between a heading and its list
+                ;; would land on whatever came before
+                (end-item))
+               ((and collecting
+                     (or (char= (char line 0) #\space)
+                         (char= (char line 0) #\tab))
+                     items)
+                ;; an indented line under an item is that item's DETAIL — where a
+                ;; TODO.md puts the commit it pins and the `Deps:` line.
+                ;;
+                ;; APPENDED, not pushed: the detail reads top-to-bottom as the
+                ;; file does, and pushing put the `Deps:` line above the commit it
+                ;; was pinned to. `(third (first items))` is the CURRENT item;
+                ;; `items` itself is newest-first.
+                (let ((det (strip-todo-markup (string-trim " " line))))
+                  (setf (third (first items))
+                        (append (third (first items)) (list det)))))
+               (t (end-item)))))))
+      (flush)
+      (nreverse out))))
+
+(defun repo-todo-rows (workspace)
+  "The repo's TODO.md as rows, or one row saying why there are none."
   (if (not (plusp (length (or workspace ""))))
-      (list "    (no workspace in the wiring)")
+      (list (list :indent 4 :mark nil :text "(no workspace in the wiring)"
+                  :body nil :item nil))
       (let ((path (format nil "~a/TODO.md" workspace)))
         (if (probe-file path)
-            (let ((body (uiop:read-file-string path))
-                  (out nil)
-                  (section nil)
-                  (open 0)
-                  (done 0))
-              (flet ((flush ()
-                       (when section
-                         (push (format nil "    ~a — ~d open, ~d done"
-                                       section open done)
-                               out))))
-                (dolist (line (uiop:split-string body :separator '(#\newline)))
-                  (if (uiop:string-prefix-p "## " line)
-                      (progn
-                        (flush)
-                        (setf section (string-trim " " (subseq line 3))
-                              open 0 done 0))
-                      (let ((trimmed (string-trim " " line)))
-                        (cond ((uiop:string-prefix-p "- [ ]" trimmed) (incf open))
-                              ((or (uiop:string-prefix-p "- [x]" trimmed)
-                                   (uiop:string-prefix-p "- [X]" trimmed))
-                               (incf done))))))
-                (flush)
-                (if out
-                    (nreverse out)
-                    (list "    no sections found."))))
-            (list (format nil "    (no TODO.md in ~a)" workspace))))))
+            (read-todo-md (uiop:read-file-string path))
+            (list (list :indent 4 :mark nil
+                        :text (format nil "(no TODO.md in ~a)" workspace)
+                        :body nil :item nil))))))
+
+;;; ---------------------------------------------------------- the watcher ;;;
+;;;
+;;; The pane used to read the file at open, so a file edited WHILE the pane was up
+;;; showed the old read — and this file is edited exactly while somebody is
+;;; looking at it. The operator: *"since the file can be updated, dont cache it i
+;;; guess or do a watcher with a nice syscall"*.
+;;;
+;;; One `stat` per draw rather than an inotify thread: a watcher means a
+;;; descriptor, a thread and an event routed into a head whose design is one loop
+;;; over one channel, and the pane is drawn only while it is open. `(mtime, len)`
+;;; rather than mtime alone, because a second-granularity mtime misses two writes
+;;; inside one second and a length change catches most of those.
+
+(defvar *repo-todo-cache* nil "The rows last read, or NIL.")
+(defvar *repo-todo-stamp* nil "The (mtime len) they were read at.")
+
+(defun %todo-stamp (path)
+  (ignore-errors
+    (let ((w (sb-posix:stat path)))
+      (list (sb-posix:stat-mtime w) (sb-posix:stat-size w)))))
+
+(defvar *repo-todo-path* nil
+  "The workspace the cache was read for, so a Switch does not show the old
+project's queue.")
+
+(defun repo-todo-rows-cached (workspace)
+  "The repo's rows, re-read when the file changes (or the workspace does)."
+  (let* ((path (and (plusp (length (or workspace "")))
+                    (format nil "~a/TODO.md" workspace)))
+         (stamp (and path (probe-file path) (%todo-stamp path))))
+    (unless (and (equal path *repo-todo-path*) (equal stamp *repo-todo-stamp*))
+      (setf *repo-todo-path* path
+            *repo-todo-stamp* stamp
+            *repo-todo-cache* (repo-todo-rows workspace)))
+    *repo-todo-cache*))
+
+(defun repo-todo-lines (workspace)
+  "The repo's TODO.md as plain lines, for callers that want text. The pane uses
+`repo-todo-rows-cached`; this stays for the rest."
+  (mapcar (lambda (row) (format nil "~a~@[~a ~]~a"
+                                (make-string (getf row :indent) :initial-element #\space)
+                                (case (getf row :mark) (:done "[x]") (:doing "[~]") (:open "[ ]"))
+                                (getf row :text)))
+          (repo-todo-rows workspace)))
+
+(defvar *todos-open* nil
+  "Which repo todo rows are unfolded, by their TEXT.
+
+Keyed by text rather than by index, because the file is re-read while the pane is
+open and an index would then point at a different line. A defvar, not a head slot:
+a struct layout change is a restart.")
+
+(defun %todo-mark-style (mark)
+  "A mark's colour: done green, doing yellow, OPEN LEFT ALONE.
+
+An open item is the default state and the majority of any list, and colouring the
+majority spends the signal the other two carry."
+  (case mark
+    (:done '(:fg :green))
+    (:doing '(:fg :yellow))
+    (t nil)))
+
+(defun %todo-mark-text (mark)
+  (case mark (:done "[x]") (:doing "[~]") (:open "[ ]") (t "   ")))
+
+(defun %todo-row-lines (row)
+  "One repo todo row to segment lines — the mark PAINTED, the indent separate.
+
+The indent is its own segment so the colour lands on the box and not in front of
+the whitespace; `TodoMark::painted` in the reference exists for the same reason,
+and so does the assertion in the test that checks the ESCAPES rather than the
+glyphs."
+  (let* ((mark (getf row :mark))
+         (indent (make-string (getf row :indent) :initial-element #\space))
+         (style (%todo-mark-style mark))
+         (text (getf row :text))
+         (open (member text *todos-open* :test #'string=))
+         (detail (getf row :body)))
+    ;; returns a LIST OF LINES. One row is one line (mark painted, indent its
+    ;; own segment), plus one line per detail row when it is unfolded. The caller
+    ;; must FLATTEN these — see `todos-lines`, which appends them — because a
+    ;; nesting mistake here is invisible: it renders as a list printed into a
+    ;; cell rather than as an error.
+    (append
+     (list (list (cons indent nil)
+                 (cons (%todo-mark-text mark) style)
+                 (cons (format nil " ~a" text) nil)
+                 ;; a folded item that HAS more says so; one that does not, does
+                 ;; not — so the mark means "there is more" rather than "this is
+                 ;; an item"
+                 (cons (if (and detail (not open)) "  ···" "")
+                       '(:fg :bright-black))))
+     (when (and detail open (getf row :item))
+       (mapcar (lambda (l) (list (cons "            " nil)
+                                 (cons l '(:fg :bright-black))))
+               detail)))))
 
 (defun todos-lines (head cols)
-  "The todos pane: the session's plan (what the model writes with todo_write),
- and the repo's TODO.md read-only (app.rs:4776)."
+  "The todos pane: the session's plan (what the model writes with `todo_write`),
+and the repo's TODO.md — items drawn, rolled up, painted and unfoldable.
+
+Second value is the cursor's LINE, for the scroll offset (see `subagent-lines`)."
   (declare (ignore cols))
   (let* ((s (head-session head))
          (todos (session-todos s))
-         (todo-lines (if todos
-                         (mapcar (lambda (todo)
-                                   (let ((mark (cond ((string= (getf todo :status) "in_progress") "[~]")
-                                                     ((string= (getf todo :status) "completed") "[x]")
-                                                     (t "[ ]"))))
-                                     (list (cons (format nil "    ~a ~a" mark
-                                                        (getf todo :content)) nil))))
-                                 todos)
-                         (list (list (cons "    none written yet. The model writes them with todo_write."
-                                           '(:fg :bright-black))))))
-         (repo-lines (mapcar (lambda (l) (list (cons l '(:fg :bright-black))))
-                             (repo-todo-lines (getf (session-wiring s) :workspace)))))
-    (append
-     (list (list (cons " todos " '(:bold t)))
-           nil
-           (list (cons "  this session — the model's plan, live:"
-                       '(:fg :bright-black))))
-     todo-lines
-     (list nil
-           (list (cons "  the repo's TODO.md — the operator's queue, read-only here:"
-                       '(:fg :bright-black))))
-     repo-lines
-     (list nil
-           (list (cons "  the file itself is in the workspace; this pane never writes it."
-                       '(:fg :bright-black)))))))
+         (sel (head-picker-sel head))
+         (header (list (list (cons " todos " '(:bold t))
+                             (cons "  ↑↓ moves · enter unfolds · esc closes"
+                                   '(:fg :bright-black)))
+                       (list nil)
+                       (list (cons "  this session — the model's plan, live:"
+                                   '(:fg :bright-black)))))
+         (todo-rows
+          (if todos
+              (loop for t2 in todos
+                    for i from 0
+                    for st = (cond ((string= (getf t2 :status) "in_progress") :doing)
+                                   ((string= (getf t2 :status) "completed") :done)
+                                   (t :open))
+                    ;; a LINE is a list of SEGMENTS — `(list (cons …) (cons …))`,
+                    ;; NOT `(list (list (cons …)))`, which is a line containing a
+                    ;; line and renders as a list inside the cell
+                    collect (list (cons "  " nil)
+                                  (cons (%todo-mark-text st) (%todo-mark-style st))
+                                  (cons (format nil " ~a" (getf t2 :content))
+                                        (if (= i sel) (list :reverse t) nil))))
+              (list (list (cons "    none written yet. The model writes them with todo_write."
+                                '(:fg :bright-black))))))
+         (repo-header (list nil
+                            (list (cons "  the repo's TODO.md — the operator's queue, read-only here:"
+                                        '(:fg :bright-black)))))
+         (rows (repo-todo-rows-cached (getf (session-wiring s) :workspace)))
+         ;; APPEND, not mapcar: each row renders to several lines, and mapcar
+         ;; leaves a list of lists — which prints into the cell instead of
+         ;; erroring, so nothing catches it
+         (repo-lines (mappend #'%todo-row-lines rows)))
+    (values
+     (append header todo-rows repo-header
+             (if repo-lines repo-lines
+                 (list (list (cons "    (nothing in it)" '(:fg :bright-black)))))
+             (list (list (cons "" '(:fg :bright-black)))
+                   (list (cons "  the file is in the workspace; this pane never writes it."
+                               '(:fg :bright-black)))))
+     ;; the cursor is on the session's plan, which starts after the header
+     (+ (length header) sel))))
 
 (defun peek-lines (head cols)
   (let ((events (head-peeked head)))

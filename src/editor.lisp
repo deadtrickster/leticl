@@ -145,6 +145,14 @@ shows the candidates on the status line."
                        (setf (head-dirty head) t))
            ((:wheel-down) (pane-scroll-by 3) (setf (head-dirty head) t))
            ((:wheel-up) (pane-scroll-by -3) (setf (head-dirty head) t))
+           ((:tab)
+            ;; Tab unfolds too, as the operator asked, BESIDE enter and under
+            ;; enter's own condition, so the two cannot disagree about whose key
+            ;; it is. On every other pane it does what enter does.
+            (when (not (eq (head-mode head) :todos))
+              (setf (head-dirty head) nil))
+            (when (eq (head-mode head) :todos)
+              (%handle-key head (list :type :enter))))
            ((:enter)
             ;; The subagent pane's enter is the one the pane already advertises:
             ;; read that subagent's scrollback without moving this session there.
@@ -156,6 +164,21 @@ shows the candidates on the status line."
                    (%send head (make-peek it))
                    (setf (head-status-note head)
                          (format nil "peeking ~a…" it)))))
+              (:todos
+               ;; Enter unfolds a repo item that HAS detail — the operator asked
+               ;; for this directly: *"if a todo has some associated text? should
+               ;; i be able to expand it somehow?"*. Keyed by the row's TEXT, not
+               ;; its index, because the file is re-read while the pane is open
+               ;; and an index would then point at a different line.
+               (let* ((rows (repo-todo-rows-cached
+                             (getf (session-wiring (head-session head)) :workspace)))
+                      (row (nth (head-picker-sel head) rows)))
+                 (when (and row (getf row :body) (getf row :item))
+                   (let ((text (getf row :text)))
+                     (if (member text *todos-open* :test #'string=)
+                         (setf *todos-open* (remove text *todos-open* :test #'string=))
+                         (push text *todos-open*))
+                     (setf (head-dirty head) t)))))
               (:picker
                (let ((hit (nth (head-picker-sel head)
                                (session-sessions (head-session head)))))

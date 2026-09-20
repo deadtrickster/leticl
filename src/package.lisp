@@ -64,6 +64,8 @@
    ;; pane scrolling (P41): one offset for every pane, counting from the TOP
    #:pane-scroll-by #:pane-scroll-max #:pane-view #:reset-pane-scroll
    #:scroll-pane-into-view #:*pane-scroll* #:*pane-lines* #:*pane-room*
+   ;; the todos pane's unfold state (P42)
+   #:*todos-open* #:*repo-todo-cache* #:*repo-todo-stamp*
    ;; engines a model may want to call directly while restyling
    #:highlight-fence #:lang-for-fence
    ;; keys
@@ -79,7 +81,9 @@
    #:markdown-lines #:wrap-segments #:top-border #:status-line
    #:decision-card-lines #:picker-lines #:help-lines *slash-commands*
    #:quit-card-lines #:secret-card-lines
-   #:todos-lines #:repo-todo-lines #:jobs-lines #:subagent-lines
+   #:todos-lines #:repo-todo-lines #:repo-todo-rows #:repo-todo-rows-cached
+   #:read-todo-md #:strip-todo-markup
+   #:jobs-lines #:subagent-lines
    #:peek-lines #:config-lines #:status-screen-lines #:help-lines #:picker-lines
    ;; highlight
    #:hl-available-p #:lang-for #:class-grid #:role-style #:highlight-lines
