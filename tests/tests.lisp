@@ -1836,8 +1836,12 @@ the head's own stream, a string stream standing in for the socket."
 ;;; ------------------------------------------------------- bindings (S9) ;;;
 
 (defun %press (head &rest keys)
-  "Press each key in order on HEAD, as the key loop would."
-  (dolist (k keys) (leticl::%normal-key head k)))
+  "Press each key in order on HEAD, as the key loop would.
+
+Through `%handle-key`, which is what the loop calls: the head's own chords run
+above every view now, so pressing one straight into `%normal-key` would test a
+path the operator cannot reach."
+  (dolist (k keys) (leticl::%handle-key head k)))
 
 (def-test the-new-chords-reach-the-features-they-name (:suite leticl)
   "A chord bound to a feature that does not exist is worse than no chord, which is
@@ -3300,9 +3304,12 @@ transcript still gave up the rows for it. And the reference's second ctrl-c CLOS
 the card (its hint bar stopped promising \"again to exit\" the day a card started
 opening); ours left."
   (let* ((*stdout* (make-string-output-stream))
+         (leticl::*ctrlc-at* nil)
          (h (%on-head :cols 80 :rows 24)))
     (leticl::%handle-key h (list :type :ctrl :ch #\c))
-    (is (head-quit-open h) "ctrl-c opens the card")
+    (is (not (head-quit-open h)) "one ctrl-c on an empty composer only ARMS")
+    (leticl::%handle-key h (list :type :ctrl :ch #\c))
+    (is (head-quit-open h) "and the second within the window opens the card")
     (leticl::%render h)
     (let ((text (%screen-text h)))
       (is (search "leave — and what happens to the daemon" text) "and the card is ON the screen")
@@ -3311,8 +3318,9 @@ opening); ours left."
           "and its LAST line is on the screen too, not under the box's top edge")
       (is (search "╭" text) "with the box still whole"))
     (leticl::%handle-key h (list :type :ctrl :ch #\c))
-    (is (not (head-quit-open h)) "a second ctrl-c closes it")
+    (is (not (head-quit-open h)) "a ctrl-c with the card up closes it")
     (is (leticl::head-running h) "and the head stays")
+    (leticl::%handle-key h (list :type :ctrl :ch #\c))
     (leticl::%handle-key h (list :type :ctrl :ch #\c))
     (leticl::%handle-key h (list :type :down))
     (is (= 1 (leticl::head-quit-sel h)) "down picks the second choice")
@@ -3374,3 +3382,564 @@ the first row only, and a continuation row is indented by its width."
       ;; and the box's walls and prompt take four more: 100 columns at 30 is four
       (is (= 4 rows) "the long line wraps to four rows rather than being cut at the box's edge")
       (is (< (cdr leticl::*caret*) 40) "and the caret is on the screen"))))
+
+;;; ------------------------------------- the operator's input, measured (keys.md) ;;;
+;;;
+;;; `docs/parity/keys.md` read every chord, every slash verb and the composer
+;;; against letibot `8af671e` and wrote down what would stop an operator trying to
+;;; make this head their daily driver. These are those findings, one test each,
+;;; and each docstring says what was MEASURED rather than what the code now does.
+
+(defun %wire (head)
+  "Give HEAD a stream to write frames to. Returns the stream, which `%sent`
+decodes — the head's own socket path, with a string stream standing in for it."
+  (let ((wire (make-string-output-stream)))
+    (setf (leticl::head-stream head) wire (head-connected head) t)
+    wire))
+
+(defun %sent (wire)
+  "Every frame written to WIRE since the last read, decoded, NEWEST FIRST."
+  (let ((text (get-output-stream-string wire)))
+    (nreverse (mapcar #'json-decode
+                      (remove "" (uiop:split-string text :separator '(#\newline))
+                              :test #'string=)))))
+
+(defun %sessions (head &rest titles)
+  "Put TITLES on HEAD as the daemon's session list, `s-1` … `s-N`."
+  (setf (session-sessions (head-session head))
+        (loop for title in titles
+              for i from 1
+              collect (list :session-id (format nil "s-~d" i) :title title)))
+  head)
+
+(def-test esc-esc-is-two-keys-and-not-one-alt (:suite leticl)
+  "G1. `read-key` saw ESC, polled 60 ms, got the second ESC and fell to the alt
+arm — `(:type :alt :ch #\\Esc)` — which the composer drops. So a FAST double tap,
+which is how anybody who means it presses it, was eaten, and the one key that
+stops a runaway turn did nothing. The reference names this exact trap and guards
+it the same way (term.rs:707-711): two keys out of two bytes."
+  (let ((s (make-string-input-stream (format nil "~C~C" +esc+ +esc+))))
+    (is (equal (read-key s) (list :type :esc)) "the first ESC is a key on its own")
+    (is (equal (read-key s) (list :type :esc)) "and the second is still there to read")))
+
+(def-test the-decoder-reads-the-chords-the-composer-answers (:suite leticl)
+  "G7/G8. `alt+b`, `alt+f`, `alt+z` and `alt+backspace` arrived as `(:type :alt)`
+and were thrown away by the one arm that reads an alt chord (alt+enter), and the
+CSI modifier parameter was parsed and never looked at — so `ctrl-←` was a plain
+`←`. SS3 Home and End were not in the table at all (term.rs:715-743, 773-780)."
+  (is (equal (key-from (format nil "~C[1;5D" +esc+)) (list :type :word-left))
+      "ctrl-← is word-left, not left")
+  (is (equal (key-from (format nil "~C[1;5C" +esc+)) (list :type :word-right))
+      "and ctrl-→ word-right")
+  (is (equal (key-from (format nil "~C[D" +esc+)) (list :type :left))
+      "a bare arrow is still a bare arrow")
+  (is (equal (key-from (format nil "~Cb" +esc+)) (list :type :word-left)) "alt+b")
+  (is (equal (key-from (format nil "~Cf" +esc+)) (list :type :word-right)) "alt+f")
+  (is (equal (key-from (format nil "~Cz" +esc+)) (list :type :redo)) "alt+z is redo")
+  (is (equal (key-from (format nil "~C~C" +esc+ (code-char 127)))
+             (list :type :kill-word-back))
+      "alt+backspace kills the word back")
+  (is (equal (key-from (format nil "~COH" +esc+)) (list :type :home)) "SS3 Home")
+  (is (equal (key-from (format nil "~COF" +esc+)) (list :type :end)) "SS3 End"))
+
+(def-test a-pane-open-is-not-a-head-you-cannot-talk-to (:suite leticl)
+  "G2. The pane arm claimed every key for the nine full-body modes and read only
+`q` out of a printable one, so NO character reached the composer while a pane was
+open — including the session picker, whose own hint bar says *\"type a number to
+switch · /new [title]\"* (chrome.lisp:363) and meant neither. The reference lets a
+pane's text fall through and gates only Enter on an empty line (app.rs:3508-3548)."
+  (let* ((h (%on-head :cols 80 :rows 24))
+         (wire (%wire h)))
+    (%sessions h "first" "second")
+    (setf (head-mode h) :picker)
+    (leticl::%handle-key h (list :type :char :ch #\2))
+    (is (eq :picker (head-mode h)) "typing does not close the list")
+    (is (string= "2" (composer-buffer (head-composer h))) "and the digit is in the composer")
+    (leticl::%handle-key h (list :type :enter))
+    (let ((f (first (%sent wire))))
+      (is (equal "switch" (getf f :frame)) "enter on the typed number switches")
+      (is (equal "s-2" (getf f :session-id)) "to the session on that row"))
+    ;; and `q` is a letter again once a line is being typed
+    (setf (head-mode h) :todos)
+    (composer-insert (head-composer h) "why")
+    (leticl::%handle-key h (list :type :char :ch #\q))
+    (is (eq :todos (head-mode h)) "q with a line typed does not close the pane")
+    (is (string= "whyq" (composer-buffer (head-composer h))) "it types a q")))
+
+(def-test a-slash-command-still-works-under-the-session-picker (:suite leticl)
+  "G2. The picker's hint promises `/new [title]` in the same breath as the number.
+`%submit-line` checked the picker arms BEFORE the slash, so the line was read as
+the name of a session to switch to (app.rs:3961-3963 puts the command first)."
+  (let* ((h (%on-head :cols 80 :rows 24))
+         (wire (%wire h)))
+    (%sessions h "first")
+    (setf (head-mode h) :picker)
+    (dolist (ch (coerce "/new notes" 'list))
+      (leticl::%handle-key h (list :type :char :ch ch)))
+    (leticl::%handle-key h (list :type :enter))
+    (let ((f (first (%sent wire))))
+      (is (equal "new_session" (getf f :frame)) "the line was a command")
+      (is (equal "notes" (getf f :title)) "carrying the title typed after it"))))
+
+(def-test the-session-picker-answers-a-name-and-refuses-an-ambiguous-one (:suite leticl)
+  "G2. `pick`: a row number, or enough of an id to be unique, or a word in a
+title — and an ambiguous prefix is REFUSED WITH THE COUNT rather than resolved to
+the first match, because switching to the wrong session is not a keystroke you can
+take back (app.rs:4068-4109)."
+  (let* ((h (%on-head :cols 80 :rows 24))
+         (wire (%wire h)))
+    (%sessions h "the parity pass" "the parity notes")
+    (setf (head-mode h) :picker)
+    (leticl::%pick-session h "parity")
+    (is (null (%sent wire)) "two titles match: nothing is switched")
+    (is (search "2 sessions match" (head-status-note h)) "and the count is said")
+    (leticl::%pick-session h "notes")
+    (is (equal "s-2" (getf (first (%sent wire)) :session-id)) "a unique word switches")))
+
+(def-test the-ladder-moves-with-a-half-typed-line-and-holds-the-words (:suite leticl)
+  "G21. The operator, 2026-09-20: *\"suppose i type a prompt and permission ask
+arrives — until i press down arrow I wont get into the permissions menu, by which
+time my prompt is erased and gone\"*. The whole ladder was gated on an empty
+composer (editor.lisp:332), so the words you were writing were the price of
+choosing an option. Up and Down move whether or not a line is being typed; Enter
+keeps the guard, answers the MARKED row and HOLDS the line (app.rs:3474-3498,
+3983-4000)."
+  (let* ((h (%on-head :cols 80 :rows 24))
+         (wire (%wire h)))
+    (setf (session-open-decisions (head-session h)) (list (%decision-with)))
+    (composer-insert (head-composer h) "some prose")
+    (leticl::%handle-key h (list :type :down))
+    (is (= 1 (leticl::head-decision-sel h)) "down moves the ladder with a line typed")
+    (is (string= "some prose" (composer-buffer (head-composer h))) "and takes nothing from it")
+    (is (null (%sent wire)) "and answers nothing yet")
+    (leticl::%handle-key h (list :type :enter))
+    (let ((f (first (%sent wire))))
+      (is (equal "answer" (getf f :frame)) "enter answers the ask")
+      (is (equal "allow_always" (getf f :option-id)) "with the row the cursor was on"))
+    (is (string= "some prose" (composer-buffer (head-composer h)))
+        "and the words are back in the composer, not sent under the ask")
+    (is (search "your line is held" (head-status-note h)) "and it says so")))
+
+(def-test a-digit-that-names-no-row-is-the-composers (:suite leticl)
+  "G21. The ladder's digits take a row; a digit past the last one is a character.
+The old arm answered on any digit, so `7` on a four-option ask answered the
+fourth — `(min index …)` read a typo as a decision."
+  (let* ((h (%on-head :cols 80 :rows 24))
+         (wire (%wire h)))
+    (setf (session-open-decisions (head-session h)) (list (%decision-with)))
+    (leticl::%handle-key h (list :type :char :ch #\7))
+    (is (null (%sent wire)) "seven names no row, so nothing is answered")
+    (is (string= "7" (composer-buffer (head-composer h))) "it is typed instead")))
+
+(def-test ctrl-c-clears-the-line-and-takes-two-presses-to-leave (:suite leticl)
+  "G10. `ctrl-c` on a half-written paragraph offered to QUIT — while `/help` and
+the hint bar both promised the clear (panes.lisp:164, chrome.lisp:358) — and on an
+empty composer the FIRST press opened the quit card, with no armed window and
+nothing on the hint bar in between (editor.rs:466-484, `QUIT_WINDOW_MS`)."
+  (let ((leticl::*ctrlc-at* nil)
+        (h (%on-head :cols 80 :rows 24 :buffer "half a thought")))
+    (leticl::%handle-key h (list :type :ctrl :ch #\c))
+    (is (string= "" (composer-buffer (head-composer h))) "a non-empty composer is cleared")
+    (is (not (head-quit-open h)) "and nothing offers to leave")
+    ;; empty now: one press arms and says so, two leave
+    (leticl::%handle-key h (list :type :ctrl :ch #\c))
+    (is (not (head-quit-open h)) "the first press on an empty composer only arms")
+    (is (search "ctrl+c again to exit"
+                (format nil "~{~a~}" (mapcar #'car (hint-bar h 100))))
+        "and the hint bar says what the second press does")
+    (leticl::%handle-key h (list :type :ctrl :ch #\c))
+    (is (head-quit-open h) "the second within the window opens the card")
+    ;; and a press two seconds later is a fresh gesture, not the second half of one
+    (setf (head-quit-open h) nil
+          leticl::*ctrlc-at* (- (get-internal-real-time)
+                                (* 2 internal-time-units-per-second)))
+    (leticl::%handle-key h (list :type :ctrl :ch #\c))
+    (is (not (head-quit-open h)) "a press two seconds after the last one arms again")))
+
+(def-test ctrl-c-closes-what-is-on-the-screen (:suite leticl)
+  "G11. The pane arm, `pick-key-event` and the secret arm had no `:ctrl` case, so
+ctrl-c fell through all three and offered to quit the head instead of closing the
+thing in front of the operator. With a PASSWORD ask up that left no way to refuse
+it with the key a person reaches for (app.rs:3003-3011, 3273, 3306, 3321, 3379)."
+  (let* ((leticl::*ctrlc-at* nil)
+         (leticl::*pick-open* nil)
+         (h (%on-head :cols 80 :rows 24))
+         (wire (%wire h)))
+    (setf (head-mode h) :jobs)
+    (leticl::%handle-key h (list :type :ctrl :ch #\c))
+    (is (eq :normal (head-mode h)) "ctrl-c closes a pane")
+    (is (not (head-quit-open h)) "and does not offer to leave")
+    (setf leticl::*pick-open* :mode)
+    (leticl::%handle-key h (list :type :ctrl :ch #\c))
+    (is (null leticl::*pick-open*) "ctrl-c closes the picker card")
+    (is (not (head-quit-open h)) "and does not offer to leave")
+    ;; the password ask: ctrl-c REFUSES it
+    (setf (head-secret-req h) (list :req-id "s1" :prompt "password"))
+    (leticl::%handle-key h (list :type :ctrl :ch #\c))
+    (let ((f (first (%sent wire))))
+      (is (equal "secret" (getf f :frame)) "a secret frame goes back")
+      (is (null (getf f :secret)) "carrying no secret — the refusal"))
+    (is (null (head-secret-req h)) "and the card is gone")))
+
+(def-test the-secret-card-takes-a-typed-character (:suite leticl)
+  "Found closing G11. The `:char` arm concatenated `(getf key :ch)` — a
+CHARACTER — onto the buffer with `concatenate 'string`, which is a type error:
+every keystroke into a password ask threw. The arm that reads a paste trims the
+trailing newline the copy took with it, as the reference's does (app.rs:2988)."
+  (let ((h (%on-head :cols 80 :rows 24)))
+    (setf (head-secret-req h) (list :req-id "s1" :prompt "password"))
+    (leticl::%handle-key h (list :type :char :ch #\h))
+    (leticl::%handle-key h (list :type :char :ch #\i))
+    (is (string= "hi" (leticl::head-secret-buf h)) "the characters land in the field")
+    (leticl::%handle-key h (list :type :paste :text (format nil "there~%")))
+    (is (string= "hithere" (leticl::head-secret-buf h)) "a pasted secret loses its trailing newline")
+    (leticl::%handle-key h (list :type :ctrl :ch #\u))
+    (is (string= "" (leticl::head-secret-buf h)) "and ctrl-u clears the field")))
+
+(def-test ctrl-d-does-not-throw-away-a-line (:suite leticl)
+  "G12. `ctrl-d` set `head-running` to NIL unconditionally, so the chord that
+means *end of input* also meant *throw away the paragraph I am in the middle
+of*. The reference quits only on an empty composer (editor.rs:485-491)."
+  (let ((h (%on-head :cols 80 :rows 24 :buffer "x")))
+    (leticl::%handle-key h (list :type :ctrl :ch #\d))
+    (is (leticl::head-running h) "with text typed, ctrl-d does nothing")
+    (leticl::%handle-key h (list :type :ctrl :ch #\c))   ; clears the line
+    (leticl::%handle-key h (list :type :ctrl :ch #\d))
+    (is (not (leticl::head-running h)) "on an empty one it leaves")))
+
+(def-test the-pane-chords-toggle-and-the-globals-reach-under-a-pane (:suite leticl)
+  "G14/G18. The global chords ran LAST, inside `%normal-key` and under the pane
+arm, so a pane swallowed every one of them: `ctrl-l` could not repaint a torn
+screen while a pane was up, `ctrl-o` could not background a command while you read
+the jobs list, and the second press of a pane chord did nothing — so every one of
+them opened and none of them closed (app.rs:3017-3245, 3071-3137)."
+  (let ((*pane-scroll* 0)
+        (h (%on-head :cols 80 :rows 24)))
+    (leticl::%handle-key h (list :type :ctrl :ch #\s))
+    (is (eq :picker (head-mode h)) "ctrl-s opens the session list")
+    (leticl::%handle-key h (list :type :ctrl :ch #\s))
+    (is (eq :normal (head-mode h)) "and ctrl-s closes it again")
+    ;; the head's own chords still answer with a pane up
+    (setf (head-mode h) :jobs)
+    (let ((before (getf (head-prefs h) :show-reasoning)))
+      (leticl::%handle-key h (list :type :ctrl :ch #\r))
+      (is (not (eq before (getf (head-prefs h) :show-reasoning)))
+          "ctrl-r flips the thinking fold under a pane"))
+    (setf (leticl::head-full-repaint h) nil)
+    (leticl::%handle-key h (list :type :ctrl :ch #\l))
+    (is (leticl::head-full-repaint h) "and ctrl-l repaints under one")
+    (is (eq :jobs (head-mode h)) "with the pane still open")))
+
+(def-test tab-on-a-pane-that-is-not-the-todos-leaves-the-frame-alone (:suite leticl)
+  "G16. `(when (not (eq mode :todos)) (setf (head-dirty head) nil))` — against
+the comment right above it, which says Tab does what Enter does. It suppressed the
+next repaint instead. The reference binds Tab in the todos pane only
+(app.rs:3753-3768)."
+  (let ((h (%on-head :cols 80 :rows 24)))
+    (setf (head-mode h) :jobs (head-dirty h) t)
+    (leticl::%handle-key h (list :type :tab))
+    (is (head-dirty h) "the frame is still due")))
+
+(def-test the-esc-arming-is-disarmed-by-the-next-key (:suite leticl)
+  "G9. `*esc-at*` was set by Esc and cleared only by a SECOND Esc, so: press Esc,
+type a paragraph, press Esc four seconds later — and the turn was interrupted,
+with the hint bar promising exactly that the whole time. Any key that is not Esc
+disarms it (editor.rs:304-306)."
+  (let* ((leticl::*esc-at* nil)
+         (h (%on-head :cols 80 :rows 24))
+         (wire (%wire h)))
+    (setf (session-turn (head-session h))
+          (list :turn-id "t" :text "" :reasoning "" :calls nil
+                :state (list :state "running")))
+    (leticl::%handle-key h (list :type :esc))
+    (is (search "esc again to interrupt"
+                (format nil "~{~a~}" (mapcar #'car (hint-bar h 100))))
+        "the first esc arms, and says so")
+    (leticl::%handle-key h (list :type :char :ch #\x))
+    (is (not (search "esc again to interrupt"
+                     (format nil "~{~a~}" (mapcar #'car (hint-bar h 100)))))
+        "a typed character disarms it, and the hint stops promising")
+    (leticl::%handle-key h (list :type :esc))
+    (is (null (find "interrupt" (%sent wire)
+                    :key (lambda (f) (getf f :frame)) :test #'string=))
+        "so the next esc arms again rather than interrupting")))
+
+(def-test a-paste-marker-is-unique-and-the-ledger-is-forgotten (:suite leticl)
+  "G3. `%paste-marker` keyed on the LINE COUNT alone, so two twelve-line pastes in
+one prompt produced the same marker and `expand-pastes` replaced both occurrences
+with whichever text the ledger found first: two stack traces pasted into one
+prompt became the same stack trace twice. And `*paste-ledger*` was never cleared —
+it grew for the life of the process (editor.rs:564-566, 475, 596)."
+  (let* ((*paste-ledger* nil)
+         (h (%on-head :cols 80 :rows 24))
+         (c (head-composer h))
+         (a (format nil "~{a~d~%~}" (loop for i from 1 to 12 collect i)))
+         (b (format nil "~{b~d~%~}" (loop for i from 1 to 12 collect i)))
+         (m1 (composer-insert-paste c a))
+         (m2 (composer-insert-paste c b)))
+    (is (not (string= m1 m2)) "two pastes of the same line count get two markers")
+    (let ((out (expand-pastes (composer-buffer c))))
+      (is (search a out) "the first paste comes back")
+      (is (search b out) "and so does the second")
+      (is (< (search a out) (search b out)) "in the order they were pasted"))
+    (%wire h)
+    (leticl::%submit-line h)
+    (is (null *paste-ledger*) "and the ledger goes with the line that carried it")))
+
+(def-test a-short-but-heavy-paste-still-collapses (:suite leticl)
+  "G3. Five lines was the only test, so a three-line four-kilobyte log filled the
+composer and pushed the transcript off the screen — the line count said `3`. The
+reference has a byte threshold beside the line one (`PASTE_BYTES`, editor.rs:217).
+A bracketed paste's CRLF and bare CR are normalised there too: ConPTY sends CR-only
+newlines, and left alone they are control characters in the prompt."
+  (let* ((*paste-ledger* nil)
+         (c (make-composer))
+         (heavy (format nil "~a~%~a~%~a" (make-string 300 :initial-element #\x)
+                        (make-string 300 :initial-element #\y)
+                        (make-string 300 :initial-element #\z))))
+    (is (= 3 (leticl::%paste-lines heavy)) "three lines")
+    (is (composer-insert-paste c heavy) "and it collapses anyway, on its size")
+    (is (string= heavy (expand-pastes (composer-buffer c))) "and expands back whole"))
+  (let* ((*paste-ledger* nil)
+         (c (make-composer)))
+    (composer-insert-paste c (format nil "a~C~Cb~Cc" #\return #\newline #\return))
+    (is (string= (format nil "a~%b~%c") (composer-buffer c))
+        "CRLF and a bare CR both become one newline")))
+
+(def-test the-arrows-move-inside-a-multi-line-prompt (:suite leticl)
+  "G5. `/help` promises *\"↑ ↓ move inside the prompt\"* (panes.lisp:164) and `↑`
+always walked history instead — on a head that has had `alt+enter` since S4. A
+multi-line prompt you cannot navigate is a prompt you retype (editor.rs:500-516)."
+  (let* ((h (%on-head :cols 80 :rows 24))
+         (c (head-composer h)))
+    (composer-push-history c "an older prompt")
+    (composer-insert c (format nil "aaa~%bbb"))
+    (setf (composer-cursor c) 7)          ; end of the second line
+    (leticl::%handle-key h (list :type :up))
+    (is (string= (format nil "aaa~%bbb") (composer-buffer c))
+        "↑ inside the prompt does not touch the buffer")
+    (is (= 3 (composer-cursor c)) "the cursor is on the first row, at the same column")
+    (leticl::%handle-key h (list :type :up))
+    (is (string= "an older prompt" (composer-buffer c))
+        "and a second ↑, from the top row, walks history")))
+
+(def-test up-recalls-the-queued-prompt-and-withdraws-it (:suite leticl)
+  "G6. Recall-and-withdraw was on `ctrl-u`, which also means kill-to-start — two
+meanings on one chord, and the one key readline taught for *the previous entry*
+did not do it. The reference puts it on `↑` with an empty composer at the tail
+(app.rs:3851-3861)."
+  (let* ((h (%on-head :cols 80 :rows 24))
+         (wire (%wire h)))
+    (setf (head-queued h) (list "the prompt I sent"))
+    (leticl::%handle-key h (list :type :up))
+    (is (string= "the prompt I sent" (composer-buffer (head-composer h)))
+        "↑ on an empty composer takes the queued prompt back")
+    (is (equal "withdraw_prompts" (getf (first (%sent wire)) :frame))
+        "and tells the daemon to drop it")
+    ;; with a line being typed it is history's key again, and sends nothing
+    (setf (head-queued h) (list "another"))
+    (leticl::%handle-key h (list :type :up))
+    (is (null (%sent wire)) "with a line typed, ↑ withdraws nothing")))
+
+(def-test word-motion-and-the-lines-own-ends (:suite leticl)
+  "G5/G7. There was no word motion at all, and `ctrl-a`/`home` went to the start
+of the BUFFER rather than of the LINE — wrong on every multi-line prompt
+(editor.rs:687-758)."
+  (let ((c (make-composer)))
+    (composer-insert c "one two three")
+    (is (= 13 (composer-cursor c)))
+    (composer-move c :word-left)
+    (is (= 8 (composer-cursor c)) "one word left is the start of `three`")
+    (composer-move c :word-left)
+    (is (= 4 (composer-cursor c)) "and again, the start of `two`")
+    (composer-move c :word-right)
+    (is (= 8 (composer-cursor c)) "word right lands past the gap, on the next word"))
+  (let ((c (make-composer)))
+    (composer-insert c (format nil "first~%second"))
+    (composer-move c :home)
+    (is (= 6 (composer-cursor c)) "home is the start of the LINE")
+    (composer-move c :end)
+    (is (= 12 (composer-cursor c)) "and end is the end of it")
+    ;; and a kill takes the line, not the buffer
+    (setf (composer-cursor c) 6)
+    (composer-kill-to-end c)
+    (is (string= (format nil "first~%") (composer-buffer c))
+        "ctrl-k kills to the end of the line and leaves the one above it")))
+
+(def-test redo-brings-back-what-undo-took (:suite leticl)
+  "G8. There was no redo stack: `ctrl-z` past the point you meant was a word you
+retyped. `alt+z` is the binding, because Ctrl+Shift+Z arrives byte-identical to
+Ctrl+Z in many terminals (editor.rs:441-454, term.rs:740-742)."
+  (let* ((*undo-stack* nil) (leticl::*redo-stack* nil)
+         (h (%on-head :cols 80 :rows 24)))
+    (dolist (ch (coerce "abc" 'list))
+      (leticl::%handle-key h (list :type :char :ch ch)))
+    (is (string= "abc" (composer-buffer (head-composer h))))
+    (leticl::%handle-key h (list :type :ctrl :ch #\z))
+    (is (string= "" (composer-buffer (head-composer h))) "ctrl-z takes the word back")
+    (leticl::%handle-key h (list :type :redo))
+    (is (string= "abc" (composer-buffer (head-composer h))) "and alt+z brings it back")
+    ;; and an edit abandons the branch
+    (leticl::%handle-key h (list :type :ctrl :ch #\z))
+    (leticl::%handle-key h (list :type :char :ch #\d))
+    (leticl::%handle-key h (list :type :redo))
+    (is (string= "d" (composer-buffer (head-composer h)))
+        "typing after an undo drops the redo branch")))
+
+(def-test tab-walks-the-matches-and-names-a-miss (:suite leticl)
+  "G15. `%complete` inserted only on a UNIQUE prefix and otherwise printed the
+candidates to the status line, so `/re` — four commands — did nothing to the line;
+`/help` says *\"more tabs walk the matches\"* (panes.lisp:164). And a prefix
+nothing matches was silent (app.rs:4292-4324)."
+  (let ((leticl::*completion* nil)
+        (h (%on-head :cols 80 :rows 24 :buffer "/re")))
+    (flet ((tab () (leticl::%handle-key h (list :type :tab))
+             (composer-buffer (head-composer h))))
+      (let ((walk (loop repeat 5 collect (tab))))
+        (is (equal "/rename" (first walk)) "the first match")
+        (is (equal "/resync" (second walk)) "the second")
+        (is (equal "/resume" (third walk)) "the third")
+        (is (equal "/reseat" (fourth walk)) "the fourth")
+        ;; the reference lists `reseat summarise` as its own row too, and its
+        ;; cycle stops on one the same way: a line with a space in it is not a
+        ;; bare verb, so the next Tab leaves it alone rather than clobbering it
+        (is (equal "/reseat summarise" (fifth walk)) "the fifth, which is two words")
+        (is (equal "/reseat summarise" (tab)) "and the cycle stops there"))))
+  (let ((leticl::*completion* nil)
+        (h (%on-head :cols 80 :rows 24 :buffer "/mode x")))
+    (leticl::%handle-key h (list :type :tab))
+    (is (string= "/mode x" (composer-buffer (head-composer h)))
+        "a line with an argument on it is not a verb to complete"))
+  (let ((leticl::*completion* nil)
+        (h (%on-head :cols 80 :rows 24 :buffer "/zz")))
+    (leticl::%handle-key h (list :type :tab))
+    (is (string= "/zz" (composer-buffer (head-composer h))) "what was typed is kept")
+    (is (search "no /command starts with" (head-status-note h)) "and the miss is named")))
+
+(def-test the-peek-panes-arrows-and-enter-do-what-it-says (:suite leticl)
+  "G19. `:peek` was in the generic pane list but `pane-row-count` returns 0 for
+it, so `move-cursor` moved nothing, and `:peek` was not in the Enter case at all —
+while the pane's own hint bar says *\"arrows scroll · enter re-reads\"*
+(chrome.lisp:369). A hint bar that names two keys and means neither
+(app.rs:3255-3280)."
+  (let* ((*pane-scroll* 4) (*pane-lines* 100) (*pane-room* 10)
+         (leticl::*peeked-session* "s-child")
+         (h (%on-head :cols 80 :rows 24))
+         (wire (%wire h)))
+    (setf (head-mode h) :peek)
+    (leticl::%handle-key h (list :type :up))
+    (is (= 3 *pane-scroll*) "↑ scrolls the pane, the way PgUp does")
+    (leticl::%handle-key h (list :type :down))
+    (is (= 4 *pane-scroll*) "and ↓ comes back")
+    (leticl::%handle-key h (list :type :enter))
+    (let ((f (first (%sent wire))))
+      (is (equal "peek" (getf f :frame)) "enter re-reads")
+      (is (equal "s-child" (getf f :session-id)) "the same subagent"))))
+
+(def-test o-switches-into-a-subagent-and-enter-waits-for-one-opening (:suite leticl)
+  "G22. The subagent pane's own last line says *\"o switches into it\"* and the
+key did not exist — the pane arm read only `q` out of a printable character. And
+Enter had no `opening` guard, so it peeked at a subagent with nothing to read and
+the daemon refused it by name (app.rs:3660-3709)."
+  (let* ((h (%on-head :cols 80 :rows 24))
+         (wire (%wire h)))
+    (setf (session-subagents (head-session h))
+          (list (list :subagent-id "s-kid" :state "running" :prompt "go" :role "worker")))
+    (setf (head-mode h) :subagents (head-picker-sel h) 0)
+    (leticl::%handle-key h (list :type :char :ch #\o))
+    (let ((f (first (%sent wire))))
+      (is (equal "switch" (getf f :frame)) "o switches into it")
+      (is (equal "s-kid" (getf f :session-id)) "by id"))
+    ;; one still opening has nothing to read, and says so rather than being refused
+    (setf (session-subagents (head-session h))
+          (list (list :subagent-id "s-new" :state "opening" :prompt "go" :role "worker"))
+          (head-mode h) :subagents)
+    (leticl::%handle-key h (list :type :enter))
+    (is (null (%sent wire)) "enter on one still opening sends nothing")
+    (is (search "still opening" (head-status-note h)) "and says which silence it is")))
+
+(def-test a-click-on-the-mode-picker-card-marks-a-row (:suite leticl)
+  "G17. The click arm tested `head-mode`, and the mode/model picker runs with
+`head-mode` :normal and `*pick-open*` set — so a click on the card fell through to
+the composer and was dropped. Select and confirm stay two acts: the click marks
+the row and takes nothing, because a gesture that commits on press is how a
+misclick moves somebody's session (app.rs:3639-3651)."
+  (let* ((*stdout* (make-string-output-stream))
+         (leticl::*pick-open* nil) (leticl::*mode-confirm* nil)
+         (h (%on-head :cols 100 :rows 24))
+         (wire (%wire h)))
+    (setf (head-settings h)
+          (list (list :key "mode" :value "read-only"
+                      :choices (list "read-only" "always-ask" "writes allowed"))))
+    (open-pick h :mode)
+    (leticl::%render h)
+    (let* ((rows (uiop:split-string (%screen-text h) :separator '(#\newline)))
+           (row (position-if (lambda (l) (search "writes allowed" l)) rows)))
+      (is (not (null row)) "the third choice is on the screen")
+      (leticl::%handle-key h (list :type :mouse :kind :press :x 10 :y row))
+      (is (= 2 (head-picker-sel h)) "the click marks the row it landed on")
+      (is (eq :mode leticl::*pick-open*) "the card stays open")
+      (is (null (%sent wire)) "and nothing is taken"))))
+
+(def-test history-is-capped-deduplicated-and-stops-on-an-edit (:suite leticl)
+  "G25. The history was an uncapped vector with no duplicate rule, empty Enters
+were pushed into it, and nothing stopped the walk once a recalled line had been
+edited — so one more `↑` silently destroyed the edit. The last of those is the one
+that costs work (editor.rs:519-548, 591-593, 219)."
+  (let* ((h (%on-head :cols 80 :rows 24))
+         (c (head-composer h)))
+    (%wire h)
+    (flet ((submit (text)
+             (leticl::composer-buffer-set c text)
+             (leticl::%submit-line h)))
+      (submit "a") (submit "a") (submit "b")
+      (is (equal '("a" "b") (coerce (leticl::composer-history c) 'list))
+          "a line that repeats the one before it is not remembered twice")
+      (submit "")
+      (is (= 2 (length (leticl::composer-history c))) "and an empty Enter adds nothing")
+      ;; the walk stops once the recalled line has been edited. (Nothing is
+      ;; queued by the time this runs on a live head — a `↑` with prompts still
+      ;; in flight takes the last one back instead, which is G6's arm.)
+      (setf (head-queued h) nil)
+      (leticl::%handle-key h (list :type :up))
+      (is (string= "b" (composer-buffer c)) "↑ recalls the newest")
+      (leticl::%handle-key h (list :type :char :ch #\!))
+      (leticl::%handle-key h (list :type :up))
+      (is (string= "b!" (composer-buffer c))
+          "and a second ↑ after an edit leaves the edit alone")
+      ;; fifty-one submissions leave fifty
+      (loop for i from 1 to 51 do (submit (format nil "line ~d" i)))
+      (is (= leticl::*history-max* (length (leticl::composer-history c)))
+          "the history is capped, oldest dropped"))))
+
+(def-test reseat-summarise-asks-for-the-lossy-kind-by-name (:suite leticl)
+  "G23. `%command` split the verb, bound `rest` and then ignored it, and the frame
+carried no `summarise` at all — so the operator asked for the destructive variant
+by name and got the other one, with no word either way. The reference says which
+one ran (app.rs:4590-4608)."
+  (let* ((h (%on-head :cols 80 :rows 24))
+         (wire (%wire h)))
+    (leticl::%command h "reseat summarise")
+    (let ((f (first (%sent wire))))
+      (is (equal "reseat_session" (getf f :frame)) "the frame goes")
+      (is (eq t (getf f :summarise)) "carrying the ask to summarise"))
+    (is (search "summarising" (head-status-note h)) "and it says which one ran")
+    (leticl::%command h "reseat")
+    (let ((f (first (%sent wire))))
+      (is (equal "reseat_session" (getf f :frame)))
+      (is (null (getf f :summarise)) "a bare /reseat carries the lossless kind"))
+    (is (search "carrying the conversation" (head-status-note h)) "and says so too")))
+
+(def-test the-short-verbs-are-the-heads-and-not-the-daemons (:suite leticl)
+  "G24. `/s` and `/i` were not in `%command`, so the catch-all forwarded them to
+the daemon as slash lines — a round trip for the two verbs whose whole point is to
+be short (app.rs:4443, 4567)."
+  (let* ((h (%on-head :cols 80 :rows 24))
+         (wire (%wire h)))
+    (leticl::%command h "s")
+    (is (eq :picker (head-mode h)) "/s opens the session picker")
+    (is (null (find "slash" (%sent wire) :key (lambda (f) (getf f :frame)) :test #'string=))
+        "and nothing travelled to the daemon")
+    (leticl::%command h "i")
+    (let ((f (first (%sent wire))))
+      (is (equal "interrupt" (getf f :frame)) "/i interrupts the turn"))))

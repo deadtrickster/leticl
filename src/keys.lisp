@@ -67,12 +67,17 @@ here, because the paste IS the key event."
   (let* ((params (if (and (plusp (length params)) (char= (char params 0) #\<))
                      (subseq params 1)
                      params))
-         (nums (mapcar #'parse-integer-or-nil (uiop:split-string params :separator ";"))))
+         (nums (mapcar #'parse-integer-or-nil (uiop:split-string params :separator ";")))
+         ;; `1;5C` — the MODIFIER is the second parameter and 5 is Ctrl
+         ;; (term.rs:773). The parameters were already parsed here and the
+         ;; second one was never read, so `ctrl-→` decoded as a plain `→` and
+         ;; the word motion every editor binds to it moved one character.
+         (ctrl (eql 5 (second nums))))
     (cond
       ((string= final "A") (list :type :up))
       ((string= final "B") (list :type :down))
-      ((string= final "C") (list :type :right))
-      ((string= final "D") (list :type :left))
+      ((string= final "C") (list :type (if ctrl :word-right :right)))
+      ((string= final "D") (list :type (if ctrl :word-left :left)))
       ((string= final "H") (list :type :home))
       ((string= final "F") (list :type :end))
       ((string= final "~")
@@ -140,6 +145,17 @@ terminator is kept as content — a paste may contain anything."
                                   (* *escape-wait-ms* (/ internal-time-units-per-second) 0.001)))))
          (cond
            ((null next) (list :type :esc))
+           ;; TWO of them. `esc esc` is how a turn is interrupted, and a fast
+           ;; double tap arrives inside the 60 ms gesture window — which fell to
+           ;; the alt arm below as `(:type :alt :ch #\Esc)` and was dropped, so
+           ;; the one key that stops a runaway turn did nothing for exactly the
+           ;; operator who pressed it quickly. The reference names the same trap
+           ;; and guards it the same way (term.rs:707-711): the first ESC is a
+           ;; key on its own and the second is PUT BACK for the next read, which
+           ;; then sees a lone ESC and says so.
+           ((char= next +esc+)
+            (unread-char next stream)
+            (list :type :esc))
            ((char= next #\[)
             (let ((body (%read-csi stream)))
               (%decode-csi stream (subseq body 0 (1- (length body)))
@@ -148,12 +164,28 @@ terminator is kept as content — a paste may contain anything."
             (let ((c (%poll-char stream
                                  (+ (get-internal-real-time)
                                     (* *escape-wait-ms* (/ internal-time-units-per-second) 0.001)))))
+              ;; SS3, what a terminal sends after `smkx`. `H` and `F` were not
+              ;; in the table and fell through to a lone ESC, so Home and End
+              ;; did nothing on a keyboard in application mode (term.rs:715-733).
               (case (and c (char-code c))
                 (65 (list :type :up))
                 (66 (list :type :down))
                 (67 (list :type :right))
                 (68 (list :type :left))
+                (72 (list :type :home))
+                (70 (list :type :end))
                 (t (list :type :esc)))))
+           ;; The ESC-prefixed chords the composer answers, decoded here rather
+           ;; than left as `(:type :alt …)` for the editor to guess at: the alt
+           ;; arm inserts nothing but a newline, so every one of these was read
+           ;; and thrown away (term.rs:738-743).
+           ((char= next #\b) (list :type :word-left))
+           ((char= next #\f) (list :type :word-right))
+           ;; Ctrl+Shift+Z is byte-identical to Ctrl+Z in many terminals, so redo
+           ;; needs a second binding and this is the one the reference chose.
+           ((char= next #\z) (list :type :redo))
+           ((or (char= next #\backspace) (char= next (code-char 127)))
+            (list :type :kill-word-back))
            (t (list :type :alt :ch next)))))
       ((char= ch #\return) (list :type :enter))
       ((char= ch #\newline) (list :type :enter))
