@@ -241,6 +241,14 @@ keeps the live card and the settled row saying one thing."
       (note-call-target (getf tc :id)
                         (display-target (getf tc :arguments))))))
 
+(defun note-snapshot-answered (items)
+  "Record every call that HAS a result in ITEMS, so the assistant row above it
+does not draw the proposal as well."
+  (dolist (item (coerce items 'list))
+    (let ((body (getf item :item)))
+      (when (and (consp body) (string= (getf body :type) "tool_result"))
+        (note-answered-call (getf body :call-id))))))
+
 (defun note-snapshot-targets (items)
   "Walk a SNAPSHOT's items once, recording every assistant row's call targets.
 
@@ -480,6 +488,21 @@ editor.rs, and…` had thrown away the question and kept its tail."
             ;; keep the HEAD: prose announces itself at the front
             (concatenate 'string (subseq subject 0 (max 1 (- max 1))) "…")))))
 
+(defvar *answered-calls* nil
+  "Call ids whose result row exists, so an assistant row does not also draw them.
+
+A proposal says a call is COMING; once the result has settled nothing is coming,
+and the result row already says everything the proposal did plus what happened.
+The reference measured the doubling: a turn eight calls deep showed eight live rows
+under eight settled ones, in the same order, saying less.")
+
+(defun call-answered-p (call-id)
+  (and call-id (member call-id *answered-calls* :test #'string=)))
+
+(defun note-answered-call (call-id)
+  (when (and call-id (not (call-answered-p call-id)))
+    (push call-id *answered-calls*)))
+
 (defun %tool-result-lines (item body cols prefs)
   "One settled tool-result row, weighted the way the reference weights it."
   (let* ((facts (item-facts (getf item :item-id)))
@@ -566,15 +589,63 @@ editor.rs, and…` had thrown away the question and kept its tail."
       (t
        (case (intern (string-upcase (getf body :type)) :keyword)
          ((:user)
-          (let ((text (%fold-cells (item-display-text item))))
-            (wrap-segments
-             (list (cons "› " '(:fg :bright-cyan :bold t))
-                   (cons text nil))
-             cols)))
+          ;; THE OPERATOR'S OWN MESSAGE, to the reference's shape — read off its
+          ;; screen because the three differences are all things a screenshot
+          ;; shows and a test would not:
+          ;;
+          ;;   · a BLUE `▌` bar (`Role::UserAccent` is `ESC[34m`), not a cyan `›`;
+          ;;   · the message in REVERSE VIDEO (`Role::UserBlock` is `ESC[7m`) —
+          ;;     the block IS the highlight, which is why it carries no colour of
+          ;;     its own and survives a terminal-native palette;
+          ;;   · the message PADDED to the full width, so the block is a block: a
+          ;;     background that stops early leaves a ragged right edge;
+          ;;   · and the timestamp right-aligned on the FIRST row, which is why
+          ;;     that row is wrapped narrower than the rest.
+          (let* ((text (%fold-cells (item-display-text item)))
+                 (stamp (%clock-time (item-ts item)))
+                 ;; the first row shares its width with the timestamp
+                 (head-cols (max 8 (- cols 2 (length stamp) (if (plusp (length stamp)) 1 0))))
+                 (rows (wrap-segments (list (cons text nil)) head-cols))
+                 (rows (if rows rows (list (list (cons "" nil))))))
+            (loop for row in rows
+                  for i from 0
+                  for row-text = (format nil "~{~a~}" (mapcar #'car row))
+                  for pad = (max 0 (- (max 0 (- cols 2)) (string-width row-text)
+                                      (if (and (= i 0) (plusp (length stamp)))
+                                          (string-width stamp) 0)))
+                  collect (list (cons "▌" '(:fg :blue))
+                                (cons " " nil)
+                                (cons (format nil "~a~a" row-text
+                                              (make-string pad :initial-element #\space))
+                                      '(:reverse t))
+                                (cons (if (and (= i 0) (plusp (length stamp))) stamp "")
+                                      '(:reverse t))))))
          ((:assistant)
-          (if (plusp (length (getf body :text)))
-              (markdown-lines (getf body :text) nil)
-              (list (list (cons "·" '(:dim t))))))
+          ;; The answer sits at the body's own column, with the question: it is
+          ;; the one thing on the screen not subordinate to something else.
+          ;;
+          ;; **An empty row draws NOTHING.** Ours drew a lone `·`, which left a
+          ;; row of punctuation between every pair of cards — measured against
+          ;; letibot's screen, where an assistant row with no prose and no
+          ;; unanswered call is simply absent.
+          ;;
+          ;; **And a call with no result gets a `→` row**, which is what survives
+          ;; of the proposal: a call the transcript has taken over is drawn by its
+          ;; RESULT, and drawing it here too is two rows and one fact. `→` therefore
+          ;; means exactly "asked for, nothing came back" — the turn was
+          ;; interrupted, or the body has not arrived.
+          (let ((rows (when (plusp (length (getf body :text)))
+                        (markdown-lines (getf body :text) nil))))
+            (append
+             rows
+             (loop for tc in (getf body :tool-calls)
+                   unless (call-answered-p (getf tc :id))
+                     collect (list (cons "  → " '(:dim t))
+                                   (cons (verb-label (getf tc :name)) '(:dim t))
+                                   (cons (let ((tgt (display-target (getf tc :arguments))))
+                                           (if (plusp (length tgt))
+                                               (format nil " ~a" tgt) ""))
+                                         nil))))))
          ((:reasoning)
           (when (getf prefs :show-reasoning)
             (mapcar (lambda (segs)
@@ -851,3 +922,17 @@ would show the answer twice."
             (list (cons " enter submits · esc refuses" '(:dim t)))))))
 
 
+
+(defun %clock-time (ts)
+  "TS (epoch ms) as `HH:MM:SS`, or empty when there is no timestamp.
+
+Empty rather than `00:00:00`: a row read out of a snapshot may have no `ts`, and
+midnight is a time nobody took — the same rule the duration on a card follows."
+  (if (and (numberp ts) (plusp ts))
+      ;; LOCAL time, which is what `localtime_r` gives the reference. Passing an
+      ;; explicit 0 here is UTC, and the stamp then read 11:53:34 on a screen whose
+      ;; clock said 13:53:34 — a timestamp that is wrong by the offset is worse
+      ;; than no timestamp, because it looks like a measurement.
+      (multiple-value-bind (s m h) (decode-universal-time (floor ts 1000))
+        (format nil "~2,'0d:~2,'0d:~2,'0d" h m s))
+      ""))

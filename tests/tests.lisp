@@ -156,7 +156,7 @@
 (def-test attach-golden (:suite leticl)
   (is
    (equal
-    "{\"frame\":\"attach\",\"protocol_version\":20,\"session_id\":\"\",\"since_seq\":0,\"kind\":\"tui\",\"identity\":\"\",\"caps\":{\"queue\":1024,\"can_decide\":true}}"
+    "{\"frame\":\"attach\",\"protocol_version\":21,\"session_id\":\"\",\"since_seq\":0,\"kind\":\"tui\",\"identity\":\"\",\"caps\":{\"queue\":1024,\"can_decide\":true}}"
     (encode-frame (make-attach)))
    "defaults, serde-default fields omitted, caps present"))
 

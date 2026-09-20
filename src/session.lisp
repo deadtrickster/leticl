@@ -71,6 +71,7 @@ refuses it: 'not an array with a fill pointer'.)"
   ;; a turn has no live proposals to learn from: the assistant row is the only
   ;; place that call is described, and a `ToolResult` row carries no target.
   (note-snapshot-targets (getf snapshot :items))
+  (note-snapshot-answered (getf snapshot :items))
   session)
 
 (defun ingest-hello (session hello)
@@ -260,7 +261,10 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
          ;; call id move to the row's ITEM id — which is unique, where the call
          ;; id is round-positional and about to be reused.
          (when (and body (string= (getf body :type) "tool_result"))
-           (%adopt-call-facts (getf env :item-id) (getf body :call-id)))
+           (%adopt-call-facts (getf env :item-id) (getf body :call-id))
+           ;; and note it, so the assistant row above stops drawing a proposal
+           ;; for a call whose result is now on the screen
+           (note-answered-call (getf body :call-id)))
          ;; an Assistant row ends a round, so the call ids in the staging table
          ;; must not survive into the next one
          (when (and body (string= (getf body :type) "assistant"))

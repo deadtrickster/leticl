@@ -109,7 +109,15 @@ on ClientFrame::Slash)."
                    (head-picker-sel head) 0)
              (reset-pane-scroll)
              (setf (head-dirty head) t))))
-      ((string= verb "jobs") (setf (head-mode head) :jobs (head-dirty head) t))
+      ((string= verb "jobs")
+       ;; ASK, then open. The jobs pane drew `N out` from JobSettled events, which
+       ;; a head that attached after the jobs started never saw — so the pane was
+       ;; empty for exactly the case it exists for. `ListJobs` is answered at once
+       ;; (protocol 21, deliberately not a Slash: those ride the command queue and
+       ;; are answered between turns, so `/job` during a long turn arrived after
+       ;; it had finished).
+       (%send head (make-list-jobs))
+       (setf (head-mode head) :jobs (head-dirty head) t))
       ((string= verb "subagents") (setf (head-mode head) :subagents (head-dirty head) t))
       ((string= verb "todos")
        ;; Ask for the list AND open the pane. The session's plan is carried by

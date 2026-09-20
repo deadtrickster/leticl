@@ -36,7 +36,7 @@
    #:+protocol-version+
    #:make-attach #:make-ack #:make-prompt #:make-interrupt #:make-answer
    #:match-option
-   #:make-answer-question #:make-list-sessions #:make-list-todos
+   #:make-answer-question #:make-list-sessions #:make-list-todos #:make-list-jobs
    #:make-new-session #:make-resume-session #:make-rename-session
    #:make-switch #:make-peek #:make-settings #:make-detach #:make-resync
    #:make-screen-answer
@@ -68,6 +68,7 @@
    #:item-facts #:note-call-started #:note-call-finished #:note-call-decision
    #:display-target #:verb-label #:call-target-of #:note-call-target
    #:note-assistant-targets #:note-snapshot-targets #:*call-targets*
+   #:call-answered-p #:note-answered-call #:*answered-calls*
    #:*item-facts* #:*call-facts* #:*call-started-ms*
    ;; pane scrolling (P41): one offset for every pane, counting from the TOP
    #:pane-scroll-by #:pane-scroll-max #:pane-view #:reset-pane-scroll

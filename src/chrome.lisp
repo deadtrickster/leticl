@@ -412,9 +412,12 @@ never worth a resident sentence of bright yellow. With nothing running and nothi
 wrong, the edge is bare."
   (let ((parts (remove nil (list (and (alarmed-p head) "⚠")
                                  (turn-status head)))))
+    ;; NOTHING is nothing: returning a space put a stray `─ ╯` on the box where
+    ;; letibot draws `──╯`. Same defect as `composer-title`'s, one function over —
+    ;; and only a column-precise diff shows a one-column difference.
     (if parts
         (format nil " ~{~a~^ · ~} " parts)
-        " ")))
+        "")))
 
 (defun %composer-rows (head cols)
   "How many rows the composer buffer renders to, wrapped at the box's inner width.

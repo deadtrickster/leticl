@@ -114,6 +114,15 @@ paints to it, and defvar for the same reason as *head*.")
         (when (eq (getf key :type) :eof) (return))))))
 
 ;;; ------------------------------------------------------------ frames ;;;
+
+(defun %frame-plist-p (x)
+  "T when X is a decoded frame: a plist with a `:frame` key.
+
+THE guard, in one place. `:disconnected` is a one-element list the reader pushes
+to signal a dead socket, and any code that assumes `consp` means `plist` will call
+`getf` on it and die in the main thread — which is a head that will not start."
+  (and (consp x) (keywordp (car x)) (evenp (length x)) (getf x :frame)))
+
 ;;;
 ;;; `%handle-frame` returns a DISPOSITION, which is what the ack counts
 ;;; (driver.rs:31 classifies each frame the same three ways):
@@ -210,6 +219,10 @@ paints to it, and defvar for the same reason as *head*.")
     ((string= (frame-name frame) "sessions")
      (setf (session-sessions (head-session head)) (getf frame :sessions)
            (head-picker-sel head) 0
+           (head-dirty head) t)
+     :control)
+    ((string= (frame-name frame) "jobs")
+     (setf (head-jobs head) (getf frame :jobs)
            (head-dirty head) t)
      :control)
     ((string= (frame-name frame) "todos")
@@ -315,9 +328,17 @@ is a resume — the gap arrives as events, or a Resync does (§13.2)."
              ;; gate can say so, and the loop reads the next one.
              (dolist (frame (%drain (head-frames head)))
                (note-frame-arrived)
-               (when (and (consp frame) (string= (frame-name frame) "event")
-                          (getf frame :seq))
-                 (setf last-seq (getf frame :seq)))
+               ;; `(%frame-p frame)`, not `(consp frame)`: the reader pushes
+               ;; `(:disconnected)` — a ONE-element list — and `frame-name` calls
+               ;; `(getf frame :frame)` on it, which is a malformed plist and a
+               ;; TYPE-ERROR in the main thread. With --disable-debugger that is
+               ;; not a wrong frame, it is a head that refuses to start: measured,
+               ;; `leticl` exited at launch for 45 minutes of this session.
+               ;; A frame is a plist whose car is `:frame`; nothing else is one.
+               (when (%frame-plist-p frame)
+                 (when (and (string= (frame-name frame) "event")
+                            (getf frame :seq))
+                   (setf last-seq (getf frame :seq))))
                (handler-case
                    (case (%handle-frame head frame)
                      (:rendered (incf rendered))

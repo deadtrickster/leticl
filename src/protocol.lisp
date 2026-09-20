@@ -11,7 +11,10 @@
 
 (in-package #:leticl)
 
-(defparameter +protocol-version+ 20)
+(defparameter +protocol-version+ 21)
+;; 21 added ListJobs (a read-only frame answered at once, not through the command
+;; queue: `/job` during a long turn used to arrive after the turn ended, which is
+;; useless for a pane that opens).
 ;; 19 added WithdrawPrompts (a queued prompt can be taken back into the
 ;; composer; consecutive queued messages merge daemon-side), 20 added Stop
 ;; (the head asks whether the daemon goes too, instead of a second terminal
@@ -144,6 +147,15 @@ not sending (protocol.rs on ClientFrame::AnswerQuestion)."
 
 (defun make-list-todos ()
   (list :frame "list_todos"))
+
+(defun make-list-jobs ()
+  "This session's background jobs, answered IMMEDIATELY.
+
+Deliberately not a `slash` line: those ride the command queue and are answered
+between turns, so `/job` during a long turn arrived after it had finished — which
+is useless for a pane that opens. Added at protocol 21, which is why the daemon
+refused us with `bye` until this head learned to say 21 too."
+  (list :frame "list_jobs"))
 
 (defun make-new-session (title workspace)
   (list :frame "new_session"
