@@ -338,11 +338,16 @@ scrolls the transcript by a row every keystroke.
                                 (quit-card-lines head cols)
                                 card-lines))
                 (card-rows (length card-lines))
-                (want (max 1 (- body-bottom body-top (if card-lines (+ 2 card-rows) 0))))
+                ;; the card takes exactly its rows: the viewport already ends
+                ;; with the gap row, so no blank is added between them — the
+                ;; reference's chrome is [card…, box] straight under the gap
+                (want (max 1 (- body-bottom body-top card-rows)))
                 (lines (%viewport-lines head cols want)))
            (%place-lines s lines body-top (+ body-top (length lines) -1) cols)
+           ;; `body-bottom` is the composer's FIRST row — exclusive. Placing the
+           ;; card through it put its last line under the box's top edge.
            (when card-lines
-             (%place-lines s card-lines (- body-bottom card-rows -1) body-bottom cols))))))
+             (%place-lines s card-lines (- body-bottom card-rows) (1- body-bottom) cols))))))
     ;; the chrome, each row where the layout above put it
     (when alarm-row (put-segments s alarm-row +gutter+ alarm))
     (when status-row (put-segments s status-row +gutter+ status))
