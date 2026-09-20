@@ -24,7 +24,8 @@ through an eval socket, per instance, with no rebuild and no detach.
 **In**: everything a head does — connect, attach, snapshot, events, render,
 keys, composer, cards, picker — plus the live-modification layer.
 
-**Out**: the daemon, the protocol (we speak v18 as-is, no new frames), the
+**Out**: the daemon, the protocol (we speak what it speaks — protocol 20 as of
+2026-09-20, and we add no frames), the
 model connection, tools, the ledger. If something is missing on the wire we
 note it and live with it; a protocol change is a Rust PR, not ours.
 
@@ -55,16 +56,25 @@ note it and live with it; a protocol change is a Rust PR, not ours.
   (`crates/tui/src/term.rs:188,461`). We mirror these byte-for-byte: alt
   screen, cursor hide, bracketed paste, mouse motion+SGR, synchronized output.
 
-## 5. The seam: protocol 18 in one page
+## 5. The seam: protocol 20 in one page
 
-Source of truth: `../letibot/letibot/crates/sessionlog/src/protocol.rs`
-(`PROTOCOL_VERSION = 18`). Framing (`wire.rs`): newline-delimited JSON over any
-stream, blank lines skipped, flush per frame, EOF = detach (not an error).
+Source of truth: `../letibot/letibot/crates/sessionlog/src/protocol.rs`.
+**`+protocol-version+` is 20** (`src/protocol.lisp:14`) — this document said 18
+for a while, which was true when it was written and wrong by the time anybody
+read it. v19 added `withdraw_prompts` (a queued prompt can be taken back into
+the composer; consecutive queued messages merge daemon-side) and v20 added
+`stop` (the head asks whether the daemon goes too, instead of a second terminal
+and `letibot --stop`). Both are client frames; the ATTACH-time refusal is what
+would tell us about a bump.
+
+Framing (`wire.rs`): newline-delimited JSON over any stream, blank lines
+skipped, flush per frame, EOF = detach (not an error).
 
 Both directions tag with `"frame"`; events tag with `"event"`; all names
 `snake_case`.
 
-**Client frames (24)**: `attach ack resync prompt interrupt promote
+**Client frames (26)** — counted from `ClientFrame` in `protocol.rs`, not from
+memory: `attach ack resync prompt withdraw_prompts stop interrupt promote
 compact_session reseat_session mode slash askpass secret screen answer
 answer_question list_sessions list_todos new_session resume_session
 rename_session switch peek settings detach`.
@@ -72,12 +82,18 @@ rename_session switch peek settings detach`.
 **Server frames (11)**: `hello secret sessions todos settings peeked event
 resync accepted rejected bye`.
 
-**Session events (27)**: `turn_started prompt_progress delta tool_call_proposed
+**Session events (28)** — and this list was also short by one, `tokens_generated`
+(a live counter; PLAN's original 27 predated it):
+`turn_started prompt_progress tokens_generated delta tool_call_proposed
 decision_requested decision_answered tool_started tool_progress tool_finished
 turn_finished turn_interrupted turn_failed transcript_appended
 transcript_content head_attached head_detached warning screen_requested
 secret_requested secret_settled explain command_issued session_renamed
 todos_updated denial_raised subagent job_settled`.
+
+A count in a document is a claim about code that moves. If you bump one of these,
+recount it from the enum — the two lists above had both drifted, by one frame and
+by one event, and nobody had noticed because nobody recounts.
 
 **The rules the frame shapes enforce** (each one is a bug that already happened
 in Rust; we inherit the shape, not the bug):
@@ -113,7 +129,7 @@ in Rust; we inherit the shape, not the bug):
 | cells | `src/cells.lisp` | cell buffer (char + interned style), SGR builder, diff painter, full painter |
 | json | `src/json.lisp` | yason wrappers; the key convention lives here |
 | wire | `src/wire.lisp` | NDJSON read/write, `wire-error` carrying the offending line |
-| protocol | `src/protocol.lisp` | v18 constants, frame constructors, encode/decode |
+| protocol | `src/protocol.lisp` | the protocol-version constant, frame constructors, encode/decode |
 | socket | `src/socket.lisp` | unix connect, daemon discovery from `$XDG_RUNTIME_DIR/letibot/*.json` |
 | session | `src/session.lisp` | attach/hello/snapshot ingestion, event application, ack bookkeeping, resync |
 | head | `src/head.lisp` | threads + mailboxes, paint-on-dirty loop, resize poll |
@@ -148,7 +164,7 @@ incidental.
 
 ## 8. The live-hack layer (the point)
 
-- Each TUI instance listens on `$XDG_RUNTIME_DIR/leticl/tui-<pid>.sock`
+- Each TUI instance listens on `$XDG_RUNTIME_DIR/tui-<pid>.sock`
   (fallback `/tmp/leticl-<uid>/`), mode 0600. Separate namespace from the
   daemons' `letibot/` so discovery of either stays unambiguous.
 - Line protocol, one request per line: `eval <form>` — the rest of the line is
@@ -221,7 +237,9 @@ incidental.
 
 ## 13. Decisions so far
 
-- **D1** (2026-09-17): daemon untouched; head-only rewrite; protocol 18 as-is.
+- **D1** (2026-09-17): daemon untouched; head-only rewrite; the protocol as-is
+  (18 when decided, 20 as of 2026-09-20 — the version is read from the wire and
+  bumped when the daemon bumps it, never negotiated here).
 - **D2**: SBCL builtins + vendored yason only; no quicklisp. (Relaxed
   2026-09-19 for T20: the head may call exactly one native component — the
   rano highlight shim, a Rust `cdylib` — via sb-alien (already in the tree

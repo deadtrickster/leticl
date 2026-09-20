@@ -639,3 +639,20 @@ passes review and never fires"*.
 **leticl**: `%outcome-style` and the `:tool_result` arm print the outcome word and
 a payload preview with no such check (`cards.lisp`). **P46**, and it depends on
 P8–P10 having somewhere to put the reason.
+
+---
+
+### P40: what to do with this document — **keep it, as the measurement**
+
+Recommendation, and the argument in five lines: **this file should stay, because
+it is the only place that says what the reference DOES rather than what we plan
+to do, and the two drift at different rates.** `TODO.md` is a work list — items
+are opened, worked and closed, and a closed item says nothing about what it
+closed on. This file is a measurement with provenance: a pinned commit, a file
+and line for each gap, and the counts that go stale silently (§1's 28 bindings,
+§3.9's line counts). Folding the finished rows into `TODO.md` would delete the
+evidence and leave the conclusions, which is exactly the shape of claim this repo
+exists against. So: keep it, and re-measure it against a new pinned commit when
+the reference moves in a way that matters — not edit it line by line, which is
+how a measurement becomes a memory. `TODO.md` §7 already carries the sync
+procedure for the same reason.

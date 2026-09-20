@@ -675,13 +675,27 @@ mark because it *measured* 135 rebuilds of an 89-row session.
   streaming turn, `tui-eval` reading `hist_renders`-equivalent counts. Only build
   the cache if the numbers say so; write the numbers down either way.
 
-### S11 — docs (independent)
+### S11 — docs ✅ **done** (2026-09-20)
 
-- [ ] **P39** `PLAN.md` says protocol **18** in four places and gives the eval
-  socket path wrong twice; the code is 20 and `$XDG_RUNTIME_DIR/tui-<pid>.sock`.
-  Fix the doc to the code, and say the frames v19/v20 added.
-- [ ] **P40** decide `PARITY.md`'s fate: keep it as the measurement, or fold the
-  done rows into `TODO.md` and delete it. (It is untracked as of writing.)
+- [x] **P39** `PLAN.md` said protocol **18** in four places and gave the eval
+  socket path as `$XDG_RUNTIME_DIR/leticl/tui-<pid>` — the code is **20** and
+  `$XDG_RUNTIME_DIR/tui-<pid>.sock`. Both fixed to the code, with the v19/v20
+  frames named (`withdraw_prompts`, `stop`) and D1 saying the version is read off
+  the wire and bumped when the daemon bumps it, never negotiated here.
+
+  **Recounting found two more errors nobody had noticed**, which is the point:
+  the client-frame list said 24 and there are **26**, and the session-event list
+  said 27 and there are **28** — it was missing `tokens_generated` entirely. Both
+  lists are now counted from the enums with a note saying a count in a document
+  is a claim about code that moves.
+
+- [x] **P40** `PARITY.md` **stays**, as the measurement rather than a work list.
+  The recommendation and its argument are at the end of that file: a closed item
+  in `TODO.md` says nothing about what it closed on, while `PARITY.md` carries a
+  pinned commit and a file:line per gap — folding the done rows in would delete
+  the evidence and leave the conclusions, which is the shape of claim this repo
+  exists against. Re-measure it against a new commit when the reference moves;
+  do not edit it line by line, which is how a measurement becomes a memory.
 
 ---
 
