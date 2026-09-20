@@ -213,7 +213,8 @@ The facts come from `item-facts` (see the header) and are ABSENT for a row this
 head did not watch run: a snapshot, or a replay of a log recorded elsewhere. An
 absent fact shows nothing rather than a fabricated `0ms`, which is the same rule
 the reference's `Replayed` phase holds."
-  (let* ((facts (item-facts (getf item :item-id)))
+  (let* (
+(facts (item-facts (getf item :item-id)))
          (name (getf body :name))
          (outcome (getf body :outcome))
          (payload (getf body :payload))
@@ -230,13 +231,37 @@ the reference's `Replayed` phase holds."
                             '(:fg :bright-black)))))
          ;; the oracle's brief and reply, on the row rather than on a card that
          ;; has already left the screen
+         ;; **A refusal says its reason once.**
+         ;;
+         ;; The operator, counting them in one card: *"how many times is 'nothing
+         ;; ran' needed?"* — once. It was three, and the card was 21 lines for one
+         ;; refused command, because a refusal's PAYLOAD is already a complete
+         ;; explanation and two other places said the same paragraph again.
+         ;;
+         ;; Bounded twice, so the check cannot misfire: a SHORT reason is left
+         ;; alone (cheap to repeat, and a short string can appear below by
+         ;; coincidence), and the comparison is on the reason's FIRST LINE,
+         ;; because the envelope's copy is one line while the payload arrives
+         ;; already split — a whole-paragraph containment could never match,
+         ;; which is the kind of check that passes review and never fires.
+         (already-said-p (lambda (reason)
+                           (and reason
+                                (> (length reason) 40)
+                                (let ((first (or (position #\newline reason)
+                                                 (length reason))))
+                                  (search (subseq reason 0 first)
+                                          (or payload ""))))))
          (decision-line
           (when decision
             (let ((basis (getf decision :basis))
                   (verdict (getf (getf decision :outcome) :outcome)))
               (list (list (cons "    ⚖ " '(:fg :bright-black))
                           (cons (or verdict "answered") '(:fg :bright-black))
-                          (cons (if basis (format nil " — ~a" (%first-line basis)) "")
+                          ;; the basis only when the payload has not already said
+                          ;; it — a refusal's payload IS its explanation
+                          (cons (if (and basis (not (funcall already-said-p basis)))
+                                    (format nil " — ~a" (%first-line basis))
+                                    "")
                                 '(:fg :bright-black)))))))
          (detail
           (when (getf prefs :show-tools)
@@ -429,6 +454,19 @@ would show the answer twice."
                                   (if question "leaves it open" "does nothing"))
                           '(:fg :bright-black)))
               body)
+        ;; WHERE THE WORDS GO. The option is labelled "Deny, and tell the model
+        ;; why" and nothing said how — which is how the why ended up in the
+        ;; composer with nothing to do with it. A card that names an affordance
+        ;; has to say where the affordance is.
+        (awhen (and (not question)
+                    (find-if (lambda (o)
+                               (search "reject_always"
+                                       (string-downcase (or (getf o :kind) ""))))
+                             options))
+          (push (list (cons (format nil " type: ~a <the words the model should hear>"
+                                    (getf it :option-id))
+                            '(:fg :bright-black)))
+                body))
         (nreverse body)))))
 
 (defun quit-card-lines (head cols)

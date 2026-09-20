@@ -112,15 +112,23 @@ wakes with Closed (protocol.rs, v20)."
         :expected-seq expected-seq
         :who who))
 
-(defun make-answer (req-id option-id &optional pattern)
-  "Grant or deny a permission, by option id. PATTERN is the operator's own
-glob for always-allow; meaningful only there, ignored elsewhere (protocol.rs
-on ClientFrame::Answer)."
+(defun make-answer (req-id option-id &optional pattern note)
+  "Grant or deny a permission, by option id.
+
+PATTERN is the operator's own glob, for always-allow only. NOTE is what they
+want the MODEL told, for `deny_and_tell` only. Each is ignored on every other
+option rather than quietly widening one: a glob on an `allow_once` would be a
+grant nobody named, and a note on one would be a sentence nobody reads, which is
+worse than dropping it.
+
+Both are ADDED, DEFAULTED fields on an existing frame, so an older daemon ignores
+them and answers as it did before (protocol.rs on `pattern` and `note`)."
   (append (list :frame "answer"
                 :client-request-id (next-request-id)
                 :req-id req-id
                 :option-id option-id)
-          (when pattern (list :pattern pattern))))
+          (when pattern (list :pattern pattern))
+          (when note (list :note note))))
 
 (defun make-answer-question (req-id answer)
   "ANSWER is the QuestionAnswer payload: a choice, a note, a typed reply, or a

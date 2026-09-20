@@ -1782,3 +1782,81 @@ a command that was never started."
     (leticl::%command h "promote")
     (is (search "still working" (head-status-note h))
         "with a turn but no command, it says the MODEL is working")))
+
+;;; ------------------------------------- deny-and-tell, and one reason (P45/P46) ;;;
+
+(defun %decision-with (&key (kind "permission"))
+  (list :req-id "adj-1" :kind kind :summary "run a program"
+        :options (list (list :option-id "allow_once" :label "Allow once" :kind "allow_once")
+                       (list :option-id "allow_always" :label "Always allow" :kind "allow_always")
+                       (list :option-id "reject_always" :label "Deny, and tell why"
+                             :kind "reject_always")
+                       (list :option-id "deny" :label "Deny" :kind "reject"))))
+
+(def-test deny-and-tell-takes-the-words-that-were-refused (:suite leticl)
+  "The operator: *\"deny and tell doesnt work - there is no input for the 'tell'
+part\"*. The option was labelled `Deny, and tell the model why` and the why had
+nowhere to go — worse, typing it was REFUSED, so the line stayed in the composer
+and NOTHING was answered while they looked at their own sentence."
+  (let ((d (%decision-with)))
+    (destructuring-bind (id pattern note) (match-option d "reject_always use the scratch dir")
+      (is (string= "reject_always" id) "the option is named")
+      (is (null pattern) "and no glob is sent")
+      (is (string= "use the scratch dir" note) "and the words ARE the note"))))
+
+(def-test the-glob-still-goes-to-the-option-that-writes-a-rule (:suite leticl)
+  "The change must not take the glob away from always-allow: both trailing-word
+cases live in one matcher and only one of them may win per option."
+  (let ((d (%decision-with)))
+    (destructuring-bind (id pattern note) (match-option d "allow_always /tmp/*")
+      (is (string= "allow_always" id))
+      (is (string= "/tmp/*" pattern) "the glob rides on always-allow")
+      (is (null note) "and no note"))))
+
+(def-test an-option-that-promised-nothing-refuses-trailing-words (:suite leticl)
+  "Somebody who typed them meant them, and answering as though they had not is the
+answer they did not give — so the words are refused, not silently dropped."
+  (let ((d (%decision-with)))
+    (is (null (match-option d "deny because I said so"))
+        "a plain deny takes no words")))
+
+(def-test a-ladder-answer-needs-no-words (:suite leticl)
+  "The ladder answers by id alone, which is what most answers are."
+  (let ((d (%decision-with)))
+    (destructuring-bind (id pattern note) (match-option d "allow_once")
+      (is (string= "allow_once" id) "the id matches")
+      (is (null pattern) "with nothing extra")
+      (is (null note)))))
+
+(def-test a-refusal-does-not-say-its-reason-twice (:suite leticl)
+  "The operator, counting the repeats in one card: *\"how many times is 'nothing
+ran' needed?\"* — once. It was three, and the card was 21 lines for one refused
+command."
+  (let ((*item-facts* nil))
+    (let* ((basis "refused: the request was for a path outside the workspace, and nothing ran because the programme was never started at all")
+           (payload (format nil "outcome: not run~%~a~%extra detail" basis))
+           (item (list :item-id "r1" :kind "tool_result"
+                       :item (list :type "tool_result" :call-id "c" :name "bash"
+                                   :outcome (list :outcome "not_run") :payload payload))))
+      (setf *item-facts* (list (cons "r1" (list :decision (list :req-id "a"
+                                                                :outcome (list :outcome "denied")
+                                                                :basis basis)))))
+      (let ((text (segs-of (item-lines item 120 (list :show-tools t)))))
+        (is (<= (count-substring basis text) 1)
+            "the reason is said at most ONCE, not once per place that knows it —
+and here it is not repeated at all, because the payload renders its first line
+and the decision line would have been the second copy")
+        (is (search "⚖ denied" text)
+            "and the verdict is still there, which is what the row adds"))))
+  ;; and a reason the payload does NOT carry is still said
+  (let ((*item-facts* nil))
+    (let ((basis "the operator declined this because the path is outside every grant the session holds"))
+      (setf *item-facts* (list (cons "r2" (list :decision (list :req-id "a"
+                                                                :outcome (list :outcome "denied")
+                                                                :basis basis)))))
+      (let* ((item (list :item-id "r2" :kind "tool_result"
+                         :item (list :type "tool_result" :call-id "c" :name "bash"
+                                     :outcome (list :outcome "not_run") :payload "nothing ran")))
+             (text (segs-of (item-lines item 120 (list :show-tools t)))))
+        (is (search basis text)
+            "where the payload does NOT say it, dropping it would lose the reason")))))

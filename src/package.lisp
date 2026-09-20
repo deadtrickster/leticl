@@ -32,6 +32,7 @@
    ;; protocol
    #:+protocol-version+
    #:make-attach #:make-ack #:make-prompt #:make-interrupt #:make-answer
+   #:match-option
    #:make-answer-question #:make-list-sessions #:make-list-todos
    #:make-new-session #:make-resume-session #:make-rename-session
    #:make-switch #:make-peek #:make-settings #:make-detach #:make-resync

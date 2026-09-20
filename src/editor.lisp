@@ -15,6 +15,49 @@
 (defun %open-decision (head)
   (first (session-open-decisions (head-session head))))
 
+(defun match-option (decision typed)
+  "TYPED as an answer to DECISION: `(values option-id pattern note)`, or NIL.
+
+Three things, and each is a rule the reference learned the hard way:
+
+  · the WORD is matched against the option id or its label, case-insensitively,
+    falling back to a unique PREFIX — the ladder's option ids are long, and an
+    operator who types `allow` means the one option that starts with it;
+  · trailing words are a GLOB on the option that writes a rule (always-allow),
+    and the operator's own words on the option that promised to carry a reason
+    (`deny_and_tell`) — which used to be REFUSED, so the line stayed in the
+    composer and NOTHING was answered while the operator looked at their own
+    sentence;
+  · on any other option trailing words are refused rather than dropped: somebody
+    who typed them meant them, and answering as though they had not is the answer
+    they did not give."
+  (when decision
+    (let* ((line (string-trim " " (or typed "")))
+           (sp (position #\space line))
+           (word (if sp (subseq line 0 sp) line))
+           (rest (if sp (string-trim " " (subseq line (1+ sp))) ""))
+           (options (if (string= (getf decision :kind) "question")
+                        (getf decision :choices)
+                        (getf decision :options)))
+           (opt (find-if (lambda (o)
+                           (let ((id (or (getf o :option-id) ""))
+                                 (label (or (getf o :label) "")))
+                             (or (string-equal word id) (string-equal word label))))
+                         options)))
+      (when opt
+        (let ((kind (getf opt :kind))
+              (id (getf opt :option-id)))
+          (cond
+            ((zerop (length rest)) (list id nil nil))
+            ;; the option that WRITES a rule takes the glob
+            ((and kind (search "allow_always" (string-downcase kind)))
+             (list id rest nil))
+            ;; the option that PROMISED a reason takes the words
+            ((and kind (search "reject_always" (string-downcase kind)))
+             (list id nil rest))
+            ;; every other option refuses them, rather than dropping them
+            (t nil)))))))
+
 (defun %answer-decision (head index)
   (let ((d (%open-decision head)))
     (when d
@@ -39,13 +82,33 @@ composer shows `[⋮ pasted 312 lines ⋮]` and the daemon receives the 312 line
 History keeps what was typed, so an Up recalls the marker and not a wall of
 text — which is what makes the ledger safe to forget about."
   (let* ((typed (composer-buffer (head-composer head)))
-         (line (expand-pastes typed)))
+         (line (expand-pastes typed))
+         (decision (%open-decision head)))
     (composer-push-history (head-composer head) typed)
     (%undo-push (head-composer head))
     (setf (composer-buffer (head-composer head)) ""
           (composer-cursor (head-composer head)) 0)
     (cond
       ((zerop (length line)))
+      ;; A DECISION IS OPEN: the line is an answer to it, not a prompt.
+      ;;
+      ;; This is the bug the reference records in the operator's own words —
+      ;; *"deny and tell doesnt work - there is no input for the 'tell' part"* —
+      ;; and the shape of it was worse than a missing feature: the words were
+      ;; REFUSED, so the line stayed in the composer and NOTHING was answered
+      ;; while the operator looked at their own sentence, with the ask still open.
+      (decision
+       (let ((m (match-option decision line)))
+         (cond
+           (m (destructuring-bind (id pattern note) m
+                (%send head (make-answer (getf decision :req-id) id pattern note))
+                (setf (head-decision-sel head) 0)))
+           ;; it did not name an option: say so and KEEP the line, because a
+           ;; question that swallowed the answer would be worse than one that
+           ;; said it could not read it
+           (t (progn (composer-insert (head-composer head) line)
+                     (say head (format nil "~s is not an option here — /help has the ladder"
+                                       (%truncate-width line 40))))))))
       ((char= (char line 0) #\/) (%command head (subseq line 1)))
       (t (%prompt head line)))
     (setf (head-dirty head) t)))
