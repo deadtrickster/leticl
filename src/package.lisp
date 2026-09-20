@@ -83,7 +83,8 @@
    #:quit-card-lines #:secret-card-lines
    #:todos-lines #:repo-todo-lines #:repo-todo-rows #:repo-todo-rows-cached
    #:read-todo-md #:strip-todo-markup
-   #:jobs-lines #:subagent-lines
+   #:jobs-lines #:subagent-lines #:mode-picker-lines #:models-picker-lines
+   #:setting-choices #:setting-value
    #:peek-lines #:config-lines #:status-screen-lines #:help-lines #:picker-lines
    ;; highlight
    #:hl-available-p #:lang-for #:class-grid #:role-style #:highlight-lines

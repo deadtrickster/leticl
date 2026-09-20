@@ -133,7 +133,8 @@ scrolls the transcript by a row every keystroke.
     (let ((card-rows (length card-lines)))
       (cond
         ;; full-body screens replace the transcript
-        ((member (head-mode head) '(:help :status :config :jobs :subagents :peek :picker :todos))
+        ((member (head-mode head) '(:help :status :config :jobs :subagents :peek :picker :todos
+                                     :mode-picker :models-picker))
          (let* ((lines nil)
                 (sel-line nil)
                 (room (max 1 (- (or alarm-row status-row) body-top))))
@@ -150,7 +151,9 @@ scrolls the transcript by a row every keystroke.
                (:peek (peek-lines head cols))
                (:picker (picker-lines (head-session head)
                                       (head-picker-sel head) cols))
-               (:todos (todos-lines head cols))))
+               (:todos (todos-lines head cols))
+               (:mode-picker (mode-picker-lines head cols))
+               (:models-picker (models-picker-lines head cols))))
            ;; tell the KEY handler what it may scroll: it clamps without
            ;; re-rendering, and the cursor can then scroll itself into view
            (setf *pane-lines* (length lines)

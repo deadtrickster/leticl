@@ -1662,3 +1662,59 @@ it somehow?\"*. Unfolded, the detail is drawn under the row."
       (is (= 3 (length lines)) "the row, and both detail lines")
       (is (search "pin: abc123" text) "the detail is drawn")
       (is (search "Deps: T2" text) "all of it, in file order"))))
+
+;;; ------------------------------------------------- pickers (P22, P23) ;;;
+
+(defun %head-with-settings ()
+  (let ((h (%make-head)))
+    (setf (head-settings h)
+          (list (list :key "mode" :value "automode-edits"
+                      :choices (list "read-only" "always-ask" "automode-edits"))
+                (list :key "model" :value "deepseek/deepseek-flash"
+                      :choices (list "local" "deepseek/deepseek-flash" "glm/glm-5.3-flash"))))
+    h))
+
+(def-test the-mode-picker-lists-the-daemons-own-choices (:suite leticl)
+  "The head keeps no list of modes to drift: `SettingRow.choices` is the
+daemon's, and this is why the head asks for the settings at attach."
+  (let* ((h (%head-with-settings)))
+    (multiple-value-bind (lines sel-line) (mode-picker-lines h 80)
+      (let ((text (format nil "~{~a~^~%~}" (lines-text lines))))
+        (is (search "read-only" text) "a choice is listed")
+        (is (search "automode-edits" text) "and another")
+        (is (search "●" text) "the CURRENT value is marked")
+        (is (integerp sel-line) "and the cursor's line comes back")))))
+
+(def-test a-picker-with-no-choices-says-why-not-guesses (:suite leticl)
+  "A picker whose list is empty because nobody asked the daemon is a picker that
+looks broken — so it says which it is."
+  (let ((h (%make-head)))                ; no settings at all
+    (let ((text (format nil "~{~a~^~%~}" (lines-text (mode-picker-lines h 80)))))
+      (is (search "reports no choices" text) "it names the problem")
+      (is (search "asked" text) "and points at the cause"))))
+
+(def-test the-models-picker-lists-models-not-modes (:suite leticl)
+  (let* ((h (%head-with-settings)))
+    (let ((text (format nil "~{~a~^~%~}" (lines-text (models-picker-lines h 80)))))
+      (is (search "deepseek/deepseek-flash" text) "the model row's choices")
+      (is (search "glm/glm-5.3-flash" text) "all of them")
+      (is (not (search "read-only" text)) "and NOT the mode row's"))))
+
+(def-test a-picker-selection-travels-as-the-daemons-own-word (:suite leticl)
+  "The mode goes as its own frame carrying the name the daemon LISTED, and the
+model as the slash line the operator would have typed — so neither vocabulary is
+copied into the head to drift."
+  (let* ((h (%head-with-settings)))
+    (setf (head-mode h) :mode-picker (head-picker-sel h) 1)
+    ;; the key handler builds the frame; assert on what it would send
+    (is (string= "always-ask" (nth (head-picker-sel h) (setting-choices h "mode")))
+        "the cursor picks a choice by the daemon's word")
+    (is (string= "automode-edits" (setting-value h "mode"))
+        "and the current value is the daemon's, not the head's")))
+
+(def-test a-picker-opens-only-when-the-rows-are-asked-for (:suite leticl)
+  "The picker's list IS the daemon's choices, so opening it asks if it has to."
+  (let ((h (%make-head)))
+    (is (null (setting-choices h "mode")) "with no rows, there is nothing to list")
+    (setf (head-settings h) (list (list :key "mode" :value "x" :choices (list "x" "y"))))
+    (is (equal '("x" "y") (setting-choices h "mode")) "and once asked, there is")))

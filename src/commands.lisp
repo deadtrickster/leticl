@@ -28,7 +28,8 @@
     ("think" . "fold or unfold the model's reasoning")
     ("tools" . "fold or unfold tool output")
     ("config" . "every setting, as the daemon reports it")
-    ("mode" . "NAME — move this session's project to a mode")
+    ("mode" . "the mode picker — or /mode NAME to type it")
+    ("models" . "which model answers: the picker, or /models PROVIDER/MODEL")
     ("jobs" . "the background-jobs pane")
     ("subagents" . "the subagent tree")
     ("cells" . "MESSAGE — send it with a copy of this screen")
@@ -81,7 +82,32 @@ on ClientFrame::Slash)."
                              :client-request-id (next-request-id)
                              :expected-seq (session-expected-seq (head-session head))
                              :name rest))
-           (setf (head-status-note head) "usage: /mode NAME" (head-dirty head) t)))
+           ;; with no name, OPEN THE PICKER rather than printing a list to copy a
+           ;; name out of. The reference made the same change: *"for starters i
+           ;; want it to be usual menu, like /mode"* — the wall of text was the
+           ;; least visible part of the thing anybody types it for.
+           (progn
+             ;; make sure the rows are here: the picker's list IS the daemon's
+             ;; choices, and a head that never asked has none to show
+             (unless (head-settings head) (%send head (make-settings)))
+             (setf (head-mode head) :mode-picker
+                   (head-picker-sel head) 0)
+             (reset-pane-scroll)
+             (setf (head-dirty head) t))))
+      ((or (string= verb "models") (string= verb "model"))
+       ;; `/models` with no name opens the picker; with a name it is the daemon's
+       ;; verb and travels as the line the operator would have typed
+       (if (plusp (length rest))
+           (%send head (list :frame "slash"
+                             :client-request-id (next-request-id)
+                             :expected-seq (session-expected-seq (head-session head))
+                             :line (format nil "models ~a" rest)))
+           (progn
+             (unless (head-settings head) (%send head (make-settings)))
+             (setf (head-mode head) :models-picker
+                   (head-picker-sel head) 0)
+             (reset-pane-scroll)
+             (setf (head-dirty head) t))))
       ((string= verb "jobs") (setf (head-mode head) :jobs (head-dirty head) t))
       ((string= verb "subagents") (setf (head-mode head) :subagents (head-dirty head) t))
       ((string= verb "todos")

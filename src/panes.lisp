@@ -461,3 +461,65 @@ Second value is the cursor's LINE, for the scroll offset (see `subagent-lines`).
          (list (list (cons "  nothing" '(:fg :bright-black))))))))
 
 
+
+;;; ------------------------------------------------------------ pickers ;;;
+;;;
+;;; The MODE and MODELS pickers, the session picker's twins for one question each.
+;;; Both read their choices from the daemon's own settings rows — `SettingRow`
+;;; carries `choices` from protocol 18 — so the head keeps no list to drift.
+;;;
+;;; The reference has one flag per picker for the same reason it has one cursor
+;;; for all of them: the choices, the cursor, the scroll offset and the drawing
+;;; are shared, because the one thing this file has already been burned by is a
+;;; second copy of a list that then drifts.
+
+(defun setting-choices (head key)
+  "The choices the daemon reports for setting KEY, or NIL.
+
+From the settings rows the head asks for at attach, which is why it asks: a
+picker whose list is empty because nobody ever asked the daemon is a picker that
+looks broken (P44 in TODO.md is the same bug one layer down)."
+  (let ((row (and (head-settings head)
+                  (find key (head-settings head)
+                        :key (lambda (r) (getf r :key)) :test #'string=))))
+    (getf row :choices)))
+
+(defun setting-value (head key)
+  (let ((row (and (head-settings head)
+                  (find key (head-settings head)
+                        :key (lambda (r) (getf r :key)) :test #'string=))))
+    (getf row :value)))
+
+(defun %choice-lines (head label key cols)
+  "A picker body: every choice, the CURRENT one marked, the cursor reversed.
+
+Returns the lines and, as a second value, the cursor's LINE — see
+`subagent-lines` for why the two are different numbers."
+  (declare (ignore cols))
+  (let* ((choices (setting-choices head key))
+         (current (setting-value head key))
+         (sel (head-picker-sel head))
+         (header (list (list (cons (format nil " ~a " label) '(:bold t))
+                             (cons "  ↑↓ then enter · esc closes" '(:fg :bright-black)))
+                       nil)))
+    (values
+     (append header
+             (if choices
+                 (loop for c in choices
+                       for i from 0
+                       for here = (and current (string= c current))
+                       collect (list (cons (format nil "  ~a ~a" (if here "●" " ") c)
+                                           (cond ((= i sel) '(:reverse t :bold t))
+                                                 (here '(:fg :bright-cyan :bold t))
+                                                 (t nil)))))
+                 (list (list (cons (format nil "  (the daemon reports no choices for ~a — has it been asked?)" key)
+                                   '(:fg :bright-black))))))
+     (+ (length header) sel))))
+
+(defun mode-picker-lines (head cols)
+  "The modes this session's project can be moved to."
+  (%choice-lines head "mode" "mode" cols))
+
+(defun models-picker-lines (head cols)
+  "The models this daemon can reach."
+  (%choice-lines head "model" "model" cols))

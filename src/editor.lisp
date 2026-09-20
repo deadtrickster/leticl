@@ -116,12 +116,15 @@ shows the candidates on the status line."
       ;; the same argument the pane scroll offset makes. A per-pane cursor would
       ;; be a `head` slot each, and a struct slot is a RESTART: the one thing
       ;; this head must not need.
-      ((member (head-mode head) '(:help :status :config :jobs :subagents :peek :todos :picker))
+      ((member (head-mode head) '(:help :status :config :jobs :subagents :peek :todos :picker
+                                       :mode-picker :models-picker))
        (flet ((rows () (case (head-mode head)
                          (:subagents (length (head-subagents head)))
                          (:jobs (length (head-jobs head)))
                          (:todos (length (session-todos (head-session head))))
                          (:picker (length (session-sessions (head-session head))))
+                         (:mode-picker (length (setting-choices head "mode")))
+                         (:models-picker (length (setting-choices head "model")))
                          (t 0)))
               (move-cursor (n)
                 (setf (head-picker-sel head)
@@ -184,6 +187,28 @@ shows the candidates on the status line."
                                (session-sessions (head-session head)))))
                  (when hit
                    (%send head (make-switch (getf hit :session-id) 0))
+                   (setf (head-mode head) :normal))))
+              (:mode-picker
+               ;; the mode travels as its own frame with the name the daemon
+               ;; listed, so the head keeps no vocabulary of its own to drift
+               (let ((c (nth (head-picker-sel head) (setting-choices head "mode"))))
+                 (awhen c
+                   (%send head (list :frame "mode"
+                                     :client-request-id (next-request-id)
+                                     :expected-seq (session-expected-seq (head-session head))
+                                     :name it))
+                   (say head (format nil "mode → ~a" it))
+                   (setf (head-mode head) :normal))))
+              (:models-picker
+               ;; /models is a daemon-side verb: the head sends the line it would
+               ;; have typed, which is how `slash` frames work
+               (let ((c (nth (head-picker-sel head) (setting-choices head "model"))))
+                 (awhen c
+                   (%send head (list :frame "slash"
+                                     :client-request-id (next-request-id)
+                                     :expected-seq (session-expected-seq (head-session head))
+                                     :line (format nil "models ~a" it)))
+                   (say head (format nil "model → ~a" it))
                    (setf (head-mode head) :normal)))))
             (setf (head-dirty head) t))
            ((:char) (when (eql (getf key :ch) #\q)
