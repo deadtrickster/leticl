@@ -2742,6 +2742,29 @@ check that would have caught the bug on the day it landed."
         (is (plusp (length lines)) (format nil "the ~(~a~) pane has rows" mode))
         (is (%well-formed-lines-p lines)
             (format nil "and every one of the ~(~a~) pane's segments is (string . plist)" mode))))
+    ;; and the CARDS, which ride in the same chrome slot and go through the same
+    ;; `put-segments`: the permission card and the password card are drawn from
+    ;; panes.lisp now, and a card whose \"line\" is a list of lines kills the paint
+    ;; exactly the way the two panes above did
+    (setf (session-open-decisions (head-session h))
+          (list (list :req-id "r1" :kind "exec"
+                      :summary "`bash` wants exec access to `ls`" :target "ls"
+                      :detail "a listing" :because "the guard says so"
+                      :advice (list :would "allow" :by "oracle" :basis "harmless"
+                                    :cites (list "trail 1") :latency-ms 9)
+                      :options (list (list :option-id "allow_once" :label "Allow once"
+                                           :kind "allow_once")
+                                     (list :option-id "reject_always" :label "Deny and tell"
+                                           :kind "reject_always")))))
+    (setf (head-secret-req h) (list :req-id "s1" :prompt "password:" :command "sudo ls"
+                                    :deadline 0))
+    (dolist (pair (list (cons "permission card" (leticl::permission-card-lines h 210))
+                        (cons "password card" (leticl::secret-ask-lines h 210))))
+      (is (plusp (length (cdr pair))) (format nil "the ~a has rows" (car pair)))
+      (is (%well-formed-lines-p (cdr pair))
+          (format nil "and every one of the ~a's segments is (string . plist)" (car pair))))
+    (setf (head-secret-req h) nil
+          (session-open-decisions (head-session h)) nil)
     ;; and through the render itself, onto a screen the size of the capture
     (let ((*stdout* (make-string-output-stream))
           (*pane-scroll* 0)
@@ -2820,8 +2843,13 @@ envelope's `session_id`, which is the parent's."
       (is (search "▸ [x] first" (nth 2 text)) "the picked row, its mark by state")
       (is (search "       …11111111 · role worker · done" (nth 3 text)) "the short id, role and state under it")
       (is (search "  [~] second" (nth 4 text)) "the other row"))
-    (is (string= " 1 subagent running " (leticl::composer-title h))
-        "and the box's top edge counts the same fold")))
+    (is (string= "1 subagent running" (leticl::composer-title h))
+        "and the box's top edge counts the same fold")
+    ;; the legend is the EDGE's to place: `box_edge` frames it and pins it right
+    ;; (app.rs:5384-5411), so the title itself carries no padding of its own
+    (let ((edge (lines-text (list (leticl::composer-box-top h 60)))))
+      (is (search "1 subagent running ─╮" (first edge))
+          "and the edge pins it to the RIGHT, framed, not hard against the ╭"))))
 
 (def-test the-config-pane-renders-every-row-with-its-source-under-the-cursor (:suite leticl)
   "The screen showed `UNBOUND-VARIABLE / The variable ANAPHORA:IT is unbound.`:
@@ -3431,3 +3459,539 @@ and the stall sentence in the chrome above the box (app.rs:5069-5075)."
           "trimmed to the width it has")
       (leticl::%render h)
       (is (search "nothing received for" (%screen-text h)) "and it reaches the screen"))))
+
+;;; ----------------------------- the frame, the cards and the pane cursors ;;;
+;;;
+;;; docs/parity/panes.md G5, G6, G11-G16, G19, G21 and docs/parity/rendering.md
+;;; §4's gaps 16-20, each measured against `/home/dead/Projects/letibot/letibot`
+;;; at `8af671e` and each with the reference's own function named in the
+;;; docstring. Every test below FAILS on the commit before this one.
+
+(def-test the-picker-opens-on-the-session-you-are-in (:suite leticl)
+  "**Ctrl+S then Enter moved you off your own session.** `%open-pane` seeds every
+pane's cursor at row 0 (`src/commands.lisp:178-191`), so the session picker
+opened on row 1 of the list and Enter — the obvious thing to press on a list you
+did not mean to change — switched. The reference seeds `picker_sel` from the
+current session when it opens the list (app.rs:3080-3087) precisely so that Enter
+on an untouched picker is a no-op.
+
+`picker-initial-sel` is the fact `%open-pane` is missing; the subagent filter is
+the same one the pane draws from, so the cursor and the rows cannot disagree
+about which row is which."
+  (let* ((h (%pane-head))
+         (s (head-session h)))
+    ;; the head is in the FIRST session of `%pane-head`; put it in the second
+    (is (= 0 (leticl::picker-initial-sel h)) "row 0 when you are the first row")
+    (setf (session-session-id s) "s-1789418841049398558")
+    (is (= 1 (leticl::picker-initial-sel h))
+        "and row 1 when you are the second — subagents are not counted, so the
+child session between them does not move it")
+    ;; a session the daemon has not listed is row 0: there is nowhere else to be
+    (setf (session-session-id s) "s-not-listed")
+    (is (= 0 (leticl::picker-initial-sel h)) "0 when the list does not hold it")
+    ;; and every other pane opens at the top, which is what one shared cursor
+    ;; can honestly promise
+    (setf (session-session-id s) "s-1789418841049398558")
+    (is (= 1 (leticl::pane-initial-sel h :picker)) "the picker is seeded")
+    (dolist (mode '(:jobs :subagents :config :todos))
+      (is (= 0 (leticl::pane-initial-sel h mode))
+          (format nil "and the ~(~a~) pane opens at the top" mode)))))
+
+(def-test the-peek-pane-shows-the-tail-and-names-its-spill-file (:suite leticl)
+  "**The pane advertised three keys and a file, and had none of them.**
+`pane-row-count` answers 0 for `:peek` (`src/editor.lisp:749`) so its cursor has
+nowhere to walk; the generic pane window took the TOP of the read, so a subagent
+that had written two hundred lines showed its first screenful while its ANSWER,
+which is at the end, was off the bottom; and `spill_sub_out` (app.rs:8025-8060)
+had no counterpart at all — `grep -rn spill src/*.lisp` found only the per-call
+`:spill` field.
+
+The reference's `sub_out_lines` (app.rs:6844-6892) is a TERMINAL, not a document:
+the tail shows by default and `scroll` is clamped where the visible height is
+known, because *a key handler cannot clamp what it cannot see*."
+  (let* ((h (%pane-head))
+         (leticl::*peeked-session* "s-child")
+         (leticl::*peeked-dropped* 0)
+         (leticl::*peek-spill* nil)
+         (*pane-scroll* 0))
+    ;; a read long enough to need a window: thirty assistant rows
+    (setf (head-peeked h)
+          (loop for i from 0 below 30
+                collect (list :event "transcript_content"
+                              :item (list :type "assistant"
+                                          :text (format nil "line-~2,'0d" i)))))
+    (is (plusp (leticl::peek-row-count h))
+        "the pane has rows for a cursor to walk — `pane-row-count` answers 0")
+    (let ((text (lines-text (leticl::peek-lines h 80 12))))
+      (is (search "line-29" (format nil "~{~a~^|~}" text))
+          "the TAIL is what a fresh peek shows: the answer is at the end")
+      (is (not (search "line-00" (format nil "~{~a~^|~}" text)))
+          "and the head of a long read is off the top, not the bottom")
+      (is (= 12 (length text)) "and it fills exactly the room it was given")
+      (is (search "full: " (car (last text)))
+          "the footer names the spill file, as the reference's does"))
+    ;; the file the footer names is a file that exists
+    (let ((path (leticl::spill-peek "s-child" (list "a" "b"))))
+      (is (and path (probe-file path))
+          "and `spill-peek` wrote it — a footer that promises a path it did not
+write is worse than one that promises nothing"))
+    ;; Esc goes back to the tree, not out of everything (app.rs:3251-3262)
+    (is (eq :subagents (leticl::pane-escape-target :peek))
+        "Esc from the peek means back to the subagent tree")
+    (is (eq :normal (leticl::pane-escape-target :jobs))
+        "and everywhere else it still means close")))
+
+(defun %decision-head (&key advice (options :full))
+  "A head with one open permission on it, shaped the way the daemon sends one."
+  (let ((h (%pane-head)))
+    (setf (session-open-decisions (head-session h))
+          (list (list :req-id "r1"
+                      :kind "exec"
+                      :summary "`bash` wants exec access to `cargo test --workspace`"
+                      :target "cargo test --workspace"
+                      :detail "the guard read this as a build, in this project"
+                      :advice advice
+                      :options (if (eq options :full)
+                                   (list (list :option-id "allow_once" :label "Allow once"
+                                               :kind "allow_once")
+                                         (list :option-id "allow_always" :label "Always allow `cargo test *`"
+                                               :kind "allow_always")
+                                         (list :option-id "reject_once" :label "Deny" :kind "reject_once")
+                                         (list :option-id "reject_always" :label "Deny, and tell the model why"
+                                               :kind "reject_always"))
+                                   (list (list :option-id "allow_once" :label "Allow once"
+                                               :kind "allow_once")
+                                         (list :option-id "reject_once" :label "Deny"
+                                               :kind "reject_once"))))))
+    h))
+
+(def-test the-permission-card-draws-the-oracles-verdict (:suite leticl)
+  "**The head RECEIVES the oracle's advice and never drew it.** `:advice` is
+folded onto the open decision at `src/session.lisp:324` and nothing read it, so
+under `/mode supervised` — where the question is not *should this run* but *do
+you agree with the model* — the model's answer was off-screen.
+
+`decision_lines` (app.rs:7329-7466) line for line, and four things the old card
+had none of: the verdict with its basis, its citations and `{by} · {N} ms`; the
+option IDS, so the ladder and the typed path show one choice and not two; the
+glob hint, **only** when `allow_always` is on offer; and `ask_without_target`
+(app.rs:7865-7874), without which the command is printed twice — once inside the
+summary sentence and once on its own line under it."
+  ;; the target comes off the end of the sentence, and the sentence's " to" with it
+  (is (equal "`bash` wants exec access"
+             (leticl::ask-without-target "`bash` wants exec access to `cargo test`"
+                                         "cargo test"))
+      "the heading is the ask without the thing being asked about")
+  (is (null (leticl::ask-without-target "some other builder wrote this" "cargo test"))
+      "and NIL when the sentence does not end in the target — then nothing is lost")
+  (let* ((h (%decision-head
+             :advice (list :would "allow"
+                           :by "oracle-local"
+                           :basis "it is the project's own test command"
+                           :cites (list "trail entry 4" "trail entry 9")
+                           :latency-ms 310)))
+         (text (format nil "~{~a~^~%~}" (lines-text (leticl::permission-card-lines h 120)))))
+    (is (search "? `bash` wants exec access [exec]" text)
+        "the ask, in the reference's shape, with the target taken off it")
+    (is (= 1 (count-substring "cargo test --workspace" text))
+        "and the command appears ONCE, on its own line — it was printed twice")
+    (is (search "model says allow: it is the project's own test command" text)
+        "the oracle's verdict, above the ladder")
+    (is (search "oracle-local · cites trail entry 4 · trail entry 9 · 310 ms" text)
+        "with who said it, what it grounded the answer in, and how long it took")
+    (is (search "(allow_always)" text)
+        "every option carries its id, so the ladder and the typed path agree")
+    (is (search "`allow_always <glob>`" text)
+        "the glob hint, because an always-allow is on offer")
+    (is (search "`deny_and_tell <why>`" text)
+        "and where the words go, because a reject-always is")
+    (is (not (search "no oracle" text)) "nothing claims an oracle was skipped"))
+  ;; an oracle that AUTHORISED while citing nothing is the case worth a look; one
+  ;; that did not authorise has nothing to cite, and saying so about it claims a
+  ;; search that was never the question
+  (let ((text (format nil "~{~a~^~%~}"
+                      (lines-text (leticl::advice-lines
+                                   (list :would "admit" :by "oracle-local" :basis "b"
+                                         :cites nil :latency-ms 12)
+                                   120)))))
+    (is (search "cites nothing from your words" text) "an `admit` with no cites says so"))
+  (let ((text (format nil "~{~a~^~%~}"
+                      (lines-text (leticl::advice-lines
+                                   (list :would "refuse" :by "oracle-local" :basis "b"
+                                         :cites nil :latency-ms 12)
+                                   120)))))
+    (is (not (search "cites nothing" text))
+        "and a refusal does not — it had nothing to cite and was not asked to"))
+  ;; no always-allow on offer, no glob hint: a hint for an option this request
+  ;; does not have teaches the operator to stop reading the hints
+  (let* ((h (%decision-head :options :short))
+         (text (format nil "~{~a~^~%~}" (lines-text (leticl::permission-card-lines h 120)))))
+    (is (not (search "`allow_always <glob>`" text)) "no always-allow, no glob line")
+    (is (not (search "`deny_and_tell" text)) "no reject-always, no words line")
+    (is (search "no oracle was consulted for this one" text)
+        "and the absence of a verdict is SAID: `not asked` and `said nothing`
+are different facts and looked identical on a card that drew neither")))
+
+(def-test the-password-card-counts-down-and-the-dots-are-in-the-field (:suite leticl)
+  "`secret_lines` (app.rs:7305-7327) and `composer_rows` (app.rs:5343-5348).
+
+Two measured breakages. `SecretAsk.deadline` arrives on the frame and was folded
+onto `head-secret-req` and never read, so a sudo ask about to time out looked
+exactly like one that had just arrived. And the dots were drawn INSIDE the card
+while the composer under it kept painting the ordinary buffer — so whatever had
+been typed before sudo asked sat on the screen while a password was entered over
+the top of it. The reference renders the dots in the composer box and never even
+measures the text."
+  (let* ((*stdout* (make-string-output-stream))
+         (leticl::*now-ms* 1000000)
+         (h (%on-head :cols 80 :rows 24 :buffer "the sentence I was typing")))
+    (setf (head-secret-req h) (list :req-id "r" :prompt "[sudo] password for dead:"
+                                    :command "apt install ripgrep"
+                                    :deadline 1047000)
+          (leticl::head-secret-buf h) "hunter2")
+    ;; at 120 columns, where the sentence fits — the reference trims this row to
+    ;; the width it has (`trim_to`), so a narrow screen loses the tail of it
+    (let ((text (format nil "~{~a~^~%~}" (lines-text (leticl::secret-ask-lines h 120)))))
+      (is (search "sudo wants a password — [sudo] password for dead:" text))
+      (is (search "for: apt install ripgrep" text))
+      (is (search "· 47s left" text) "the countdown, from the deadline on the frame"))
+    ;; no clock, no number: a head that was never told the time must not guess
+    (let ((leticl::*now-ms* 0))
+      (is (not (search "s left" (format nil "~{~a~}"
+                                        (lines-text (leticl::secret-ask-lines h 120)))))
+          "and no countdown at all when nobody has said what time it is"))
+    (leticl::%render h)
+    (let ((screen (%screen-text h)))
+      (is (search "•••••••" screen) "a dot per character, in the composer's own box")
+      (is (not (search "the sentence I was typing" screen))
+          "and the buffer underneath is not on the screen while sudo is asking"))))
+
+(def-test the-header-prefers-the-prompt-being-sent (:suite leticl)
+  "`header_line` (app.rs:6274-6281): **live prefill numbers win while a turn
+runs**, because \"how big is this prompt\" is a question about the prompt being
+sent and not about the last one that finished. Ours read `state.usage` or
+`turn.usage` and had no `progress` path at all, so through the whole of a long
+turn the header showed the PREVIOUS turn's context while the bar on the
+composer's edge expanded a different one.
+
+`src/session.lisp:218-223` has folded `PromptProgress` onto the turn as
+`(:total :cache :processed :time-ms)` since it was written; nothing read it."
+  (let* ((h (%make-head))
+         (s (head-session h)))
+    (setf (session-turn s)
+          (list :turn-id "t1"
+                :state (list :state "running"
+                             :usage (list :prompt-tokens 900 :cached-tokens 100))
+                :progress (list :total 41200 :cache 37000 :processed 1000 :time-ms 500)))
+    (let ((parts (format nil "~{~a~^ · ~}" (leticl::%usage-numbers s))))
+      (is (search "41.2k ctx" parts) "the prompt being sent, not the one that finished")
+      (is (not (search "900 ctx" parts)) "the kept usage does not win while one is in flight")
+      (is (search "90% cached" parts) "and the live cache fraction beside it"))
+    ;; with nothing in flight the kept usage is what there is
+    (setf (getf (session-turn s) :progress) nil)
+    (let ((parts (format nil "~{~a~^ · ~}" (leticl::%usage-numbers s))))
+      (is (search "900 ctx" parts) "and the kept usage when no prefill is running"))))
+
+(def-test a-scrubbed-head-shows-the-triangle (:suite leticl)
+  "`alarmed()` is `dropped + scrubbed + resyncs > 0` (app.rs:7619-7620) and
+`alarm-counts` carried the first and the third. A head that had had secrets
+stripped out of its rows and nothing else wrong showed **no ⚠ at all** — the one
+counter whose entire purpose is that the operator learns about it was the one
+kept quiet."
+  (let ((h (%make-head))
+        (leticl::*resyncs* 0)
+        (leticl::*scrubbed-total* 0))
+    (setf (head-connected h) t)
+    (is (not (alarmed-p h)) "a clean head is clean")
+    (let ((leticl::*scrubbed-total* 2))
+      (is (alarmed-p h) "scrubbed alone is an alarm")
+      (is (search "scrubbed 2" (format nil "~{~a ~a~^ · ~}"
+                                       (loop for (k . v) in (alarm-counts h)
+                                             append (list k v))))
+          "and it is named, not merely counted"))))
+
+(def-test a-failed-save-is-said-out-loud (:suite leticl)
+  "`app.rs:6413-6423,6541-6545` appends ` (not saved: …)` to the notice. Ours
+swallowed the write under `ignore-errors` and said only `key → value`, so a
+read-only `head.toml` left the pane claiming a change the file did not have and
+the next start of the head silently undid it. A setting that did not persist is a
+different fact from one that did."
+  (let ((h (%pane-head))
+        (real (symbol-function 'save-head-prefs)))
+    (unwind-protect
+         (progn
+           (setf (symbol-function 'save-head-prefs)
+                 (lambda (head &optional path)
+                   (declare (ignore head path))
+                   (error "Permission denied")))
+           (setf (head-picker-sel h) 0)      ; `diff view`, a head row
+           (leticl::config-change h)
+           (is (search "(not saved:" (head-status-note h))
+               "the note says the write did not land")
+           (is (search "diff view →" (head-status-note h))
+               "and still says what the live value became"))
+      (setf (symbol-function 'save-head-prefs) real))
+    ;; and a save that works says nothing extra
+    (setf (head-picker-sel h) 0)
+    (leticl::config-change h)
+    (is (not (search "(not saved:" (head-status-note h)))
+        "a save that landed adds no apology")))
+
+(def-test o-on-a-subagent-row-switches-into-it (:suite leticl)
+  "The subagents pane's own footer has advertised `o switches into it` since it
+was written (`src/panes.lisp:686`) and **no key was ever bound to it** — the one
+row on the screen that names a key named a key that did nothing. The reference
+binds it at app.rs:3696-3707.
+
+This is the act; the key is `src/editor.lisp:283-296`'s, whose `:char` arm
+handles only `#\\q`."
+  (let ((h (%pane-head))
+        (sent nil)
+        (real (symbol-function 'leticl::%send)))
+    (unwind-protect
+         (progn
+           (setf (symbol-function 'leticl::%send)
+                 (lambda (head frame) (declare (ignore head)) (push frame sent)))
+           ;; a subagent whose latest state is `opening` — the row says
+           ;; `— not attachable yet` and there is nothing to switch to
+           (setf (session-subagents (head-session h))
+                 (list (list :subagent-id "s-child" :state "opening"
+                             :prompt "Fix an auto-compaction failure" :role "worker")))
+           (setf (head-picker-sel h) 0 (head-mode h) :subagents)
+           (is (null (leticl::subagent-switch h))
+               "a subagent that is still opening has no session to switch to")
+           (is (null sent) "and nothing went out")
+           (is (search "not attachable yet" (head-status-note h))
+               "and it says so in the same words the row does")
+           ;; make it running, which is what `[~]` on the row means
+           (setf (session-subagents (head-session h))
+                 (list (list :subagent-id "s-child" :state "running"
+                             :prompt "Fix an auto-compaction failure" :role "worker")))
+           (is (leticl::subagent-switch h) "a running one switches")
+           (is (equal "switch" (getf (first sent) :frame)) "a switch frame went out")
+           (is (equal "s-child" (getf (first sent) :session-id)) "for that subagent")
+           (is (eq :normal (head-mode h)) "and the pane closed behind it"))
+      (setf (symbol-function 'leticl::%send) real))))
+
+(def-test the-gutter-is-the-first-thing-a-narrow-screen-gives-up (:suite leticl)
+  "`gutter` (app.rs:5320-5327): two columns at forty or more and **zero below**,
+because \"four columns out of forty is a tenth of the line, and out of twenty it
+is a fifth.\" Ours were two constants that never moved at any width, so on a
+30-column terminal the reference wrapped the body at 30 and this head wrapped it
+at 26 and drew a margin nobody had the columns for."
+  (is (= 2 (leticl::frame-gutter 40)) "two at the threshold")
+  (is (= 0 (leticl::frame-gutter 39)) "and none below it")
+  (let ((*stdout* (make-string-output-stream)))
+    (let ((h (%on-head :cols 30 :rows 20)))
+      (leticl::%render h)
+      (let ((row (find-if (lambda (l) (search "╭" l))
+                          (uiop:split-string (%screen-text h) :separator '(#\newline)))))
+        (is (and row (= 0 (position #\╭ row)))
+            "at 30 columns the box starts at the very first column")
+        (is (and row (= 29 (position #\╮ row)))
+            "and ends at the last one: all thirty go to the frame")))
+    (let ((h (%on-head :cols 60 :rows 20)))
+      (leticl::%render h)
+      (let ((row (find-if (lambda (l) (search "╭" l))
+                          (uiop:split-string (%screen-text h) :separator '(#\newline)))))
+        (is (and row (= 2 (position #\╭ row)))
+            "and at 60 the gutter is back")))))
+
+(def-test the-chrome-is-given-up-in-the-references-order (:suite leticl)
+  "**There was no fit ladder and no backstop.** `boxed = (>= rows 8)` was the
+whole of this head's degradation — one step, taken whether or not anything else
+could have been given up first — and nothing clamped the result, so on a short
+terminal the composer's first row came out at a NEGATIVE index and the head
+returned more rows than the terminal has.
+
+The reference drops in a named order (app.rs:5094-5126) — completions, the hint
+bar, the notice, a composer row down to one, the stall sentence, the box, a
+decision row — and then clamps (app.rs:5206-5208). Every position in that order
+is an argument; this asserts the order itself."
+  (let* ((*stdout* (make-string-output-stream))
+         (leticl::*now-ms* 100000)
+         (leticl::*last-event-ms* 0)
+         (h (%on-head :cols 80 :rows 20 :buffer "/he")))
+    (say h "the head has something to say")
+    (setf (session-turn (head-session h))
+          (list :turn-id "t1" :model "a-model" :state (list :state "running")))
+    (flet ((frame (rows)
+             (setf (head-rows h) rows)
+             (screen-resize (head-screen h) 80 rows)
+             (screen-resize (head-prev-screen h) 80 rows)
+             (leticl::%render h)
+             (%screen-text h)))
+      (let ((wide (frame 20)))
+        (is (search "/help" wide) "at 20 rows the completions row is there")
+        (is (search "ctrl-s sessions" wide) "and the hint bar")
+        (is (search "the head has something to say" wide) "and the notice")
+        (is (search "nothing received for" wide) "and the stall sentence")
+        (is (search "╭" wide) "and the box"))
+      (let ((r7 (frame 7)))
+        (is (not (search "/help" r7)) "the completions row goes first")
+        (is (search "ctrl-s sessions" r7) "the hint bar is still there"))
+      (let ((r6 (frame 6)))
+        (is (not (search "ctrl-s sessions" r6)) "the hint bar goes next")
+        (is (search "the head has something to say" r6) "the notice is still there"))
+      (let ((r5 (frame 5)))
+        (is (not (search "the head has something to say" r5)) "then the notice")
+        (is (search "nothing received for" r5) "the stall outlives it — it is the
+only thing on the screen saying why nothing is happening"))
+      (let ((r4 (frame 4)))
+        (is (not (search "nothing received for" r4)) "then the stall")
+        (is (search "╭" r4) "the box outlives it"))
+      (let ((r3 (frame 3)))
+        (is (not (search "╭" r3)) "and the box is last of the chrome")
+        (is (search "›" r3) "the composer is what is left")))))
+
+(def-test the-frame-never-returns-more-rows-than-the-terminal-has (:suite leticl)
+  "The backstop (app.rs:5206-5208): `the ladder above cannot always win — h can
+be 2 — and a head that returns more lines than the terminal has scrolls its own
+composer off the bottom`. Ours had none, and `cursor` could go negative.
+
+Here it is a one-row terminal with a four-row card on it, which the ladder cannot
+fit: everything that does not fit is placed above row 0 and dropped by
+`screen-put`, which is the frame the reference gets by draining the front of its
+chrome vector. The caret is clamped at both ends for the same reason."
+  (let ((*stdout* (make-string-output-stream)))
+    (dolist (rows '(1 2 3 5))
+      (let ((h (%on-head :cols 40 :rows rows)))
+        (setf (head-quit-open h) t)       ; a four-row card
+        (screen-resize (head-screen h) 40 rows)
+        (screen-resize (head-prev-screen h) 40 rows)
+        (setf (head-rows h) rows)
+        (finishes (leticl::%render h))
+        (is (= rows (length (uiop:split-string (%screen-text h) :separator '(#\newline))))
+            (format nil "at ~d row~:p the frame is ~d rows" rows rows))
+        (is (and (>= (car *caret*) 0) (< (car *caret*) rows))
+            (format nil "and the caret is on the screen at ~d row~:p" rows))
+        (is (>= (cdr *caret*) 0) "and never at a negative column")))
+    ;; and the header is not drawn on a screen too short for it (app.rs:5231)
+    (let ((h (%on-head :cols 40 :rows 5)))
+      (leticl::%render h)
+      (is (not (search "▌" (%screen-text h)))
+          "a five-row frame does not spend one of its five on a header")
+      (setf (head-rows h) 6)
+      (screen-resize (head-screen h) 40 6)
+      (screen-resize (head-prev-screen h) 40 6)
+      (leticl::%render h)
+      (is (search "▌" (%screen-text h)) "and at six it is back"))))
+
+(def-test the-turn-status-leads-with-the-spinner (:suite leticl)
+  "`turn_status` (app.rs:7538-7566): `{spin} Responding{since}{count}`. Ours was
+`Responding{count}{since} · {spin}` — the spinner last, where a narrow border
+truncates the one moving glyph away first, and the count and the elapsed swapped.
+
+And there was **no prefill arm at all**: while the prompt is still expanding the
+reference replaces the whole status with the bar. `prefill-line`
+(`src/progress.lisp:172`) was written, tested and called from nowhere, so the one
+number this harness exists to move never reached the composer's edge."
+  (let* ((h (%make-head))
+         (leticl::*now-ms* 5000)
+         (leticl::*turn-started-ms* nil))
+    (setf (session-turn (head-session h))
+          (list :turn-id "t1" :state (list :state "running") :tokens 1200))
+    (let ((s (turn-status h 120)))
+      (is (find (char s 0) "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+          "the spinner is the FIRST thing on the line, not the last")
+      (is (search "Responding · started before this head attached · 1200 tok" s)
+          "and the elapsed comes before the count"))
+    ;; a prompt still expanding is a bar, not a word
+    (setf (getf (session-turn (head-session h)) :progress)
+          (list :total 41200 :cache 37000 :processed 12000 :time-ms 800))
+    (let ((s (turn-status h 120)))
+      (is (search "prefill" s) "while it prefills, the bar is the status")
+      (is (not (search "Responding" s)) "and it replaces the word, as the reference's does")
+      (is (find (char s 0) "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏") "the spinner still leads"))
+    ;; prefill finished: back to the word
+    (setf (getf (getf (session-turn (head-session h)) :progress) :processed) 41200)
+    (is (search "Responding" (turn-status h 120))
+        "and once the prompt is in, the word is back")))
+
+(def-test the-stall-sentence-is-the-references-fifteen-seconds (:suite leticl)
+  "`stuck_line` (app.rs:7594) fires at 15 000 ms. Ours was 20 000 — five extra
+seconds of a turn that has stopped talking and nothing on the screen saying so."
+  (is (= 15000 leticl::*stall-ms*) "the reference's own number")
+  (let ((h (%make-head)))
+    (setf (session-turn (head-session h))
+          (list :turn-id "t1" :model "a-model" :state (list :state "running")))
+    (let ((leticl::*now-ms* 15500) (leticl::*last-event-ms* 0))
+      (is (stall-text h) "fifteen and a half seconds of silence is a stall"))
+    (let ((leticl::*now-ms* 14500) (leticl::*last-event-ms* 0))
+      (is (null (stall-text h)) "fourteen and a half is not"))))
+
+(def-test the-box-edges-pin-their-legends-right-and-frame-them (:suite leticl)
+  "`box_edge` (app.rs:5384-5411). Ours put the top legend hard against the `╭`
+and painted it bold — the header's register — where the reference pins it RIGHT
+in `Role::Pending` (yellow, style.rs:174) and frames it as ` {legend} ─`. Neither
+edge had the framing. Invisible until a subagent runs, which is why it survived
+two rounds of `compare-heads`.
+
+Gated as the reference gates it: nothing below `inner >= 10`, and the right
+legend is dropped rather than squeezed below four columns of room — a legend
+squeezed to two characters is a legend nobody can read occupying room the border
+needs."
+  (let ((wide (car (lines-text (list (leticl::box-edge 40 #\╭ #\╮ "" "2 subagents running"))))))
+    (is (search " 2 subagents running ─╮" wide) "framed and pinned right")
+    (is (char= #\╭ (char wide 0)) "the corner is still the corner")
+    (is (char= #\─ (char wide 1)) "and the fill starts immediately after it")
+    (is (= 40 (string-width wide)) "the edge is exactly its width"))
+  (is (equal '(:fg :yellow)
+             (cdr (find "2 subagents running"
+                        (leticl::box-edge 40 #\╭ #\╮ "" "2 subagents running" '(:fg :yellow))
+                        :key #'car :test #'string=)))
+      "and the legend is Pending, not Strong")
+  (let ((narrow (car (lines-text (list (leticl::box-edge 9 #\╭ #\╮ "" "legend"))))))
+    (is (not (search "legend" narrow)) "no legend at all below inner >= 10")
+    (is (= 9 (string-width narrow)) "and the edge is still whole"))
+  (let ((tight (car (lines-text (list (leticl::box-edge 14 #\╭ #\╮ "" "a much longer legend"))))))
+    (is (= 14 (string-width tight)) "a legend never makes the edge wider than its width")))
+
+(def-test the-completions-row-lists-what-tab-would-take (:suite leticl)
+  "`completions_line` (app.rs:4342-4358). Tab has completed since this head was
+written (`src/editor.lisp:118`) and **nothing was ever drawn**, so the only way
+to learn what a prefix matched was to press Tab and watch the buffer change under
+you. A bare `/` lists everything; a prefix nothing matches draws nothing, because
+a row that appears and disappears is noise."
+  (let ((h (%on-head :cols 100 :rows 24 :buffer "/mod")))
+    (let ((text (car (lines-text (leticl::completions-line h 200)))))
+      (is (search "/mode" text) "the verb")
+      (is (search "the mode picker" text) "and its hint, as the reference joins them")
+      (is (search "/models" text) "and every other match"))
+    (setf (composer-buffer (head-composer h)) "/zzz")
+    (is (null (leticl::completions-line h 200)) "a prefix nothing matches is no row")
+    (setf (composer-buffer (head-composer h)) "/mode allow-all")
+    (is (null (leticl::completions-line h 200))
+        "and a line with an argument on it is not a name being completed")
+    (setf (composer-buffer (head-composer h)) "hello")
+    (is (null (leticl::completions-line h 200)) "nor is ordinary prose"))
+  ;; and it reaches the screen, above the composer
+  (let* ((*stdout* (make-string-output-stream))
+         (h (%on-head :cols 100 :rows 24 :buffer "/mod")))
+    (leticl::%render h)
+    (is (search "/mode" (%screen-text h)) "it is drawn, above the box")))
+
+(def-test an-empty-session-says-what-it-is (:suite leticl)
+  "app.rs:6112-6131: `an empty screen with a status line under it is
+indistinguishable from a head that attached to the wrong socket`. Ours had no
+banner at all.
+
+Guarded on `attaching-p` the way the reference guards it on `!self.attaching`:
+the walking cat covers *not answered yet* and this covers *attached and quiet*,
+and an empty screen must never be left to mean both."
+  (let* ((*stdout* (make-string-output-stream))
+         (leticl::*attach-started-ms* nil)
+         (h (%on-head :cols 80 :rows 24)))
+    (leticl::%render h)
+    (let ((text (%screen-text h)))
+      (is (search "attached, and this session has said nothing yet" text)
+          "the banner is on the screen")
+      (is (search "/help lists the keys." text) "and it says where the keys are"))
+    ;; while the daemon has not answered, the cat has the screen and the banner
+    ;; must not claim the session is empty
+    (let ((leticl::*attach-started-ms* (internal-real-time-ms)))
+      (leticl::%render h)
+      (is (not (search "said nothing yet" (%screen-text h)))
+          "and it is silent while nobody has reported")
+      (is (search "asking the daemon for this session" (%screen-text h))
+          "because that is the cat's screen, not this one's"))))
