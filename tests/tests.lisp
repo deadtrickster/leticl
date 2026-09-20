@@ -2086,3 +2086,93 @@ the border lands inside the text instead of the text overflowing the border."
         (is (= measured end)
             (format nil "~a: the columns MEASURED (~a) are the columns PLACED (~a)"
                     label measured end))))))
+
+;;; ------------------------------------------------- the two-panel diff (P5) ;;;
+
+(defun %split-text (lines)
+  (format nil "~{~a~^~%~}"
+          (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l))) lines)))
+
+(def-test the-two-panel-view-puts-before-on-the-left (:suite leticl)
+  "The shape the operator asked for twice: the same evidence the unified card
+carries, drawn side by side, with the SIGN COLUMN carrying the change rather than
+a background tint — a glyph survives a terminal with no colour and a pipe to a
+file, which a tint does not."
+  (let* ((old (list "a" "b" "c"))
+         (new (list "a" "B" "c"))
+         (text (%split-text (render-split old new :width 60 :old-start 10 :new-start 10))))
+    ;; every ROW is the same width, separator in the same column: that is what
+    ;; "the panels line up" means, and a wide glyph in one is what breaks it
+    (dolist (row (render-split old new :width 60 :old-start 10 :new-start 10))
+      (is (= 60 (string-width
+                 (format nil "~{~a~}" (mapcar #'car row))))
+          "each row is exactly the width the caller asked for"))
+    (is (search "10 a" text) "the left gutter numbers from the FILE, not the excerpt")
+    (is (search "11-b" text) "the removed line is signed MINUS on the left")
+    (is (search "11+B" text) "and the added line PLUS on the right")
+    (is (search "│" text) "the panels are separated")
+    ;; and the two SIDES differ where the change is: a bug that filled one table
+    ;; from both sides drew the after-text in both panels, which looks like a
+    ;; correctly aligned row and is exactly what it must not be
+    (let* ((row (second (mapcar (lambda (l) (mapcar #'car l))
+                                (render-split old new :width 60
+                                              :old-start 10 :new-start 10))))
+           (left (first row))
+           (right (third row)))
+      (is (search "-" left) "the left half carries the removal")
+      (is (search "+" right) "the right half carries the addition")
+      (is (not (string= left right)) "and the two are not the same text"))))
+
+(def-test a-rewritten-line-sits-beside-the-line-it-replaced (:suite leticl)
+  "A change run pairs the k-th removal with the k-th addition, which is what puts a
+rewritten line BESIDE the line it replaced rather than above it. Two panels that
+put them on different rows are two panels nobody can read across."
+  (let* ((old (list "one" "two" "three"))
+         (new (list "ONE" "TWO" "THREE"))
+         (lines (render-split old new :width 60 :old-start 1 :new-start 1)))
+    (is (= 3 (length lines)) "three paired rows, not six stacked ones")
+    (let ((first-row (%split-text (list (first lines)))))
+      (is (search "one" first-row) "the first removal")
+      (is (search "ONE" first-row) "is on the SAME row as its replacement"))))
+
+(def-test a-deletion-and-an-insertion-leave-the-other-panel-blank (:suite leticl)
+  "Unequal sides: a deletion has nothing on the right and an insertion nothing on
+the left, and saying so is the whole of what the row is for. The blank half keeps
+its width, or the separator would move and the panels would stop lining up."
+  ;; a pure insertion
+  (let* ((lines (render-split (list "a" "c") (list "a" "b" "c")
+                              :width 60 :old-start 1 :new-start 1))
+         (text (%split-text lines)))
+    (is (search "+b" text) "the inserted line is signed")
+    ;; one separator PER ROW, and the blank half keeps its width — that is what
+    ;; keeps the two panels lined up rather than ragged
+    (dolist (row lines)
+      (let ((rowtext (format nil "~{~a~}" (mapcar #'car row))))
+        (is (= 1 (count-if (lambda (c) (char= c #\│)) rowtext))
+            "one separator per row")
+        (is (= 60 (string-width rowtext)) "and the row keeps its full width"))))
+  ;; a pure deletion
+  (let ((text (%split-text (render-split (list "a" "b" "c") (list "a" "c")
+                                         :width 60 :old-start 1 :new-start 1))))
+    (is (search "-b" text) "the deleted line is signed")))
+
+(def-test a-narrow-pane-degrades-rather-than-refusing (:suite leticl)
+  "A narrow pane gets a narrow split rather than no diff — an edit drawn cramped is
+still an edit the operator can read, and an edit NOT drawn is one they approved
+blind — but below the point where a panel can hold a gutter and code at once it
+says so instead of overprinting."
+  (let ((text (%split-text (render-split (list "a" "b") (list "a" "B")
+                                         :width 20 :old-start 1 :new-start 1))))
+    (is (search "too narrow" text) "it says the pane is too narrow")
+    (is (search "unified" text) "and names the alternative")))
+
+(def-test the-card-chooses-the-view-from-the-pref (:suite leticl)
+  "The choice is the operator's toggle and nothing else — not the width, which is
+opencode's rule and would take the diff away on a narrow terminal."
+  (let ((edit (list :path "f.lisp" :created nil :before-start 1 :after-start 1
+                    :before-lines 3 :after-lines 3 :truncated nil
+                    :before (format nil "a~%b~%c") :after (format nil "a~%B~%c"))))
+    (is (search "│" (segs-of (edit-lines edit 60 :split t)))
+        "split is the two-panel view")
+    (is (not (search "│" (segs-of (edit-lines edit 60 :split nil))))
+        "and unified is the one-panel view")))

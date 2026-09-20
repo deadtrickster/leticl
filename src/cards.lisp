@@ -267,7 +267,10 @@ the reference's `Replayed` phase holds."
           (when (getf prefs :show-tools)
             (cond
               ;; a file-editing call: both sides, as a real diff
-              (edit (edit-lines edit cols :folded (not (getf prefs :tools-open))))
+              (edit (edit-lines edit cols
+                                :folded (not (getf prefs :tools-open))
+                                :split (string= (or (getf prefs :diff) "unified")
+                                                "split")))
               (t (let ((preview (%first-line (or payload ""))))
                    (when (plusp (length preview))
                      (wrap-segments
@@ -344,7 +347,7 @@ in the range\")."
       nil
       (uiop:split-string text :separator '(#\newline))))
 
-(defun edit-lines (edit cols &key (folded nil))
+(defun edit-lines (edit cols &key (folded nil) (split nil))
   "The diff of an EDIT, as segment lines.
 
 This is the twice-requested diff, and it is why `render-diff` exists: the edit
@@ -363,7 +366,12 @@ line 4 changed when it was line 313\")."
            (head-line (list (list (cons (format nil "  ~a~a" path
                                                 (if created " (new)" ""))
                                       '(:bold t :fg :cyan)))))
-           (body (render-diff (%edit-lines-text (or (getf edit :before) ""))
+           (body (if split
+                     ;; the two-panel view, when the operator has asked for it
+                     ;; (`/config`'s diff row): before on the left, after on the
+                     ;; right, the sign column carrying the change
+                     (edit-split-lines edit cols)
+                     (render-diff (%edit-lines-text (or (getf edit :before) ""))
                               (%edit-lines-text (or (getf edit :after) ""))
                               :width (max 20 (- cols 4))
                               :context 3
@@ -371,7 +379,7 @@ line 4 changed when it was line 313\")."
                               :intra-line t
                               :max-rows (if folded 8 60)
                               :old-start (or (getf edit :before-start) 1)
-                              :new-start (or (getf edit :after-start) 1)))
+                              :new-start (or (getf edit :after-start) 1))))
            (tail (when (getf edit :truncated)
                    (list (list (cons
                                 (format nil "  … the excerpt was capped; the file is ~a lines now"

@@ -31,6 +31,8 @@ through an eval socket and see the change on the next frame."
                ;; before its callee is a style-warning per call site.
                (:file "src/highlight")
                (:file "src/diff")
+               ;; the two-panel view; it diffs the excerpts with the engine above
+               (:file "src/sidediff")
                (:file "src/markdown")
                (:file "src/keys")
                ;; `head` defines the head STRUCT and the loop. It comes before
