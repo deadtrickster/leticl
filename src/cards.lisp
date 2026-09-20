@@ -969,9 +969,11 @@ three colours, none of them the reference's."
 a pure insertion has no `before`, and rendering that as a blank line claims a
 line was there (`ToolEditExcerpt::before` — \"empty when the side has no lines
 in the range\")."
-  (if (zerop (length text))
-      nil
-      (uiop:split-string text :separator '(#\newline))))
+  ;; and ONE trailing empty is dropped, as `str::lines()` does: the unified card
+  ;; drew a signed, numbered blank row at the foot of every diff whose side ended
+  ;; in a newline, claiming a line that is not in the file. `%lines-of` is the
+  ;; one rule; this is its caller, not a second copy of it.
+  (%lines-of text))
 
 (defun edit-lines (edit cols &key (folded nil) (split nil))
   "The diff of an EDIT, as segment lines.
@@ -1002,7 +1004,16 @@ line 4 changed when it was line 313\")."
                               :width (max 20 (- cols 4))
                               :context 3
                               :line-numbers t
-                              :intra-line t
+                              ;; **Both reference call sites pass `intra_line:
+                              ;; false`** (app.rs:8817, 9934). The wiring for word
+                              ;; emphasis was dead here — `%pair-rows` bound
+                              ;; `add-start` after consuming the addition run —
+                              ;; and fixing that made this head start emitting
+                              ;; emphasis the reference deliberately suppresses.
+                              ;; `render-diff`'s own default stays T, matching
+                              ;; `DiffConfig::default`; the choice belongs at the
+                              ;; call site, which is what the reference's two are.
+                              :intra-line nil
                               :max-rows (if folded 8 60)
                               :old-start (or (getf edit :before-start) 1)
                               :new-start (or (getf edit :after-start) 1))))

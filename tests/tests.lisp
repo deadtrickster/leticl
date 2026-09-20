@@ -4880,3 +4880,29 @@ be short (app.rs:4443, 4567)."
     (leticl::%command h "i")
     (let ((f (first (%sent wire))))
       (is (equal "interrupt" (getf f :frame)) "/i interrupts the turn"))))
+
+(def-test the-unified-card-draws-no-line-the-file-does-not-have (:suite leticl)
+  "`str::lines()` yields no final empty line for a text ending in a newline and
+`uiop:split-string` does, so the unified edit card drew a signed, numbered blank
+row at the foot of every diff whose side ended in one — a line claimed that is not
+in the file. The split view was fixed with `%lines-of`; this is its other caller,
+which had kept its own copy of the rule.
+
+And the emphasis: both reference call sites pass `intra_line: false`
+(app.rs:8817, 9934). Ours passed T against wiring that was dead, so repairing the
+wiring would have started emitting what the reference suppresses."
+  (let* ((*item-facts* nil)
+         (edit (list :path "src/f.lisp" :created nil
+                     :before-start 1 :after-start 1
+                     :before-lines 1 :after-lines 1 :truncated nil
+                     :before (format nil "a~%") :after (format nil "b~%")))
+         (lines (edit-lines edit 80))
+         (text (lines-text lines)))
+    (is (= 1 (count-if (lambda (l) (search "-a" l)) text)) "the removal")
+    (is (= 1 (count-if (lambda (l) (search "+b" l)) text)) "the addition")
+    (is (notany (lambda (l) (let ((tr (string-trim " -+0123456789│" l)))
+                              (and (zerop (length tr)) (search "2" l))))
+                text)
+        "and no numbered blank row after them: ~s" text))
+  (is (search ":intra-line nil" (source-of "cards"))
+      "the call site suppresses word emphasis, as both of the reference's do"))
