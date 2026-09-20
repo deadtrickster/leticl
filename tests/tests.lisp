@@ -3431,3 +3431,21 @@ and the stall sentence in the chrome above the box (app.rs:5069-5075)."
           "trimmed to the width it has")
       (leticl::%render h)
       (is (search "nothing received for" (%screen-text h)) "and it reaches the screen"))))
+
+(def-test the-terminal-comes-back-from-anywhere (:suite leticl)
+  "**A crash must not cost the operator their terminal.** The head runs raw, on
+the alternate screen, with the cursor hidden, and `with-tui-terminal`'s
+`unwind-protect` gives all three back when the stack UNWINDS — which an unhandled
+error in a saved executable does not do: it enters the debugger, which prints onto
+a raw alternate screen nobody will ever leave. `reset` was the only way out. The
+image's toplevel now restores from its debugger hook, the way the reference
+restores from its panic hook (term.rs:191-197)."
+  (let ((out (make-string-output-stream)))
+    (is (eq t (restore-terminal out)) "it answers, and does not signal")
+    (let ((bytes (get-output-stream-string out)))
+      (dolist (seq '("[?2026l" "[?1006l" "[?1002l" "[?2004l" "[0 q" "[?25h" "[?1049l"))
+        (is (search seq bytes)
+            "~a — synchronized output, the mouse, bracketed paste, the cursor shape, the cursor and the alternate screen all come back"
+            seq))))
+  ;; twice in a row is a no-op, because it runs where things are already wrong
+  (is (eq t (restore-terminal (make-string-output-stream))) "idempotent"))

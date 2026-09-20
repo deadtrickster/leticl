@@ -40,6 +40,13 @@
   (write-line "       sets it from the current directory and resolves --continue to the newest" stream)
   (write-line "       session (harnessd --latest-session). Dev commands stay in run.lisp." stream))
 
+(defun %restore-terminal ()
+  "The system's `restore-terminal`, reached by name because this file is READ
+before the package exists — the same reader trap `--where` fell into."
+  (ignore-errors
+   (let ((f (find-symbol "RESTORE-TERMINAL" :leticl)))
+     (when f (funcall f)))))
+
 (defun main ()
   ;; A refusal is a sentence, not a backtrace: `no-daemon` is the head saying
   ;; there is nothing here to attach to, and the operator saw it as an
@@ -48,11 +55,26 @@
   ;; the condition's name is looked up when the handler is established and not
   ;; written as `leticl:no-daemon` — the same reader trap `--where` fell into
   ;; with sb-introspect.
-  (handler-bind ((error (lambda (c)
-                          (when (typep c (find-symbol "NO-DAEMON" :leticl))
-                            (format *error-output* "leticl: ~a~%" c)
-                            (uiop:quit 1)))))
-    (%main)))
+  ;; **The terminal comes back before anything is printed**, or the report is a
+  ;; staircase on a raw screen — the reference's own note. The hook covers the
+  ;; path `unwind-protect` cannot: an unhandled error in a saved executable does
+  ;; not unwind, it enters the debugger.
+  (let ((sb-ext:*invoke-debugger-hook*
+          (lambda (condition hook)
+            (declare (ignore hook))
+            (%restore-terminal)
+            (format *error-output* "~&leticl: ~a~%~%" condition)
+            (ignore-errors (sb-debug:print-backtrace :stream *error-output* :count 20))
+            (uiop:quit 70))))
+    (handler-bind ((error (lambda (c)
+                            (when (typep c (find-symbol "NO-DAEMON" :leticl))
+                              (format *error-output* "leticl: ~a~%" c)
+                              (uiop:quit 1))))
+                   ;; ctrl-c at the wrong moment, a closed pty, a SIGTERM the
+                   ;; loop turned into a condition: the terminal still comes back
+                   (serious-condition (lambda (c) (declare (ignore c))
+                                        (%restore-terminal))))
+      (%main))))
 
 (defun %main ()
   (let ((args (uiop:command-line-arguments)))

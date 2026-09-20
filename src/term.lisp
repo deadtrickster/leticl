@@ -134,6 +134,34 @@ only latency (wire.rs flushes per frame for the same reason)."
                 out)
   (force-output out))
 
+(defun restore-terminal (&optional out)
+  "Give the terminal back, from anywhere, at any time: synchronized output off,
+mouse off, bracketed paste off, the cursor shape and the cursor back, the
+alternate screen left, and the saved termios restored.
+
+**A crash must not cost the operator their terminal.** The head runs raw, on the
+alternate screen, with the cursor hidden. `with-tui-terminal`'s `unwind-protect`
+gives all three back when the stack UNWINDS — and an unhandled error in a saved
+executable does not unwind, it enters the debugger, which then prints onto a raw
+alternate screen nobody will ever leave. What the operator gets back is a
+terminal with no echo, no cursor and no scrollback, and `reset` is the only way
+out. The reference restores from a panic hook for exactly this (term.rs:191-197)
+and again on `Drop`.
+
+Idempotent, and guarded at every step: it runs where things are already wrong, so
+a failure to restore one thing must not stop the next. OUT defaults to the head's
+own stdout, falling back to `*error-output*` — in case the stream is what broke."
+  ;; `*stdout*` is defined in head.lisp, which loads after this file, so it is
+  ;; reached by NAME rather than written as a symbol the reader would intern
+  ;; here and a compile-time warning would then report as undefined.
+  (let* ((sym (find-symbol "*STDOUT*" :leticl))
+         (stream (or out
+                     (ignore-errors (and sym (boundp sym) (symbol-value sym)))
+                     *error-output*)))
+    (ignore-errors (leave-tui stream))
+    (ignore-errors (leave-raw))
+    t))
+
 (defmacro with-tui-terminal ((out &key (fd 1)) &body body)
   "Raw mode + alternate screen for the body; the terminal is given back
 exactly as term.rs leaves it, on every exit path."

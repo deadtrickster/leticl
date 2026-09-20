@@ -5,7 +5,13 @@
 `card.rs` line number below is a line in **that** commit; `.claude/worktrees/*`
 copies in the reference tree are stale and were not read.
 
-**Subject**: `~/Projects/leticl` @ `dc62ddf` (master, clean).
+**Subject**: `~/Projects/leticl` @ `dc62ddf` — the tree as it stood when this pass
+started. **It moved underneath the pass**: `4e32354` landed while this was being
+written and touched `src/chrome.lisp`, `src/render.lisp` and `src/panes.lisp`.
+Everything below was read at `dc62ddf`, and the two findings `4e32354` already
+changes are marked inline (§4's stall row, and gap 19). Re-read the function
+before trusting a `src/` line number — a citation is a pointer, not a
+specification.
 
 **Scope**: the transcript row, markdown, diff/highlight, the frame, styles and
 width. Keys, commands, the wire and the panes are covered elsewhere.
@@ -37,10 +43,12 @@ The parts that are genuinely byte-identical *by construction*, not by luck:
   `crates/ui/src/width.rs:216-237` and `:241-282`, machine-diffed, with zero
   ranges on either side only. `char-width`, `is_control`,
   `is_regional_indicator` and `skip_escape` all agree.
-- **Sixteen of the twenty-two `Role`s.** `Faint`, `Strong`, `Heading`,
+- **Seventeen of the twenty-two `Role`s.** `Faint`, `Strong`, `Heading`,
   `Subheading`, `UserAccent`, `UserBlock`, `Success`, `Pending`, `Failure`,
   `Reasoning`, `Code`, `Added`, `Removed`, `Keyword`, `StringLit`, `Comment`,
   `TypeName` all emit the same SGR attributes (modulo leticl's reset prefix, §5).
+  `Plain` and `Emphasis` match in rendition but not in bytes; only `Attention`,
+  `NumberLit` and `FuncName` are genuinely different colours.
 - **The card vocabulary**: `Verb::of` and `Verb::label` (`crates/ui/src/card.rs:125-156`)
   against `*verb-map*`/`verb-label` (`src/cards.lisp:404-437`) — the same 25 tool
   names, the same 14 tense pairs, the same "an unknown name keeps its own name".
@@ -476,7 +484,8 @@ Subject: `src/render.lisp` (`%render`, `%viewport-lines`, `%place-lines`) and
 | `turn_status`, generating: `{spin} Responding{since}{count}` — spinner **first**, then `since`, then the count | `app.rs:7560-7566` | `Responding{count}{since} · {spin}` — spinner **last**, count and since swapped | `src/chrome.lisp:389-400` | **DIFFERS** |
 | `turn_status`, prefilling: `{spin} {progress::prefill_line(pf, w-6, p)}` | `app.rs:7538-7550` | no prefill arm at all; `prefill-line` exists (`src/progress.lisp:172`) and is never called from the status | `src/chrome.lisp:377-400` | **MISSING**: the prefill bar never appears on the composer's edge. |
 | `since`: `" · started before this head attached"` when `started_ms == 0` | `app.rs:7513-7519` | same string | `src/chrome.lisp:386` | SAME |
-| `stuck_line`: at **15 s** of silence, a yellow row **of its own above the border** — `{model} — nothing received for {d}. The turn is still marked running; esc esc interrupts it.` | `app.rs:7582-7601` | at **20 s**, ` · no frames for {d}` appended to the *status line*, which is only drawn when the frame is **unboxed** | `src/chrome.lisp:285-311`, `:328`, `src/render.lisp:314-317` | **DIFFERS**: different threshold, different text, no model name, and on a normal (boxed) screen it is never drawn at all. |
+| `stuck_line`: at **15 s** of silence, a yellow row **of its own above the border** — `{model} — nothing received for {d}. The turn is still marked running; esc esc interrupts it.` | `app.rs:7582-7601` | at `dc62ddf`: at **20 s**, ` · no frames for {d}` appended to the *status line*, which is only drawn when the frame is **unboxed**. **`4e32354` has since fixed this**: `stall-text` now takes the head, gates on a running turn, names the model and uses the reference's sentence; `stall-row` and `notice-line` are placed above the box by `%render`'s new `extra` rows | `src/chrome.lisp:285-311,328` (before); `src/chrome.lisp:308-344` and `src/render.lisp:314-320,409-411` (after) | was DIFFERS, now **SAME but for the threshold** (20 s vs 15 s) |
+| The notice row: `· {n}` in magenta, in the chrome above the box, one of the fit ladder's rungs | `app.rs:5071-5074,5113` | at `dc62ddf` the note rode `status-line`, drawn only when unboxed — i.e. never on a real screen, so every `say` went into silence including `detached — reconnecting…`. `4e32354` adds `notice-line` above the box | `src/chrome.lisp:322-334` (before), `:326-337` (after) | was **MISSING**, now SAME placement — but still outside any ladder (gap 16) |
 | `hint_bar`: composer half + `" · "` + context tail; ten context arms, exact strings | `app.rs:5418-5459` | the same ten arms, the same strings | `src/chrome.lisp:338-375` | SAME — confirmed on the live capture (row 63, identical bytes) |
 | `composer_rows`: box walls, padded to full width, caret `(row, col)` returned | `app.rs:5341`+ | `composer-box-body` + `composer-caret`, segment boundaries tuned to the reference's escapes | `src/chrome.lisp:503-583` | SAME (documented as escape-matched at `src/chrome.lisp:519-538`) |
 | `body_window` air: separator **before** a row whose `RowClass` changed; two `Activity` rows pack; a row that renders to nothing gets no separator; one gap row between the history and the live pane | `app.rs:5809-5830`, `:5886-5893` | identical rule, same three clauses | `src/render.lisp:240-258` | SAME |
@@ -892,9 +901,11 @@ D12. Perf only, invisible at card sizes: `nth`/`elt` over lists in `hunks` and
     prefill arm** — `src/chrome.lisp:377-400` vs `app.rs:7538-7566`. The prefill
     bar never reaches the composer's edge, which is the one number this harness
     exists to move. **M**
-19. **The stall line is on the wrong row, at the wrong threshold, with the wrong
-    text** — `src/chrome.lisp:285-311,328` vs `app.rs:7582-7601`. On a normal
-    boxed screen it is never drawn at all. **S**
+19. ~~**The stall line is on the wrong row, at the wrong threshold, with the
+    wrong text**~~ — **closed by `4e32354`** while this pass was running, along
+    with the notice row that had the same defect. What is left is one constant:
+    `*stall-ms*` is 20000 (`src/chrome.lisp:285`) where the reference fires at
+    15000 (`app.rs:7592`). **S**
 20. **The box's top legend is left-pinned and bold** — `src/chrome.lisp:480-490`
     vs `app.rs:5384-5411,5157-5173`. Invisible until a subagent runs. **S**
 
@@ -1006,7 +1017,7 @@ is the row:
 | 16 fit ladder | resize the pane to 10 rows, then 4, then 2 | at each size letibot returns exactly `h` rows with a composer visible; leticl's row count and caret position are the finding |
 | 17 gutter | resize to 30 columns | letibot's header starts at column 0 and is 30 wide; leticl's starts at 2 and is 26 |
 | 18 turn_status | a turn running with prefill in progress | letibot's bottom border carries `⠙ prefill 61% ▐████▓▓░░░▌ · 2.4k tok/s · ~12s left`; leticl's carries `Responding · 1.2k chars · 4.2s · ⠙` |
-| 19 stall line | kill the daemon's event flow for 20 s mid-turn | letibot grows a yellow row above the box naming the model; leticl's boxed frame shows nothing |
+| 19 stall threshold | stop the daemon's event flow mid-turn; capture at 16 s and again at 21 s | letibot has the yellow row at both; leticl (post-`4e32354`) only at 21 s. That one constant is the whole remaining difference |
 | 20 box legend | a session with a subagent running | letibot: `╰…… ⚠ · ⠙ Responding ─╯` and `╭…… 1 subagent running ─╮`; leticl: `╭ 1 subagent running ────╮` |
 
 Two rules for these, from `HACKING.md`:
@@ -1020,6 +1031,17 @@ Two rules for these, from `HACKING.md`:
   the byte stream. That is the right comparison for this head (segment splitting
   is free) and the wrong one for a claim about emitted bytes, which belongs in a
   unit test against `screen-rows-ansi`.
+
+### Performance — count, do not time
+
+The reference's `hist_renders` (`app.rs:5785`) exists so a test can say "a frame
+with no new row renders no rows" (`app.rs:13475-13503`). We have no such
+invariant, so a change that makes the frame quadratic would be invisible until
+somebody noticed the head feeling slow. Before any cache work, add two counters
+— `item-lines` calls per frame and `hl-grid` calls per frame — and two tests
+that bound them on a fixed transcript. A count is reproducible on any box; a
+millisecond is not, and the 0.46 ms figure in this document is a measurement of
+one machine on one day.
 
 Finally: gaps 1, 2, 3, 22 and 30 change what `string-width` and the wrap agree
 on, and `screen-put-string` places what `string-width` measured

@@ -8,7 +8,8 @@
   (:nicknames #:lt)
   (:export
    ;; term
-   #:with-raw-mode #:terminal-size #:make-tty-streams
+   #:with-raw-mode #:terminal-size #:make-tty-streams #:restore-terminal
+   #:leave-tui #:leave-raw
    #:enter-tui #:leave-tui #:with-tui-terminal
    #:sync-begin #:sync-end
    ;; width
