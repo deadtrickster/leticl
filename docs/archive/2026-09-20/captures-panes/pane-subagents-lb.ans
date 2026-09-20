@@ -1,0 +1,61 @@
+  [34m▌ [1m[39mhello, what we are doing here[0;2m  ~/Projects/leticl[0m                                                                             [2m1/71 · deepseek/deepseek-flash · $0.5602 · 702.8k ctx · 100% cached · 104 tok/s · 5.5s · 572 out[0m
+  [1msubagents[0m
+
+  [2m    none spawned yet. The model spawns them with the task tool.[0m
+
+  [2m    arrows move, Enter reads the subagent's output, o switches into it — subagents are hidden from ctrl-s.[0m
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  [2m╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮[0m
+  [2m│[0m [2m› [0m                                                                                                                                                                                                                          [2m│[0m
+  [2m╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯[0m
+  [2menter send · ctrl+c exit · subagents this session spawned · esc closes[0m

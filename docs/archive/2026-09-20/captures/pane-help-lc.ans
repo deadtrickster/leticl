@@ -1,0 +1,63 @@
+  [34m▌ [1m[39mhello, what we are doing here[0;2m  ~/Projects/leticl[0m                                                            [2m1/71 · deepseek/deepseek-flash · $0.0074 · 702.8k ctx · 100% cached · 104 tok/s · 5.5s · 572 out[0m
+  [1m leticl keys [0m
+  [1m  enter        [0;2m  send the line; queued if a turn runs[0m
+  [1m  ctrl+c       [0;2m  interrupt the running turn[0m
+  [1m  ctrl+d       [0;2m  quit[0m
+  [1m  pgup/pgdn    [0;2m  scroll the transcript[0m
+  [1m  up/down      [0;2m  history, or move in lists[0m
+  [1m  alt+enter    [0;2m  a newline inside the prompt[0m
+  [1m  esc esc      [0;2m  interrupt the running turn, twice within five seconds[0m
+  [1m  tab          [0;2m  complete a slash command[0m
+  [1m  ctrl-r       [0;2m  fold or unfold the model's thinking[0m
+  [1m  ctrl-t       [0;2m  fold or unfold tool output[0m
+  [1m  ctrl-x       [0;2m  show the raw <function=…> markup of tool calls[0m
+  [1m  ctrl-s       [0;2m  the session list[0m
+  [1m  ctrl-p       [0;2m  the todos pane[0m
+  [1m  ctrl-g       [0;2m  the subagent tree[0m
+  [1m  ctrl-q       [0;2m  the background jobs[0m
+  [1m  ctrl-o       [0;2m  move the running command to the background[0m
+  [1m  ctrl-u       [0;2m  kill the line, or take back a queued prompt[0m
+  [1m  ctrl-y       [0;2m  yank the last kill[0m
+  [1m  ctrl-z       [0;2m  undo, a word at a time[0m
+  [1m  ctrl-l       [0;2m  repaint the screen[0m
+
+  [1m commands [0m
+  [36m  /new[2m[39m  TITLE — start a fresh session[0m
+  [36m  /sessions[2m[39m  the session picker[0m
+  [36m  /switch[2m[39m  ID — go to another session[0m
+  [36m  /rename[2m[39m  NAME — name the session you are in[0m
+  [36m  /help[2m[39m  the key and command reference[0m
+  [36m  /status[2m[39m  telemetry, full screen[0m
+  [36m  /think[2m[39m  fold or unfold the model's reasoning[0m
+  [36m  /tools[2m[39m  fold or unfold tool output[0m
+  [36m  /config[2m[39m  every setting, as the daemon reports it[0m
+  [36m  /mode[2m[39m  the mode picker — or /mode NAME to type it[0m
+  [36m  /models[2m[39m  which model answers: the picker, or /models PROVIDER/MODEL[0m
+  [36m  /jobs[2m[39m  the background-jobs pane[0m
+  [36m  /subagents[2m[39m  the subagent tree[0m
+  [36m  /cells[2m[39m  MESSAGE — send it with a copy of this screen[0m
+  [36m  /todos[2m[39m  the model's plan, and the repo's TODO.md — ask, then open it[0m
+  [36m  /peek[2m[39m  SESSION-ID — read a subagent's output without leaving this session[0m
+  [36m  /resync[2m[39m  throw this head's state away and take a fresh snapshot[0m
+  [36m  /resume[2m[39m  SESSION-ID — bring a stored session back to life[0m
+  [36m  /compact[2m[39m  summarise this session and fork it[0m
+  [36m  /reseat[2m[39m  rebuild the prompt from the tools seated now[0m
+  [36m  /promote[2m[39m  move the RUNNING COMMAND to the background (ctrl-o)[0m
+  [36m  /interrupt[2m[39m  stop the running turn[0m
+  [36m  /quit[2m[39m  leave the head[0m
+
+
+
+
+
+
+
+
+
+
+
+
+  [2m╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮[0m
+  [2m│[0m [2m› [0m                                                                                                                                                                                                         [2m│[0m
+  [2m╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── ⚠ ╯[0m
+  [2mesc closes this[0m

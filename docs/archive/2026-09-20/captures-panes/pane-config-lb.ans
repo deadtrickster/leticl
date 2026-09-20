@@ -1,0 +1,61 @@
+  [34m▌ [1m[39mhello, what we are doing here[0;2m  ~/Projects/leticl[0m                                                                             [2m1/71 · deepseek/deepseek-flash · $0.5602 · 702.8k ctx · 100% cached · 104 tok/s · 5.5s · 572 out[0m
+  [1mconfig[0m
+
+  [2m  head — this window[0m
+  [7m▸ ✎ diff view        split[0m
+  [2m       from /home/dead/.config/letibot/head.toml[0m
+    ✎ thinking         folded
+    ✎ tool output      open
+    ✎ raw tool calls   hidden
+
+  [2m  session — the daemon[0m
+    ✎ mode             allow-all (this box, consented)
+    ✎ model            deepseek/deepseek-flash
+    ✎ supervise        on — the guard model answers
+      session          s-1789639478142928813
+      seat             leticode
+      workspace        /home/dead/Projects/leticl
+      scratch          /tmp/letibot-scratch-616785
+      owner            dead
+      dialect          qwen3.8
+      endpoint         127.0.0.1:8080
+      vocab            /home/dead/models/Qwen3.8-27B-UD-Q6_K_XL.gguf
+      context          1000000 tokens
+      auto-compact     true
+      effort           default
+      provider         deepseek (deepseek-flash)
+      adjudicator      head
+    ✎ oracle           127.0.0.1:8080
+      oracle.model     qwen-3.8-27b
+      oracle.budget    20.0s
+      oracle.question  verdict
+      oracle.scope     9 intent(s) up to host_other (declared)
+    ✎ permission       150 rule(s)
+      downgrade        none
+      bash             true
+      unconfined       true
+      grants.ro        /home/dead/.cargo, /home/dead/.rustup
+      placement        host
+      spill            unset — nothing spills
+      spill.storage    memory
+      max-tool-rounds  200
+      stall-rounds     5
+      intent.prose     false
+      flowy            off
+      fabric           none
+      web_search       configured
+      web_fetch        curl
+      socket           /run/user/1000/letibot/fcf91a545af4.sock
+      store            /home/dead/.local/share/letibot/sessions.db
+
+  [2m  files — edit with an editor[0m
+      modes.tsv        5 lines
+      permission.json  157 lines
+      providers.toml   214 lines
+      sensitive.json   not present
+
+  [2m    ✎ changes now and is kept (head → head.toml, mode → project store); the rest shows its source and takes a restart[0m
+  [2m╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮[0m
+  [2m│[0m [2m› [0m                                                                                                                                                                                                                          [2m│[0m
+  [2m╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯[0m
+  [2menter send · ctrl+c exit · arrows move · enter changes a row marked ✎ · esc closes[0m

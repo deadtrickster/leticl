@@ -1,0 +1,61 @@
+  [34m▌ [1m[39mhello, what we are doing here[0;2m  ~/Projects/leticl[0m                                                                             [2m1/71 · deepseek/deepseek-flash · $0.0074 · 702.8k ctx · 100% cached · 104 tok/s · 5.5s · 572 out[0m
+  [1mtodos[0m
+
+  [2m  this session — the model's plan, live:[0m
+      [32m[x][39m S0 decomposition (DONE)
+      [32m[x][39m S1 wire — acks, settings on attach (DONE)
+      [32m[x][39m P2 dead frames — /resync, /peek, /todos, /resume (DONE)
+      [32m[x][39m S2 engines — diff (P3), highlight (P4), progress (P6) DONE; sidediff (P5), width (P7) left
+      [32m[x][39m S5 prefs (DONE)
+      [32m[x][39m S11 docs (DONE)
+      [32m[x][39m S4 editor (DONE)
+      [32m[x][39m S8 chrome — box, alarm, hint, stall, notice TTL, money meter (DONE)
+      [32m[x][39m S3 cards — item-id maps (DONE), deny_and_tell note (P45), refusal dedup (P46) left
+      [ ] S6 panes — pickers, output views, promote, click, pane scroll (P41), todos rewrite (P42)
+      [ ] S7 commands — /verbosity, /models, /default-model, /job, /gate, /supervise, /flowy (P28-P32)
+      [ ] S9 bindings — chords (P37)
+      [ ] S10 render architecture — measure first (P38)
+      [ ] P5 sidediff, P7 cluster-aware width
+
+  [2m  the repo's TODO.md — the operator's queue, read-only here:[0m
+  [2m      Dependency graph[0m
+      [32m[x][39m Phase 0 — repo  [2/2]
+          [32m[x][39m T1 git init, .gitignore, commit PLAN.md + TODO.md.
+          [32m[x][39m T2 vendor yason + alexandria + trivial-gray-streams, pinned in ···
+      [32m[x][39m Phase 1 — foundation (M1)  [8/8]
+          [32m[x][39m T3 leticl.asd (+ /test system), src/package.lisp (one package ···
+          [32m[x][39m T4 src/term.lisp: termios via sb-alien (tcgetattr/tcsetattr/ ···
+          [32m[x][39m T5 src/width.lisp: char-width/string-width, compact port of the ···
+          [32m[x][39m T6 src/cells.lisp: cell buffer (char + interned style plist), ···
+          [32m[x][39m T7 src/wire.lisp: read-frame (skip blanks, :eof on close), ···
+          [32m[x][39m T8 src/json.lisp: yason wrappers — decode to keyword-key plists, ···
+          [32m[x][39m T9 src/protocol.lisp: +protocol-version+ 18, constructors for the ···
+          [32m[x][39m T10 src/socket.lisp: connect-unix, discover-daemons (parse ···
+      [32m[x][39m Phase 2 — attach (M2)  [3/3]
+          [32m[x][39m T11 src/session.lisp: attach/hello handling, snapshot ingestion ···
+          [32m[x][39m T12 src/head.lisp: reader thread + mailbox, input thread + mailbox, ···
+          [32m[x][39m T13 live smoke: attach to a real daemon, render the snapshot as plain ···
+      [32m[x][39m Phase 3 — real TUI (M3)  [4/4]
+          [32m[x][39m T14 src/render.lisp: transcript items → styled cells, chrome ···
+          [32m[x][39m T15 src/keys.lisp + composer: escape decoding (port term.rs tables, ···
+          [32m[x][39m T16 decision/question cards: DecisionRequested/question rendering, ···
+          [32m[x][39m T17 session picker: Sessions/ListSessions, Switch, ···
+      [32m[x][39m Phase 4 — the point (M4)  [1/1]
+          [32m[x][39m T18 src/hack.lisp + scripts/tui-eval: per-instance eval socket ···
+      [33m[~][39m Phase 5 — the ports (M5)  [2/3]
+          [32m[x][39m T19 markdown rendering (port tui/markdown.rs). Deps: T14.
+          [ ] T20 diff/sidediff/highlight (port ui/diff.rs, ui/sidediff.rs, ···
+          [32m[x][39m T21 prefs/settings/peek/subagent rows/todos screens. Deps: T17.
+      [32m[x][39m Phase 6 — hardening (M6)  [1/1]
+          [32m[x][39m T22 resync/reconnect drills, Screen frame answers (last painted ···
+  [2m      Phase 7 — parity[0m
+  [2m      The two gates every strand must pass[0m
+  [2m      The rules that keep the live head usable[0m
+  [2m      Read the reference, do not guess from the citations[0m
+  [2m      Write Common Lisp, not Rust in parentheses[0m
+  [2m      How a strand is run[0m
+  [2m      The DAG[0m
+  [2m╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮[0m
+  [2m│[0m [2m› [0m                                                                                                                                                                                                                          [2m│[0m
+  [2m╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── ⚠ ╯[0m
+  [2m↑↓ moves · enter or tab unfolds · esc closes[0m

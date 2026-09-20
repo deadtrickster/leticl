@@ -1,0 +1,63 @@
+  [34m▌ [1m[39mhello, what we are doing here[0;2m  ~/Projects/leticl[0m                                                            [2m1/71 · deepseek/deepseek-flash · $0.0074 · 702.8k ctx · 100% cached · 104 tok/s · 5.5s · 572 out[0m
+  [1m sessions [0m
+  [7m ● hello, what we are doing here[0m
+     when i send a message mid
+     please add commonlisp code highlighting
+     назови самый вкусный пирог и дай
+     Fix an auto-compaction failure in the
+     Investigate and fix an auto-compaction failure
+     i noticed that shebang files do
+     we have the situation when I
+     Reply with the single word ok.
+     what i want you to fix
+     list your tools
+     Question: does letibot's flowy integration supp…
+     You are building a table of
+     Run exactly: zcat /usr/share/man/man1/shred.1.g…
+     Run exactly: zcat /usr/share/man/man1/dd.1.gz |…
+     Run this and answer only from
+     Run this and answer only from
+     Run: man dd | col -b
+     Run: man dd | col -b
+     (unnamed)
+     Reply with the single word ok.
+     what tools do you have
+     Using the bash tool run exactly:
+     Using the ps tool, check whether
+     Using the bash tool run exactly:
+     Using the bash tool run exactly:
+     Using the bash tool run exactly:
+     You are working in a copy
+     list your tools
+     You are working in a copy
+     You are working in a copy
+     Using the bash tool run exactly:
+     Reply with the single word ok.
+     Reply with the single word ok.
+     In crates/tools/src/builtins/grep.rs the `searc…
+     In crates/flowy/src/context.rs there is a funct…
+     In the repository at the current
+     In crates/flowy/src/context.rs there is a funct…
+     In crates/flowy/src/context.rs the function fir…
+     (unnamed)
+     --bash
+     --bash
+     --bash
+     --bash
+     run a subagent to summarize ~/bin/letibot
+     Read the file at ~/bin/letibot (relative
+     Summarize the file or directory at
+     spawn a subagent to summarize ~/bin/leticode
+     Read the file at ~/bin/leticode (expand
+     start a subagent tp summarize ~/bin/letibot
+     Read the file ~/bin/letibot (a 522-line
+     read ~/bin/letibot
+     Below is the complete content of
+     Read the file /home/dead/bin/letibot in full
+     read ~/bin/leticode
+     read ~/bin/letibot
+     (unnamed)
+  [2m╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮[0m
+  [2m│[0m [2m› [0m                                                                                                                                                                                                         [2m│[0m
+  [2m╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── ⚠ ╯[0m
+  [2m↑↓ then enter switches · esc closes[0m

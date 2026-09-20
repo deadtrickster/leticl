@@ -1,0 +1,63 @@
+  [34m▌ [1m[39mhello, what we are doing here[0;2m  ~/Projects/leticl[0m                                                                      [2m1/71 · deepseek/deepseek-flash · 702.8k ctx · 100% cached · 104 tok/s · 5.5s · 572 out[0m
+  [1m600/600.[0m Let me freeze, restart, and see it:
+
+    [2m▸ Ran [0m"cd /home/dead/Projects/leticl && timeout 300 sbcl --script freeze.lisp 2>&1 | grep freezing && ./scripts/tui-eval --…[2m · ok · 2 lines[0m
+    [2m  freezing leticl head image to /home/dead/Projects/leticl/bin/leticl-head[0m
+    [2m  686445[0m
+    [2m▸ Ran [0m"sleep 8; cd /tmp/letibot-scratch-2906340 && python3 << 'PY'\nimport subprocess, re\ndef snap(t):\n    r = subprocess…[2m · ok · 25 lines[0m
+    [2m  leticl: 63 rows | letibot: 63 rows[0m
+    [2m  … +24 lines · ctrl-t[0m
+    ▸ [1mThought[0;2m · 13 lines · ctrl-r[0m
+
+  The indent matches now — both heads have cards at column 4 and prose at 2. Committing:
+
+    [2m▸ Ran [0m"cd /home/dead/Projects/leticl && git add -A && git commit -q -F - <<'MSG'\nthe step: the model's working sits in, un…[2m · ok · [0me73b11a the step: the model's working sits in, under what it says
+
+  Committed. And yes — [1mthe render optimizations are real, but they're theirs, not ours.[0m
+
+  [2m##[0m [1m[34mWhat I measured[0m
+
+                           [2m │ [0;1mletibot[0m            [2m │ [0;1mleticl[0m
+  [2m──────────────────────────┼─────────────────────┼───────[0m
+  attach, 2000-item session[2m │ [0;1m1.6–2.7 s[0m of lexing[2m │ [0;1m0.29 s[0m
+
+  Their commit [36m495d5d2[39m says the operator reported [3m"startup time skyrocketed. literally seconds"[0m after they migrated markdown to tree-sitter. Their own numbers: [1m133 ns/byte for block lexing, 250 ns/byte for[0m
+  [1minline[0m, against Rust's ~3 ns/byte baseline — a stored 4–6 MB session is 1.6–2.7 s of parse.
+
+  Their three levers, smallest-first, as they wrote them:
+
+  1. [1mLex only what is drawn[0m — "bounds the work, changes the Block model".
+  2. [1mCache the rendered history[0m — "strongest for [36m--continue[39m, needs a disk format".
+  3. [1mPaint chrome first, fill over frames[0m — "touches what makes scrollback correct".
+
+  [1mLever 1 is our architecture.[0m [36m%viewport-lines[39m walks the transcript [3mbackwards[0m and stops as soon as it has the lines the viewport needs, so cost is bounded by the screen and not the session — which is exactly
+  why our 2000-item attach is 0.29 s and theirs is measured in seconds. I documented that measurement in S10 earlier; this is it paying off.
+
+  So there's nothing to port. [1mThe optimization they need is the thing we happened to build.[0m
+
+  [2m##[0m [1m[34mThe rendering difference you saw[0m
+
+  [36mactivity-indent[1m[39m was defined and never called[0m — used only to compute a subject's [3mwidth[0m, never to move a row. Third instance of that exact class this session, after [36m:tools-open[39m and the money meter: a function
+  that looks live and isn't.
+
+  letibot's cards sit at [1mcolumn 4[0m, its prose at [1m2[0m; every row of ours was at 2. That's why a turn read as one flat column. Now fixed — and reasoning is a folded row ([36m▸ Thought · N lines · ctrl-r[39m) with the [36m┃ [39m
+  rail, instead of the whole working-out inline.
+
+  Both heads now: gutter 2, prose 2, cards/reasoning 4, spacing by [36mRowClass[39m. 600 tests, tree clean, head on [36mpid 686445[39m.
+
+  [1mOne thing I'd flag:[0m three dead functions found in one session suggests scanning for more. Want me to sweep for defined-but-never-called functions across the tree — the same check [36m--where[39m's cousin would do —
+  before moving on?
+
+  [1mthe mode this session runs under[0m
+     1  read-only
+     2  always-ask
+     3  writes allowed
+     4  automode
+     5  automode-edits
+  [7m▸  6  [1mallow-all[0;7m                                                                                                                                                                                          [2m← now[0m
+  [2m  ↑↓ moves · enter switches · or type a name or the number on the left · esc closes[0m
+  [2m  a mode change moves THIS session from its next call, and every later session in this project.[0m
+  [2m╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮[0m
+  [2m│[0m [2m› [0m                                                                                                                                                                                                         [2m│[0m
+  [2m╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── ⚠ ╯[0m
+  [2ma row number switches · ↑↓ then enter · or type a name · esc closes[0m

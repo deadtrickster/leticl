@@ -1,0 +1,63 @@
+  ▌ hello, what we are doing here  ~/Projects/leticl                                                            1/71 · deepseek/deepseek-flash · $0.5602 · 702.8k ctx · 100% cached · 104 tok/s · 5.5s · 572 out
+       8| 16|6|       tool: edit
+       9|111|6|       outcome: failed — `old_string` is not in `src/cards.lisp` exactly; at 1
+      10|208|6|       `old_string` is not in `src/cards.lisp` byte for byte. 1 place(s) match
+      12| 28|6|       lines 701–706 of 1008:
+      13| 93|9|          698|           ;; lines · ctrl-r`. We printed the whole working-out i
+
+      === LETICL ===
+       2|107|2|   ind is used only to compute the subject's width — the lines themselves are n
+       4| 70|4|     ▸ Read 40 560 src/cards.lisp · ok · 41 lines  … +40 lines · ctrl-t
+       5|173|4|     ▸ Edited "      ;; **FOLDED BY DEFAULT**, which is letibot's default and n
+       6|169|4|     ▸ Edited "     ;; **FOLDED BY DEFAULT**, which is letibot's default and no
+       8| 51|2|   Now apply it in item-lines for the activity rows:
+      10| 70|4|     ▸ Read 30 615 src/cards.lisp · ok · 31 lines  … +30 lines · ctrl-t
+      11|169|4|     ▸ Edited "(defun item-lines (item cols prefs)   \"One transcript row to se
+      13| 74|2|   Now close the step-in-lines call and pass the right indent per row type:
+      15| 70|4|     ▸ Read 50 690 src/cards.lisp · ok · 51 lines  … +50 lines · ctrl-t
+      16|173|4|     ▸ Edited "          ((:tool_result) (%tool-result-lines item body cols pre
+    ▸ Thought · 13 lines · ctrl-r
+
+  The indent matches now — both heads have cards at column 4 and prose at 2. Committing:
+
+    ▾ Ran "cd /home/dead/Projects/leticl && git add -A && git commit -q -F - <<'MSG'\nthe step: the model's working sits in, un… · ok · 13ms · e73b11a the step: the model's working sits in, under what it says
+
+  Committed. And yes — the render optimizations are real, but they're theirs, not ours.
+
+  ## What I measured
+
+                            │ letibot             │ leticl
+  ──────────────────────────┼─────────────────────┼───────
+  attach, 2000-item session │ 1.6–2.7 s of lexing │ 0.29 s
+
+  Their commit 495d5d2 says the operator reported "startup time skyrocketed. literally seconds" after they migrated markdown to tree-sitter. Their own numbers: 133 ns/byte for block lexing, 250 ns/byte for
+  inline, against Rust's ~3 ns/byte baseline — a stored 4–6 MB session is 1.6–2.7 s of parse.
+
+  Their three levers, smallest-first, as they wrote them:
+
+  1. Lex only what is drawn — "bounds the work, changes the Block model".
+  2. Cache the rendered history — "strongest for --continue, needs a disk format".
+  3. Paint chrome first, fill over frames — "touches what makes scrollback correct".
+
+  Lever 1 is our architecture. %viewport-lines walks the transcript backwards and stops as soon as it has the lines the viewport needs, so cost is bounded by the screen and not the session — which is exactly
+  why our 2000-item attach is 0.29 s and theirs is measured in seconds. I documented that measurement in S10 earlier; this is it paying off.
+
+  So there's nothing to port. The optimization they need is the thing we happened to build.
+
+  ## The rendering difference you saw
+
+  activity-indent was defined and never called — used only to compute a subject's width, never to move a row. Third instance of that exact class this session, after :tools-open and the money meter: a function
+  that looks live and isn't.
+
+  letibot's cards sit at column 4, its prose at 2; every row of ours was at 2. That's why a turn read as one flat column. Now fixed — and reasoning is a folded row (▸ Thought · N lines · ctrl-r) with the ┃
+  rail, instead of the whole working-out inline.
+
+  Both heads now: gutter 2, prose 2, cards/reasoning 4, spacing by RowClass. 600 tests, tree clean, head on pid 686445.
+
+  One thing I'd flag: three dead functions found in one session suggests scanning for more. Want me to sweep for defined-but-never-called functions across the tree — the same check --where's cousin would do —
+  before moving on?
+
+  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ ›                                                                                                                                                                                                          │
+  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+  enter send · ctrl+c exit · ctrl-s sessions · ctrl-p todos · ctrl-g subagents · ctrl-r thinking · ctrl-t tool output · ctrl-q jobs · tab completes /commands · /help

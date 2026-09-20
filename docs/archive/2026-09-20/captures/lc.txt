@@ -1,0 +1,63 @@
+  ▌ hello, what we are doing here  ~/Projects/leticl                                                                deepseek/deepseek-flash · $0.0074 · 702.8k ctx · 100% cached · 104 tok/s · 5.5s · 572 out
+    ▸ Ran "cd /home/dead/Projects/leticl && grep -n \"(:reasoning)\" -A8 src/cards.lisp | head -12" · ok · 9 lines  … +8 lines · ctrl-t
+    ▸ Thought · 64 lines · ctrl-r
+
+  The reasoning arm already adds its own "  ", so it double-indents. And letibot draws reasoning as a folded header at the activity indent. Let me read its shape:
+
+    ▸ Ran "cd /home/dead/Projects/letibot/letibot && sed -n '544,600p' crates/ui/src/card.rs && echo \"=== REASONING_RAIL_WIDTH… · ok · 59 lines  … +58 lines · ctrl-t
+    ▸ Thought · 31 lines · ctrl-r
+
+  Now I have the full spec. letibot's reasoning is a folded header (Thought · N lines · ctrl-r) with a ┃  rail when open — not raw text:
+
+    ▸ Edited "         ((:reasoning)           ;; **The model's working-out, so it can never be mistaken for its           ;; answ… · ok · 39 lines  … +38 lines · ctrl-t
+    ▸ Thought · 3 lines · ctrl-r
+
+  turn isn't in scope in item-lines — a settled row is by definition not running:
+
+    ▸ Edited "           (let* ((text (getf body :text))                   (body-rows (if (plusp (length text))                   … · failed · 29 lines  … +28 lines · ctrl-t
+    ▸ Edited "          (let* ((text (getf body :text))                  (body-rows (if (plusp (length text))                     … · ok · 16 lines  … +15 lines · ctrl-t
+    ▸ Ran "cd /home/dead/Projects/leticl && timeout 400 sbcl --script run.lisp test 2>&1 | grep -E \"Pass:|Fail:\"; timeout 400… · ok · 2 lines  … +1 lines · ctrl-t
+
+  600/600. Let me freeze, restart, and see it:
+
+    ▸ Ran "cd /home/dead/Projects/leticl && timeout 300 sbcl --script freeze.lisp 2>&1 | grep freezing && ./scripts/tui-eval --… · ok · 2 lines  … +1 lines · ctrl-t
+    ▸ Ran "sleep 8; cd /tmp/letibot-scratch-2906340 && python3 << 'PY' import subprocess, re def snap(t):     r = subprocess.ru… · ok · 8.0s · 26 lines  … +25 lines · ctrl-t
+    ▸ Thought · 13 lines · ctrl-r
+
+  The indent matches now — both heads have cards at column 4 and prose at 2. Committing:
+
+    ▸ Ran "cd /home/dead/Projects/leticl && git add -A && git commit -q -F - <<'MSG' the step: the model's working sits in, und… · ok · 33ms · 1 line · e73b11a the step: the model's working sits in, under what
+
+  Committed. And yes — the render optimizations are real, but they're theirs, not ours.
+
+  What I measured
+
+                            │ letibot                 │ leticl
+  ──────────────────────────┼─────────────────────────┼───────────
+  attach, 2000-item session │ **1.6–2.7 s** of lexing │ **0.29 s**
+
+  Their commit 495d5d2 says the operator reported "startup time skyrocketed. literally seconds" after they migrated markdown to tree-sitter. Their own numbers: 133 ns/byte for block lexing, 250 ns/byte for inli
+
+  Their three levers, smallest-first, as they wrote them:
+
+  1. Lex only what is drawn — "bounds the work, changes the Block model".
+  2. Cache the rendered history — "strongest for --continue, needs a disk format".
+  3. Paint chrome first, fill over frames — "touches what makes scrollback correct".
+
+  Lever 1 is our architecture. %viewport-lines walks the transcript backwards and stops as soon as it has the lines the viewport needs, so cost is bounded by the screen and not the session — which is exactly wh
+
+  So there's nothing to port. The optimization they need is the thing we happened to build.
+
+  The rendering difference you saw
+
+  `activity-indent` was defined and never called — used only to compute a subject's width, never to move a row. Third instance of that exact class this session, after :tools-open and the money meter: a function
+
+  letibot's cards sit at column 4, its prose at 2; every row of ours was at 2. That's why a turn read as one flat column. Now fixed — and reasoning is a folded row (▸ Thought · N lines · ctrl-r) with the ┃  rai
+
+  Both heads now: gutter 2, prose 2, cards/reasoning 4, spacing by RowClass. 600 tests, tree clean, head on pid 686445.
+
+  One thing I'd flag: three dead functions found in one session suggests scanning for more. Want me to sweep for defined-but-never-called functions across the tree — the same check --where's cousin would do — b
+  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ ›                                                                                                                                                                                                          │
+  ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── ⚠ ╯
+  enter send · ctrl+c exit · ctrl-s sessions · ctrl-p todos · ctrl-g subagents · ctrl-r thinking · ctrl-t tool output · ctrl-q jobs · tab completes /commands · /help
