@@ -58,6 +58,9 @@
    #:session-warnings #:session-denials #:session-subagents #:session-jobs
    #:session-todos #:session-wiring #:session-open-decisions #:session-sessions
    #:item-lines #:turn-lines #:outcome-name #:edit-lines #:call-lines
+   ;; the item-id maps (S3): what a settled row keeps of the live card
+   #:item-facts #:note-call-started #:note-call-finished #:note-call-decision
+   #:*item-facts* #:*call-facts* #:*call-started-ms*
    ;; engines a model may want to call directly while restyling
    #:highlight-fence #:lang-for-fence
    ;; keys

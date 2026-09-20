@@ -13,6 +13,106 @@
 
 (in-package #:leticl)
 
+;;; ------------------------------------------------------- the item-id maps ;;;
+;;;
+;;; ## Why this exists
+;;;
+;;; The live card knows three things the settled row does not: how long the call
+;;; took, both sides of the file it changed, and the decision that gated it. A
+;;; `TranscriptItem::ToolResult` carries the tool's prose and **no timestamps at
+;;; all** (`edit` is display-only, lib.rs:74), so the moment the row lands those
+;;; facts leave the screen — which is exactly what happened, and the operator
+;;; reported it twice: *"nothing really shown"*, and *"past edits lose their diff
+;;; panels"*.
+;;;
+;;; ## Why the key is the item id and not the call id
+;;;
+;;; A call id is **round-positional**: the engine assigns `call_{n}` from the
+;;; round's own call list, so every round of every turn starts again at `call_0`.
+;;; A table keyed on it alone has all fourteen rounds of a long turn writing the
+;;; same three keys, and every settled card reads back whichever round wrote last
+;;; — which is how a head comes to name a file the tool never opened. An item id
+;;; is unique per row, so it cannot do that.
+;;;
+;;; Both are defvars, not `head` slots: a defstruct layout change is a hard error
+;;; in this SBCL, so a slot would mean a restart.
+
+(defvar *call-facts* nil
+  "Alist CALL-ID → plist of what the live turn knows about one call: `:ms` (how
+long it ran), `:edit` (both sides of the file it changed), `:decision` (what
+gated it).
+
+Keyed by the ROUND-POSITIONAL call id, so it is cleared at every round boundary
+(`%round-boundary`). It is a STAGING table: facts land here from `tool_finished`
+and `decision_answered`, and move to `*item-facts*` under the row's item id when
+the transcript row arrives with its body.")
+
+(defvar *item-facts* nil
+  "Alist ITEM-ID → the same plist, once the row it belongs to exists.
+
+The durable half, and what `%tool-result-lines` reads: this is what keeps a
+settled row's diff, duration and approval on the screen after the live card is
+gone. An item id is unique per row, so two rounds cannot collide here.")
+
+(defvar *call-started-ms* nil
+  "Alist CALL-ID → the monotonic ms when its ToolStarted arrived.
+
+Neither `tool_finished` nor the row that lands afterwards carries a duration, so
+the only way to keep *\"that grep took 4.1 s\"* on the screen is to have noted
+when it began.")
+
+(defun note-call-started (call-id)
+  (when call-id
+    (setf (alexandria:assoc-value *call-started-ms* call-id :test #'string=)
+          (internal-real-time-ms))))
+
+(defun note-call-finished (call-id &key edit)
+  "Fold what ToolFinished carried into the staging table.
+
+The facts plist is written THROUGH the place, never bound to a local first:
+`(let ((f (assoc-value table k))) (setf (getf f :ms) …))` mutates the local and
+leaves the table untouched, which is how the first version of this recorded
+nothing at all while looking like it recorded something. A test caught it."
+  (when call-id
+    (let ((start (cdr (assoc call-id *call-started-ms* :test #'string=))))
+      (when (numberp start)
+        (setf (getf (alexandria:assoc-value *call-facts* call-id :test #'string=) :ms)
+              (max 0 (- (internal-real-time-ms) start)))))
+    (when edit
+      (setf (getf (alexandria:assoc-value *call-facts* call-id :test #'string=) :edit)
+            edit))))
+
+(defun note-call-decision (call-id decision)
+  "Attach the settled decision to its call, so a settled row shows what gated it."
+  (when call-id
+    (setf (getf (alexandria:assoc-value *call-facts* call-id :test #'string=) :decision)
+          decision)))
+
+(defun %round-boundary ()
+  "A round is over: the call ids in the staging table are about to be reused.
+
+Called when an Assistant row lands, which is what delimits a round — the engine
+appends a round's assistant row before generating the next, so no delta of round
+N+1 can arrive before round N's row."
+  (setf *call-facts* nil
+        *call-started-ms* nil))
+
+(defun item-facts (item-id)
+  "What the live turn knew about the row ITEM-ID, or NIL."
+  (and item-id (cdr (assoc item-id *item-facts* :test #'string=))))
+
+(defun %adopt-call-facts (item-id call-id)
+  "Move the staging facts for CALL-ID onto ITEM-ID, once the row exists.
+
+This is the handover: the row is now the durable artifact, so the facts have to
+be reachable from the ROW rather than from a call id that the next round will
+reuse."
+  (when (and item-id call-id)
+    (let ((facts (cdr (assoc call-id *call-facts* :test #'string=))))
+      (when facts
+        (setf (alexandria:assoc-value *item-facts* item-id :test #'string=)
+              (copy-list facts))))))
+
 ;;; ------------------------------------------------------- item rendering ;;;
 (defun %fold-cells (text)
   "A /cells message folds back out of the transcript at render time
@@ -47,6 +147,52 @@ folded text, or the text unchanged when it holds no screen."
     (subseq text 0 nl)
     text))
 
+(defun %tool-result-lines (item body cols prefs)
+  "One settled tool-result row: the call, its outcome, its duration, its diff, and
+the decision that gated it — everything the live card had.
+
+The facts come from `item-facts` (see the header) and are ABSENT for a row this
+head did not watch run: a snapshot, or a replay of a log recorded elsewhere. An
+absent fact shows nothing rather than a fabricated `0ms`, which is the same rule
+the reference's `Replayed` phase holds."
+  (let* ((facts (item-facts (getf item :item-id)))
+         (name (getf body :name))
+         (outcome (getf body :outcome))
+         (payload (getf body :payload))
+         (ms (getf facts :ms))
+         (edit (getf facts :edit))
+         (decision (getf facts :decision))
+         (headline
+          (list (list (cons "  · " '(:fg :bright-black))
+                      (cons (or name "tool") '(:bold t))
+                      (cons " → " '(:fg :bright-black))
+                      (cons (outcome-name outcome) (%outcome-style outcome))
+                      ;; a duration only when one was MEASURED
+                      (cons (if (numberp ms) (format nil " · ~a" (duration ms)) "")
+                            '(:fg :bright-black)))))
+         ;; the oracle's brief and reply, on the row rather than on a card that
+         ;; has already left the screen
+         (decision-line
+          (when decision
+            (let ((basis (getf decision :basis))
+                  (verdict (getf (getf decision :outcome) :outcome)))
+              (list (list (cons "    ⚖ " '(:fg :bright-black))
+                          (cons (or verdict "answered") '(:fg :bright-black))
+                          (cons (if basis (format nil " — ~a" (%first-line basis)) "")
+                                '(:fg :bright-black)))))))
+         (detail
+          (when (getf prefs :show-tools)
+            (cond
+              ;; a file-editing call: both sides, as a real diff
+              (edit (edit-lines edit cols :folded (not (getf prefs :tools-open))))
+              (t (let ((preview (%first-line (or payload ""))))
+                   (when (plusp (length preview))
+                     (wrap-segments
+                      (list (cons "    " '(:fg :bright-black))
+                            (cons preview '(:fg :bright-black)))
+                      (max 4 (- cols 4))))))))))
+    (append headline decision-line detail)))
+
 (defun item-lines (item cols prefs)
   "One transcript row to segment lines."
   (let ((body (item-body item)))
@@ -73,24 +219,7 @@ folded text, or the text unchanged when it holds no screen."
                     (wrap-segments
                      (list (cons (getf body :text) '(:italic t :fg :bright-black)))
                      (max 2 (- cols 2))))))
-         ((:tool_result)
-          (let* ((name (getf body :name))
-                 (outcome (getf body :outcome))
-                 (payload (getf body :payload))
-                 (lines (list (list (cons "  · " '(:fg :bright-black))
-                                    (cons name '(:bold t))
-                                    (cons " → " '(:fg :bright-black))
-                                    (cons (outcome-name outcome) (%outcome-style outcome))))))
-            (when (getf prefs :show-tools)
-              (let ((preview (%first-line payload)))
-                (when (plusp (length preview))
-                  (setf lines
-                        (append lines
-                                (wrap-segments
-                                 (list (cons "    " '(:fg :bright-black))
-                                       (cons preview '(:fg :bright-black)))
-                                 (max 4 (- cols 4))))))))
-            lines))
+         ((:tool_result) (%tool-result-lines item body cols prefs))
          ((:system)
           (wrap-segments
            (list (cons "◦ " '(:fg :yellow))

@@ -1336,3 +1336,117 @@ getting that order wrong scrolls the transcript by a row on every keystroke."
     (let ((text (%screen-text h)))
       (is (search "╭" text) "the box is still there")
       (is (search "╰" text) "and complete"))))
+
+;;; ----------------------------------------- cards: evidence that survives (S3) ;;;
+
+(defun segs-of (lines)
+  (format nil "~{~a~^~%~}"
+          (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l))) lines)))
+
+(def-test a-settled-row-keeps-its-duration (:suite leticl)
+  "A `ToolResult` row carries no timestamps at all, so unless the head noted when
+the call began, \"that grep took 4.1s\" leaves the screen the moment the row lands."
+  (let ((*call-facts* nil) (*item-facts* nil) (*call-started-ms* nil))
+    (note-call-started "call_0")
+    ;; pretend it ran for a measurable time
+    (setf (cdr (assoc "call_0" *call-started-ms* :test #'string=))
+          (- (internal-real-time-ms) 4100))
+    (note-call-finished "call_0")
+    (is (numberp (getf (cdr (assoc "call_0" *call-facts* :test #'string=)) :ms))
+        "the duration was measured and staged")
+    ;; the row lands and adopts it
+    (leticl::%adopt-call-facts "s1#t1.4" "call_0")
+    (let* ((item (list :item-id "s1#t1.4" :kind "tool_result"
+                       :item (list :type "tool_result" :call-id "call_0"
+                                   :name "grep" :outcome (list :outcome "ok")
+                                   :payload "a match")))
+           (text (segs-of (item-lines item 80 (list :show-tools t)))))
+      (is (search "grep" text) "the tool is named")
+      (is (search "ok" text) "and its outcome")
+      (is (search "4.1s" text)
+          "and the DURATION, which only the head could have kept"))))
+
+(def-test a-row-this-head-did-not-watch-shows-no-duration (:suite leticl)
+  "An absent fact shows NOTHING rather than a fabricated `0ms` — the same rule the
+reference's `Replayed` phase holds. A snapshot, a restart or a replay of a log
+recorded elsewhere all land here."
+  (let ((*call-facts* nil) (*item-facts* nil))
+    (let* ((item (list :item-id "old#t1.0" :kind "tool_result"
+                       :item (list :type "tool_result" :call-id "call_0"
+                                   :name "read" :outcome (list :outcome "ok")
+                                   :payload "x")))
+           (text (segs-of (item-lines item 80 (list :show-tools t)))))
+      (is (search "read" text) "the row still renders")
+      (is (not (search "ms" text)) "but claims no duration")
+      (is (not (search "0s" text)) "and not a zero one either"))))
+
+(def-test a-settled-row-keeps-its-diff (:suite leticl)
+  "The operator's second report: *\"past edits lose their diff panels\"*. The live
+card had the pair and the transcript row does not."
+  (let ((*call-facts* nil) (*item-facts* nil) (*call-started-ms* nil))
+    (note-call-started "call_2")
+    (note-call-finished "call_2"
+                        :edit (list :path "src/fib.lisp" :created nil
+                                    :before-start 10 :after-start 10
+                                    :before-lines 20 :after-lines 20 :truncated nil
+                                    :before (format nil "a~%b~%c")
+                                    :after (format nil "a~%B~%c")))
+    (note-call-finished "call_2"
+                        :edit (getf (cdr (assoc "call_2" *call-facts* :test #'string=)) :edit))
+    (leticl::%adopt-call-facts "s1#t2.1" "call_2")
+    (let* ((item (list :item-id "s1#t2.1" :kind "tool_result"
+                       :item (list :type "tool_result" :call-id "call_2"
+                                   :name "write" :outcome (list :outcome "ok")
+                                   :payload "wrote")))
+           (text (segs-of (item-lines item 80 (list :show-tools t :tools-open t)))))
+      (is (search "src/fib.lisp" text) "the file is named")
+      (is (search "11" text) "the changed line is numbered from the FILE, not the excerpt")
+      (is (search "-b" text) "the removed line")
+      (is (search "+B" text) "and the added one"))))
+
+(def-test a-settled-row-keeps-the-decision-that-gated-it (:suite leticl)
+  "The oracle's brief and reply used to leave the screen with the live card."
+  (let ((*call-facts* nil) (*item-facts* nil) (*call-started-ms* nil))
+    (note-call-started "call_3")
+    (note-call-decision "call_3" (list :req-id "adj-1"
+                                       :outcome (list :outcome "selected"
+                                                      :option-id "allow_session")
+                                       :by (list :kind "model" :identity "oracle")
+                                       :basis "the operator authorised this"))
+    (note-call-finished "call_3")
+    (leticl::%adopt-call-facts "s1#t3.1" "call_3")
+    (let* ((item (list :item-id "s1#t3.1" :kind "tool_result"
+                       :item (list :type "tool_result" :call-id "call_3"
+                                   :name "bash" :outcome (list :outcome "ok")
+                                   :payload "done")))
+           (text (segs-of (item-lines item 80 (list :show-tools t)))))
+      (is (search "⚖" text) "the decision is marked on the row")
+      (is (search "selected" text) "with its outcome")
+      (is (search "the operator authorised this" text) "and its basis"))))
+
+(def-test the-item-id-is-what-survives-the-round (:suite leticl)
+  "A call id is round-positional — every round starts again at `call_0` — so a
+table keyed on it alone has every round of a long turn writing the same keys, and
+a settled card reads back whichever round wrote last. The ITEM id is unique, so
+the same call id in two rounds cannot collide."
+  (let ((*call-facts* nil) (*item-facts* nil) (*call-started-ms* nil))
+    ;; round one: call_0 takes 100ms
+    (note-call-started "call_0")
+    (setf (cdr (assoc "call_0" *call-started-ms* :test #'string=))
+          (- (internal-real-time-ms) 100))
+    (note-call-finished "call_0")
+    (leticl::%adopt-call-facts "r1#1" "call_0")
+    ;; a round boundary: the staging table is cleared
+    (leticl::%round-boundary)
+    ;; round two: call_0 AGAIN, but 5000ms
+    (note-call-started "call_0")
+    (setf (cdr (assoc "call_0" *call-started-ms* :test #'string=))
+          (- (internal-real-time-ms) 5000))
+    (note-call-finished "call_0")
+    (leticl::%adopt-call-facts "r2#1" "call_0")
+    ;; each row keeps its OWN duration, which keying on the call id could not do
+    (is (equal 100 (getf (item-facts "r1#1") :ms)) "round one's row keeps 100ms")
+    (is (equal 5000 (getf (item-facts "r2#1") :ms)) "round two's keeps 5000ms")
+    (is (not (equal (getf (item-facts "r1#1") :ms)
+                    (getf (item-facts "r2#1") :ms)))
+        "and they are not the same number, which is the whole point")))

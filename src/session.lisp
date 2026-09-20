@@ -160,6 +160,9 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
                  (getf turn :calls)))
          (if turn :dirty :quiet)))
       ((:tool-started)
+       ;; note WHEN it began: neither ToolFinished nor the row that lands
+       ;; afterwards carries a duration, so this is the only source for it
+       (note-call-started (getf env :call-id))
        (let ((turn (session-turn session)))
          (when turn
            (ensure-call turn (getf env :call-id) (getf env :name) ""))
@@ -169,6 +172,9 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
          (when call (setf (getf call :progress-note) (getf env :note)))
          (if call :dirty :quiet)))
       ((:tool-finished)
+       ;; stage what the live card knows, for the row that is about to land:
+       ;; a settled ToolResult carries no duration and no timestamps at all
+       (note-call-finished (getf env :call-id) :edit (getf env :edit))
        (let ((call (call-view (session-turn session) (getf env :call-id))))
          (when call
            (setf (getf call :state)
@@ -209,7 +215,17 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
                                 :item nil))
        :dirty)
       ((:transcript-content)
-       (fill-item session (getf env :item-id) (getf env :item))
+       (let ((body (getf env :item)))
+         (fill-item session (getf env :item-id) body)
+         ;; THE HANDOVER. The row now exists, so the facts staged against its
+         ;; call id move to the row's ITEM id — which is unique, where the call
+         ;; id is round-positional and about to be reused.
+         (when (and body (string= (getf body :type) "tool_result"))
+           (%adopt-call-facts (getf env :item-id) (getf body :call-id)))
+         ;; an Assistant row ends a round, so the call ids in the staging table
+         ;; must not survive into the next one
+         (when (and body (string= (getf body :type) "assistant"))
+           (%round-boundary)))
        :dirty)
       ((:decision-requested)
        (endp-open (session-open-decisions session))
@@ -229,18 +245,24 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
              (session-open-decisions session))
        :dirty)
       ((:decision-answered)
+       ;; the settled decision is worth keeping on the ROW its call produced, so
+       ;; the approval does not leave the screen with the live card
        (let ((req (find (getf env :req-id) (session-open-decisions session)
                         :key (lambda (d) (getf d :req-id)) :test #'string=)))
          (setf (session-open-decisions session)
                (remove req (session-open-decisions session)))
          (when req
-           (push (list :req-id (getf env :req-id)
-                       :summary (getf req :summary)
-                       :outcome (getf env :outcome)
-                       :by (getf env :by)
-                       :basis (getf env :basis)
-                       :late (getf env :late))
-                 (session-settled-decisions session))))
+           (let ((settled (list :req-id (getf env :req-id)
+                                :summary (getf req :summary)
+                                :outcome (getf env :outcome)
+                                :by (getf env :by)
+                                :basis (getf env :basis)
+                                :late (getf env :late))))
+             (push settled (session-settled-decisions session))
+             ;; and onto the CALL, so the row that lands later can keep it: the
+             ;; approval must not leave the screen with the live card
+             (when (getf req :call-id)
+               (note-call-decision (getf req :call-id) settled)))))
        :dirty)
       ((:warning)
        (push (list :code (getf env :code) :detail (getf env :detail)

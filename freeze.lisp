@@ -77,4 +77,26 @@
     (setf *image-path* (namestring (merge-pathnames "bin/leticl-head" root)))))
 
 (format t "freezing leticl head image to ~A~%" *image-path*)
+
+;; **Clear the malloc'd terminal state before saving.**
+;;
+;; `sb-alien:make-alien` is a malloc, and malloc'd memory is NOT part of a saved
+;; image — so an image saved while `enter-raw` had allocated termios aliens
+;; carries a pointer into a heap that no longer exists, and EVERY head started
+;; from that image dies at launch with an uncatchable memory fault inside
+;; `%tcgetattr`. That is not a hypothetical: it is the crash this file's comment
+;; in term.lisp records from T4 ("memory fault in tcgetattr"), and the symptom is
+;; a head that dies the moment it starts, with a backtrace pointing at code that
+;; looks correct.
+;;
+;; Nothing here should have entered raw mode — but "should not" is the wrong
+;; guarantee for a landmine that is silent until someone runs it, so the state is
+;; cleared unconditionally. The vars are re-allocated lazily on first use, which
+;; is what makes clearing them safe.
+(ignore-errors
+ (dolist (v '("LETICL::*SAVED-TERMIOS*" "LETICL::*RAW-TERMIOS*" "LETICL::*RAW-FD*"))
+   (let ((sym (find-symbol (subseq v (length "LETICL::")) :leticl)))
+     (when sym (set sym nil)))))
+(format t "cleared the terminal aliens (not part of an image)~%")
+
 (sb-ext:save-lisp-and-die *image-path* :executable t :toplevel #'main)
