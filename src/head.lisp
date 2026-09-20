@@ -395,8 +395,10 @@ push ran `(defparameter *stdout* nil)` and the operator's head exited)."
       (setf *stdout* (sb-sys:make-fd-stream 1 :output t :element-type 'character
                                             :external-format :utf-8 :buffering :none))))
 
-(defun run (&key socket-path session-id)
-  "Attach to a daemon and run until /quit or ctrl+d."
+(defun run (&key socket-path session-id new-title)
+  "Attach to a daemon and run until /quit or ctrl+d. NEW-TITLE asks the daemon for
+a fresh session under that name right after the attach — `letibot --new TITLE`
+through `scripts/leticl-head`, the same two frames `/new` sends from the composer."
   (%open-stdout)
   (unless (plusp (%isatty 1))
     (error "the head paints on the real terminal — run it on a tty, not a pipe"))
@@ -437,6 +439,11 @@ push ran `(defparameter *stdout* nil)` and the operator's head exited)."
     (setf *attach-started-ms* (internal-real-time-ms))
     (%send head (make-attach :session-id (or session-id "")
                              :identity "leticl"))
+    ;; `--new TITLE`: the attach lands on the daemon's current session, and this
+    ;; asks for a fresh one under the name — the frame `/new` sends, so the
+    ;; launcher's `--new` and the composer's `/new` cannot disagree
+    (when (and new-title (plusp (length new-title)))
+      (%send head (make-new-session new-title "")))
     (hack-start head)
     (setf (head-reader head)
           (sb-thread:make-thread (lambda () (%reader-loop head)) :name "leticl reader")

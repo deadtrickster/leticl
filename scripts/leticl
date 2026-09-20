@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# leticl — letibot seated as leticode, drawn by the Common Lisp head.
+#
+# The operator (2026-09-20): "leticl should behave and look like leticode". So this
+# IS `~/bin/leticode`, line for line — the same seat (role leticode, automode-edits,
+# the shell and web_fetch on by default), and then `letibot` itself, which finds or
+# starts this folder's daemon, resolves --continue and --new, and execs the head —
+# with one difference: the head it execs is ours. `LETIBOT_HEAD` is the launcher's
+# hook for that, and `scripts/leticl-head` speaks letibot-tui's arguments to the
+# image.
+#
+#   leticl                       attach / start, leticode seat
+#   leticl --continue            reopen the newest session in this folder
+#   leticl --new [TITLE]         a fresh session
+#   leticl "one question"        one-shot, no TUI (letibot's, unchanged)
+#
+# Everything `letibot` takes is forwarded unchanged. What used to be here — a
+# private resolution of the daemon's socket and `harnessd --latest-session` — was
+# a second copy of letibot's launcher that had already drifted from it: in a
+# folder with no daemon it attached to whichever daemon the run dir listed first.
+# One launcher, one head hook.
+
+export LETIBOT_ROLE=leticode
+: "${LETIBOT_MODE:=automode-edits}"
+export LETIBOT_MODE
+: "${LETIBOT_BASH:=1}"
+export LETIBOT_BASH
+: "${LETIBOT_WEB_FETCH:=1}"
+export LETIBOT_WEB_FETCH
+for a in "$@"; do
+  case "$a" in
+    --no-bash) LETIBOT_BASH="" ;;
+    --no-web-fetch) LETIBOT_WEB_FETCH="" ;;
+  esac
+done
+args=()
+for a in "$@"; do
+  case "$a" in
+    --no-bash|--no-web-fetch) ;;
+    *) args+=("$a") ;;
+  esac
+done
+
+LETICL_HOME="${LETICL_HOME:-/home/dead/Projects/leticl}"
+export LETICL_HOME
+export LETIBOT_HEAD="$LETICL_HOME/scripts/leticl-head"
+exec letibot "${args[@]}"

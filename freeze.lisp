@@ -33,6 +33,7 @@
 (defun usage (stream)
   (write-line "usage: leticl [--continue|-c]   attach the head to the newest session in this dir" stream)
   (write-line "       leticl --session ID      attach to a specific session" stream)
+  (write-line "       leticl --new TITLE       attach, then open a fresh session under TITLE" stream)
   (write-line "       leticl -h|help           this message" stream)
   (write-line "" stream)
   (write-line "       the head attaches to the daemon named by $LETIBOT_SOCKET; ~/bin/leticl" stream)
@@ -60,6 +61,9 @@
     (cond
       ((string= (first args) "--session")
        (uiop:symbol-call :leticl '#:run :session-id (or (second args) "")))
+      ;; the launcher's `--new TITLE`, through scripts/leticl-head
+      ((string= (first args) "--new")
+       (uiop:symbol-call :leticl '#:run :new-title (or (second args) "")))
       ((or (null args)
            (string= (first args) "--continue")
            (string= (first args) "-c")

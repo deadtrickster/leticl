@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# leticl-head — the leticl image, spoken to like `letibot-tui`.
+#
+# `~/bin/letibot` execs its head as
+#
+#     letibot-tui --socket S --identity U [--resume ID | --new-session TITLE]
+#
+# and, with `LETIBOT_HEAD` pointing here, execs this instead. Everything above the
+# head — finding or starting the folder's daemon, the seat's defaults, --continue,
+# --new — stays the launcher's; this only translates its arguments into the
+# image's: the socket becomes $LETIBOT_SOCKET (how the image finds its daemon),
+# `--resume ID` becomes `--session ID`, `--new-session TITLE` becomes
+# `--new TITLE`, and `--identity` is dropped — the image says `leticl` on the
+# wire, which is what the daemon's head list should show for this head.
+#
+# It refuses an argument it does not know rather than guessing: a launcher that
+# grows a flag this file has never seen must fail loudly here, not be silently
+# attached without it.
+
+set -euo pipefail
+
+LETICL_HOME="${LETICL_HOME:-/home/dead/Projects/leticl}"
+IMAGE="$LETICL_HOME/bin/leticl-head"
+
+if [ ! -x "$IMAGE" ]; then
+  echo "leticl: no head image at $IMAGE" >&2
+  echo "        build it: (cd $LETICL_HOME && sbcl --script freeze.lisp)" >&2
+  exit 1
+fi
+
+args=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --socket)      export LETIBOT_SOCKET="$2"; shift 2 ;;
+    --identity)    shift 2 ;;
+    --resume)      args+=(--session "$2"); shift 2 ;;
+    --new-session) args+=(--new "$2"); shift 2 ;;
+    *) echo "leticl-head: unknown argument from the launcher: $1" >&2; exit 2 ;;
+  esac
+done
+
+exec "$IMAGE" "${args[@]}"
