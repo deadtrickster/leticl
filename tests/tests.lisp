@@ -737,16 +737,22 @@ so a diff of an excerpt does not claim line 1 changed when it was line 311")
     (is (not (search " 1 " text)) "never numbered from 1")))
 
 (def-test edit-card-is-not-worse-without-a-shim (:suite leticl)
-  "A fence with no highlighter renders dim, exactly as it did before P4.
+  "A fence with no highlighter renders PLAIN, and the change is gap M6.
 
 The point of `highlight-fence` is that wiring the engine cannot REGRESS a
 terminal with no syntax colour: an unknown language, or a shim that is not
-built, still gives one readable segment per line rather than dropping the code."
+built, still gives one readable segment per line rather than dropping the code.
+
+It used to give a DIM one, which this test pinned. `render.rs:190-192,256-258`
+draws an unhighlightable body plain — *\"a wrong colour is worse than none\"* —
+and dim IS a colour: it says de-emphasised. Every language the shim lacks read
+as de-emphasised, which is the opposite of what a code box is for. The frame and
+the rail stay faint; the code inside them does not."
   (let* ((lines (highlight-fence (list "let x = 1;" "let y = 2;") "some-unknown-language"))
          (first-seg (first (first lines))))
     (is (= 2 (length lines)) "one line per input line")
     (is (equal "let x = 1;" (car first-seg)) "the text survives verbatim")
-    (is (equal '(:dim t) (cdr first-seg)) "and is dim, not dropped")))
+    (is (null (cdr first-seg)) "and is plain, neither dimmed nor dropped")))
 
 (def-test fence-language-names-map-to-the-highlighter (:suite leticl)
   "A fence carries a NAME; the shim takes a PATH. Both spellings work."
@@ -3923,3 +3929,230 @@ here and fourteen there."
   (let ((rows (list (list (cons "a" nil)) (list (cons "b" nil)))))
     (is (equal rows (leticl::head-tail-lines rows 5 3))
         "nothing is hidden when nothing needs to be")))
+
+;;; ------------------------------------------------- the markdown lexer ;;;
+
+(def-test emphasis-markers-never-reach-the-screen (:suite leticl)
+  "M1. `***both***` is ONE BoldItalic run (markdown.rs:1947-1956). Ours let the
+`**` rule take two of the three asterisks and printed the third — and a marker
+on the screen is the one failure this whole surface exists to remove."
+  (is (equal (list (cons "both" '(:bold t :italic t))) (inline-spans "***both***"))
+      "three asterisks, one run, no marker")
+  (is (equal (list (cons "both" '(:bold t :italic t))) (inline-spans "___both___"))
+      "and the underscore spelling")
+  (let ((segs (inline-spans "**bold *and italic***")))
+    (is (not (find #\* (format nil "~{~a~}" (mapcar #'car segs))))
+        "a run longer than the delimiter closes at its END, so no asterisk is left over")
+    (is (equal (cons "bold " '(:bold t)) (first segs)))
+    (is (equal (cons "and italic" '(:bold t :italic t)) (second segs))
+        "and the inner italic nests rather than becoming a second marker"))
+  ;; the guards that were already right stay right
+  (is (equal (list (cons "2 * 3 = 6" nil)) (inline-spans "2 * 3 = 6"))
+      "a star that is not emphasis stays literal"))
+
+(def-test an-autolink-is-its-url (:suite leticl)
+  "M7. `<https://x>` is what a model writes for a bare URL (markdown.rs:599-608);
+`<` and `>` were ordinary characters here, so the brackets reached the screen."
+  (is (equal (list (cons "https://x" nil)) (inline-spans "<https://x>")) "a URL")
+  (is (equal (list (cons "a@b.c" nil)) (inline-spans "<a@b.c>")) "an email")
+  (is (equal (list (cons "a " nil) (cons "https://x/y?z=1" nil) (cons " b" nil))
+             (inline-spans "a <https://x/y?z=1> b"))
+      "in the middle of a sentence")
+  ;; and a `<` that is not an autolink is still a `<`
+  (is (equal (list (cons "a < b and 3 > 2" nil)) (inline-spans "a < b and 3 > 2"))
+      "arithmetic is not markup")
+  (is (equal (list (cons "<Generic>" nil)) (inline-spans "<Generic>"))
+      "nor is a type parameter")
+  ;; an image is its alt text, not `!alt`
+  (is (equal (list (cons "a diagram" nil)) (inline-spans "![a diagram](x.png)"))
+      "an image is its alt text"))
+
+(def-test a-fence-cannot-be-closed-by-a-shorter-one (:suite leticl)
+  "M3. A closing fence must be at least as long as the opener
+(markdown.rs:819-834). Four backticks is how a model quotes a fence when it is
+TEACHING, and any run of three closed anything here — so the demonstration was
+cut in half and the rest spilled out as prose."
+  (let ((blocks (leticl::markdown-blocks (format nil "````~%```rust~%let a = 1;~%```~%````"))))
+    (is (= 1 (length blocks)) "one block, not three")
+    (is (eq :code (getf (first blocks) :kind)))
+    (is (equal '("```rust" "let a = 1;" "```") (getf (first blocks) :lines))
+        "the inner fence is CONTENT of the outer one")
+    (is (getf (first blocks) :closed) "and the outer one closed"))
+  ;; `~~~` is a fence opener too
+  (let ((blocks (leticl::markdown-blocks (format nil "~apython~%x = 1~%~a" "~~~" "~~~"))))
+    (is (eq :code (getf (first blocks) :kind)) "a tilde fence is a fence")
+    (is (equal '("x = 1") (getf (first blocks) :lines)))
+    (is (equal "python" (getf (first blocks) :lang))))
+  ;; and a backtick run does not close a tilde fence
+  (let ((blocks (leticl::markdown-blocks (format nil "~a~%```~%~a" "~~~" "~~~"))))
+    (is (equal '("```") (getf (first blocks) :lines))
+        "the character has to match as well as the length"))
+  ;; the rule that was already right: a line that merely ENDS in backticks is
+  ;; content, which is the box art the reference keeps a test for
+  (let ((blocks (leticl::markdown-blocks (format nil "```~%│ a ```~%```"))))
+    (is (equal '("│ a ```") (getf (first blocks) :lines)) "box art survives")))
+
+(def-test indented-code-is-code-and-not-mangled-prose (:suite leticl)
+  "M4. A four-space indent is a code block (markdown.rs:971,1161-1177). Ours ran
+it through the paragraph arm, which `string-trim`s the indent away and JOINS the
+lines — so the code was not merely uncoloured, it was mangled, and indentation
+is most of what code written without a fence has."
+  (let ((blocks (leticl::markdown-blocks (format nil "text~%~%    def f():~%        return 1~%~%after"))))
+    (is (= 3 (length blocks)) "paragraph, code, paragraph")
+    (is (eq :code (getf (second blocks) :kind)))
+    (is (equal '("def f():" "    return 1") (getf (second blocks) :lines))
+        "four columns come off and the rest is the code's own")
+    (is (equal "" (getf (second blocks) :lang)) "with no language claimed"))
+  ;; a nested list item is not code: this head renders nesting by indent, and
+  ;; reading `    - sub` as code would take that away
+  (let ((blocks (leticl::markdown-blocks (format nil "    - sub"))))
+    (is (eq :list (getf (first blocks) :kind)) "a list item keeps being one")))
+
+(def-test a-setext-heading-is-a-heading (:suite leticl)
+  "M8. `Title` over `====` is a level-one heading and over `----` a level-two one
+(markdown.rs:950,993-994). Ours joined the `====` into the paragraph and drew it
+as text, and read the `----` as a thematic break under a paragraph that was the
+heading."
+  (let ((blocks (leticl::markdown-blocks (format nil "Title~%===="))))
+    (is (equal '(:kind :heading :level 1 :text "Title") (first blocks))))
+  (let ((blocks (leticl::markdown-blocks (format nil "Subtitle~%----"))))
+    (is (equal '(:kind :heading :level 2 :text "Subtitle") (first blocks))))
+  ;; a bare rule with no paragraph over it is still a rule
+  (let ((blocks (leticl::markdown-blocks (format nil "a~%~%----~%~%b"))))
+    (is (eq :rule (getf (second blocks) :kind)) "nothing above it, so nothing to underline")))
+
+(def-test a-task-list-item-does-not-keep-its-checkbox (:suite leticl)
+  "M8. `- [x] done` → `· done` (markdown.rs:1050-1052,1242-1244). Ours drew
+`· [x] done`, which is a marker on the screen with a bullet already beside it."
+  (let ((blocks (leticl::markdown-blocks (format nil "- [ ] open~%- [x] done~%- [X] also"))))
+    (is (equal '("open" "done" "also")
+               (mapcar (lambda (it) (getf it :text)) (getf (first blocks) :items))))))
+
+(def-test an-ordered-list-counts-up-from-its-own-start (:suite leticl)
+  "M5. `start + i` (render.rs:408-414). `1. / 1. / 1.` is very common model
+output and rendered as three `1.`s — numbers that refer to nothing, when a
+number in an ordered list is exactly what the prose refers back to.
+
+And a loose list is ONE block (markdown.rs:2016-2040): a blank line between
+items closed the list here, so a six-point answer came out N blocks with N−1
+blank rows between them, twice the height of the reference's."
+  (let ((lines (markdown-lines (format nil "1. one~%1. two~%1. three") :width 80)))
+    (is (equal '("1. " "2. " "3. ") (mapcar (lambda (l) (car (first l))) lines))
+        "counted up, not repeated"))
+  (let ((lines (markdown-lines (format nil "4. four~%4. five") :width 80)))
+    (is (equal '("4. " "5. ") (mapcar (lambda (l) (car (first l))) lines))
+        "from the number the model wrote first"))
+  (let ((lines (markdown-lines (format nil "1. one~%~%2. two~%~%3. three") :width 80)))
+    (is (= 3 (length lines)) "a loose list is one block: three rows, no blanks between")
+    (is (equal '("1. " "2. " "3. ") (mapcar (lambda (l) (car (first l))) lines))
+        "and the numbering runs across the blanks")))
+
+(def-test a-fence-inside-a-quote-is-a-code-box (:suite leticl)
+  "M2. `%fence-at` never fired on a `>` line, so a fence inside a quote rendered
+as quote prose with literal backticks in it — which is exactly what
+`split_container` exists for (markdown.rs:713-747,842-860)."
+  (let ((blocks (leticl::markdown-blocks (format nil "> ```rust~%> let a = 1;~%> ```"))))
+    (is (= 1 (length blocks)) "no empty quote left behind")
+    (is (eq :code (getf (first blocks) :kind)))
+    (is (equal "rust" (getf (first blocks) :lang)))
+    (is (equal '("let a = 1;") (getf (first blocks) :lines)))
+    (is (getf (first blocks) :closed))
+    (is (not (find-if (lambda (l) (find #\> l)) (getf (first blocks) :lines)))
+        "and the quote marker is gone from the code"))
+  ;; a fence ON a list marker's line is a code box, not item text
+  (dolist (src (list (format nil "- ```rust~%  let a = 1;~%  ```")
+                     (format nil "1. ```rust~%   let a = 1;~%   ```")))
+    (let ((blocks (leticl::markdown-blocks src)))
+      (is (= 1 (length blocks)) "one block")
+      (is (eq :code (getf (first blocks) :kind)) "and it is code, not item text")
+      (is (equal "rust" (getf (first blocks) :lang)))
+      (is (equal '("let a = 1;") (getf (first blocks) :lines))
+          "the marker's columns are the container's, not the code's")))
+  ;; a fence INSIDE an item keeps the code's own indentation and loses the
+  ;; item's — `stripping_a_content_column_does_not_eat_content`
+  (let* ((blocks (leticl::markdown-blocks (format nil "- item~%~%  ```rust~%  if x {~%      y~%  }~%  ```")))
+         (code (find :code blocks :key (lambda (b) (getf b :kind)))))
+    (is (equal '("if x {" "    y" "}") (getf code :lines))
+        "two columns of container indent come off; the four the code wrote stay")))
+
+(def-test a-table-inside-a-quote-keeps-its-cells-and-not-its-pipes (:suite leticl)
+  "M12. The pipes survived into the quote text (markdown.rs:1063-1081). A quote
+is a CONTAINER: its content is lexed like any other text and flattened back to
+the lines the rail carries."
+  (let ((blocks (leticl::markdown-blocks (format nil "> | a | b |~%> |---|---|~%> | 1 | 2 |"))))
+    (is (eq :quote (getf (first blocks) :kind)))
+    (is (member "1 2" (getf (first blocks) :lines) :test #'equal) "the row survives")
+    (is (not (find-if (lambda (l) (find #\| l)) (getf (first blocks) :lines)))
+        "and no pipe does"))
+  ;; a list inside a quote loses its markers the same way
+  (let ((blocks (leticl::markdown-blocks (format nil "> - one~%> - two"))))
+    (is (equal '("one" "two") (getf (first blocks) :lines))
+        "the words, without the bullets the rail already stands in for"))
+  ;; and a plain quote is unchanged
+  (let ((blocks (leticl::markdown-blocks (format nil "> a~%> b"))))
+    (is (equal '("a" "b") (getf (first blocks) :lines)))))
+
+(def-test a-fence-header-names-the-grammar-that-ran (:suite leticl)
+  "M9. `render.rs:296-298,375-379`: a recognised fence is named by the grammar
+that actually coloured it, so the header cannot claim one language over a fence
+parsed as another. Ours printed the raw info string, so `sh`, `shell`, `bash`
+and `zsh` — the same grammar — read as four different boxes."
+  (is (equal "┌─ bash" (car (first (first (markdown-lines (format nil "```sh~%ls~%```") :width 80)))))
+      "`sh` is bash")
+  (is (equal "┌─ rust" (car (first (first (markdown-lines (format nil "```rs~%x~%```") :width 80)))))
+      "`rs` is rust")
+  (is (equal "┌─ typescript"
+             (car (first (first (markdown-lines (format nil "```ts~%x~%```") :width 80)))))
+      "`ts` is typescript")
+  ;; a language nobody can colour keeps the name the model wrote: naming a
+  ;; language we are not colouring is honest, inventing one we are is not
+  (is (equal "┌─ brainfuck"
+             (car (first (first (markdown-lines (format nil "```brainfuck~%+~%```") :width 80)))))
+      "an unknown name is printed as written")
+  (is (equal "┌─ code" (car (first (first (markdown-lines (format nil "```~%x~%```") :width 80)))))
+      "and a bare fence is `code`"))
+
+(def-test a-bounded-blocks-title-is-its-text-and-not-its-source (:suite leticl)
+  "M10. `Block::title` is `runs_text` — the markers are already gone
+(markdown.rs:184-199). Ours returned the raw source, so the one row standing in
+for a block nobody can see showed `**markers**`.
+
+And the truncation is `trim_to(title, w)` and THEN `▸ ` (render.rs:631): the row
+may be `w + 2`, because those two columns belong to the affordance rather than
+to the name. Truncating the whole string took two characters off the title
+instead."
+  (let* ((text (format nil "~{~a~^~%~}"
+                       (cons "- **The measurement** and what it showed"
+                             (loop for i from 1 to 30 collect (format nil "- line ~d" i)))))
+         (lines (markdown-lines text :width 80 :limit 10)))
+    (is (equal "▸ The measurement and what it showed" (car (first (first lines))))
+        "the title with its markers consumed"))
+  ;; the fence title names the grammar too
+  (let* ((text (format nil "```sh~%~{~a~%~}```"
+                       (loop for i from 1 to 30 collect (format nil "echo ~d" i))))
+         (lines (markdown-lines text :width 80 :limit 6)))
+    (is (search "▸ bash · 30 lines" (car (first (first lines))))
+        "and says which grammar and how many lines"))
+  ;; `▸ ` is outside the budget, so the title itself gets the whole width
+  (let* ((title (make-string 40 :initial-element #\t))
+         (text (format nil "~a~%~{~a~%~}" title
+                       (loop for i from 1 to 30 collect (format nil "line ~d" i))))
+         (row (car (first (first (markdown-lines text :width 20 :limit 6))))))
+    (is (= 20 (string-width (subseq row 2)))
+        "the title is trimmed to the width, and the mark is added after")))
+
+(def-test a-table-row-does-not-end-in-a-space (:suite leticl)
+  "M11. `row.trim_end()` over the WHOLE row (render.rs:528). Ours trimmed the
+last segment only, so a row whose last cell is empty kept the padded blank AND
+the ` │ ` separator before it — invisible until copied, and the reference
+explicitly fixed exactly this."
+  (let ((lines (markdown-lines (format nil "| a | b |~%|---|---|~%| 1 | |") :width 80)))
+    (is (every (lambda (l) (let ((s (segs-of (list l))))
+                             (string= s (string-right-trim " " s))))
+               lines)
+        "no row ends in whitespace")
+    (let ((row (segs-of (last lines))))
+      (is (eql (1- (length row)) (search "│" row :from-end t))
+          "a row whose last cell is empty ends AT the separator — the padded blank
+after it and the separator's own trailing space are both gone, which is what
+trimming one segment could not do"))))
