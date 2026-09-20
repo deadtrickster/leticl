@@ -98,16 +98,53 @@ runs. Idempotent, so calling it on a healthy head is a no-op in effect."
           do (vector-push-extend (%style-sgr spec) *style-sgrs*))
     *style-sgrs*))
 
+(defparameter *style-key-order*
+  '(:bold :dim :italic :underline :reverse :strikethrough :fg :bg)
+  "The one order a style spec's keys are written in, for `%canonical-style`.
+
+The order `%style-sgr` already emits in, so a canonical spec reads the way its
+escape does.")
+
+(defun %canonical-style (spec)
+  "SPEC with its pairs in `*style-key-order*`, duplicates dropped and every pair
+whose value is NIL removed.
+
+**Two spellings of one style were two styles.** `'(:fg :red :bold t)` and
+`'(:bold t :fg :red)` are the same rendition, and `style-index` interned them at
+different indices with different bytes — `ESC[0;31;1m` against `ESC[0;1;31m` —
+so a frame drawn by one and repainted by the other emitted a style change where
+nothing had changed, and `compare-heads` read a difference that was not one.
+Both spellings are in the tree today (`src/chrome.lisp:271,329` against
+`src/cards.lisp:1065`).
+
+A NIL value is dropped rather than kept, because `'(:bold nil)` renders as
+nothing and index 0 renders as nothing, and two indices for one rendition is the
+same defect one level down. A key nobody knows is kept, in the order it was
+written, so `%style-sgr` still refuses it out loud rather than ignoring it."
+  (when spec
+    (let ((pairs (loop for (k v) on spec by #'cddr
+                       unless (or (null v) (assoc k seen))
+                         collect (cons k v) into seen
+                       finally (return seen))))
+      (append
+       (loop for k in *style-key-order*
+             for hit = (assoc k pairs)
+             when hit append (list k (cdr hit)))
+       (loop for (k . v) in pairs
+             unless (member k *style-key-order*) append (list k v))))))
+
 (defun style-index (spec)
   "Intern a style spec plist (:fg :cyan :bold t …) into a small integer.
-Index 0 is the default; EQUAL is the identity of a spec."
-  (if (null spec)
+Index 0 is the default; EQUAL is the identity of a CANONICAL spec — see
+`%canonical-style`, which is what makes the key order not matter."
+  (let ((spec (%canonical-style spec)))
+    (if (null spec)
       0
       (or (position spec *styles* :test #'equal)
           (progn
             (vector-push-extend spec *styles*)
             (vector-push-extend (%style-sgr spec) *style-sgrs*)
-            (1- (length *styles*))))))
+            (1- (length *styles*)))))))
 
 (defun %sgr (index)
   (aref *style-sgrs* index))

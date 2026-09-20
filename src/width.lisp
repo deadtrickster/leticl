@@ -301,6 +301,18 @@ one-pass walkers mirror its rules and are tested against it — and it is what
                                    first nil
                                    prev-ri (%regional-indicator-p ch))
                              (incf i))
+                            ;; ZERO FIRST, and that order is the rule, not a
+                            ;; formatting choice (width.rs:107-139). A control
+                            ;; character measures zero for the same reason a
+                            ;; combining mark does and is not one, so it ends
+                            ;; the cluster — and the test has to be reached to
+                            ;; say so. Ours asked the ZWJ question first, so a
+                            ;; ZWJ immediately followed by a C0 byte absorbed
+                            ;; the control and hid a row break inside a cell.
+                            ((zerop w)
+                             (if (%c1-control-p (char-code ch))
+                                 (return)
+                                 (incf i)))
                             ((and prev-ri (%regional-indicator-p ch))
                              (setf cols 2
                                    prev-ri nil)
@@ -309,12 +321,6 @@ one-pass walkers mirror its rules and are tested against it — and it is what
                             ((char= (schar string (1- i)) +esc-zwj+)
                              (setf cols (max cols w))
                              (incf i))
-                            ;; extend with anything that stands alone at zero —
-                            ;; but NOT a control character, per the rule above
-                            ((zerop w)
-                             (if (%c1-control-p (char-code ch))
-                                 (return)
-                                 (incf i)))
                             (t (return)))))))
                 (push (%make-cluster esc (subseq string cluster-start i) cols) out))))))
     (nreverse out)))
@@ -358,12 +364,15 @@ index read here is either I in [START, END) or (1- I) with I > START."
           (let ((ch (schar string i)))
             (when (char= ch +esc+) (return))
             (let ((w (%code-width (char-code ch))))
-              (cond ((and prev-ri (%regional-indicator-p ch))
+              ;; the same order as `clusters`, for the same reason: zero-width
+              ;; first, so a control character can end the cluster before the
+              ;; ZWJ rule swallows it (width.rs:107-139)
+              (cond ((zerop w)
+                     (if (%c1-control-p (char-code ch)) (return) (incf i)))
+                    ((and prev-ri (%regional-indicator-p ch))
                      (setf cols 2 prev-ri nil) (incf i))
                     ((char= (schar string (1- i)) +esc-zwj+)
                      (setf cols (max cols w)) (incf i))
-                    ((zerop w)
-                     (if (%c1-control-p (char-code ch)) (return) (incf i)))
                     (t (return))))))
         (incf total cols)))
     total))
@@ -412,11 +421,15 @@ Default safety: the entry coerces and the loop's index is bounded by the length.
                    (and (char/= ch +esc+)
                         (= 1 (%code-width (char-code ch))))))))
 
-(defun truncate-to-width (string cols)
-  "STRING cut to at most COLS columns, escapes kept whole, no cluster split.
+(defun %truncate-cells (string cols)
+  "STRING cut to at most COLS columns, escapes kept whole, no cluster split, and
+NOTHING said about it. The silent half of `truncate-to-width`, which is the only
+caller that should want it: a cut with no mark on it is a cut a reader cannot
+see, so the mark is added one level up and this stays the place that knows where
+a cluster ends.
 
 A cluster is never cut in half: half a ZWJ sequence is a different glyph, and half
-a flag is a letter. Styles are carried with their cluster, so a cut does not leave
+a flag is a letter. Escapes are carried with their cluster, so a cut does not leave
 an attribute open."
   (if (<= (string-width string) cols)
       string
@@ -428,6 +441,21 @@ an attribute open."
           (write-string (cluster-text c) out)
           (incf w (cluster-cols c)))
         (get-output-stream-string out))))
+
+(defun truncate-to-width (string cols)
+  "STRING cut to at most COLS columns, with an `…` where the rest went.
+
+**The elision is disclosed** (`width::truncate`, width.rs:329-353). Ours cut
+silently, so `…/worktrees/agent` and `…/worktrees/agent-a19da2/crates` ended at
+the same place on the screen and read as the same path — and every pane row, every
+card header and every diff row on this head elided without a mark. The last column
+is spent on saying so, which is why the content is fitted to `cols - 1`: a cap that
+forgets the ellipsis costs is a cap the output is allowed to exceed.
+
+COLS of zero is the empty string: there is no column to put the mark in."
+  (cond ((<= (string-width string) cols) (or string ""))
+        ((<= cols 0) "")
+        (t (concatenate 'string (%truncate-cells string (1- cols)) "…"))))
 
 (defun fit-to-width (string cols)
   "STRING padded or truncated to EXACTLY COLS columns."

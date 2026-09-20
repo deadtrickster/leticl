@@ -875,16 +875,22 @@ so a diff of an excerpt does not claim line 1 changed when it was line 311")
     (is (not (search " 1 " text)) "never numbered from 1")))
 
 (def-test edit-card-is-not-worse-without-a-shim (:suite leticl)
-  "A fence with no highlighter renders dim, exactly as it did before P4.
+  "A fence with no highlighter renders PLAIN, and the change is gap M6.
 
 The point of `highlight-fence` is that wiring the engine cannot REGRESS a
 terminal with no syntax colour: an unknown language, or a shim that is not
-built, still gives one readable segment per line rather than dropping the code."
+built, still gives one readable segment per line rather than dropping the code.
+
+It used to give a DIM one, which this test pinned. `render.rs:190-192,256-258`
+draws an unhighlightable body plain — *\"a wrong colour is worse than none\"* —
+and dim IS a colour: it says de-emphasised. Every language the shim lacks read
+as de-emphasised, which is the opposite of what a code box is for. The frame and
+the rail stay faint; the code inside them does not."
   (let* ((lines (highlight-fence (list "let x = 1;" "let y = 2;") "some-unknown-language"))
          (first-seg (first (first lines))))
     (is (= 2 (length lines)) "one line per input line")
     (is (equal "let x = 1;" (car first-seg)) "the text survives verbatim")
-    (is (equal '(:dim t) (cdr first-seg)) "and is dim, not dropped")))
+    (is (null (cdr first-seg)) "and is plain, neither dimmed nor dropped")))
 
 (def-test fence-language-names-map-to-the-highlighter (:suite leticl)
   "A fence carries a NAME; the shim takes a PATH. Both spellings work."
@@ -2337,19 +2343,37 @@ literal newline in it."
         "and its bytes are carried, which is what closes the attribute")))
 
 (def-test truncation-never-cuts-a-cluster-in-half (:suite leticl)
-  "Half a ZWJ sequence is a different glyph and half a flag is a letter."
+  "Half a ZWJ sequence is a different glyph and half a flag is a letter.
+
+**And the elision is disclosed.** `width::truncate` (width.rs:329-353) spends the
+last column on an `…`, which ours did not — so a path cut at 20 columns and one
+that happened to BE 20 columns read as the same string. The reference's own case
+(`truncation_does_not_cut_a_cluster_in_half`, width.rs:701) is the last two
+assertions: two columns comes back as one cluster plus the mark."
   (let ((family (format nil "~C~C~C~C~C" (%ch #x1f468) (%ch #x200d)
                         (%ch #x1f469) (%ch #x200d) (%ch #x1f467))))
     (is (string= family (truncate-to-width family 2))
-        "a two-column cluster survives a two-column budget whole")
-    (is (string= "" (truncate-to-width family 1))
-        "and is dropped rather than halved when it does not fit")
-    (is (= 2 (string-width (truncate-to-width (concatenate 'string family family) 2)))
-        "two of them in a two-column budget is one of them")))
+        "a two-column cluster survives a two-column budget whole — nothing was cut, so nothing is said")
+    (is (string= "…" (truncate-to-width family 1))
+        "and is dropped rather than halved when it does not fit, with the mark in its place")
+    (is (= 1 (string-width (truncate-to-width (concatenate 'string family family) 2)))
+        "two of them in a two-column budget: one column of content will not hold one, so the mark is all there is")
+    (is (string= "" (truncate-to-width family 0)) "and no column is no mark either"))
+  (let* ((acute (%ch #x301))
+         (s (format nil "a~Cb~Cc~C" acute acute acute))
+         (cut (truncate-to-width s 2)))
+    (is (= 2 (string-width cut)) "two columns: one cluster plus the ellipsis")
+    (is (eql 0 (search (format nil "a~C" acute) cut))
+        "and the cluster it kept is whole"))
+  (let ((cut (truncate-to-width "…/Projects/leticl/src/cards.lisp" 12)))
+    (is (<= (string-width cut) 12) "never over the budget the caller gave")
+    (is (char= #\… (char cut (1- (length cut)))) "and it ends in the mark")))
 
 (def-test fit-reaches-exactly-the-columns-asked-for (:suite leticl)
   (is (string= "ab   " (fit-to-width "ab" 5)) "padded")
-  (is (string= "abc" (fit-to-width "abcdef" 3)) "truncated")
+  ;; `fit` truncates through `truncate` (width.rs:356-364), so the disclosure
+  ;; comes with it: ours returned `abc`, which is a lie about a six-letter word.
+  (is (string= "ab…" (fit-to-width "abcdef" 3)) "truncated, and said so")
   (is (= 5 (string-width (fit-to-width "中文" 5)))
       "and measured in columns, not characters"))
 
@@ -5522,3 +5546,714 @@ the chord has always meant here."
     (let ((line (get-output-stream-string wire)))
       (is (search "switch" line) "a switch frame went out: ~a" line)
       (is (search "s-sub-1" line) "naming the subagent's session"))))
+
+;;; =========================================================================
+;;; The parity pass of 2026-09-20, closing `docs/parity/rendering.md`.
+;;;
+;;; Every test below names what was MEASURED against
+;;; `~/Projects/letibot/letibot` @ `8af671e` and the reference function that
+;;; settles the question. Segment-level assertions where the style is part of
+;;; the finding: a segment is `(TEXT . STYLE)`, so one `is` pins both.
+;;; =========================================================================
+
+(defun %draw-segs (lines &key (cols 100))
+  "LINES painted onto a real screen and read back as ANSI — what the head
+ACTUALLY draws, cells and all, rather than the segments handed to the painter.
+
+The distinction is the whole point of the sanitising test below: a segment can
+hold any bytes at all, and the question is which of them reach a terminal."
+  (let ((s (make-screen cols (max 1 (length lines)))))
+    (loop for line in lines
+          for r from 0
+          do (let ((c 0))
+               (dolist (seg line)
+                 (setf c (screen-put-string s r c (car seg)
+                                            (leticl::style-index (cdr seg)))))))
+    (format nil "~{~a~^~%~}" (leticl::screen-rows-ansi s))))
+
+(def-test a-tool-payload-cannot-reconfigure-the-operators-terminal (:suite leticl)
+  "**The reference's `f36d927`, ported.** A payload is whatever the command
+wrote. Counted in the operator's own store, 2026-09-20: 44 `tool_result` rows
+carry an escape and 20 carry a MODE string — `?1002`/`?1006` are mouse
+reporting, `?1049` the alternate screen, `?2004` bracketed paste. Turning mouse
+reporting off is why *\"when i expand tools with Ct scroll stops working, even
+after collapsing back\"*.
+
+`without_control` (app.rs:369) maps every control character to a SPACE before
+the row is built (app.rs:9712) — a space and not a deletion, because the wrapper
+about to measure these lines counts columns.
+
+Asserted as the PAIRING, as the reference asserts it: `[?1002l` as text is six
+harmless characters and it is the `ESC` in front of it that a terminal acts on.
+Deliberately not \"no ESC anywhere in the frame\" — this head's own colour is
+made of them."
+  (let* ((*item-facts* nil)
+         (esc (%ch 27))
+         (payload (format nil "before~C[?1002l~C[?1006l~%~C[1;1Hmoved~%~C[0;90mdim~%after"
+                          esc esc esc esc))
+         (body (list :type "tool_result" :call-id "c" :name "bash"
+                     :outcome (list :outcome "ok") :payload payload))
+         (lines (item-lines (list :item-id "p1" :kind "tool_result" :item body)
+                            100 (list :show-tools t)))
+         (drawn (%draw-segs lines :cols 100))
+         (segs (segs-of lines)))
+    (dolist (bad '("[?1002" "[?1006" "[?1049" "[?2004" "[1;1H"))
+      (let ((seq (format nil "~C~a" esc bad)))
+        (is (not (search seq drawn))
+            (format nil "a payload's ESC~a reached a drawn cell" bad))
+        ;; and it never even reaches the segment: sanitised at render, which is
+        ;; where the record stops being the record and starts being a screen
+        (is (not (search seq segs))
+            (format nil "a payload's ESC~a survived into a segment" bad))))
+    ;; And the text itself survives, which is the point of showing it at all.
+    (is (search "before" segs) "the words before the escape")
+    (is (search "moved" segs) "the words after a cursor move")
+    (is (search "after" segs) "and the last line")))
+
+(def-test a-control-character-in-a-payload-costs-a-column (:suite leticl)
+  "Gap 28. The painter drops an escape-only cluster, so an unsanitised
+`ESC[?1002l` measured ZERO columns here and eight there — and every wrap and
+truncation downstream of the row then disagreed with the reference's. A SPACE
+per control character is what `without_control` leaves behind, so the columns
+agree again."
+  (let ((esc (%ch 27)))
+    (is (equal "a  b" (leticl::%without-control (format nil "a~C~Cb" esc (%ch 7))))
+        "two control characters, two spaces")
+    (is (= 8 (string-width (leticl::%without-control (format nil "~C[?1002l" esc))))
+        "a mode string is eight columns of spaces, as the reference measures it")
+    (is (equal "plain" (leticl::%without-control "plain")) "and prose is untouched")))
+
+(def-test an-envelope-line-is-matched-by-its-whole-shape (:suite leticl)
+  "`is_envelope` (app.rs:7925-7928) is `<<<` AND `>>>` AND longer than six. Ours
+tested the opening alone, so a payload line that merely begins `<<<` — a
+heredoc, a conflict marker, a model quoting this very format — was dropped from
+the output with nothing to say it had been."
+  (is (leticl::%envelope-line-p "<<<TOOL_ERROR 5ebfdef6>>>") "a real marker")
+  (is (leticl::%envelope-line-p "  <<<END_OK abc>>>  ") "trimmed first")
+  (is (not (leticl::%envelope-line-p "<<<EOF")) "an opening alone is content")
+  (is (not (leticl::%envelope-line-p "<<<<<<< HEAD")) "and so is a conflict marker")
+  (is (not (leticl::%envelope-line-p "<<<>>>")) "six characters is no envelope")
+  (let* ((*item-facts* nil)
+         (body (list :type "tool_result" :call-id "c" :name "bash"
+                     :outcome (list :outcome "ok")
+                     :payload (format nil "<<<EOF~%body")))
+         (lines (item-lines (list :item-id "e1" :kind "tool_result" :item body)
+                            80 (list :show-tools t))))
+    (is (search "<<<EOF" (segs-of lines)) "and it survives onto the screen")))
+
+(def-test two-spellings-of-one-style-are-one-style (:suite leticl)
+  "Gap 29. `'(:fg :red :bold t)` and `'(:bold t :fg :red)` are the same
+rendition and interned at two indices with two different escapes —
+`ESC[0;31;1m` against `ESC[0;1;31m`. Both spellings are in the tree today
+(`src/chrome.lisp:271,329` against `src/cards.lisp:1065`), so a row drawn by one
+and repainted by the other emitted a style change where nothing had changed."
+  (is (= (leticl::style-index '(:fg :red :bold t))
+         (leticl::style-index '(:bold t :fg :red)))
+      "one index")
+  (is (equal (leticl::%sgr (leticl::style-index '(:fg :red :bold t)))
+             (leticl::%sgr (leticl::style-index '(:bold t :fg :red))))
+      "and one escape")
+  (is (= 0 (leticl::style-index '(:bold nil)))
+      "an attribute that is off is no attribute, not a second way of being plain")
+  (is (= (leticl::style-index '(:dim t))
+         (leticl::style-index '(:dim t :dim t)))
+      "and a doubled key is the key once — `appendf-attr` writes these")
+  (is (equal '(:bold t :dim t :italic t :fg :cyan)
+             (leticl::%canonical-style '(:fg :cyan :italic t :dim t :bold t)))
+      "the canonical order is the order the escape is emitted in"))
+
+(def-test a-zwj-does-not-swallow-the-control-after-it (:suite leticl)
+  "Gap 30. The cluster rules are tried in an ORDER and ours had the ZWJ test
+before the zero-width one, inverting `width.rs:116` against `:134`. So a ZWJ
+immediately followed by a C0 byte absorbed the control — and absorbing a
+newline hides a row break inside a cell, which is the exact defect the
+zero-width branch's own comment exists to name."
+  (let* ((zwj (%ch #x200d))
+         (s (format nil "a~C~Cb" zwj (%ch 10))))
+    (is (= 3 (length (clusters s)))
+        "`a` + ZWJ, then the newline, then `b` — the control is its own cluster")
+    (is (= 2 (string-width s))
+        "and the one-pass walker agrees with the cluster walk")
+    (is (= (string-width s)
+           (reduce #'+ (mapcar #'cluster-cols (clusters s))))
+        "which is the invariant `string-width-agrees-with-clusters` holds")))
+
+;;; ------------------------------------------------- the transcript row ;;;
+
+(def-test a-path-subject-is-cut-at-a-separator (:suite leticl)
+  "Gap 3. `ellipsise_left` (app.rs:9074-9109) drops WHOLE segments, so what is
+left is a real path. Ours cut at a character index — `…/1f0655c6-…/scratchpad`
+was the operator's example, *\"two lies in twenty-two columns\"*: the first
+ellipsis says a prefix went, which is true, and the second says a directory has
+a shorter name than it does, which is not. Neither half can be pasted back into
+a shell. On a non-ASCII path a character count also overshoots the budget.
+
+The two cases below are the reference's own, measured at the widths it measured
+them at."
+  (let ((p "/home/dead/Projects/leticl/.claude/worktrees/agent-a19da2/crates/tui"))
+    (let ((cut (leticl::%shorten-subject p 24)))
+      (is (<= (string-width cut) 24) "inside the budget it was given")
+      (is (char= #\… (char cut 0)) "eaten from the left")
+      (is (char= #\/ (char cut 1)) "and at a SEPARATOR, so what is left is a path")
+      (is (search "crates/tui" cut) "keeping the end, which is what names it")))
+  ;; a glob is prose: read from the start, cut from the right
+  (let* ((glob "**/*.{md,json,toml,yaml,yml} 40")
+         (cut (leticl::%shorten-subject glob 20)))
+    (is (<= (string-width cut) 20) "inside the budget")
+    (is (eql 0 (search "**/*.{md" cut))
+        "the front is kept: left-cutting a glob throws away the fact that it IS one")
+    (is (char= #\… (char cut (1- (length cut)))) "and the elision is marked"))
+  ;; and the budget is COLUMNS, which is where the character count overshot
+  (let* ((wide (format nil "/~C~C~C/~C~C~C/end" (%ch #x4e2d) (%ch #x6587) (%ch #x5b57)
+                       (%ch #x4e2d) (%ch #x6587) (%ch #x5b57)))
+         (cut (leticl::%shorten-subject wide 10)))
+    (is (<= (string-width cut) 10)
+        "a CJK path does not overshoot: the walk counts columns, not characters"))
+  ;; a single segment with no separator to cut on still fits
+  (let ((cut (leticl::%shorten-subject "/averyveryverylongsinglesegmentname" 10)))
+    (is (<= (string-width cut) 10) "no separator to cut on, so the characters are all there is")
+    (is (char= #\… (char cut 0)) "still marked")))
+
+(def-test a-call-with-no-result-says-it-has-no-result (:suite leticl)
+  "Gap 4. `→ {verb} {target} · no result`, the whole row in `Role::Attention`
+(app.rs:9614-9645). Ours drew `  → ` dim, the verb dim, the target plain, no
+tag, no `Attention`, a hard-coded two-column indent and no truncation. The
+reference's note is that this row's ONLY meaning is \"asked for, nothing came
+back\" — *\"a row that looks like every other tool row and quietly has no output
+is the shape a person reads straight past.\"*"
+  (let* ((*answered-calls* nil)
+         (*call-targets* nil)
+         (body (list :type "assistant" :text ""
+                     :tool-calls (list (list :id "c1" :name "read"
+                                             :arguments "{\"path\":\"src/cards.lisp\"}"))))
+         (line (first (item-lines (list :item-id "a1" :kind "assistant" :item body)
+                                  80 nil))))
+    (is (equal (list (cons "  " nil)
+                     (cons "→ Read src/cards.lisp · no result" '(:bold t :fg :yellow)))
+               line)
+        "the whole line in Attention, stepped in by the activity indent")
+    ;; below sixty columns the step is given up, and this row went with it
+    (let ((narrow (first (item-lines (list :item-id "a1" :kind "assistant" :item body)
+                                     50 nil))))
+      (is (equal "" (car (first narrow))) "no indent at 50 columns")))
+  ;; an empty target earns the call id its columns: it is then the only thing
+  ;; distinguishing two calls to the same tool
+  (let* ((*answered-calls* nil)
+         (body (list :type "assistant" :text ""
+                     :tool-calls (list (list :id "c7" :name "bash" :arguments ""))))
+         (line (first (item-lines (list :item-id "a2" :kind "assistant" :item body)
+                                  80 nil))))
+    (is (search "(c7)" (segs-of (list line))) "the id, when there is nothing better"))
+  ;; and it is trimmed to the width like every other row
+  (let* ((*answered-calls* nil)
+         (body (list :type "assistant" :text ""
+                     :tool-calls (list (list :id "c1" :name "read"
+                                             :arguments
+                                             (format nil "{\"path\":\"~a\"}"
+                                                     (make-string 200 :initial-element #\x))))))
+         (line (first (item-lines (list :item-id "a3" :kind "assistant" :item body)
+                                  40 nil))))
+    (is (<= (leticl::%segs-width line) 40) "never past the width it was given")))
+
+(def-test a-segment-boundary-is-a-row (:suite leticl)
+  "Gap 5. `SegmentMark` → `dim(\"─── {label} ───\")` (app.rs:10042-10044). The
+`case` had no arm for it, so a `/compact` boundary — the one place in a
+transcript where the model's memory of everything above it changed — drew
+nothing at all."
+  (let ((lines (item-lines (list :item-id "m1" :kind "segment_mark"
+                                 :item (list :type "segment_mark" :segment-id "s"
+                                             :label "compacted" :kind "compact"
+                                             :edge "open"))
+                           80 nil)))
+    (is (equal (list (list (cons "─── compacted ───" '(:dim t)))) lines)
+        "one dim row, and it is the label between two rules")))
+
+(def-test a-row-whose-body-has-not-arrived-draws-nothing (:suite leticl)
+  "Gap 6. app.rs:9525-9542. This drew `[{kind} — content not loaded]` in RED,
+one row per announcement. A `/reseat` publishes an announcement for every item
+before a single body follows, so the operator got thousands at once — *\"i again
+so insane amount of grainess with s- and whatever tool lines\"*. A screen full
+of identical placeholders is not a diagnostic, it is noise with the shape of
+one, and both callers drop a render with no lines."
+  (is (null (item-lines (list :item-id "x" :kind "tool_result" :item nil) 80 nil))
+      "no body, no rows")
+  (is (null (item-lines (list :item-id "x" :kind "assistant") 80 nil))
+      "and the same when the key is absent rather than null"))
+
+(def-test a-screen-that-came-with-a-message-is-replaced-by-a-note (:suite leticl)
+  "Gap 8. `fold_cells` (app.rs:8980-9001) REPLACES the block with
+`· {rows} rows of this screen ({size}) went with this message`. Ours kept the
+operator's words, kept the marker head, appended ` …`, and kept whatever
+followed the close marker — a different string, a different shape, and text the
+reference drops. Redrawing sixty rows of somebody else's terminal inside this
+one is a picture of a picture."
+  (let* ((text (format nil "~a~%~a210x63 — the sentence~a~%row one~%row two~%row three~%~a~%tail"
+                       "look at this" leticl::*cells-open* leticl::*cells-mark-end*
+                       leticl::*cells-close*))
+         (folded (leticl::%fold-cells text)))
+    (is (equal (format nil "look at this~%· 3 rows of this screen (210x63) went with this message")
+               folded)
+        "the words, then one line naming what went with them — and the tail is gone")
+    (is (not (search leticl::*cells-open* folded)) "no marker survives"))
+  ;; a message that is ONLY a screen is only the note
+  (let ((folded (leticl::%fold-cells
+                 (format nil "~a80x24 — s~a~%r~%~a~%"
+                         leticl::*cells-open* leticl::*cells-mark-end*
+                         leticl::*cells-close*))))
+    (is (equal "· 1 rows of this screen (80x24) went with this message" folded)))
+  (is (equal "no screen here" (leticl::%fold-cells "no screen here"))
+      "and a message with no screen in it is untouched"))
+
+(def-test a-users-parts-are-joined-and-the-rest-are-named (:suite leticl)
+  "Gap 10. app.rs:8550-8558 joins the parts with a SPACE and names the others —
+`[image {media_type}]`, `[file {path}]`. Ours concatenated the text parts, so a
+two-part message ran its parts together into a word that is in neither of them,
+and rendered every non-text part as the empty string: an attached image was
+invisible on the row that attached it."
+  (let ((body (list :type "user"
+                    :parts (list (list :kind "text" :text "look at")
+                                 (list :kind "text" :text "this")))))
+    (is (equal "look at this" (leticl::%user-parts-text body))
+        "joined with a space, not run together"))
+  (let ((body (list :type "user"
+                    :parts (list (list :kind "text" :text "what is wrong with")
+                                 (list :kind "image" :media-type "image/png"
+                                       :data-ref "r1")
+                                 (list :kind "file_ref" :path "src/cards.lisp"
+                                       :sha256 "abc")))))
+    (is (equal "what is wrong with [image image/png] [file src/cards.lisp]"
+               (leticl::%user-parts-text body))
+        "and an attachment is named where it sat")
+    (is (search "[image image/png]"
+                (segs-of (item-lines (list :item-id "u1" :kind "user" :item body :ts 0)
+                                     80 nil)))
+        "which is what reaches the screen")))
+
+(def-test a-system-row-names-its-origin-and-is-dim (:suite leticl)
+  "Gap 11. `dim(\"system ({origin:?})\")` and then the text, every line dim
+(app.rs:9544-9548). Ours drew `◦ ` and the text in YELLOW and no origin at all —
+and the origin is the fact: the prompt a session opened with and a later change
+to it are different events, and only the second means somebody reconfigured the
+model mid-conversation. Yellow is `Pending`, which says something is happening;
+a system row is the quietest thing in a transcript."
+  (let ((lines (item-lines (list :item-id "s1" :kind "system"
+                                 :item (list :type "system" :text "tools were changed"
+                                             :origin "update"))
+                           80 nil)))
+    (is (equal (cons "system (Update)" '(:dim t)) (first (first lines)))
+        "the origin on its own line, dim")
+    (is (search "tools were changed" (segs-of lines)) "then the text")
+    (is (every (lambda (l) (every (lambda (seg) (equal '(:dim t) (cdr seg))) l)) lines)
+        "and every segment of every row is dim — nothing here is yellow")))
+
+(def-test a-failed-turns-reason-is-wrapped-not-cut (:suite leticl)
+  "Gap 13. app.rs:8232-8245 wraps a `Failed` footer at `cfg.width`; ours declared
+`cols` ignored and emitted one line. The rule was already written in the
+function's own docstring — *\"wrapped rather than truncated, because the reason
+is the whole content of the event\"* — and the code did the opposite, so a long
+provider error was cut at the frame's edge."
+  (let* ((err (format nil "~{~a~^ ~}" (loop repeat 40 collect "reason")))
+         (lines (turn-footer-lines
+                 (list :turn-id "t" :state (list :state "failed" :error err
+                                                 :partial-kept nil))
+                 60)))
+    (is (> (length lines) 1) "more than one row at sixty columns")
+    (is (every (lambda (l) (<= (leticl::%segs-width l) 60)) lines) "none of them over the width")
+    (is (search "reason reason" (segs-of lines)) "and the reason is all there")
+    (is (every (lambda (l) (every (lambda (seg) (equal '(:fg :red :bold t) (cdr seg))) l)) lines)
+        "every row in the failure register, not just the first")))
+
+(def-test a-queued-prompt-takes-the-shape-of-the-row-it-becomes (:suite leticl)
+  "Gap 14. `queued_lines` (app.rs:9017-9046): `▌` in `UserAccent`, the tag
+`queued · ` in `Role::Pending` where the timestamp goes, the text `Faint`, and
+continuation rows indented by `width(\"queued\") + 3`. Ours drew a bright-cyan
+`›`, put the tag at the END, and showed only the FIRST line — so a pasted
+paragraph queued as one sentence and grew into a block when the boundary landed,
+which reads as the head having changed what was sent."
+  (let ((h (%make-head)))
+    (setf (head-queued h) (list (format nil "~{~a~^ ~}" (loop repeat 30 collect "word"))))
+    (let ((lines (queued-lines h 40)))
+      (is (equal (cons "▌ " '(:fg :blue)) (first (first lines))) "the bar, UserAccent")
+      (is (equal (cons "queued · " '(:fg :yellow)) (second (first lines)))
+          "the tag where the timestamp goes, in Pending")
+      (is (equal '(:dim t) (cdr (third (first lines)))) "the words faint")
+      (is (> (length lines) 1) "and a long prompt is WRAPPED, not cut to its first line")
+      (is (equal "         " (car (second (second lines))))
+          "continuations hang under the text, by the tag's own columns")
+      (is (every (lambda (l) (<= (leticl::%segs-width l) 40)) lines)
+          "and nothing exceeds the width"))))
+
+(def-test attention-is-not-pending (:suite leticl)
+  "Gap 23. `Role::Attention` is `ESC[1;33m` and `Role::Pending` is `ESC[33m`,
+kept apart on purpose (style.rs:174,180, pinned there by a test): \"needs a
+person\" and \"is happening\" are close enough that a WEIGHT is the right
+distinction, and the cube's orange is not a slot any theme defines. Ours folded
+them together — abstained and denied were plain yellow, backgrounded was
+`Code`'s cyan — so §8.2's rule about abstention had no display to stand on."
+  (is (string= (format nil "~C[0;1;33m" (%ch 27))
+               (leticl::%sgr (leticl::style-index leticl::+role-attention+)))
+      "Attention is bold yellow")
+  (is (string= (format nil "~C[0;33m" (%ch 27))
+               (leticl::%sgr (leticl::style-index leticl::+role-pending+)))
+      "Pending is plain yellow")
+  (is (not (equal leticl::+role-attention+ leticl::+role-pending+)) "and they are two roles")
+  ;; the outcomes the reference maps onto each
+  (dolist (word '("abstained" "denied" "backgrounded"))
+    (is (equal leticl::+role-attention+ (leticl::%outcome-style (list :outcome word)))
+        (format nil "~a needs a person, so it is Attention" word)))
+  (dolist (word '("failed" "timeout" "not_run"))
+    (is (equal leticl::+role-failure+ (leticl::%outcome-style (list :outcome word)))
+        (format nil "~a is Failure — `display_outcome` maps it onto Failed" word)))
+  (is (equal leticl::+role-success+ (leticl::%outcome-style (list :outcome "ok")))))
+
+(def-test a-decision-says-what-it-was-grounded-in (:suite leticl)
+  "Gap 9. `decision_detail` (app.rs:9462-9507) is five parts and we drew one.
+The two that carry the obligation: *\"empty cites is loud\"* — an authorisation
+the oracle could not ground in anything the operator said is a different fact
+from one grounded in four utterances — and `no oracle was consulted for this
+one`, because \"no oracle was asked\" and \"an oracle was asked and said
+nothing\" are different and a blank reads as the second."
+  (let ((d (list :summary "run `rm -rf build`"
+                 :outcome (list :option-id "allow_once")
+                 :by (list :kind "operator" :identity "dead")
+                 :basis "dead chose `allow_once` at the head")))
+    (let ((lines (leticl::%decision-detail d 200)))
+      (is (equal "asked: run `rm -rf build`" (first lines)) "what was asked")
+      (is (equal "operator: dead chose `allow_once` at the head" (second lines))
+          "named by the DECIDER's own kind, so `decided:` never stands in for a model")
+      (is (equal "no oracle was consulted for this one" (third lines))
+          "said out loud rather than left blank"))
+    ;; an oracle that was asked and grounded its answer in nothing
+    (let* ((with-advice (append d (list :advice (list :by "guard" :latency-ms 40
+                                                      :would "admit" :basis "it is a build dir"
+                                                      :cites nil))))
+           (lines (leticl::%decision-detail with-advice 200)))
+      (is (search "oracle (guard, 40ms) would admit: it is a build dir" (format nil "~{~a~%~}" lines))
+          "the oracle's own verdict, separate from the decider's basis")
+      (is (member "oracle cited: nothing — it could not ground this in anything you said"
+                  lines :test #'equal)
+          "and the emptiness is RENDERED, not the absence of a list"))
+    (let* ((cited (append d (list :advice (list :by "guard" :latency-ms 40
+                                                :would "admit" :basis "b"
+                                                :cites (list "you said build/ is disposable")))))
+           (lines (leticl::%decision-detail cited 200)))
+      (is (member "oracle cited: you said build/ is disposable" lines :test #'equal)
+          "one line per citation"))
+    ;; ours, and the reference has no counterpart: the decider's line is dropped
+    ;; when the payload below already carries it — *"how many times is 'nothing
+    ;; ran' needed?"*
+    (let ((lines (leticl::%decision-detail d 200 :skip-basis t)))
+      (is (not (find-if (lambda (l) (search "operator:" l)) lines))
+          "the decider's line goes")
+      (is (member "no oracle was consulted for this one" lines :test #'equal)
+          "and the oracle's do not, because they are nowhere else")))
+  ;; and it reaches the open settled row
+  (let* ((*item-facts* (list (cons "d1" (list :decision
+                                              (list :summary "run it"
+                                                    :outcome (list :option-id "allow_once")
+                                                    :by (list :kind "operator" :identity "dead")
+                                                    :basis "because")))))
+         (body (list :type "tool_result" :call-id "c" :name "bash"
+                     :outcome (list :outcome "ok") :payload "done"))
+         (text (segs-of (item-lines (list :item-id "d1" :kind "tool_result" :item body)
+                                    80 (list :show-tools t)))))
+    (is (search "· allowed, by operator dead" text) "the folded line stays")
+    (is (search "asked: run it" text) "and the detail is under it when the tools are open")
+    (is (search "no oracle was consulted" text) "including the one that says nobody was asked")))
+
+(def-test a-live-card-discloses-its-bytes-its-decision-and-its-budget (:suite leticl)
+  "Gap 12. Three of the live card's four body parts were absent.
+
+The §8.3 bytes disclosure (app.rs:8767-8780) is the one with an obligation
+attached, and it lives in the BODY rather than the header tail because a header
+tail is dropped whole when it does not fit — \"there is more, and here is how to
+get it\" is not a line that may vanish on a narrow terminal.
+
+The decision block (app.rs:8842-8864) was on the settled row and not here, so
+the one moment a person can still act on an approval was the one moment it was
+not shown.
+
+`head_tail` with `Budget::for_verb` (card.rs:482-511) is what stops a folded
+card filling the screen: a live `edit` with a sixty-row diff drew all sixty rows
+here and fourteen there."
+  (let* ((*call-facts* nil)
+         (call (list :call-id "c1" :name "bash" :target "ls"
+                     :state (list :state "finished" :outcome (list :outcome "ok")
+                                  :inline-bytes 512)))
+         (text (segs-of (call-lines call 80 nil))))
+    (is (search "512 B" text) "a finished call says how much went to the model"))
+  ;; spilled: how much went, how much there was, and the handle for the rest
+  (let* ((*call-facts* nil)
+         (call (list :call-id "c1" :name "bash" :target "ls"
+                     :state (list :state "finished" :outcome (list :outcome "ok")
+                                  :inline-bytes 1024 :full-bytes 1048576
+                                  :spill "deadbeef")))
+         (text (segs-of (call-lines call 200 nil))))
+    (is (search "1.0 KB of 1.0 MB went to the model, the rest is kept — read_spill hash=deadbeef"
+                text)
+        "the whole sentence, in units a person reads"))
+  ;; the decision the call was gated by, on the card that can still be acted on
+  (let* ((*call-facts* (list (cons "c1" (list :decision
+                                              (list :summary "run it"
+                                                    :outcome (list :option-id "deny")
+                                                    :by (list :kind "policy")
+                                                    :basis "outside the boundary")))))
+         (call (list :call-id "c1" :name "bash" :target "ls"
+                     :state (list :state "running")))
+         (text (segs-of (call-lines call 80 (list :show-tools t)))))
+    (is (search "· refused, by policy" text) "who decided and how")
+    (is (search "policy: outside the boundary" text) "and, open, what it was grounded in"))
+  ;; the budget: a shell verb keeps two rows of head and three of tail
+  (let* ((*call-facts* nil)
+         (body (loop for i from 1 to 60 collect (format nil "line ~d" i)))
+         (rows (leticl::head-tail-lines
+                (mapcar (lambda (l) (list (cons l nil))) body) 2 3)))
+    (is (= 6 (length rows)) "two, a marker, three")
+    (is (equal (cons "… +55 lines" '(:dim t)) (first (third rows)))
+        "and the marker is a separator row that says how many went, never a silent cut")
+    (is (equal "line 60" (car (first (car (last rows))))) "the tail is the end"))
+  (is (equal '(5 . 3) (leticl::%budget-for-verb "read")) "Read: enough head to see what it is")
+  (is (equal '(5 . 3) (leticl::%budget-for-verb "ls")) "List with it")
+  (is (equal '(2 . 3) (leticl::%budget-for-verb "bash")) "a shell command's tail is what matters")
+  (is (equal '(10 . 3) (leticl::%budget-for-verb "some_unknown_tool")) "anything else")
+  ;; and a short body is not touched
+  (let ((rows (list (list (cons "a" nil)) (list (cons "b" nil)))))
+    (is (equal rows (leticl::head-tail-lines rows 5 3))
+        "nothing is hidden when nothing needs to be")))
+
+;;; ------------------------------------------------- the markdown lexer ;;;
+
+(def-test emphasis-markers-never-reach-the-screen (:suite leticl)
+  "M1. `***both***` is ONE BoldItalic run (markdown.rs:1947-1956). Ours let the
+`**` rule take two of the three asterisks and printed the third — and a marker
+on the screen is the one failure this whole surface exists to remove."
+  (is (equal (list (cons "both" '(:bold t :italic t))) (inline-spans "***both***"))
+      "three asterisks, one run, no marker")
+  (is (equal (list (cons "both" '(:bold t :italic t))) (inline-spans "___both___"))
+      "and the underscore spelling")
+  (let ((segs (inline-spans "**bold *and italic***")))
+    (is (not (find #\* (format nil "~{~a~}" (mapcar #'car segs))))
+        "a run longer than the delimiter closes at its END, so no asterisk is left over")
+    (is (equal (cons "bold " '(:bold t)) (first segs)))
+    (is (equal (cons "and italic" '(:bold t :italic t)) (second segs))
+        "and the inner italic nests rather than becoming a second marker"))
+  ;; the guards that were already right stay right
+  (is (equal (list (cons "2 * 3 = 6" nil)) (inline-spans "2 * 3 = 6"))
+      "a star that is not emphasis stays literal"))
+
+(def-test an-autolink-is-its-url (:suite leticl)
+  "M7. `<https://x>` is what a model writes for a bare URL (markdown.rs:599-608);
+`<` and `>` were ordinary characters here, so the brackets reached the screen."
+  (is (equal (list (cons "https://x" nil)) (inline-spans "<https://x>")) "a URL")
+  (is (equal (list (cons "a@b.c" nil)) (inline-spans "<a@b.c>")) "an email")
+  (is (equal (list (cons "a " nil) (cons "https://x/y?z=1" nil) (cons " b" nil))
+             (inline-spans "a <https://x/y?z=1> b"))
+      "in the middle of a sentence")
+  ;; and a `<` that is not an autolink is still a `<`
+  (is (equal (list (cons "a < b and 3 > 2" nil)) (inline-spans "a < b and 3 > 2"))
+      "arithmetic is not markup")
+  (is (equal (list (cons "<Generic>" nil)) (inline-spans "<Generic>"))
+      "nor is a type parameter")
+  ;; an image is its alt text, not `!alt`
+  (is (equal (list (cons "a diagram" nil)) (inline-spans "![a diagram](x.png)"))
+      "an image is its alt text"))
+
+(def-test a-fence-cannot-be-closed-by-a-shorter-one (:suite leticl)
+  "M3. A closing fence must be at least as long as the opener
+(markdown.rs:819-834). Four backticks is how a model quotes a fence when it is
+TEACHING, and any run of three closed anything here — so the demonstration was
+cut in half and the rest spilled out as prose."
+  (let ((blocks (leticl::markdown-blocks (format nil "````~%```rust~%let a = 1;~%```~%````"))))
+    (is (= 1 (length blocks)) "one block, not three")
+    (is (eq :code (getf (first blocks) :kind)))
+    (is (equal '("```rust" "let a = 1;" "```") (getf (first blocks) :lines))
+        "the inner fence is CONTENT of the outer one")
+    (is (getf (first blocks) :closed) "and the outer one closed"))
+  ;; `~~~` is a fence opener too
+  (let ((blocks (leticl::markdown-blocks (format nil "~apython~%x = 1~%~a" "~~~" "~~~"))))
+    (is (eq :code (getf (first blocks) :kind)) "a tilde fence is a fence")
+    (is (equal '("x = 1") (getf (first blocks) :lines)))
+    (is (equal "python" (getf (first blocks) :lang))))
+  ;; and a backtick run does not close a tilde fence
+  (let ((blocks (leticl::markdown-blocks (format nil "~a~%```~%~a" "~~~" "~~~"))))
+    (is (equal '("```") (getf (first blocks) :lines))
+        "the character has to match as well as the length"))
+  ;; the rule that was already right: a line that merely ENDS in backticks is
+  ;; content, which is the box art the reference keeps a test for
+  (let ((blocks (leticl::markdown-blocks (format nil "```~%│ a ```~%```"))))
+    (is (equal '("│ a ```") (getf (first blocks) :lines)) "box art survives")))
+
+(def-test indented-code-is-code-and-not-mangled-prose (:suite leticl)
+  "M4. A four-space indent is a code block (markdown.rs:971,1161-1177). Ours ran
+it through the paragraph arm, which `string-trim`s the indent away and JOINS the
+lines — so the code was not merely uncoloured, it was mangled, and indentation
+is most of what code written without a fence has."
+  (let ((blocks (leticl::markdown-blocks (format nil "text~%~%    def f():~%        return 1~%~%after"))))
+    (is (= 3 (length blocks)) "paragraph, code, paragraph")
+    (is (eq :code (getf (second blocks) :kind)))
+    (is (equal '("def f():" "    return 1") (getf (second blocks) :lines))
+        "four columns come off and the rest is the code's own")
+    (is (equal "" (getf (second blocks) :lang)) "with no language claimed"))
+  ;; a nested list item is not code: this head renders nesting by indent, and
+  ;; reading `    - sub` as code would take that away
+  (let ((blocks (leticl::markdown-blocks (format nil "    - sub"))))
+    (is (eq :list (getf (first blocks) :kind)) "a list item keeps being one")))
+
+(def-test a-setext-heading-is-a-heading (:suite leticl)
+  "M8. `Title` over `====` is a level-one heading and over `----` a level-two one
+(markdown.rs:950,993-994). Ours joined the `====` into the paragraph and drew it
+as text, and read the `----` as a thematic break under a paragraph that was the
+heading."
+  (let ((blocks (leticl::markdown-blocks (format nil "Title~%===="))))
+    (is (equal '(:kind :heading :level 1 :text "Title") (first blocks))))
+  (let ((blocks (leticl::markdown-blocks (format nil "Subtitle~%----"))))
+    (is (equal '(:kind :heading :level 2 :text "Subtitle") (first blocks))))
+  ;; a bare rule with no paragraph over it is still a rule
+  (let ((blocks (leticl::markdown-blocks (format nil "a~%~%----~%~%b"))))
+    (is (eq :rule (getf (second blocks) :kind)) "nothing above it, so nothing to underline")))
+
+(def-test a-task-list-item-does-not-keep-its-checkbox (:suite leticl)
+  "M8. `- [x] done` → `· done` (markdown.rs:1050-1052,1242-1244). Ours drew
+`· [x] done`, which is a marker on the screen with a bullet already beside it."
+  (let ((blocks (leticl::markdown-blocks (format nil "- [ ] open~%- [x] done~%- [X] also"))))
+    (is (equal '("open" "done" "also")
+               (mapcar (lambda (it) (getf it :text)) (getf (first blocks) :items))))))
+
+(def-test an-ordered-list-counts-up-from-its-own-start (:suite leticl)
+  "M5. `start + i` (render.rs:408-414). `1. / 1. / 1.` is very common model
+output and rendered as three `1.`s — numbers that refer to nothing, when a
+number in an ordered list is exactly what the prose refers back to.
+
+And a loose list is ONE block (markdown.rs:2016-2040): a blank line between
+items closed the list here, so a six-point answer came out N blocks with N−1
+blank rows between them, twice the height of the reference's."
+  (let ((lines (markdown-lines (format nil "1. one~%1. two~%1. three") :width 80)))
+    (is (equal '("1. " "2. " "3. ") (mapcar (lambda (l) (car (first l))) lines))
+        "counted up, not repeated"))
+  (let ((lines (markdown-lines (format nil "4. four~%4. five") :width 80)))
+    (is (equal '("4. " "5. ") (mapcar (lambda (l) (car (first l))) lines))
+        "from the number the model wrote first"))
+  (let ((lines (markdown-lines (format nil "1. one~%~%2. two~%~%3. three") :width 80)))
+    (is (= 3 (length lines)) "a loose list is one block: three rows, no blanks between")
+    (is (equal '("1. " "2. " "3. ") (mapcar (lambda (l) (car (first l))) lines))
+        "and the numbering runs across the blanks"))
+  ;; …but only for another item of the SAME kind. A bullet list under an ordered
+  ;; one is a second list, and swallowing the blank between them renumbers the
+  ;; bullets into it.
+  (let ((blocks (leticl::markdown-blocks (format nil "- a~%- b~%~%1. one~%2. two"))))
+    (is (= 2 (length blocks)) "two lists, not one")
+    (is (not (getf (first (getf (first blocks) :items)) :ordered)))
+    (is (getf (first (getf (second blocks) :items)) :ordered)))
+  (let ((lines (markdown-lines (format nil "- a~%~%1. one") :width 80)))
+    (is (= 3 (length lines)) "and the blank row between them survives")
+    (is (null (second lines)))))
+
+(def-test a-fence-inside-a-quote-is-a-code-box (:suite leticl)
+  "M2. `%fence-at` never fired on a `>` line, so a fence inside a quote rendered
+as quote prose with literal backticks in it — which is exactly what
+`split_container` exists for (markdown.rs:713-747,842-860)."
+  (let ((blocks (leticl::markdown-blocks (format nil "> ```rust~%> let a = 1;~%> ```"))))
+    (is (= 1 (length blocks)) "no empty quote left behind")
+    (is (eq :code (getf (first blocks) :kind)))
+    (is (equal "rust" (getf (first blocks) :lang)))
+    (is (equal '("let a = 1;") (getf (first blocks) :lines)))
+    (is (getf (first blocks) :closed))
+    (is (not (find-if (lambda (l) (find #\> l)) (getf (first blocks) :lines)))
+        "and the quote marker is gone from the code"))
+  ;; a fence ON a list marker's line is a code box, not item text
+  (dolist (src (list (format nil "- ```rust~%  let a = 1;~%  ```")
+                     (format nil "1. ```rust~%   let a = 1;~%   ```")))
+    (let ((blocks (leticl::markdown-blocks src)))
+      (is (= 1 (length blocks)) "one block")
+      (is (eq :code (getf (first blocks) :kind)) "and it is code, not item text")
+      (is (equal "rust" (getf (first blocks) :lang)))
+      (is (equal '("let a = 1;") (getf (first blocks) :lines))
+          "the marker's columns are the container's, not the code's")))
+  ;; a fence INSIDE an item keeps the code's own indentation and loses the
+  ;; item's — `stripping_a_content_column_does_not_eat_content`
+  (let* ((blocks (leticl::markdown-blocks (format nil "- item~%~%  ```rust~%  if x {~%      y~%  }~%  ```")))
+         (code (find :code blocks :key (lambda (b) (getf b :kind)))))
+    (is (equal '("if x {" "    y" "}") (getf code :lines))
+        "two columns of container indent come off; the four the code wrote stay")))
+
+(def-test a-table-inside-a-quote-keeps-its-cells-and-not-its-pipes (:suite leticl)
+  "M12. The pipes survived into the quote text (markdown.rs:1063-1081). A quote
+is a CONTAINER: its content is lexed like any other text and flattened back to
+the lines the rail carries."
+  (let ((blocks (leticl::markdown-blocks (format nil "> | a | b |~%> |---|---|~%> | 1 | 2 |"))))
+    (is (eq :quote (getf (first blocks) :kind)))
+    (is (member "1 2" (getf (first blocks) :lines) :test #'equal) "the row survives")
+    (is (not (find-if (lambda (l) (find #\| l)) (getf (first blocks) :lines)))
+        "and no pipe does"))
+  ;; a list inside a quote loses its markers the same way
+  (let ((blocks (leticl::markdown-blocks (format nil "> - one~%> - two"))))
+    (is (equal '("one" "two") (getf (first blocks) :lines))
+        "the words, without the bullets the rail already stands in for"))
+  ;; and a plain quote is unchanged
+  (let ((blocks (leticl::markdown-blocks (format nil "> a~%> b"))))
+    (is (equal '("a" "b") (getf (first blocks) :lines)))))
+
+(def-test a-fence-header-names-the-grammar-that-ran (:suite leticl)
+  "M9. `render.rs:296-298,375-379`: a recognised fence is named by the grammar
+that actually coloured it, so the header cannot claim one language over a fence
+parsed as another. Ours printed the raw info string, so `sh`, `shell`, `bash`
+and `zsh` — the same grammar — read as four different boxes."
+  (is (equal "┌─ bash" (car (first (first (markdown-lines (format nil "```sh~%ls~%```") :width 80)))))
+      "`sh` is bash")
+  (is (equal "┌─ rust" (car (first (first (markdown-lines (format nil "```rs~%x~%```") :width 80)))))
+      "`rs` is rust")
+  (is (equal "┌─ typescript"
+             (car (first (first (markdown-lines (format nil "```ts~%x~%```") :width 80)))))
+      "`ts` is typescript")
+  ;; a language nobody can colour keeps the name the model wrote: naming a
+  ;; language we are not colouring is honest, inventing one we are is not
+  (is (equal "┌─ brainfuck"
+             (car (first (first (markdown-lines (format nil "```brainfuck~%+~%```") :width 80)))))
+      "an unknown name is printed as written")
+  (is (equal "┌─ code" (car (first (first (markdown-lines (format nil "```~%x~%```") :width 80)))))
+      "and a bare fence is `code`"))
+
+(def-test a-bounded-blocks-title-is-its-text-and-not-its-source (:suite leticl)
+  "M10. `Block::title` is `runs_text` — the markers are already gone
+(markdown.rs:184-199). Ours returned the raw source, so the one row standing in
+for a block nobody can see showed `**markers**`.
+
+And the truncation is `trim_to(title, w)` and THEN `▸ ` (render.rs:631): the row
+may be `w + 2`, because those two columns belong to the affordance rather than
+to the name. Truncating the whole string took two characters off the title
+instead."
+  (let* ((text (format nil "~{~a~^~%~}"
+                       (cons "- **The measurement** and what it showed"
+                             (loop for i from 1 to 30 collect (format nil "- line ~d" i)))))
+         (lines (markdown-lines text :width 80 :limit 10)))
+    (is (equal "▸ The measurement and what it showed" (car (first (first lines))))
+        "the title with its markers consumed"))
+  ;; the fence title names the grammar too
+  (let* ((text (format nil "```sh~%~{~a~%~}```"
+                       (loop for i from 1 to 30 collect (format nil "echo ~d" i))))
+         (lines (markdown-lines text :width 80 :limit 6)))
+    (is (search "▸ bash · 30 lines" (car (first (first lines))))
+        "and says which grammar and how many lines"))
+  ;; `▸ ` is outside the budget, so the title itself gets the whole width
+  (let* ((title (make-string 40 :initial-element #\t))
+         (text (format nil "~a~%~{~a~%~}" title
+                       (loop for i from 1 to 30 collect (format nil "line ~d" i))))
+         (row (car (first (first (markdown-lines text :width 20 :limit 6))))))
+    (is (= 20 (string-width (subseq row 2)))
+        "the title is trimmed to the width, and the mark is added after")))
+
+(def-test a-table-row-does-not-end-in-a-space (:suite leticl)
+  "M11. `row.trim_end()` over the WHOLE row (render.rs:528). Ours trimmed the
+last segment only, so a row whose last cell is empty kept the padded blank AND
+the ` │ ` separator before it — invisible until copied, and the reference
+explicitly fixed exactly this."
+  (let ((lines (markdown-lines (format nil "| a | b |~%|---|---|~%| 1 | |") :width 80)))
+    (is (every (lambda (l) (let ((s (segs-of (list l))))
+                             (string= s (string-right-trim " " s))))
+               lines)
+        "no row ends in whitespace")
+    (let ((row (segs-of (last lines))))
+      (is (eql (1- (length row)) (search "│" row :from-end t))
+          "a row whose last cell is empty ends AT the separator — the padded blank
+after it and the separator's own trailing space are both gone, which is what
+trimming one segment could not do"))))
