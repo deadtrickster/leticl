@@ -283,52 +283,60 @@ def strip_ansi(s):
 
 #; ------------------------------------------- --tree: make the head match disk ;;;
 
-ASD_COMPONENT = re.compile(r'\(:file\s+"(src/[^"]+)"\)')
-
-
-def asd_files(root):
-    """The src files `leticl.asd` lists, in load order.
-
-    Order matters: the asd is `:serial t`, so it is the order the head was built
-    in, and pushing them in any other order can evaluate a form before the thing
-    it calls exists. Reading the asd rather than globbing means a new file is
-    picked up by having been registered once, in the one place that already has
-    to know about it.
-    """
-    path = os.path.join(root, "leticl.asd")
-    text = open(path).read()
-    # the asd writes components WITHOUT the extension — ASDF appends ".lisp" —
-    # so "src/package" is the file "src/package.lisp". Adding it here is the
-    # whole difference between pushing the tree and pushing 23 nonexistent paths.
-    files = [f + ".lisp" for f in ASD_COMPONENT.findall(text)]
-    return [os.path.join(root, f) for f in files]
-
-
-# **The safety files go in FIRST.** A push is not atomic against a frame unless
-# the head already serialises the two, and that serialisation lives in
-# `render.lisp` (the paint lock) and `hack.lisp` (the eval taking it) — files 20
-# and 22 of 23. Pushing in asd order to a head built before that mechanism
-# existed therefore races: the push lands mid-frame, an in-flight call reaches a
-# function that just changed, and the main thread dies. Measured twice on the
-# operator's head, at a different file each time — cells.lisp once, json.lisp
-# the next, a signature of timing rather than of a bad file.
+# **A struct a head does not have is a landmine, not an error.**
 #
-# So these two are pushed ahead of the rest, in this order: `render` defines the
-# lock and the guarded paint, `hack` makes an eval hold it. After them the rest
-# of the tree is safe to push in the order it was built.
-SAFETY_FIRST = ("src/render.lisp", "src/hack.lisp")
+# `--file` SKIPS `defstruct`, because a changed layout is a hard error in this
+# SBCL. That is right for a HEAD that has the struct and wrong for the code that
+# CALLS it: pushing `width.lisp` to a head without the `cluster` struct defines
+# `clusters` against a constructor that does not exist, so `string-width` — which
+# every border is measured with — fails on the next frame. The head survives (it
+# paints its own failure) but the screen is gone, and the cause is three files
+# away from the symptom.
+#
+# So before pushing anything, ask the head for the constructors this tree defines
+# and REFUSE if one is missing. A restart is then a sentence rather than a
+# diagnosis.
+STRUCT_DEF = re.compile(r"\(defstruct\s+\(?([a-z0-9-]+)(?:\s+\(:constructor\s+([^\s()]+))?", re.I)
 
 
-def asd_files_safely_first(root):
-    """`asd_files` with the lock-defining files hoisted to the front."""
-    files = asd_files(root)
-    head, rest = [], []
-    for f in files:
-        rel = "/".join(f.split(os.sep)[-2:])
-        (head if rel in SAFETY_FIRST else rest).append(f)
-    # keep SAFETY_FIRST's own order (render before hack), then the asd order
-    head.sort(key=lambda f: SAFETY_FIRST.index("/".join(f.split(os.sep)[-2:])))
-    return head + rest
+def struct_constructors(root):
+    """Every constructor this tree's `defstruct`s define, as a sorted list.
+
+    `defstruct (name (:constructor ctor) …)` names one explicitly; the default is
+    `make-<name>`. Both forms appear in this tree (`%make-head`, `%make-session`,
+    `%make-cluster` are explicit; `make-composer` is explicit too), so the regex
+    has to read the option rather than assume the default.
+    """
+    found = set()
+    for path in sorted(glob.glob(os.path.join(root, "src", "*.lisp"))):
+        for m in STRUCT_DEF.finditer(open(path).read()):
+            name, ctor = m.group(1), m.group(2)
+            found.add((ctor or ("make-" + name)).upper())
+    return sorted(found)
+
+
+def missing_constructors(pid, target, root):
+    """The constructors this tree defines that the head does NOT have.
+
+    Read with `find-symbol` rather than `read-from-string`, so nothing in this
+    check can itself be a reader error.
+    """
+    ctors = struct_constructors(root)
+    if not ctors:
+        return []
+    form = ('(let ((pkg (find-package :leticl))) '
+            '(loop for n in (list {}) collect '
+            '  (let ((s (and pkg (find-symbol n pkg)))) '
+            '    (if (and s (fboundp s)) 1 0))))').format(
+        " ".join('"%s"' % c for c in ctors))
+    try:
+        value = reply_value(eval_form(pid, form, target))
+    except (OSError, ValueError, RuntimeError):
+        return []
+    present = re.findall(r"\d+", value or "")
+    if len(present) != len(ctors):
+        return []
+    return [c for c, p in zip(ctors, present) if p == "0"]
 
 
 def push_tree(pid, target, root, send_all=False, verbose=True):
@@ -551,6 +559,24 @@ def main(argv):
     target = sock or find_socket(pid, sock)
 
     if do_tree:
+        # REFUSE rather than break: a struct this head does not have cannot be
+        # pushed (see the note above `struct_constructors`), and the symptom
+        # appears three files away from the cause.
+        missing = missing_constructors(pid, target, root)
+        if missing:
+            print("REFUSING: this head is missing {} constructor(s) the tree "
+                  "defines:".format(len(missing)), file=sys.stderr)
+            print("  " + ", ".join(missing), file=sys.stderr)
+            print("", file=sys.stderr)
+            print("`--file` SKIPS `defstruct` (a changed layout is a hard error in "
+                  "this SBCL), so pushing a file that CALLS a missing constructor "
+                  "defines it against nothing — `string-width` would break and "
+                  "every border with it.", file=sys.stderr)
+            print("This is not a bug in the push: a head started before a struct "
+                  "existed cannot take code that uses it. RESTART the head "
+                  "(`bin/leticl-head`, or the image it was started from).",
+                  file=sys.stderr)
+            return 3
         print("pushing the tree in leticl.asd order ({} files)".format(
             len(asd_files(root))))
         ok, results = push_tree(pid, target, root, send_all)
