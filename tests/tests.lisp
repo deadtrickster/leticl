@@ -4838,10 +4838,15 @@ while the pane's own hint bar says *\"arrows scroll · enter re-reads\"*
          (h (%on-head :cols 80 :rows 24))
          (wire (%wire h)))
     (setf (head-mode h) :peek)
+    ;; **TAIL-ORIGIN.** `peek-lines` windows `end = total - scroll`, because a
+    ;; subagent's ANSWER is at the end and that is what the pane was opened for —
+    ;; so `*pane-scroll*` counts lines hidden BELOW the bottom and `↑` adds to
+    ;; it. Called with the top-origin sign, `↑` walked toward the end while the
+    ;; hint bar said *"arrows scroll"* and meant the other way.
     (leticl::%handle-key h (list :type :up))
-    (is (= 3 *pane-scroll*) "↑ scrolls the pane, the way PgUp does")
+    (is (= 5 *pane-scroll*) "↑ moves toward the BEGINNING of the scrollback")
     (leticl::%handle-key h (list :type :down))
-    (is (= 4 *pane-scroll*) "and ↓ comes back")
+    (is (= 4 *pane-scroll*) "and ↓ comes back toward the end")
     (leticl::%handle-key h (list :type :enter))
     (let ((f (first (%sent wire))))
       (is (equal "peek" (getf f :frame)) "enter re-reads")

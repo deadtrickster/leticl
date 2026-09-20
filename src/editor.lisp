@@ -683,7 +683,9 @@ one thing this head must not need."
                ;; bottom, and moving toward the beginning ADDS to it. Every key
                ;; that scrolls goes through here, so the arrows, the page keys
                ;; and the wheel cannot disagree about which way is back.
-               (pane-scroll-by (if (eq mode :job-out) (- n) n))
+               ;; the TAIL-ORIGIN panes are `:peek` and `:job-out`; every other
+               ;; pane counts from the top
+               (pane-scroll-by (if (member mode '(:job-out :peek)) (- n) n))
                (setf (head-dirty head) t)
                t))
         (case type
@@ -697,12 +699,17 @@ one thing this head must not need."
            (let ((n (if (eq type :up) -1 1)))
              (case mode
                (:todos (%todos-move head n))
-               ;; the peek view has no rows to walk — `pane-row-count` says 0 —
-               ;; so its arrows SCROLL, which is what its hint bar promises and
-               ;; what `move-cursor` could never do on it (app.rs:3260-3270).
-               ;; The polarity is the pane's: up moves toward the beginning,
-               ;; the same direction PgUp goes.
-               (:peek (pane-scroll-by n) (setf (head-dirty head) t))
+               ;; the peek view has no rows to walk — `pane-row-count` counted
+               ;; 0 for it — so its arrows SCROLL, which is what its hint bar
+               ;; promises and what `move-cursor` could never do (app.rs:3260).
+               ;;
+               ;; **Through `scroll`, because this pane is tail-origin too.**
+               ;; `peek-lines` windows `end = total - scroll` for the same reason
+               ;; the job-output overlay does — a subagent's ANSWER is at the end
+               ;; — so `*pane-scroll*` counts lines hidden below the bottom and
+               ;; `↑` must ADD to it. Called with the top-origin sign, `↑` walked
+               ;; toward the END while the hint bar said otherwise.
+               (:peek (scroll n))
                ;; the job-output overlay is the same shape: a window of bytes
                ;; with no rows to select, so its arrows scroll the loaded window
                ;; rather than walking a cursor (app.rs:3256-3268)
