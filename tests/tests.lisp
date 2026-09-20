@@ -470,10 +470,14 @@ mode - subtodos shown, when all subtodos checked section becomes also checked\"*
   (is (null (role-style 0)) "plain")
   (is (equal (role-style 1) '(:dim t)) "comment")
   (is (equal (role-style 2) '(:fg :green)) "string")
-  (is (equal (role-style 3) '(:fg :bright-yellow)) "number")
-  (is (equal (role-style 4) '(:fg :cyan)) "type")
-  (is (equal (role-style 5) '(:fg :magenta)) "keyword")
-  (is (equal (role-style 6) '(:fg :bright-cyan)) "function")
+  ;; the REFERENCE's slots (style.rs:203-211): a number is 33 and a function
+  ;; name 34, not their bright cousins — a bright slot is a different palette
+  ;; entry in every terminal theme, so the same Rust rendered two colours in two
+  ;; panes of one screen
+  (is (equal (role-style 3) '(:fg :yellow)) "number — NumberLit, 33")
+  (is (equal (role-style 4) '(:fg :cyan)) "type — TypeName, 36")
+  (is (equal (role-style 5) '(:fg :magenta)) "keyword — Keyword, 35")
+  (is (equal (role-style 6) '(:fg :blue)) "function — FuncName, 34")
   (is (null (role-style 99)) "unknown is plain"))
 
 (def-test highlight-degrades-without-lang (:suite leticl)
@@ -504,7 +508,7 @@ that every highlight test passes with no shim present; it did not."
                                    (equal (cdr s) '(:fg :magenta))))
                   (first lines)) "fn is a keyword")
         (is (some (lambda (s) (and (string= "42" (car s))
-                                   (equal (cdr s) '(:fg :bright-yellow))))
+                                   (equal (cdr s) '(:fg :yellow))))
                   (second lines)) "42 is a number")
         (is (some (lambda (s) (and (string= "// c" (car s))
                                    (equal (cdr s) '(:dim t))))
@@ -2649,7 +2653,7 @@ for renders plain, which is what a terminal with no palette reads anyway."
              (row (first (edit-split-lines edit 64))))
         (is (find (cons "let" '(:fg :magenta :bg 52)) row :test #'equal)
             "the keyword is a keyword on the removed side, over its tint")
-        (is (find (cons "42" '(:fg :bright-yellow :bg 22)) row :test #'equal)
+        (is (find (cons "42" '(:fg :yellow :bg 22)) row :test #'equal)
             "and the number a number on the added side, over its own")
         (is (null (class-rows (list "let x = 1;") 0))
             "language 0 is no colour, not a guess"))
@@ -2661,7 +2665,7 @@ for renders plain, which is what a terminal with no palette reads anyway."
             "no shim, no grid")
         (is (search "let x = 1;" (format nil "~{~a~}" (mapcar #'car row)))
             "the code is still drawn — the contract of this file")
-        (is (null (intersection '(:magenta :bright-yellow :cyan)
+        (is (null (intersection '(:magenta :yellow :cyan)
                                 (mapcar (lambda (seg) (getf (cdr seg) :fg)) row)))
             "and carries no syntax colour: no shim is a dimmer screen, not a crash"))))
 
@@ -6257,3 +6261,19 @@ explicitly fixed exactly this."
           "a row whose last cell is empty ends AT the separator — the padded blank
 after it and the separator's own trailing space are both gone, which is what
 trimming one segment could not do"))))
+
+(def-test a-user-row-says-what-was-attached (:suite leticl)
+  "`item-display-text` joined a user message's parts with NOTHING, so two parts
+ran into one word — and an image or a file attachment was invisible: the operator
+sent something and the row showed no sign of it. The reference names each part
+(`app.rs:8489-8497`); the rendering was fixed with it, this is the text the panes
+and the search read."
+  (let ((item (list :item-id "u1" :kind "user"
+                    :item (list :type "user"
+                                :parts (list (list :kind "text" :text "look at")
+                                             (list :kind "image" :media-type "image/png")
+                                             (list :kind "file_ref" :path "src/f.lisp")
+                                             (list :kind "text" :text "and say"))))))
+    (is (string= "look at [image image/png] [file src/f.lisp] and say"
+                 (leticl::item-display-text item))
+        "each part named, joined with a space")))

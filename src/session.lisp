@@ -616,7 +616,17 @@ arrived renders as a placeholder, honestly (view.rs on SnapshotItem.item)."
         (format nil "[~a — content not loaded]" (item-kind item))
         (case (intern (string-upcase (getf body :type)) :keyword)
           ((:system) (getf body :text))
-          ((:user) (format nil "~{~a~}" (mapcar (lambda (p) (or (getf p :text) "")) (getf body :parts))))
+          ;; parts joined with a SPACE, and a part that is not text says what it
+          ;; is — `app.rs:8489-8497`. Joined with nothing, two parts ran into one
+          ;; word, and an image or a file attachment was invisible: the operator
+          ;; sent something and the row showed nothing of it.
+          ((:user) (format nil "~{~a~^ ~}"
+                           (mapcar (lambda (p)
+                                     (switch ((or (getf p :kind) "text") :test #'string=)
+                                       ("image" (format nil "[image ~a]" (or (getf p :media-type) "")))
+                                       ("file_ref" (format nil "[file ~a]" (or (getf p :path) "")))
+                                       (t (or (getf p :text) ""))))
+                                   (getf body :parts))))
           ((:reasoning) (getf body :text))
           ((:assistant) (getf body :text))
           ((:tool_result)

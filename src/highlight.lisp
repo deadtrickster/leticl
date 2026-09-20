@@ -188,10 +188,15 @@ index → colour decision lives here, in the head, not in the parser."
     (0 nil)
     (1 '(:dim t))   ; comment
     (2 '(:fg :green))          ; string
-    (3 '(:fg :bright-yellow))  ; number / constant
-    (4 '(:fg :cyan))           ; type
-    (5 '(:fg :magenta))        ; keyword
-    (6 '(:fg :bright-cyan))    ; function
+    ;; the sixteen theme slots, and the REFERENCE'S choice of them
+    ;; (style.rs:203-211): a number is `33` and a function name `34`, not their
+    ;; bright cousins. Bright slots are a different palette entry in every
+    ;; terminal theme, so the same Rust rendered two colours in two panes of one
+    ;; screen — the thing one shared table exists to stop.
+    (3 '(:fg :yellow))         ; number / constant  (NumberLit, 33)
+    (4 '(:fg :cyan))           ; type               (TypeName, 36)
+    (5 '(:fg :magenta))        ; keyword            (Keyword, 35)
+    (6 '(:fg :blue))           ; function           (FuncName, 34)
     (t nil)))
 
 ;;; ------------------------------------------------- the split panels ;;;
