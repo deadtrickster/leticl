@@ -53,14 +53,47 @@ refuses it: 'not an array with a fill pointer'.)"
     (loop for item in items do (vector-push-extend item v))
     v))
 
+(defun %clear-session-scoped (session)
+  "Throw away everything that belonged to the session we are LEAVING.
+
+A snapshot is a replacement, and it carries only what `view.rs:278-297` lists —
+so every session-scoped table the snapshot does NOT carry survived a `/switch`
+and arrived wearing the last conversation's clothes. `load` (app.rs:1902-1934)
+clears each of these with a measured reason behind it: the subagent tree is the
+PARENT's fact and carried across a switch it put *\"1 subagent running\"* on the
+composer of the very subagent being looked at; the job rows kept drawing the old
+session's ids and byte counts, and now that Enter on a row asks THIS session for
+that id, a carried row is a question about a job that was never here; a denial or
+a notice from a conversation that is no longer on the screen is the same lie a
+carried-over model name is. The running turn's clock goes with them — nothing
+cleared `*turn-started-ms*`, so a switch left the previous session's start time
+walking under the new session's composer."
+  (setf (session-subagents session) nil
+        (session-jobs session) nil
+        (session-denials session) nil
+        (session-notices session) nil)
+  (setf *turn-started-ms* nil)
+  ;; the staged call facts are keyed by a call id that only existed over there
+  (%round-boundary))
+
 (defun ingest-snapshot (session snapshot)
   "Replace state with SNAPSHOT's. Resync is a normal outcome, never an error
-— this is also the Resync-frame path."
+— this is also the Resync-frame path.
+
+The id is compared BEFORE it is assigned, because that comparison is the only
+thing that knows whether this is the same conversation (app.rs:1897-1934)."
+  (let ((id (or (getf snapshot :session-id) "")))
+    (unless (string= id (session-session-id session))
+      (%clear-session-scoped session)))
   (setf (session-session-id session) (or (getf snapshot :session-id) "")
-        (session-seq session) (getf snapshot :seq)
-        (session-expected-seq session) (getf snapshot :seq)
-        (session-dropped session) (getf snapshot :dropped)
-        (session-items-dropped session) (getf snapshot :items-dropped)
+        (session-seq session) (or (getf snapshot :seq) 0)
+        (session-expected-seq session) (or (getf snapshot :seq) 0)
+        ;; `dropped` only ever grows: it is this head's running count of events
+        ;; it will never see, and a snapshot that knows of fewer than we have
+        ;; already counted is not a correction (app.rs:1937 takes the max)
+        (session-dropped session) (max (session-dropped session)
+                                       (or (getf snapshot :dropped) 0))
+        (session-items-dropped session) (or (getf snapshot :items-dropped) 0)
         (session-turn session) (getf snapshot :turn)
         (session-open-decisions session) (getf snapshot :open-decisions)
         (session-settled-decisions session) (getf snapshot :settled-decisions)
@@ -85,18 +118,53 @@ push can introduce it without a slot.")
   (loop for (nil v) on report by #'cddr when (integerp v) sum v))
 
 (defun ingest-hello (session hello)
-  (ingest-snapshot session (getf hello :snapshot))
+  "Fold a `Hello`, with or without a snapshot.
+
+**A Hello answering a resume carries no snapshot.** Every reconnect
+(`%try-reconnect` re-attaches with `since_seq = session-seq`, which is nonzero)
+and every resume whose gap is still in the daemon's ring is served from the
+scrollback: `hub.rs:628-652` sends `Hello { snapshot: null, resumed_from: N }`
+and the gap follows as `Event` frames. This function called `ingest-snapshot`
+unconditionally, which assigned `session-session-id` ← `\"\"` and then `NIL` into
+a `:type fixnum` slot and signalled — swallowed by `run-loop`'s handler into
+`*last-render-error*`, so the head neither crashed nor recovered: the session id
+was wiped, `head_id`, `wiring`, `sessions`, the title and `resumed_from` were
+never read, the settings were never asked for and the attach indicator walked
+forever. Measured: `RESUME-ERROR: TYPE-ERROR` against `SNAPSHOT-OK` for the same
+Hello with a snapshot. No reconnect and no resume had ever worked. The reference
+assigns the id explicitly on that path and keeps the state it already has
+(`app.rs:1680-1685`)."
   (incf *scrubbed-total* (%scrub-total (getf hello :scrubbed)))
-  (setf (session-head-id session) (or (getf hello :head-id) "")
-        (session-dropped session) (getf hello :dropped)
-        (session-sessions session) (getf hello :sessions)
+  (setf (session-head-id session) (or (getf hello :head-id) ""))
+  ;; `dropped` ACCUMULATES. It was assigned, so a reattach reset this head's
+  ;; running count of the events it will never see, and `/status` under-reported
+  ;; every time it mattered (app.rs:1672 `+=`, app.rs:1937 `max`).
+  (incf (session-dropped session) (or (getf hello :dropped) 0))
+  (setf (session-sessions session)
+        ;; SUBAGENTS ARE NOT SESSIONS a picker lists: they are children of this
+        ;; one, shown in the subagent tree and reached by `/switch id`. The
+        ;; reference filters them before storing, on both frames that carry the
+        ;; list (app.rs:1668-1671, 1732-1735).
+        (remove-if (lambda (b) (getf b :parent-session-id)) (getf hello :sessions))
         (session-wiring session) (getf hello :wiring))
+  (if (getf hello :snapshot)
+      (ingest-snapshot session (getf hello :snapshot))
+      (let ((id (or (getf hello :session-id) "")))
+        ;; the resumed-from path: what is already here IS this session's state,
+        ;; unless the Hello names a different session — then none of it is
+        (unless (string= id (session-session-id session))
+          (%clear-session-scoped session))
+        (setf (session-session-id session) id)))
   ;; THE TITLE FROM THE SESSION LIST. Our `session-title` was only ever set by a
   ;; `session_renamed` EVENT, so a head that attached to a named session showed
   ;; its raw id in the header while letibot showed the name. Measured against
   ;; letibot's own screen: `▌ hello, what we are doing here` against
   ;; `▌ s-1789639478142928813`. The name is in the Hello's session list, which is
   ;; also what the picker reads.
+  ;;
+  ;; Looked up in the Hello's OWN list, not in the filtered one we just stored: a
+  ;; head attached to a subagent session is looking at a row the picker filter
+  ;; drops, and it still has a name.
   (let ((brief (find (session-session-id session) (getf hello :sessions)
                      :key (lambda (b) (getf b :session-id)) :test #'string=)))
     (when brief
@@ -136,14 +204,52 @@ push can introduce it without a slot.")
     (find call-id (getf turn :calls) :key (lambda (c) (getf c :call-id))
           :test #'string=)))
 
+(defun %call-put (call key value)
+  "Write KEY on CALL's plist IN PLACE, and answer CALL.
+
+`(setf (getf call key) v)` on a LOCAL holding a plist whose KEY is absent conses
+a fresh head and assigns the local — the list inside `turn.calls` is never
+touched. That is exactly what `ToolProgress` did: every progress note this head
+ever folded went nowhere, measured as `PROGRESS-NOTE-AFTER-FINISH = NIL`, with
+the card's slot for it (`cards.lisp:942`) permanently empty. A key already
+present is written through its own cons; an absent one is appended at the tail,
+which mutates the very list the turn holds. `:progress-note` is this head's own
+key and never on the wire (`CallView` has no `note` field), so a call that came
+out of a SNAPSHOT is always the absent case."
+  (let ((cell (loop for c on call by #'cddr when (eq (car c) key) return c)))
+    (if cell
+        (setf (second cell) value)
+        (nconc call (list key value))))
+  call)
+
 (defun ensure-call (turn call-id name target)
-  "A call first seen as ToolStarted has no Proposed row behind it (view.rs on
-CallView.target) — add it rather than dropping the fact it runs."
-  (or (call-view turn call-id)
-      (let ((call (list :call-id call-id :name name :target target
-                        :args-digest "" :state (list :state "running"))))
-        (push call (getf turn :calls))
-        call)))
+  "The call CALL-ID on TURN, moved to RUNNING — created if ToolStarted is the
+first this head heard of it.
+
+This was `(or (call-view …) (push …))`, so a call that already existed as
+`proposed` was returned UNCHANGED and the running card never appeared: measured,
+`CALL-STATE-AFTER-STARTED = \"proposed\"`, and the card drew `○ bash ls ·
+proposed` for the whole run instead of `◐ bash ls · 3.2s`. The reference sets
+`Running`, restarts the clock and clears the note (`app.rs:2356-2400`).
+
+The note is CLEARED rather than kept: the notes a call collects while it is
+proposed are about the DECISION — *\"asking the guard\"* — and `app.rs:2365-2386`
+records what one cost when it rode the card through the whole run. The operator
+read the screen exactly as it was written, reported the session hung requesting
+the oracle, and the diagnosis cost an hour over a guard that had answered in
+milliseconds."
+  (let ((call (call-view turn call-id)))
+    (cond (call
+           (setf (getf call :state) (list :state "running"))
+           (%call-put call :progress-note nil)
+           call)
+          (t
+           ;; ToolStarted carries no target and none is invented (app.rs:2391)
+           (let ((new (list :call-id call-id :name name :target target
+                            :args-digest "" :progress-note nil
+                            :state (list :state "running"))))
+             (push new (getf turn :calls))
+             new)))))
 
 ;;; ------------------------------------------------------ event application ;;;
 
@@ -167,13 +273,45 @@ so a push can introduce it and a head slot need not change.")
   (>= (position *verbosity* '(:terse :normal :loud))
       (position level '(:terse :normal :loud))))
 
+(defparameter +per-turn-events+
+  '(:delta :prompt-progress :tokens-generated
+    :turn-finished :turn-interrupted :turn-failed)
+  "The events whose `turn_id` says which turn they are about.
+
+A head folds one turn at a time, and every one of these arrived carrying an id
+that nothing compared: measured, a `delta` for turn `OTHER` appended to the
+CURRENT turn's text and reported `:dirty`. Both the reference and the view
+require the id to match before folding (`app.rs:2278-2297`, `view.rs:406-419`),
+and a frame from a turn this head is no longer watching is `Filtered`. Benign on
+one turn at a time, load-bearing the moment concurrent subagents publish on one
+hub.")
+
+(defun %foreign-turn-p (session env)
+  "T when ENV names a turn that is not the one this head is folding.
+
+An EMPTY or absent `turn_id` is never foreign: a turn can fail before it ever
+published a `TurnStarted`, and the reference's view says so outright
+(`view.rs:595-606`). Only a non-empty id that disagrees with a non-empty id we
+hold is."
+  (let* ((turn (session-turn session))
+         (id (getf env :turn-id))
+         (mine (and turn (getf turn :turn-id))))
+    (and (stringp id) (plusp (length id))
+         (stringp mine) (plusp (length mine))
+         (not (string= id mine)))))
+
 (defun apply-event (session env)
   "Fold one envelope into state. Returns :dirty when something visible
 changed, :quiet when not — the head loop paints on :dirty and acks on both."
   (let ((name (event-name env))
         (seq (getf env :seq)))
+    ;; the seq is consumed either way: a filtered frame still advances the read
+    ;; mark, or a head that draws little rereads its own output forever
     (setf (session-seq session) seq
           (session-expected-seq session) seq)
+    ;; a stranger's turn is consumed and not folded — before any side effect
+    (when (and (member name +per-turn-events+) (%foreign-turn-p session env))
+      (return-from apply-event :quiet))
     (case name
       ((:turn-started)
        ;; WHEN it started, on our own clock, so the composer's edge can say how
@@ -197,8 +335,15 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
        ;; NOTHING in this head — the same shape as the four frames P2 found, and
        ;; it is why the box's edge could not show `· 188 tok` the way letibot's
        ;; does.
+       ;; TAKEN, NEVER ASSIGNED. `setf` walks the counter BACKWARDS on a
+       ;; reordered or duplicated frame — measured, `50` then `10` left `10` —
+       ;; and both the reference and the view use `max` for exactly that
+       ;; (app.rs:2281, view.rs:419): a token count that can fall is a number
+       ;; nobody can read.
        (let ((turn (session-turn session)))
-         (when turn (setf (getf turn :tokens) (getf env :tokens)))
+         (when turn
+           (setf (getf turn :tokens)
+                 (max (or (getf turn :tokens) 0) (or (getf env :tokens) 0))))
          (if turn :dirty :quiet)))
       ((:delta)
        (let ((turn (session-turn session)))
@@ -242,8 +387,9 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
            (ensure-call turn (getf env :call-id) (getf env :name) ""))
          (if turn :dirty :quiet)))
       ((:tool-progress)
+       ;; written THROUGH the place, never onto a local: see `%call-put`
        (let ((call (call-view (session-turn session) (getf env :call-id))))
-         (when call (setf (getf call :progress-note) (getf env :note)))
+         (when call (%call-put call :progress-note (getf env :note)))
          (if call :dirty :quiet)))
       ((:tool-finished)
        ;; stage what the live card knows, for the row that is about to land:
@@ -251,6 +397,9 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
        (note-call-finished (getf env :call-id) :edit (getf env :edit))
        (let ((call (call-view (session-turn session) (getf env :call-id))))
          (when call
+           ;; the note described a moment that has now passed (app.rs:2445). It
+           ;; could never go stale while `ToolProgress` wrote nowhere; it can now.
+           (%call-put call :progress-note nil)
            (setf (getf call :state)
                  (list :state "finished"
                        :outcome (getf env :outcome)
@@ -267,6 +416,13 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
        (note-turn-cost (getf env :usage))
        (let ((turn (session-turn session)))
          (when turn
+           ;; *"A progress frame is true only while it is happening"*
+           ;; (view.rs:254-256). Nothing cleared it, so a finished turn kept
+           ;; drawing the prefill bar of the prompt it had already answered —
+           ;; measured, `:progress` still held `(:TOTAL 10 :CACHE 2 …)` after
+           ;; `turn_finished`. All three terminal arms clear it, on both sides
+           ;; (app.rs:2565, 2596, 2619; view.rs:572, 588, 608).
+           (setf (getf turn :progress) nil)
            (setf (getf turn :state)
                  (list :state "finished"
                        :finish-reason (getf env :finish-reason)
@@ -275,6 +431,7 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
       ((:turn-interrupted)
        (let ((turn (session-turn session)))
          (when turn
+           (setf (getf turn :progress) nil)   ; terminal, as above
            (setf (getf turn :state)
                  (list :state "interrupted" :reason (getf env :reason)
                        :partial-kept (getf env :partial-kept))))
@@ -282,11 +439,22 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
       ((:turn-failed)
        (let ((turn (session-turn session)))
          (when turn
+           (setf (getf turn :progress) nil)   ; terminal, as above
            (setf (getf turn :state)
                  (list :state "failed" :error (getf env :error)
                        :partial-kept (getf env :partial-kept))))
          :dirty))
       ((:transcript-appended)
+       ;; THE ROWS THIS TURN HAS PUBLISHED, in order. The field was initialised
+       ;; at `turn_started` and written by nothing, so it was dead: `view.rs:246-253`
+       ;; says what it is for — *"a head shows a running turn from `text`/`reasoning`
+       ;; and a finished one from the transcript, and it needs to know which rows
+       ;; are the finished form or it renders the answer twice"* (app.rs:2650-2651).
+       ;; Appended at the tail, because the order is the fact.
+       (let ((turn (session-turn session)))
+         (when (and turn (getf env :item-id))
+           (setf (getf turn :appended)
+                 (append (getf turn :appended) (list (getf env :item-id))))))
        (push-item session (list :item-id (getf env :item-id)
                                 :kind (getf env :kind)
                                 :ledger-head (getf env :ledger-head)
@@ -335,8 +503,18 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
          (setf (session-open-decisions session)
                (remove req (session-open-decisions session)))
          (when req
+           ;; THREE things are read off the open decision before it goes, because
+           ;; the answer event carries only the `req_id` (app.rs:2503-2524,
+           ;; view.rs:494-516): the summary, the call to put the outcome on, and
+           ;; the ORACLE'S ADVICE. The last is the one the answer can never carry
+           ;; — its `basis` is the DECIDER's, and under `/supervise` the decider
+           ;; is usually the operator — so dropping it here is the one loss
+           ;; nothing downstream can recover. `call_id` went the same way, which
+           ;; is why the settled record could not be matched to its call.
            (let ((settled (list :req-id (getf env :req-id)
+                                :call-id (getf req :call-id)
                                 :summary (getf req :summary)
+                                :advice (getf req :advice)
                                 :outcome (getf env :outcome)
                                 :by (getf env :by)
                                 :basis (getf env :basis)
@@ -383,11 +561,21 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
        (setf (session-todos session) (getf env :todos))
        :dirty)
       ((:command-issued)
-       (push (list :head-id (getf env :head-id) :identity (getf env :identity)
-                   :command (getf env :command) :note (getf env :note)
-                   :ts (getf env :ts))
-             (session-notices session))
-       :dirty)
+       ;; TWO HUMANS IN ONE SESSION: seeing who did what is the point, and seeing
+       ;; YOURSELF do what you just did is not — our own routine acceptances are
+       ;; already covered by `Accepted` (app.rs:2815). The Hello's `head_id` was
+       ;; stored and read by nothing, so this head could not tell its own
+       ;; commands from anybody else's and announced both.
+       (let ((mine (session-head-id session)))
+         (cond ((and (stringp mine) (plusp (length mine))
+                     (equal mine (getf env :head-id)))
+                :quiet)
+               (t
+                (push (list :head-id (getf env :head-id) :identity (getf env :identity)
+                            :command (getf env :command) :note (getf env :note)
+                            :ts (getf env :ts))
+                      (session-notices session))
+                (if (verbosity-at-least :loud) :dirty :quiet)))))
       ((:subagent)
        (push env (session-subagents session))
        :dirty)
@@ -408,10 +596,15 @@ others' cursor state. The daemon never leaves two genuinely open; this keeps
 the head honest if it ever does."
   (declare (ignore open-decisions)))
 
-(defun ack-frame (session rendered filtered)
-  "The read mark. seq is the last seq consumed — this session's seq, whether
-or not what arrived was rendered (cursor.rs)."
-  (make-ack (session-seq session) rendered filtered))
+;;; `ack-frame` used to live here: a second spelling of the loop's own ack,
+;;; which read
+;;; `session-seq` — the last seq FOLDED — where `run-loop` reads `last-seq`, the
+;;; last seq READ. `protocol.rs:717-720` allows exactly one way to obtain an ack
+;;; *"so a head cannot ack what it chose to keep"*, and the two disagree on every
+;;; batch that ends in a filtered frame. Nothing called it, so nothing was wrong
+;;; on the wire; a dead wrong spelling beside a live right one is a trap for
+;;; whoever reaches for the one with the better name. Deleted, not fixed: the
+;;; loop's own ack, built from `last-seq`, is the only one.
 
 ;;; ---------------------------------------------------------- rendering ;;;
 

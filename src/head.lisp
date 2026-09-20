@@ -65,6 +65,13 @@ paints to it, and defvar for the same reason as *head*.")
   (reader nil) (input nil) (hack-listener nil) (hack-thread nil)
   (hack-path nil)
   (running t :type boolean)
+  ;; `screen_requested` ids waiting for a frame. The answer is the rows this
+  ;; head DRAWS, and they do not exist until the frame is built, so the id is
+  ;; queued here and the loop answers after the paint (app.rs:2723-2732).
+  (screen-reqs nil :type list)
+  ;; a `new_session` this head asked for: the `Sessions` reply that carries
+  ;; `created` is then ours to act on rather than merely announce (app.rs:1739)
+  (want-new nil :type boolean)
   (last-reconnect 0 :type fixnum)
   (socket-path nil)
   (quit-open nil :type boolean)
@@ -73,6 +80,13 @@ paints to it, and defvar for the same reason as *head*.")
 ;;; ---------------------------------------------------------------- io ;;;
 (defun %send (head frame)
   "Main thread only — the writer is single-threaded by construction."
+  ;; ONE PLACE remembers that this head asked for a session. The daemon answers
+  ;; a `NewSession` with a `Sessions` frame carrying `created`, and whether that
+  ;; id is somewhere to GO or merely something to announce depends on who asked
+  ;; — which only the sender knows. Noted here so `/new` from the composer and
+  ;; `--new TITLE` from the launcher cannot disagree about it.
+  (when (and (%frame-plist-p frame) (string= (frame-name frame) "new_session"))
+    (setf (head-want-new head) t))
   (when (and (head-stream head) (head-connected head))
     (handler-case
         (write-frame (encode-frame frame) (head-stream head))
@@ -132,6 +146,37 @@ to signal a dead socket, and any code that assumes `consp` means `plist` will ca
 `getf` on it and die in the main thread — which is a head that will not start."
   (and (consp x) (keywordp (car x)) (evenp (length x)) (getf x :frame)))
 
+(defun %retire-pending (head text)
+  "Stand down the echo of the queued prompt whose row has landed, by TEXT.
+
+The transcript takes the words over by BEING them, so the exact match is the
+rule and one row retires one entry — two prompts that say the same thing stay
+queued separately until each of their rows lands. One refinement, the
+reference's (`app.rs:4685-4703`): behind a running turn the operator's
+consecutive messages are merged by the engine into ONE, so a landing row may be
+the front PIECE of a coalesced echo; a row that is such a prefix strips itself
+off and the rest stays queued until its own row lands.
+
+The list is newest-first (`commands.lisp` pushes), and the match walks it
+OLDEST-first, because the row that lands first is the prompt that was sent
+first."
+  (let* ((oldest (reverse (head-queued head)))
+         (at (position text oldest :test #'equal))
+         (prefix (concatenate 'string text (string #\newline)))
+         (part (and (null at)
+                    (position-if (lambda (p) (uiop:string-prefix-p prefix p)) oldest))))
+    (cond
+      (at (setf (head-queued head)
+                (reverse (append (subseq oldest 0 at) (subseq oldest (1+ at))))
+                (head-dirty head) t))
+      (part
+       (let ((rest (subseq (nth part oldest) (length prefix))))
+         (setf (head-queued head)
+               (reverse (append (subseq oldest 0 part)
+                                (when (plusp (length rest)) (list rest))
+                                (subseq oldest (1+ part))))
+               (head-dirty head) t))))))
+
 ;;;
 ;;; `%handle-frame` returns a DISPOSITION, which is what the ack counts
 ;;; (driver.rs:31 classifies each frame the same three ways):
@@ -160,12 +205,42 @@ to signal a dead socket, and any code that assumes `consp` means `plist` will ca
            (head-dirty head) t)
      :control)
     ((string= (frame-name frame) "hello")
+     ;; **THE VERSION, BEFORE ANYTHING ELSE.** A daemon that speaks a different
+     ;; protocol refuses with a `Bye` and no `Hello` (server.rs:332-342), so a
+     ;; skew normally arrives the other way round — but a Hello whose version is
+     ;; not ours is a conversation neither side can trust, and nothing checked
+     ;; it. The reference exits with the daemon's sentence on a restored
+     ;; terminal (letibot-tui.rs:658-661) and the launcher refuses to route
+     ;; around it. *"A silent version skew looks like a bug in the other half,
+     ;; forever."*
+     (let ((theirs (getf frame :protocol-version)))
+       (when (and (integerp theirs) (/= theirs +protocol-version+))
+         (setf (head-status-note head)
+               (format nil "protocol ~d, this daemon speaks ~d — leaving"
+                       +protocol-version+ theirs)
+               (head-connected head) nil
+               (head-running head) nil
+               (head-dirty head) t)
+         (return-from %handle-frame :control)))
      ;; A Switch lands as a Hello on the new session, and the money meter is the
      ;; CONVERSATION's — carrying one session's bill onto another's header is
      ;; wrong in the direction that costs money. Cleared, not guessed.
      (reset-spent)
      ;; the wait is over: the cat stands down
      (setf *attach-started-ms* nil)
+     ;; THE HEAD'S OWN session-scoped state goes with the session, the way
+     ;; `ingest-snapshot` drops the session's (app.rs:1902-1934). These four are
+     ;; not in any snapshot and nothing cleared them, so a `/switch` carried the
+     ;; old session's job rows, its peeked scrollback and the echo of prompts
+     ;; queued in a conversation that is no longer on the screen.
+     (let ((moved (and (plusp (length (session-session-id (head-session head))))
+                       (not (equal (session-session-id (head-session head))
+                                   (getf frame :session-id))))))
+       (when moved
+         (setf (head-jobs head) nil
+               (head-peeked head) nil
+               (head-queued head) nil
+               (head-picker-sel head) 0)))
      (ingest-hello (head-session head) frame)
      (setf (head-connected head) t
            (head-status-note head) nil
@@ -183,20 +258,66 @@ to signal a dead socket, and any code that assumes `consp` means `plist` will ca
        ;; the two events a head answers rather than renders
        (case name
          ((:screen-requested)
-          (%send head (make-screen-answer (getf env :req-id)
-                                          (or (head-last-rows head)
-                                              (list "")))))
+          ;; QUEUED, NOT ANSWERED HERE. The answer is the rows this head draws,
+          ;; and they do not exist until the frame is built: answering from
+          ;; `head-last-rows` during the drain sends the PREVIOUS frame, which
+          ;; is a lie about the one frame in the system whose whole point is
+          ;; what the operator is looking at right now. At 30 ms a tick that is
+          ;; usually harmless and at a resize or a pane change it is wrong. The
+          ;; loop answers after the paint, with what it put on the terminal
+          ;; (driver.rs:93-99, app.rs:2723-2732).
+          (push (getf env :req-id) (head-screen-reqs head))
+          (setf (head-dirty head) t))
          ((:secret-requested)
           (setf (head-secret-req head) env
                 (head-secret-buf head) ""
                 (head-dirty head) t))
+         ((:secret-settled)
+          ;; SOMEBODY ELSE ANSWERED. Without this the masked field stayed up
+          ;; over a `sudo` that was already through, and the daemon's own
+          ;; `secret_late` warning — which would have explained it — is a
+          ;; `Warning`, which this head does not draw either (app.rs:2750-2765).
+          ;; Only OUR ask is dismissed: a settlement for another req_id is
+          ;; another question, and closing this one on it would drop the
+          ;; operator's keystrokes on the floor.
+          (when (and (head-secret-req head)
+                     (equal (getf (head-secret-req head) :req-id)
+                            (getf env :req-id)))
+            (setf (head-secret-req head) nil
+                  (head-secret-buf head) ""
+                  (head-status-note head)
+                  (if (getf env :given)
+                      (format nil "password given by ~a" (getf env :by))
+                      (format nil "no password given (~a)" (getf env :by)))
+                  (head-dirty head) t)))
+         ((:job-settled)
+          ;; FOLDED INTO THE ROW THE DAEMON GAVE US, never invented. The jobs
+          ;; pane draws `head-jobs`, which is only ever the `Jobs` reply, so an
+          ;; open pane showed `running` for a job that had exited until `/jobs`
+          ;; was run again — the exact lie event.rs:857-864 says this event
+          ;; exists to prevent. A settlement for a job this head has not been
+          ;; told about is not a row to make up: it arrives with the next
+          ;; `ListJobs` (app.rs:2176-2195).
+          (let ((row (find (getf env :job) (head-jobs head)
+                           :key (lambda (j) (getf j :id)) :test #'equal)))
+            (when row
+              (setf (getf row :state) (getf env :state)
+                    (getf row :running) nil
+                    (getf row :produced) (getf env :produced)
+                    (getf row :elapsed-ms) (getf env :elapsed-ms)
+                    (head-dirty head) t))))
          (t))
-       ;; a queued prompt's row has landed: stop announcing it (app.rs:3018)
-       (when (and (eq name :transcript-appended)
-                  (string= (getf env :kind) "user")
-                  (head-queued head))
-         (pop (head-queued head))
-         (setf (head-dirty head) t))
+       ;; a queued prompt's row has landed: stop announcing it. The ROW's TEXT
+       ;; is the match (app.rs:4744-4751), because the transcript takes the
+       ;; words over by being them — `pop` retired the NEWEST entry for a row
+       ;; that is almost certainly the OLDEST prompt, so with two queued
+       ;; prompts of different lengths the wrong one came off first.
+       (when (eq name :transcript-content)
+         (let ((body (getf env :item)))
+           (when (and (consp body) (equal (getf body :type) "user"))
+             (let ((text (loop for p in (getf body :parts)
+                               when (getf p :text) return (getf p :text))))
+               (when text (%retire-pending head text))))))
        ;; apply-event is the classifier: :dirty means something visible moved.
        (if (eq (apply-event (head-session head) env) :dirty)
            (progn (setf (head-dirty head) t) :rendered)
@@ -205,6 +326,13 @@ to signal a dead socket, and any code that assumes `consp` means `plist` will ca
      ;; a resync means this head lost its place; the count is on /status and in
      ;; the alarm, because "it happened at all" is the operator's business
      (incf *resyncs*)
+     ;; BOTH COUNTS TRAVEL ON THIS FRAME and both were dropped on this path, so
+     ;; `/status`'s `dropped` and `scrubbed` under-reported after a resync —
+     ;; which is precisely when they are worth reading. The reference adds both
+     ;; (app.rs:1843-1845). `ingest-snapshot` takes the max of its own, so this
+     ;; is counted first and cannot be overwritten by a smaller snapshot.
+     (incf (session-dropped (head-session head)) (or (getf frame :dropped) 0))
+     (incf *scrubbed-total* (%scrub-total (getf frame :scrubbed)))
      (ingest-snapshot (head-session head) (getf frame :snapshot))
      (setf (head-full-repaint head) t
            (head-dirty head) t
@@ -228,9 +356,34 @@ to signal a dead socket, and any code that assumes `consp` means `plist` will ca
            (head-dirty head) t)
      :control)
     ((string= (frame-name frame) "sessions")
-     (setf (session-sessions (head-session head)) (getf frame :sessions)
+     (setf (session-sessions (head-session head))
+           ;; subagents are not sessions a picker lists, on this frame as on the
+           ;; Hello (app.rs:1732-1735)
+           (remove-if (lambda (b) (getf b :parent-session-id)) (getf frame :sessions))
            (head-picker-sel head) 0
            (head-dirty head) t)
+     ;; `current` is the daemon's word for where this connection IS. It was
+     ;; dropped, along with `created`.
+     (let ((current (getf frame :current))
+           (created (getf frame :created)))
+       (when (and (stringp current) (plusp (length current)))
+         (setf (session-session-id (head-session head)) current))
+       (cond
+         ;; A SESSION WAS MADE BECAUSE THIS HEAD ASKED. Going there is what was
+         ;; meant: `/new` that leaves you where you were is a command whose
+         ;; effect is invisible, and that is what `/new` and `--new TITLE` did —
+         ;; they created a session and left the operator in the old one
+         ;; (app.rs:1736-1744).
+         ((and created (head-want-new head))
+          (setf (head-want-new head) nil)
+          (%send head (make-switch created 0)))
+         ;; somebody else's: said, not followed
+         (created (setf (head-status-note head)
+                        (format nil "session ~a created" created)))
+         ;; **Not** an open picker. This frame answers three different questions
+         ;; — a list, a rename, and a switch to the session you are in — and only
+         ;; the first wants one; the command that asks for a list opens it itself.
+         (t nil)))
      :control)
     ((string= (frame-name frame) "jobs")
      (setf (head-jobs head) (getf frame :jobs)
@@ -260,7 +413,15 @@ to signal a dead socket, and any code that assumes `consp` means `plist` will ca
      (reset-pane-scroll)
      :control)
     ((string= (frame-name frame) "bye")
+     ;; **A BYE IS FINAL.** The daemon writes one and returns; the reference's
+     ;; pump stops on it and the head leaves (client.rs:548, app.rs:1886-1889).
+     ;; This head only dropped `connected`, so `%try-reconnect` re-attached two
+     ;; seconds later, forever — a refusal the daemon meant as the end of the
+     ;; conversation became a loop, and a version skew became unreadable AND
+     ;; unescapable: `bye: protocol version 21, this daemon speaks 22` flashing
+     ;; under a head that never attaches and never exits.
      (setf (head-connected head) nil
+           (head-running head) nil
            (head-status-note head) (format nil "bye: ~a" (getf frame :reason))
            (head-dirty head) t)
      :control)
@@ -282,9 +443,14 @@ to signal a dead socket, and any code that assumes `consp` means `plist` will ca
 
 (defun %try-reconnect (head)
   "Detach is not abort; a dead socket is retried with the seq we had, which
-is a resume — the gap arrives as events, or a Resync does (§13.2)."
+is a resume — the gap arrives as events, or a Resync does (§13.2).
+
+A head that is LEAVING does not reconnect. The loop's own `head-running` check
+comes at the top of the next pass, which is one attach too late: a `Bye` and a
+`/quit` both arrive mid-pass, and re-attaching to a daemon that just said
+goodbye is how a final refusal became a two-second loop."
   (let ((now (get-universal-time)))
-    (when (> now (+ (head-last-reconnect head) 2))
+    (when (and (head-running head) (> now (+ (head-last-reconnect head) 2)))
       (setf (head-last-reconnect head) now)
       (handler-case
           (progn
@@ -328,6 +494,22 @@ is a resume — the gap arrives as events, or a Resync does (§13.2)."
 ;;; step 1, never the last one drawn. That distinction is the reason a head may
 ;;; filter freely: it acknowledges what it consumed, so nothing is reread and
 ;;; nothing is lost, and a head that renders almost nothing still advances.
+
+(defun %answer-screen-requests (head)
+  "Answer every queued `screen_requested` with the rows this head just PAINTED.
+
+*\"A tool asked what the operator is looking at; this is the only place in the
+system that knows, because it is the place that put the bytes on the terminal\"*
+(driver.rs:93-99). Called after the paint, never during the drain: the arm that
+answered from `head-last-rows` while the frames were still arriving sent the
+PREVIOUS frame — one tick stale at rest, and simply the wrong screen across a
+resize or a pane change, which is the one thing this frame exists to report.
+Oldest request first."
+  (when (head-screen-reqs head)
+    (let ((rows (or (head-last-rows head) (list ""))))
+      (dolist (req (nreverse (head-screen-reqs head)))
+        (%send head (make-screen-answer req rows)))
+      (setf (head-screen-reqs head) nil))))
 
 (defun run-loop (head)
   (loop while (head-running head)
@@ -379,6 +561,8 @@ is a resume — the gap arrives as events, or a Resync does (§13.2)."
              (if (head-dirty head)
                  (%render-and-paint head)
                  (sleep 0.03))
+             ;; 2b. answer every screen request with the frame just painted
+             (%answer-screen-requests head)
              ;; 3. ack, and only when a frame was actually read this pass: an
              ;; idle tick has no seq to report and must not invent one
              (when (plusp last-seq)

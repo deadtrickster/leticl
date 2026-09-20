@@ -1,4 +1,4 @@
-;;;; protocol.lisp — the head frame vocabulary, protocol version 18.
+;;;; protocol.lisp — the head frame vocabulary, protocol version 21.
 ;;;; Source of truth: crates/sessionlog/src/protocol.rs. Frames are plists in
 ;;;; the image (PLAN.md §7, D4); the constructors below are the only place
 ;;;; that knows what a frame looks like on the wire.
@@ -133,10 +133,23 @@ them and answers as it did before (protocol.rs on `pattern` and `note`)."
           (when pattern (list :pattern pattern))
           (when note (list :note note))))
 
+(defun question-answer (&key option note free)
+  "A `QuestionAnswer` payload (question.rs:55-65): a choice, a note, a typed
+reply, or a choice and a note together.
+
+Only `{\"option\":N}` was ever built, and `free` is the half the operator's own
+requirement names — *\"opencode style free user reply input\"* (question.rs:10-20)
+— so a typed answer to a question was unreachable. An empty payload is NIL rather
+than `{}`: there is no variant for \"not now\", because deferring is not sending."
+  (append (when option (list :option option))
+          (when (and note (plusp (length note))) (list :note note))
+          (when (and free (plusp (length free))) (list :free free))))
+
 (defun make-answer-question (req-id answer)
   "ANSWER is the QuestionAnswer payload: a choice, a note, a typed reply, or a
-choice and a note together. There is no variant for \"not now\" — deferring is
-not sending (protocol.rs on ClientFrame::AnswerQuestion)."
+choice and a note together — build it with `question-answer`, which is the only
+place that knows the three field names. There is no variant for \"not now\" —
+deferring is not sending (protocol.rs on ClientFrame::AnswerQuestion)."
   (list :frame "answer_question"
         :client-request-id (next-request-id)
         :req-id req-id
@@ -158,10 +171,30 @@ refused us with `bye` until this head learned to say 21 too."
   (list :frame "list_jobs"))
 
 (defun make-new-session (title workspace)
+  "A fresh session under TITLE, seated at WORKSPACE.
+
+**An empty workspace is not a default, it is a wrong tree.** `protocol.rs:599-607`
+records what it cost: the daemon seats the new session's read-only tools at its
+OWN working directory, *\"and every path in it resolved, so the only symptom was
+answers about the wrong tree\"*. Every `/new` and every `--new TITLE` this head
+sent carried `\"\"`. The reference sends its own cwd (`driver.rs:147-150`), and so
+does this — from here, so no caller can forget: a caller that has a directory to
+name passes it and wins."
   (list :frame "new_session"
         :client-request-id (next-request-id)
         :title (or title "")
-        :workspace (or workspace "")))
+        :workspace (if (and workspace (plusp (length workspace)))
+                       workspace
+                       (%cwd-string))))
+
+(defun %cwd-string ()
+  "This head's working directory, the way a path is written rather than the way
+a pathname prints: no trailing slash, because that is what the daemon stores and
+what a session brief shows back."
+  (let ((s (uiop:native-namestring (uiop:getcwd))))
+    (if (and (> (length s) 1) (char= (char s (1- (length s))) #\/))
+        (subseq s 0 (1- (length s)))
+        s)))
 
 (defun make-resume-session (session-id)
   (list :frame "resume_session"
