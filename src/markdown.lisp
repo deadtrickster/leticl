@@ -22,6 +22,15 @@
 ;;;;
 ;;;; A LINE is a list of segments; a segment is (string . style-spec) where the
 ;;;; spec is a plist for style-index. NIL is a blank line. The renderer interns.
+;;;;
+;;;; Optimisation policy (measured, 2026-09-20): `inline-spans` — the
+;;;; per-character scan — is typed; the lexer's classifiers look at one character
+;;;; before they copy a line. Everything else here runs once per BLOCK and is left
+;;;; at the default policy on purpose: under (speed 3) `render-table`,
+;;;; `fit-columns`, `markdown-blocks` and `lang-for-fence` raise notes about
+;;;; generic arithmetic and `nth` on short lists, and a 3 KB text renders in
+;;;; 0.34 ms with 315 KB consed — the cost is the strings the design makes, not
+;;;; the arithmetic between them.
 
 (in-package #:leticl)
 
@@ -61,6 +70,7 @@ cyan and NOT bold, which is what the reference draws."
           (t inner))))
 
 (defun %delim-at-p (text i delim)
+  (declare (type simple-string text delim) (type fixnum i))
   (let ((n (length delim)))
     (and (<= (+ i n) (length text))
          (string= delim text :start2 i :end2 (+ i n)))))
@@ -69,10 +79,11 @@ cyan and NOT bold, which is what the reference draws."
   "The index of the closing DELIM at or after START, or NIL. A closer must not
 follow whitespace (`a * b` is arithmetic) and must close something (`**` alone is
 two asterisks)."
-  (loop for j from start below (length text)
+  (declare (type simple-string text delim) (type fixnum start))
+  (loop for j of-type fixnum from start below (length text)
         when (and (%delim-at-p text j delim)
                   (> j start)
-                  (not (member (char text (1- j)) '(#\space #\tab))))
+                  (not (member (schar text (1- j)) '(#\space #\tab))))
           return j))
 
 (defun %word-char-p (c)
@@ -98,11 +109,18 @@ space inside the cyan, and a `string-trim` here had eaten it."
 half the terminals in use do not carry it), [text](url) as its text (this head has
 no pointer, so a destination is noise), and a backslash escapes the character
 after it. An underscore only opens or closes at a word boundary, so `snake_case`
-stays what it is."
-  (let ((segs nil)
-        (buf (make-string-output-stream))
-        (n (length text))
-        (i 0))
+stays what it is.
+
+TEXT is coerced to a `simple-string` once, at the entry, and the scan is typed
+on it: this is markdown's per-character loop, and under (speed 3) every `char`
+and every index compare in it raised a note. Default safety — the coercion is
+the check, and the text is wire-shaped (an assistant row's prose)."
+  (let* ((text (if (simple-string-p text) text (coerce text 'simple-string)))
+         (segs nil)
+         (buf (make-string-output-stream))
+         (n (length text))
+         (i 0))
+    (declare (type simple-string text) (type fixnum n i))
     (labels ((flush ()
                (let ((s (get-output-stream-string buf)))
                  (when (plusp (length s))
@@ -239,11 +257,23 @@ in a terminal with no syntax colour."
 (defun %blank-p (line)
   (zerop (length (string-trim '(#\space #\tab) line))))
 
+(defun %first-non-space (line)
+  "The index of LINE's first character that is not a space, or its length.
+
+The lexer's guard: every classifier below used to begin with a `string-left-trim`
+or a `subseq`, so every line of every paragraph was copied five times to learn
+that it is prose. Each classifier now looks at ONE character first and copies
+only when that character says it might match."
+  (declare (type string line))
+  (or (position #\space line :test-not #'char=) (length line)))
+
 (defun %fence-open (line)
   "The info string when LINE opens a fence, else NIL."
-  (let ((t0 (string-left-trim " " line)))
-    (when (and (>= (length t0) 3) (string= (subseq t0 0 3) "```"))
-      (string-trim " `" (subseq t0 3)))))
+  (let ((i (%first-non-space line)))
+    (when (and (< i (length line)) (char= (char line i) #\`))
+      (let ((t0 (subseq line i)))
+        (when (and (>= (length t0) 3) (string= (subseq t0 0 3) "```"))
+          (string-trim " `" (subseq t0 3)))))))
 
 (defun %fence-close-p (line)
   (let ((t0 (string-trim " " line)))
@@ -258,15 +288,21 @@ in a terminal with no syntax colour."
 
 (defun %rule-p (line)
   "`---`, `***`, `___`, with or without spaces between."
-  (let ((t0 (remove #\space (string-trim " " line))))
-    (and (>= (length t0) 3)
-         (member (char t0 0) '(#\- #\* #\_))
-         (every (lambda (c) (char= c (char t0 0))) t0))))
+  (let ((i (%first-non-space line)))
+    (and (< i (length line))
+         (member (char line i) '(#\- #\* #\_))
+         (let ((t0 (remove #\space (string-trim " " line))))
+           (and (>= (length t0) 3)
+                (every (lambda (c) (char= c (char t0 0))) t0))))))
 
 (defun %list-item-of (line)
   "(:ordered BOOL :number N :indent N :text S) when LINE starts a list item."
   (let* ((indent (or (position-if (lambda (c) (char/= c #\space)) line) 0))
-         (rest (subseq line indent)))
+         (c0 (and (< indent (length line)) (char line indent)))
+         ;; the copy only when the first character can start an item
+         (rest (if (and c0 (or (member c0 '(#\- #\* #\+)) (digit-char-p c0)))
+                   (subseq line indent)
+                   "")))
     (cond
       ((and (>= (length rest) 2)
             (member (char rest 0) '(#\- #\* #\+))
@@ -283,9 +319,9 @@ in a terminal with no syntax colour."
 
 (defun %quote-of (line)
   "The text after the `>` when LINE is a quote line."
-  (let ((t0 (string-left-trim " " line)))
-    (when (and (plusp (length t0)) (char= (char t0 0) #\>))
-      (let ((body (subseq t0 1)))
+  (let ((i (%first-non-space line)))
+    (when (and (< i (length line)) (char= (char line i) #\>))
+      (let ((body (subseq line (1+ i))))
         (if (and (plusp (length body)) (char= (char body 0) #\space))
             (subseq body 1)
             body)))))
@@ -430,7 +466,9 @@ table's SYNTAX, never a line of it."
 ;;; ------------------------------------------------------------ rendering ;;;
 
 (defun %segs-width (segs)
-  (reduce #'+ (mapcar (lambda (s) (string-width (car s))) segs) :initial-value 0))
+  (let ((w 0))
+    (declare (type fixnum w))
+    (dolist (s segs w) (incf w (string-width (car s))))))
 
 (defun %truncate-segs (segs cols)
   "SEGS cut to COLS columns, style boundaries kept."

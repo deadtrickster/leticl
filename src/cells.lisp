@@ -144,20 +144,31 @@ resize; carrying cells over buys nothing a full paint does not."
   (fill (screen-cells screen) (%cell #\space style))
   screen)
 
+(declaim (inline %index))
 (defun %index (screen row col)
-  (+ (* row (screen-cols screen)) col))
+  (declare (type screen screen) (type fixnum row col))
+  (the fixnum (+ (the fixnum (* row (screen-cols screen))) col)))
 
 (defun screen-put (screen row col ch &optional (style 0))
   "One cell, bounds-checked. Out-of-range writes are dropped, not errors: a
-render function that overshoots by one column should not take the head down."
+render function that overshoots by one column should not take the head down.
+
+Typed, at DEFAULT safety, deliberately: this is a contract function
+(HACKING.md) that an eval off the socket may call with anything, and the checks
+it keeps — a struct tag, two fixnum tags, a character tag and one bounds check on
+the vector — are each one instruction. What the declarations buy is the fixnum
+arithmetic and the direct `simple-vector` store. Measured: 1.1M calls in 300
+frames, 1.9% of the frame before, under the noise floor after."
+  (declare (type screen screen) (type fixnum row col style) (type character ch))
   (when (and (<= 0 row (1- (screen-rows screen)))
              (<= 0 col (1- (screen-cols screen))))
-    (setf (aref (screen-cells screen) (%index screen row col))
+    (setf (svref (screen-cells screen) (%index screen row col))
           (%cell ch style)))
   screen)
 
 (defun screen-cell (screen row col)
-  (aref (screen-cells screen) (%index screen row col)))
+  (declare (type screen screen) (type fixnum row col))
+  (svref (screen-cells screen) (%index screen row col)))
 
 (defun screen-put-string (screen row col string &optional (style 0))
   "Write STRING at row,col; returns the column after the last written cell.
@@ -177,87 +188,147 @@ stitched into six columns. The exact glyph needs a cell that holds a STRING, and
 that is a struct change (a restart); it is recorded in TODO.md rather than
 half-done here.
 
-A wide cluster that does not fit degrades to a space rather than wrapping."
+A wide cluster that does not fit degrades to a space rather than wrapping.
+
+**The plain case is placed without clusters.** When every character of STRING is
+one plain column (`plain-columns-p`: no escape, nothing wide, nothing zero-width)
+no character can join, pair or extend its neighbour, so the cluster walk reduces
+to one cell per character — and that is what is done, with no consing. Measured:
+463 calls a frame, 20% of the frame through `clusters`; the fast path is what the
+prose, the borders and the box glyphs all take. Anything else still walks
+clusters, so the two paths agree by construction of `plain-columns-p`."
+  (declare (type screen screen) (type fixnum row col style) (type (or null string) string))
   (let ((c col) (cols (screen-cols screen)))
-    (dolist (cl (clusters string))
-      (let ((w (cluster-cols cl))
-            (text (cluster-text cl)))
-        (cond
-          ((or (zerop w) (zerop (length text)))
-           ;; an escape-only cell, or a zero-width cluster with nothing to draw
-           nil)
-          ((= w 2)
-           (if (< (1+ c) cols)
-               (progn (screen-put screen row c (char text 0) style)
-                      (screen-put screen row (1+ c) +wide-cont+ style)
-                      (incf c 2))
-               (progn (screen-put screen row c #\space style)
-                      (incf c))))
-          (t (screen-put screen row c (char text 0) style)
-             (incf c)))))
+    (declare (type fixnum c cols))
+    (if (plain-columns-p string)
+        (let ((s (%simple string)))
+          (declare (type simple-string s))
+          (loop for i of-type fixnum from 0 below (length s)
+                do (screen-put screen row c (schar s i) style)
+                   (incf c)))
+        (dolist (cl (clusters string))
+          (let ((w (cluster-cols cl))
+                (text (cluster-text cl)))
+            (cond
+              ((or (zerop w) (zerop (length text)))
+               ;; an escape-only cell, or a zero-width cluster with nothing to draw
+               nil)
+              ((= w 2)
+               (if (< (1+ c) cols)
+                   (progn (screen-put screen row c (char text 0) style)
+                          (screen-put screen row (1+ c) +wide-cont+ style)
+                          (incf c 2))
+                   (progn (screen-put screen row c #\space style)
+                          (incf c))))
+              (t (screen-put screen row c (char text 0) style)
+                 (incf c))))))
     c))
 
 ;;; ---------------------------------------------------------------- paint ;;;
 
+(declaim (inline %cell=))
 (defun %cell= (a b)
+  (declare (type cell a b))
   (and (char= (cell-ch a) (cell-ch b))
        (= (cell-style a) (cell-style b))))
+
+(defun %write-decimal (n out)
+  "N, a non-negative fixnum, in decimal on OUT — what `(format out \"~D\" n)`
+does, without going through the format interpreter. The painter emits one
+cursor move per changed run: measured, up to a few hundred a frame, and `format`
+was 2.6% of the paint for two numbers per move."
+  (declare (type fixnum n) (type stream out))
+  (if (< n 10)
+      (write-char (code-char (+ 48 n)) out)
+      (progn (%write-decimal (floor n 10) out)
+             (write-char (code-char (+ 48 (mod n 10))) out))))
+
+(defun %move-to (out row col)
+  "`ESC[row;colH`, 1-based, from 0-based ROW and COL."
+  (declare (type fixnum row col) (type stream out))
+  (write-char +esc+ out)
+  (write-char #\[ out)
+  (%write-decimal (1+ row) out)
+  (write-char #\; out)
+  (%write-decimal (1+ col) out)
+  (write-char #\H out))
 
 (defun paint-diff (prev cur out &key (sync t))
   "Emit the escape sequence that turns the terminal showing PREV into the
 terminal showing CUR. PREV nil paints everything. Both screens must have the
 same shape. Runs of changed cells are written behind one absolute cursor move;
-styles are tracked across the whole frame so SGR is emitted only on change."
+styles are tracked across the whole frame so SGR is emitted only on change.
+
+Typed, and at DEFAULT safety, on purpose. The loop reads a `cell` out of each
+screen's `simple-vector` and the declaration makes every accessor a direct load —
+that is where the time was (measured: 18.7% of the frame, of which the two
+`format`s and the untyped struct reads were most). What (safety 0) would remove
+is one struct-tag test per cell, and the vector holds whatever a hack put there:
+`(fill (screen-cells s) nil)` off the eval socket is one line, and with the check
+gone that is a memory fault in the main thread — the exact failure this head has
+already died of once. The check stays, and it was measured to cost nothing: 200
+paints of a 210×63 frame with every row changed took 15 ms at default safety and
+14–16 ms with (safety 0) — the same number, inside the run-to-run noise."
+  (declare (type screen cur) (type (or null screen) prev) (type stream out))
   (when prev
     (assert (and (= (screen-cols prev) (screen-cols cur))
                  (= (screen-rows prev) (screen-rows cur)))
             (prev cur) "paint-diff screens must have the same shape"))
-  (let ((cols (screen-cols cur))
-        (rows (screen-rows cur))
-        ;; Every paint ends with a reset, so every paint begins at default
-        ;; style — SGR for style 0 is never needed mid-frame.
-        (last-style 0))
+  (let* ((cols (screen-cols cur))
+         (rows (screen-rows cur))
+         (cells (screen-cells cur))
+         ;; paint-full has just cleared: a default cell needs no writing, so
+         ;; that is the sentinel — ONE of them, not one per cell
+         (blank (%cell #\space 0))
+         (pcells (if prev (screen-cells prev) nil))
+         ;; Every paint ends with a reset, so every paint begins at default
+         ;; style — SGR for style 0 is never needed mid-frame.
+         (last-style 0))
+    (declare (type fixnum cols rows last-style)
+             (type simple-vector cells)
+             (type (or null simple-vector) pcells))
     (when sync (sync-begin out))
     (dotimes (r rows)
-      (let ((c 0))
+      (declare (type fixnum r))
+      (let ((c 0)
+            (base (* r cols)))
+        (declare (type fixnum c base))
         (loop while (< c cols)
-              for i = (+ (* r cols) c)
-              for cell = (aref (screen-cells cur) i)
-              for pcell = (if prev
-                              (aref (screen-cells prev) i)
-                              ;; paint-full has just cleared: a default cell
-                              ;; needs no writing, so that is the sentinel
-                              (%cell #\space 0))
-              do (if (%cell= pcell cell)
-                     (incf c)
-                     (progn
-                       ;; start of a changed run: move there, write until it ends
-                       (format out "~C[~D;~DH" +esc+ (1+ r) (1+ c))
-                       (loop while (< c cols)
-                             for j = (+ (* r cols) c)
-                             for cc = (aref (screen-cells cur) j)
-                             for pp = (if prev
-                                          (aref (screen-cells prev) j)
-                                          (%cell #\space 0))
-                             while (not (%cell= pp cc))
-                             do (cond
-                                  ((char= (cell-ch cc) +wide-cont+)
-                                   ;; covered by the wide char before it
-                                   (incf c))
-                                  (t
-                                   (when (/= (cell-style cc) last-style)
-                                     (write-string (%sgr (cell-style cc)) out)
-                                     (setf last-style (cell-style cc)))
-                                   (if (and (= 2 (char-width (cell-ch cc)))
-                                            (= c (1- cols)))
-                                       ;; a wide char on the last column would
-                                       ;; wrap; the buffer never holds one there
-                                       ;; (screen-put-string degrades it), but a
-                                       ;; direct screen-put could — guard anyway
-                                       (progn (write-char #\space out) (incf c))
-                                       (progn (write-char (cell-ch cc) out)
-                                              (incf c (max 1 (char-width (cell-ch cc))))))))))))))
-    (write-string (format nil "~C[0m" +esc+) out)
+              do (let* ((i (+ base c))
+                        (cell (svref cells i))
+                        (pcell (if pcells (svref pcells i) blank)))
+                   (declare (type fixnum i) (type cell cell pcell))
+                   (if (%cell= pcell cell)
+                       (incf c)
+                       (progn
+                         ;; start of a changed run: move there, write until it ends
+                         (%move-to out r c)
+                         (loop while (< c cols)
+                               do (let* ((j (+ base c))
+                                         (cc (svref cells j))
+                                         (pp (if pcells (svref pcells j) blank)))
+                                    (declare (type fixnum j) (type cell cc pp))
+                                    (when (%cell= pp cc) (return))
+                                    (let ((ch (cell-ch cc)))
+                                      (cond
+                                        ((char= ch +wide-cont+)
+                                         ;; covered by the wide char before it
+                                         (incf c))
+                                        (t
+                                         (when (/= (cell-style cc) last-style)
+                                           (write-string (%sgr (cell-style cc)) out)
+                                           (setf last-style (cell-style cc)))
+                                         (let ((w (char-width ch)))
+                                           (if (and (= 2 w) (= c (1- cols)))
+                                               ;; a wide char on the last column would
+                                               ;; wrap; the buffer never holds one there
+                                               ;; (screen-put-string degrades it), but a
+                                               ;; direct screen-put could — guard anyway
+                                               (progn (write-char #\space out) (incf c))
+                                               (progn (write-char ch out)
+                                                      (incf c (max 1 w))))))))))))))))
+    (write-char +esc+ out)
+    (write-string "[0m" out)
     (when sync (sync-end out))
     (force-output out)))
 
@@ -281,18 +352,32 @@ question."
 (defun screen-rows-ansi (screen)
   "One string per row, escape codes included — the answer to ScreenRequested
 and the body of /cells: what this head actually drew, at its real size, not a
-description of it (protocol.rs on ClientFrame::Screen)."
-  (let ((out nil))
+description of it (protocol.rs on ClientFrame::Screen).
+
+Built every frame (`%render-and-paint` keeps the last drawn rows), so it is
+typed like the painter and reads the cell vector directly. Default safety, for
+the painter's reason: the vector is a `simple-vector` of whatever was put there."
+  (declare (type screen screen))
+  (let* ((out nil)
+         (cols (screen-cols screen))
+         (cells (screen-cells screen)))
+    (declare (type fixnum cols) (type simple-vector cells))
     (dotimes (r (screen-rows screen))
+      (declare (type fixnum r))
       (with-output-to-string (s)
-        (let ((last-style -1))
-          (dotimes (c (screen-cols screen))
-            (let ((cell (screen-cell screen r c)))
+        (let ((last-style -1)
+              (base (* r cols)))
+          (declare (type fixnum last-style base))
+          (dotimes (c cols)
+            (declare (type fixnum c))
+            (let ((cell (svref cells (+ base c))))
+              (declare (type cell cell))
               (unless (char= (cell-ch cell) +wide-cont+)
                 (when (/= (cell-style cell) last-style)
                   (write-string (%sgr (cell-style cell)) s)
                   (setf last-style (cell-style cell)))
                 (write-char (cell-ch cell) s))))
-          (write-string (format nil "~C[0m" +esc+) s))
+          (write-char +esc+ s)
+          (write-string "[0m" s))
         (push (get-output-stream-string s) out)))
     (nreverse out)))

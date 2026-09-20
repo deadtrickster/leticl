@@ -8,21 +8,37 @@
 ;;;;
 ;;;; Everything here is a plain function so a model can redefine any layer of
 ;;;; it live (PLAN.md §1).
+;;;;
+;;;; Optimisation policy (measured, 2026-09-20): the per-word loop in
+;;;; `wrap-segments` and its helpers are typed; `%render`, `%viewport-lines` and
+;;;; `%place-lines` run ONCE a frame over a few dozen lines and are left at the
+;;;; default policy on purpose — under (speed 3) they raise notes about generic
+;;;; arithmetic on per-frame scalars (`head-scroll`, list lengths), and the whole
+;;;; of `%render` outside the leaves measures under 0.1 ms a frame.
 
 (in-package #:leticl)
 
 ;;; ------------------------------------------------------------- wrapping ;;;
 (defun %split-words (text)
   "Word chunks with their trailing spaces attached, so re-joining preserves
-spacing exactly."
-  (let ((out nil)
-        (buf (make-string-output-stream)))
-    (loop for ch across text
-          do (progn (write-char ch buf)
-                    (when (char= ch #\space)
-                      (push (get-output-stream-string buf) out))))
-    (push (get-output-stream-string buf) out)
-    (nreverse (remove "" out :test #'string=))))
+spacing exactly.
+
+By index and `subseq`, not through a string stream: measured, the stream version
+was 6% of the frame (`character-out` + `get-output-stream-string` per word, then a
+`remove` pass for the empty chunk) and this is one allocation per word."
+  (declare (type (or null string) text))
+  (let* ((s (%simple text))                ; NIL is no words, as `across nil` was
+         (n (length s))
+         (out nil)
+         (start 0))
+    (declare (type simple-string s) (type fixnum n start))
+    (loop for i of-type fixnum from 0 below n
+          do (when (char= (schar s i) #\space)
+               (push (subseq s start (1+ i)) out)
+               (setf start (1+ i))))
+    (when (< start n)
+      (push (subseq s start n) out))
+    (nreverse out)))
 
 (defun %hard-break (word cols)
   "One over-wide word to cols-sized chunks — a 400-column URL wraps, it does
@@ -31,6 +47,16 @@ not overflow (width.rs's third mistake)."
     (loop for i from 0 below (length word) by (max 1 cols)
           do (push (subseq word i (min (length word) (+ i (max 1 cols)))) out))
     (nreverse out)))
+
+(defun %visible-end (word)
+  "The index after the last non-space character of WORD: where its VISIBLE part
+ends. What `(length (string-right-trim \" \" word))` says, without the copy."
+  (declare (type simple-string word))   ; a `%split-words` chunk: a `subseq`
+  (let ((e (length word)))
+    (declare (type fixnum e))
+    (loop while (and (> e 0) (char= (schar word (1- e)) #\space))
+          do (decf e))
+    e))
 
 (defun wrap-segments (segs cols)
   "Segments to lines of at most COLS columns. Style carries onto continuation
@@ -42,24 +68,39 @@ row's slice may be one column over COLS *in trailing whitespace only*). It is th
 TRIMMED off the row: it is invisible until something copies it, and a painter that
 erases to the end of the row paints the background one column further than the
 text goes. Without this rule a paragraph whose words fit exactly wrapped one word
-early, and a row's last word could carry a space past the edge."
+early, and a row's last word could carry a space past the edge.
+
+The visible width of a word is measured IN PLACE (`string-width … :end`) rather
+than on a trimmed copy: every word used to be copied once and measured twice, and
+the trimmed copy is only needed when the word is too wide for a row. Measured on
+the (d) corpus — a 1 KB paragraph wrapped 2000 times — 423 ms before the width
+rewrite, 37 ms after it, 19 ms with this and the typed word loop.
+
+COLS is declared a fixnum at default safety: every caller passes a column count,
+and the declaration is what lets the per-word comparisons compile to fixnum
+compares instead of generic ones (the note speed 3 raised here)."
+  (declare (type fixnum cols))
   (if (<= cols 0)
       (list segs)
       (let ((lines nil)
             (cur nil)
             (w 0))
+        (declare (type fixnum w))
         (flet ((break-line ()
                  (when cur (push (%trim-line-end (nreverse cur)) lines))
                  (setf cur nil w 0)))
           (dolist (seg segs)
             (dolist (word (%split-words (car seg)))
-              (let* ((visible (string-right-trim " " word))
-                     (vw (string-width visible))
-                     (ww (string-width word)))
+              (let* ((ww (string-width word))
+                     (ve (%visible-end word))
+                     ;; a word is its visible part plus trailing spaces, each
+                     ;; one column, so the visible width is the difference
+                     (vw (if (= ve (length word)) ww (string-width word :end ve))))
+                (declare (type fixnum ww ve vw))
                 (cond
                   ((> vw cols)
                    (break-line)
-                   (let ((chunks (%hard-break visible cols)))
+                   (let ((chunks (%hard-break (subseq word 0 ve) cols)))
                      (dolist (c chunks)
                        (push (cons c (cdr seg)) cur))
                      (break-line)))
@@ -90,6 +131,18 @@ early, and a row's last word could carry a space past the edge."
 (defun segs-text-of (line)
   "A segment-line's text, for asking whether it renders as nothing."
   (if line (format nil "~{~a~}" (mapcar #'car line)) ""))
+
+(defun %line-blank-p (line)
+  "Does LINE render as nothing — every segment's text spaces or empty? The
+question `%viewport-lines` asks of every line of every row it places, each
+frame; it used to be asked through `format nil` and `string-trim`, which is two
+copies per line to learn one bit."
+  (every (lambda (seg)
+           (let ((text (car seg)))
+             ;; a non-string prints as its name under `~a`, which is not blank
+             (and (stringp text)
+                  (every (lambda (ch) (char= ch #\space)) text))))
+         line))
 
 (defun item-row-class (item)
   "Which KIND of row this is, for the one question the layout asks of its
@@ -144,8 +197,7 @@ terminal: the newest content sat at row 1 and the oldest at row 57.)"
             do (let* ((item (aref (session-items s) i))
                       (il (item-lines item cols (head-prefs head)))
                       (class (item-row-class item)))
-                 (unless (every (lambda (l) (zerop (length (string-trim " " (segs-text-of l)))))
-                                il)
+                 (unless (every #'%line-blank-p il)
                    (when (and hist class-above
                               (not (and (eq class :activity) (eq class-above :activity))))
                      (setf hist (cons nil hist)))
