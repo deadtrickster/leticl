@@ -198,7 +198,18 @@ than the bad line. Returns `(values prefs notes)`."
         (notes nil))
     (setf (prefs-path p) path)
     (when (and path (uiop:file-exists-p path))
-      (dolist (line (%parse-prefs (uiop:read-file-string path)))
+      ;; **A file that exists and cannot be READ is a note, not a refusal.** The
+      ;; parser already treats a bad LINE that way, but the read itself was
+      ;; unguarded: a `head.toml` owned by another user, or one holding bytes
+      ;; that are not UTF-8, signalled out of `load-prefs-into` and the head
+      ;; never started — the operator's own preferences file locking them out of
+      ;; the tool. Same rule as the bad line: name it, keep the defaults.
+      (dolist (line (%parse-prefs
+                     (handler-case (uiop:read-file-string path)
+                       (error (e)
+                         (push (format nil "head.toml: cannot be read (~a) — using the defaults" e)
+                               notes)
+                         ""))))
         (when (eq (first line) :pair)
           (destructuring-bind (key value) (rest line)
             (cond

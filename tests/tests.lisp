@@ -3449,3 +3449,21 @@ restores from its panic hook (term.rs:191-197)."
             seq))))
   ;; twice in a row is a no-op, because it runs where things are already wrong
   (is (eq t (restore-terminal (make-string-output-stream))) "idempotent"))
+
+(def-test an-unreadable-prefs-file-is-a-note-not-a-refusal (:suite leticl)
+  "The parser already treated a bad LINE that way, but the READ was unguarded: a
+`head.toml` owned by another user, or holding bytes that are not UTF-8, signalled
+out of `load-prefs-into` and the head never started — the operator's own
+preferences file locking them out of the tool."
+  (let* ((dir "/tmp/claude-1000/-home-dead-Projects-leticl/3603a50c-c42f-4b18-87ce-b917064534c9/scratchpad/")
+         (path (merge-pathnames (format nil "badprefs-~d.toml" (random 100000)) dir)))
+    (ensure-directories-exist dir)
+    ;; bytes that are not valid UTF-8
+    (with-open-file (o path :direction :output :element-type '(unsigned-byte 8)
+                            :if-exists :supersede)
+      (write-sequence (coerce '(255 254 253 10) '(vector (unsigned-byte 8))) o))
+    (multiple-value-bind (p notes) (load-prefs path)
+      (is (not (null p)) "it still answers a prefs")
+      (is (string= "split" (prefs-diff p)) "with the defaults kept")
+      (is (some (lambda (n) (search "cannot be read" n)) notes)
+          "and says so once, rather than refusing to start"))))
