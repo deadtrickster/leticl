@@ -57,45 +57,63 @@
 ;;; ------------------------------------------------------------ painter ;;;
 
 (def-test paint-diff-blank-to-text (:suite leticl)
-  (let ((cur (make-screen 10 2)))
+  (let ((cur (make-screen 10 2)) (*caret* nil))
     (screen-put-string cur 0 0 "ab")
     (with-output-to-string (out)
       (paint-diff nil cur out :sync nil)
       ;; move to row1 col1, write "ab", then the trailing reset
-      (is (equal (format nil "~C[1;1Hab~C[0m" (code-char 27) (code-char 27))
+      (is (equal (format nil "~C[1;1Hab~C[0m~C[?25l" (code-char 27) (code-char 27) (code-char 27))
                  (get-output-stream-string out))
           "one run, one move"))))
 
 (def-test paint-diff-emits-sgr-on-style-change (:suite leticl)
   (let ((cur (make-screen 10 1))
+        (*caret* nil)
         (bold-cyan (style-index '(:bold t :fg :cyan))))
     (screen-put cur 0 0 #\x 0)
     (screen-put cur 0 1 #\y bold-cyan)
     (with-output-to-string (out)
       (paint-diff nil cur out :sync nil)
-      (is (equal (format nil "~C[1;1Hx~C[0;1;36my~C[0m"
-                         (code-char 27) (code-char 27) (code-char 27))
+      (is (equal (format nil "~C[1;1Hx~C[0;1;36my~C[0m~C[?25l"
+                         (code-char 27) (code-char 27) (code-char 27) (code-char 27))
                  (get-output-stream-string out))
           "default then bold-cyan"))))
 
 (def-test paint-diff-writes-only-changes (:suite leticl)
   (let ((prev (make-screen 10 1))
-        (cur (make-screen 10 1)))
+        (cur (make-screen 10 1))
+        (*caret* nil))
     (screen-put-string prev 0 0 "abcdef")
     (screen-put-string cur 0 0 "abXdef")
     (with-output-to-string (out)
       (paint-diff prev cur out :sync nil)
-      (is (equal (format nil "~C[1;3HX~C[0m" (code-char 27) (code-char 27))
+      ;; with no caret the frame ENDS by hiding the cursor: a terminal that was
+      ;; told `?25h` by the last frame must not be left showing one somewhere
+      ;; arbitrary, which is wherever the last changed run happened to end
+      (is (equal (format nil "~C[1;3HX~C[0m~C[?25l" (code-char 27) (code-char 27) (code-char 27))
                  (get-output-stream-string out))
           "only the X moves and writes"))))
 
+(def-test the-caret-is-placed-and-shown-after-the-frame (:suite leticl)
+  "The operator: *\"the creepy thing about leticl - prompt input doesnt have caret
+or cursor\"*. The head asked for a steady block at startup and hid the cursor, and
+no frame ever said where it went. A frame is a run of absolute moves, so the
+caret has to be placed AFTER the painting and only then shown."
+  (let ((cur (make-screen 10 2))
+        (*caret* (cons 1 4)))
+    (screen-put-string cur 0 0 "hi")
+    (is (search (format nil "~C[2;5H~C[?25h" (code-char 27) (code-char 27))
+                (with-output-to-string (out) (paint-diff nil cur out :sync nil)))
+        "the move is 1-based and the cursor is shown, last")))
+
 (def-test paint-diff-sync-wraps-in-2026 (:suite leticl)
-  (let ((cur (make-screen 4 1)))
+  (let ((cur (make-screen 4 1)) (*caret* nil))
     (screen-put-string cur 0 0 "hi")
     (with-output-to-string (out)
       (paint-diff nil cur out :sync t)
-      (is (equal (format nil "~C[?2026h~C[1;1Hhi~C[0m~C[?2026l"
-                         (code-char 27) (code-char 27) (code-char 27) (code-char 27))
+      (is (equal (format nil "~C[?2026h~C[1;1Hhi~C[0m~C[?25l~C[?2026l"
+                         (code-char 27) (code-char 27) (code-char 27) (code-char 27)
+                         (code-char 27))
                  (get-output-stream-string out))
           "synchronized output brackets the frame"))))
 
@@ -3325,3 +3343,34 @@ is no daemon."
                  "and the one that is there is found"))
         (setf (symbol-function 'leticl::daemon-dir) real)
         (setf (uiop:getenv "LETIBOT_SOCKET") "")))))
+
+(def-test the-caret-follows-the-text-being-typed (:suite leticl)
+  "Where the caret sits is a position in the BUFFER, so the composer's rows have
+to be the buffer wrapped — they used to be its lines truncated at the box's edge,
+which put the caret off the screen as soon as a line ran long. The prompt is on
+the first row only, and a continuation row is indented by its width."
+  (let* ((*stdout* (make-string-output-stream))
+         (h (%on-head :cols 40 :rows 24)))
+    (leticl::%render h)
+    ;; an empty composer: the caret is just after `│ › `
+    (destructuring-bind (row . col) leticl::*caret*
+      (is (= (+ 2 4) col) "four columns in: the wall, its space, and the prompt")
+      (is (plusp row) "on the composer's first body row"))
+    ;; typed text moves it along, and the row does not
+    (composer-insert (head-composer h) "hello")
+    (leticl::%render h)
+    (is (= (+ 2 4 5) (cdr leticl::*caret*)) "five characters later, five columns on")
+    ;; a newline puts it on the next row, at the indent rather than the prompt
+    (composer-insert (head-composer h) (format nil "~%ab"))
+    (leticl::%render h)
+    (is (= (+ 2 4 2) (cdr leticl::*caret*)) "the second row's text starts under the first's")
+    ;; and a line longer than the box WRAPS rather than being cut
+    (setf (composer-buffer (head-composer h)) (make-string 100 :initial-element #\x)
+          (composer-cursor (head-composer h)) 100)
+    (leticl::%render h)
+    (let ((rows (count-if (lambda (l) (search "xxx" l))
+                          (uiop:split-string (%screen-text h) :separator '(#\newline)))))
+      ;; the frame hands the composer cols less the gutter and the right margin,
+      ;; and the box's walls and prompt take four more: 100 columns at 30 is four
+      (is (= 4 rows) "the long line wraps to four rows rather than being cut at the box's edge")
+      (is (< (cdr leticl::*caret*) 40) "and the caret is on the screen"))))

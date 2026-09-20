@@ -94,6 +94,7 @@
    #:expand-pastes #:*kill-ring* #:*kill-ring-max* #:*undo-stack*
    #:*paste-ledger* #:*esc-at* #:*esc-double-ms*
    ;; render
+   #:wrap-ranges #:locate-in-ranges #:composer-caret #:composer-ranges #:*caret*
    #:markdown-lines #:inline-spans #:reasoning-header #:reasoning-lines
    #:wrap-segments #:top-border #:status-line
    #:decision-card-lines #:picker-lines #:help-lines *slash-commands*

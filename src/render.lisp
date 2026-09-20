@@ -117,6 +117,50 @@ compares instead of generic ones (the note speed 3 raised here)."
           (break-line))
         (nreverse lines))))
 
+(defun wrap-ranges (text cols)
+  "TEXT's wrapped rows as (START . END) character-index pairs that tile it — the
+reference's `width::wrap_ranges`, which is the same breakpoint finder its `wrap`
+uses, because two functions kept in step by a comment is a bug with a schedule.
+
+The composer needs the INDICES and not the strings: the caret is a position in
+the text, and to draw it you have to know which row that position landed on and
+how many columns into it. A newline ends a row; an over-wide word hard-breaks."
+  (declare (type string text) (type fixnum cols))
+  (let ((cols (max 1 cols))
+        (n (length text))
+        (out nil)
+        (start 0)
+        (i 0)
+        (w 0)
+        (last-break nil))
+    (declare (type fixnum n start i w))
+    (flet ((emit (end next)
+             (push (cons start end) out)
+             (setf start next i next w 0 last-break nil)))
+      (loop while (< i n)
+            do (let* ((ch (char text i))
+                      (cw (char-width ch)))
+                 (cond
+                   ((char= ch #\newline) (emit i (1+ i)))
+                   ((> (+ w cw) cols)
+                    ;; break at the last space if there was one, else hard-break
+                    (if (and last-break (> last-break start))
+                        (emit last-break last-break)
+                        (emit i i)))
+                   (t (when (char= ch #\space) (setf last-break (1+ i)))
+                      (incf w cw)
+                      (incf i)))))
+      (push (cons start n) out))
+    (nreverse out)))
+
+(defun locate-in-ranges (text cursor ranges)
+  "Which wrapped ROW the CURSOR is on, and how many COLUMNS into it — the
+reference's `width::locate`."
+  (let* ((cursor (min (max 0 cursor) (length text)))
+         (row (or (position-if (lambda (r) (<= (car r) cursor)) ranges :from-end t) 0))
+         (start (car (nth row ranges))))
+    (values row (string-width text :start start :end cursor))))
+
 (defun put-segments (screen row col segs)
   "One segment line to the buffer; returns the column after it."
   (let ((c col))
@@ -359,7 +403,13 @@ scrolls the transcript by a row every keystroke.
     (loop for row in composer
           for r from cursor
           do (put-segments s r +gutter+ row))
-    (put-segments s hint-row +gutter+ hint)))
+    (put-segments s hint-row +gutter+ hint)
+    ;; **and where the terminal's own caret goes.** The painter emits the move and
+    ;; `ESC[?25h` after the frame; without it the head hid the cursor at startup
+    ;; and never showed it again, so the composer had no caret at all.
+    (let ((caret (composer-caret head cols)))
+      (setf *caret* (cons (min (1- rows) (+ cursor (car caret)))
+                          (min (1- (head-cols head)) (+ +gutter+ (cdr caret))))))))
 
 (defparameter +right-margin+ 2
   "Columns of right margin, so the frame is not flush against the edge.
@@ -493,16 +543,15 @@ thread, which is a dead head. `--tree` takes the same lock per file."
             (setf (head-last-rows head) (screen-rows-ansi (head-screen head))
                   (head-last-cols head) (head-cols head)
                   (head-last-rows-n head) (head-rows head))
-            ;; the cursor belongs at the end of the line being typed
-            (let* ((c (head-composer head))
-                   (buf (composer-buffer c)))
-              (move-to out (1- (head-rows head))
-                       (min (1- (head-cols head))
-                            (+ 2 (string-width
-                                  (if (> (+ 2 (string-width buf)) (1- (head-cols head)))
-                                      (subseq buf (max 0 (- (length buf)
-                                                            (- (1- (head-cols head)) 2))))
-                                      buf)))))))
+            ;; **The caret is the painter's, and only the painter's.** This
+            ;; moved the cursor HERE, after the frame — to the last row, the hint
+            ;; bar's, at the width of the whole buffer — and never sent `?25h`,
+            ;; so the terminal kept the `?25l` from startup and the composer had
+            ;; no caret at all while an invisible one sat on the wrong row. The
+            ;; operator: *"prompt input doesnt have caret or cursor"*. Measured
+            ;; after the fix: tmux reported our pane's cursor at (2,62) and
+            ;; letibot's at (6,60) on the same screen.
+            )
           ;; a GOOD frame clears the flag, so a fixed head goes green again
           ;; without a restart — which is the whole point of pushing a fix
           (setf *last-render-error* nil))

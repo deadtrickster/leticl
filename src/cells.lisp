@@ -253,6 +253,15 @@ was 2.6% of the paint for two numbers per move."
   (%write-decimal (1+ col) out)
   (write-char #\H out))
 
+(defvar *caret* nil
+  "Where the terminal's own caret belongs, as (ROW . COL), or NIL for hidden.
+
+Set by `%render` from the composer; read by the painter, which ends every frame
+with the move and `ESC[?25h` — or with `ESC[?25l` when nothing wants it. A defvar
+and not a head slot, because a slot is a struct layout change and that is a
+restart, which is the one thing a live push must not need."
+  )
+
 (defun paint-diff (prev cur out &key (sync t))
   "Emit the escape sequence that turns the terminal showing PREV into the
 terminal showing CUR. PREV nil paints everything. Both screens must have the
@@ -329,6 +338,15 @@ paints of a 210×63 frame with every row changed took 15 ms at default safety an
                                                       (incf c (max 1 w))))))))))))))))
     (write-char +esc+ out)
     (write-string "[0m" out)
+    ;; THE CARET, last: a frame is a run of absolute moves, so wherever the last
+    ;; changed run left the cursor is arbitrary — the caret has to be placed after
+    ;; the painting and only then shown.
+    (if *caret*
+        (progn (%move-to out (car *caret*) (cdr *caret*))
+               (write-char +esc+ out)
+               (write-string "[?25h" out))
+        (progn (write-char +esc+ out)
+               (write-string "[?25l" out)))
     (when sync (sync-end out))
     (force-output out)))
 

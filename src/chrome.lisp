@@ -450,15 +450,23 @@ wrong, the edge is bare."
         (format nil " ~{~a~^ · ~} " parts)
         "")))
 
+(defun composer-ranges (head cols)
+  "The composer buffer's wrapped rows, as index ranges at the box's inner width."
+  (wrap-ranges (composer-buffer (head-composer head)) (composer-inner cols)))
+
 (defun %composer-rows (head cols)
   "How many rows the composer buffer renders to, wrapped at the box's inner width.
+
+The WRAP, not a ceiling of the whole buffer's width: the two disagreed on any
+buffer with a newline in it, and the row count decides where the box's top edge
+goes — so the box was one row short of its own body and the transcript moved
+under it.
 
 Takes HEAD rather than reaching for the global: the paint has `*head*` bound and
 a TEST of the paint does not, and the difference is a render that dies with `NIL
 is not of type LETICL::HEAD` — measured, twice, in this file. Anything here that
 can be given the head is given it."
-  (max 1 (ceiling (max 1 (string-width (composer-buffer (head-composer head))))
-                  (max 1 (composer-inner cols)))))
+  (max 1 (length (composer-ranges head cols))))
 
 (defun composer-inner (cols)
   "The columns of editable text inside the box.
@@ -493,14 +501,20 @@ down a line on every keystroke."
           (cons "╯" '(:dim t)))))
 
 (defun composer-box-body (head cols)
-  "The body rows of the box: `│ › text… │` per wrapped row."
+  "The body rows of the box: `│ › text… │`, the buffer WRAPPED.
+
+It used to split on newlines and TRUNCATE each one, so a typed line longer than
+the box was cut at the edge with no way to see the rest of it — and the caret,
+which is a position in the text, had nowhere on the screen to be. The prompt is
+on the first row only and continuation rows are indented by its width, as the
+reference's editor does."
   (let* ((c (head-composer head))
          (inner (composer-inner cols))
          (buf (composer-buffer c))
-         (lines (if (zerop (length buf))
-                    (list "")
-                    (uiop:split-string buf :separator '(#\newline)))))
+         (lines (loop for (a . b) in (composer-ranges head cols)
+                      collect (string-right-trim '(#\space) (subseq buf a b)))))
     (loop for line in lines
+          for i from 0
           for shown = (%truncate-width line inner)
           ;; the wall and the prompt are DIM, and the wall is its own segment with
           ;; a plain space after it — read off the two screens' escapes, which is
@@ -508,7 +522,9 @@ down a line on every keystroke."
           ;; against letibot's `ESC[2m│ESC[0m space ESC[2m›ESC[0m`.
           collect (list (cons "│" '(:dim t))
                         (cons " " nil)
-                        (cons "› " '(:dim t))
+                        (if (zerop i)
+                            (cons "› " '(:dim t))
+                            (cons "  " nil))
                         (cons shown nil)
                         ;; `inner - shown + 1`: the closing wall used to carry its
                         ;; own leading space (`" │"`), and splitting it into the
@@ -541,6 +557,30 @@ places them from the bottom up. A single-row list is the degraded form."
         (append (list (composer-box-top head cols))
                 (composer-box-body head cols)
                 (list (composer-box-bottom head cols))))))
+
+(defun composer-caret (head cols)
+  "Where the terminal's own caret goes, as (ROW . COL) inside the composer's own
+rows — the reference's `composer_rows` third value.
+
+**The composer's whole affordance is that caret.** This head asked for a steady
+block at startup (`ESC[2 q`), hid the cursor (`ESC[?25l`) and then never said
+where it went, so the prompt had no cursor at all — the operator: *\"the creepy
+thing about leticl - prompt input doesnt have caret or cursor\"*. The box draws a
+`›` and that is a decoration; the caret is the thing that says where the next
+character lands."
+  (let ((c (head-composer head)))
+    (if (< (head-rows head) 8)
+        ;; the bare line: the prompt is two columns and the tail is what is shown
+        (let* ((buf (composer-buffer c))
+               (cut (max 0 (- (length buf) (- cols 2)))))
+          (cons 0 (+ 2 (string-width buf :start (min cut (composer-cursor c))
+                                        :end (composer-cursor c)))))
+        (multiple-value-bind (row col)
+            (locate-in-ranges (composer-buffer c) (composer-cursor c)
+                              (composer-ranges head cols))
+          ;; +1 for the box's wall, +1 for the space after it, +2 for `› `; the
+          ;; body's first row is one below the top edge
+          (cons (1+ row) (+ 4 col))))))
 
 (defun composer-rows-needed (head cols)
   "How many rows `composer-line` will return. The render needs this BEFORE it
