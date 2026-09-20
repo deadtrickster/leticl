@@ -34,6 +34,8 @@
   (write-line "usage: leticl [--continue|-c]   attach the head to the newest session in this dir" stream)
   (write-line "       leticl --session ID      attach to a specific session" stream)
   (write-line "       leticl --new TITLE       attach, then open a fresh session under TITLE" stream)
+  (write-line "       leticl --replay FILE.jsonl [--no-tty] [--cols N] [--rows N]" stream)
+  (write-line "                                render a recorded log — no daemon, no socket" stream)
   (write-line "       leticl -h|help           this message" stream)
   (write-line "" stream)
   (write-line "       the head attaches to the daemon named by $LETIBOT_SOCKET; ~/bin/leticl" stream)
@@ -76,11 +78,53 @@ before the package exists — the same reader trap `--where` fell into."
                                         (%restore-terminal))))
       (%main))))
 
+(defun %replay-args (args)
+  "Parse `--replay FILE [--no-tty] [--cols N] [--rows N]`.
+
+Returns (values path no-tty cols rows), or NIL for PATH when `--replay` is not
+in ARGS. Written as a loop rather than as a position in the list because the
+reference takes these flags in any order and the fixture comparison passes
+`--cols`/`--rows` after the file — a parser that only reads the second argument
+answers the default size and the diff is then 40 rows of nothing."
+  (let ((path nil) (no-tty nil) (cols 100) (rows 40) (rest args))
+    (loop while rest
+          for arg = (pop rest)
+          do (cond ((string= arg "--replay") (setf path (pop rest)))
+                   ((string= arg "--no-tty") (setf no-tty t))
+                   ((string= arg "--cols")
+                    (setf cols (or (parse-integer (or (pop rest) "") :junk-allowed t) cols)))
+                   ((string= arg "--rows")
+                    (setf rows (or (parse-integer (or (pop rest) "") :junk-allowed t) rows)))))
+    (values path no-tty cols rows)))
+
 (defun %main ()
   (let ((args (uiop:command-line-arguments)))
     (when (uiop:getenv "LETICL_DEBUG")
       (format *error-output* "leticl main: args = ~S~%" args))
     (cond
+      ;; **The instrument, before the head.** `--replay` needs no daemon and no
+      ;; terminal, which is exactly why it is checked first: every arm below
+      ;; ends in `leticl:run`, which refuses on a pipe.
+      ((member "--replay" args :test #'string=)
+       (multiple-value-bind (path no-tty cols rows) (%replay-args args)
+         (unless path
+           (format *error-output* "leticl: --replay needs a file~%")
+           (uiop:quit 2))
+         (unless (probe-file path)
+           (format *error-output* "leticl: ~a: no such file~%" path)
+           (uiop:quit 1))
+         ;; A REFUSAL IS A SENTENCE. Checked here rather than left to the error
+         ;; inside `replay-tty`, because an error in a saved executable goes to
+         ;; the debugger hook and the operator gets the sentence followed by
+         ;; twenty frames of backtrace — which is the shape freeze.lisp's own
+         ;; header records `no-daemon` arriving in.
+         (when (and (not no-tty)
+                    (not (plusp (uiop:symbol-call :leticl '#:%isatty 1))))
+           (format *error-output*
+                   "leticl: --replay paints on the real terminal; add --no-tty on a pipe~%")
+           (uiop:quit 1))
+         (uiop:symbol-call :leticl '#:replay path
+                           :no-tty no-tty :cols cols :rows rows)))
       ((string= (first args) "--session")
        (uiop:symbol-call :leticl '#:run :session-id (or (second args) "")))
       ;; the launcher's `--new TITLE`, through scripts/leticl-head

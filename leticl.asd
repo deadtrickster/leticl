@@ -51,7 +51,12 @@ through an eval socket and see the change on the next frame."
                (:file "src/render")
                (:file "src/editor")
                (:file "src/hack")
-               (:file "src/demo")))
+               (:file "src/demo")
+               ;; LAST, and it has to be: `replay` rebinds every global a frame
+               ;; reads so two replays in one image cannot see each other's
+               ;; state, and a `let` over a symbol that is not yet special is a
+               ;; lexical binding that silently resets nothing.
+               (:file "src/replay")))
 
 (asdf:defsystem #:leticl/test
   :description "Tests for leticl — FiveAM suite: cell buffers, escape strings,
@@ -59,7 +64,9 @@ protocol goldens, wire framing (see PLAN.md §11)."
   :depends-on (#:leticl #:fiveam)
   :serial t
   :components ((:file "tests/package")
-               (:file "tests/tests"))
+               (:file "tests/tests")
+               ;; the net under `scripts/compare-1-1`: a fixture in, a screen out
+               (:file "tests/replay"))
   :perform (asdf:test-op (o c)
              (declare (ignore o c))
              (uiop:symbol-call :leticl/tests '#:run-all)))
