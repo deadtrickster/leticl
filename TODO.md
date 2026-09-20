@@ -698,15 +698,29 @@ nothing is worse than no chord.
   completions line. Files: `head.lisp` only — which is why this is a **separate
   strand**: it can only run once every other strand's `head.lisp` edits are in.
 
-### S10 — render architecture (needs S3, S8; measure first)
+### S10 — render architecture ✅ **measured, and NOT built** (2026-09-20)
 
-`PARITY.md` §3.7. Every frame re-runs `item-lines` for the visible tail
-(`%viewport-lines`), where the reference keeps `hist_lines` + an invalidation
-mark because it *measured* 135 rebuilds of an 89-row session.
+Measured on the operator's own head — a **2273-item** session at 227x61, which is
+the case the question is about:
 
-- [ ] **P38** **measure it on the running head first** — a long session with a
-  streaming turn, `tui-eval` reading `hist_renders`-equivalent counts. Only build
-  the cache if the numbers say so; write the numbers down either way.
+| what | 50 calls | per call |
+|---|---|---|
+| a full `%render` | 45 ms | **0.9 ms** |
+| `%viewport-lines` alone | 15 ms | **0.3 ms** |
+
+**So the cache is not built, and that is the answer rather than a deferral.** The
+loop paints at most once per 30 ms tick and only when dirty, so 0.9 ms is ~3% of
+the budget; a streaming turn at 30 deltas/s would spend ~2.7% of a core. The
+reference needed its incremental-history machinery because it measured *135 full
+rebuilds of an 89-row session*; this head walks the transcript backwards and
+**stops as soon as it has the lines the viewport needs**, so its cost is bounded
+by the SCREEN and not by the session — which is why a 2273-item session costs the
+same as a 20-item one.
+
+The measurement is written down because it is the reason for the decision: if a
+future change makes a *visible* item expensive (a huge markdown block, a diff with
+thousands of rows), the bound moves from the screen to that item, and the number
+to beat is above.
 
 ### S11 — docs ✅ **done** (2026-09-20)
 
