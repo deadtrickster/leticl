@@ -291,11 +291,20 @@ is paired positionally — the k-th removal with the k-th addition."
           do (let ((rem-start i))
                (loop while (and (< i n) (eq (first (aref rows i)) :removed))
                      do (incf i))
-               (let ((rem-end i))
+               (let* ((rem-end i)
+                      ;; `add-start` is bound BEFORE the addition run is
+                      ;; consumed, exactly as `diff.rs:555` binds it before the
+                      ;; loop at `:556-558`. Binding it after — which is what
+                      ;; this did until it was measured — leaves
+                      ;; `(= add-end add-start)` true on every hunk, so the
+                      ;; branch below always took the false arm, `out` came back
+                      ;; all NIL and the whole word-emphasis path below
+                      ;; `%emphasize` was dead code that nothing on screen could
+                      ;; reach.
+                      (add-start i))
                  (loop while (and (< i n) (eq (first (aref rows i)) :added))
                        do (incf i))
-                 (let ((add-start i)
-                       (add-end i))
+                 (let ((add-end i))
                    (if (or (= rem-end rem-start) (= add-end add-start))
                        (when (= i rem-start) (incf i))
                        (let ((kmax (min (- rem-end rem-start)
