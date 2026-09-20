@@ -411,96 +411,150 @@ folded text, or the text unchanged when it holds no screen."
       0
       (1+ (count #\newline payload))))
 
-(defun %tool-result-lines (item body cols prefs)
-  "One settled tool-result row: the call, its outcome, its duration, its diff, and
-the decision that gated it — everything the live card had.
+;;; The settled tool row, to the reference's own weighting.
+;;;
+;;; Read from `crates/tui/src/app.rs`'s transcript arm rather than inferred, after
+;;; a screen comparison showed our card had the emphasis in the wrong places:
+;;;
+;;;   ▸ Ran "cd /…/sed -n '6503,6560p' crates/…" · ok · 24ms · 59 lines
+;;;   ^^^^^                                                       ^^^^^^^^
+;;;   faint  verb faint   SUBJECT bright (Plain, NO escape) · ok faint  count BOLD
+;;;
+;;; The reference's rule, in its own comment: *"the subject — the path, the
+;;; pattern — is Role::Plain, i.e. no sequence at all, so it is the brightest thing
+;;; on the row. It is what a person is looking for. Everything structural around it
+;;; is Faint: the glyph, the verb, the separators, the chord. `ok` is faint too —
+;;; it is the boring case and it is most of them; anything else keeps its own loud
+;;; role. And the line count is Strong once the output is big enough to be worth a
+;;; fold — that is the size signal, and it is an ATTRIBUTE rather than a second
+;;; colour, so it survives a terminal-native theme."*
+;;;
+;;; Our version had the verb bold, the target bright-white and the outcome GREEN —
+;;; three colours on a row whose only job is to be scanned, with the size signal
+;;; (the thing that tells you what matters before you read a word) nowhere.
 
-The facts come from `item-facts` (see the header) and are ABSENT for a row this
-head did not watch run: a snapshot, or a replay of a log recorded elsewhere. An
-absent fact shows nothing rather than a fabricated `0ms`, which is the same rule
-the reference's `Replayed` phase holds."
-  (let* (
-(facts (item-facts (getf item :item-id)))
+(defparameter +big-output-lines+ 40
+  "Lines past which the count is Bold rather than faint. The reference's BIG: the
+size signal, and an attribute rather than a colour so it survives a
+terminal-native theme.")
+
+(defparameter +activity-indent-cols+ 2
+  "Columns the model's WORKING is stepped in under what it SAYS.
+
+A turn has four readable levels and they cost no colour: the operator's question
+at the body's own column, the working stepped in one, the answer flush left again,
+and a rule to close. Given up below 60 columns, where two columns of every line is
+a bigger fraction than the hierarchy is worth.")
+
+(defun activity-indent (cols)
+  (if (>= cols 60) +activity-indent-cols+ 0))
+
+(defun %envelope-line-p (line)
+  "`<<<TOOL_ERROR 5ebfdef6>>>` and its END marker.
+
+The envelope is addressed to the MODEL, not the operator: it is how a result says
+where the harness's text stops and the payload starts, with a per-call nonce so a
+payload cannot forge one. On a screen it is noise in the middle of the two lines a
+folded row has."
+  (let ((trimmed (string-left-trim " " line)))
+    (and (>= (length trimmed) 3) (string= (subseq trimmed 0 3) "<<<"))))
+
+(defun %shorten-subject (subject max)
+  "SUBJECT cut to MAX columns the way a person reads it.
+
+A path is shortened from its LEFT at a separator, because the end of a path is
+what identifies it and `crates/tui/src/…` names nothing. Anything with a glob or a
+quote in it is PROSE rather than a path — `display-target` quotes any argument with
+whitespace — so it is cut from the RIGHT, keeping the question. Measured in the
+reference: an `ask_code` subject left-cut to `…/ is responsible for, how main.rs,
+editor.rs, and…` had thrown away the question and kept its tail."
+  (if (<= (string-width subject) max)
+      subject
+      (let ((not-a-path (find-if (lambda (c) (member c '(#\* #\? #\{ #\[ #\")))
+                                 subject)))
+        (if (and (find #\/ subject) (not not-a-path))
+            ;; keep the TAIL: the end of a path is what names it
+            (let* ((n (length subject))
+                   (cut (max 0 (- n (max 1 (- max 1))))))
+              (concatenate 'string "…" (subseq subject cut)))
+            ;; keep the HEAD: prose announces itself at the front
+            (concatenate 'string (subseq subject 0 (max 1 (- max 1))) "…")))))
+
+(defun %tool-result-lines (item body cols prefs)
+  "One settled tool-result row, weighted the way the reference weights it."
+  (let* ((facts (item-facts (getf item :item-id)))
          (name (getf body :name))
          (outcome (getf body :outcome))
-         (payload (getf body :payload))
+         (payload (or (getf body :payload) ""))
          (ms (getf facts :ms))
          (edit (getf facts :edit))
+         (word (outcome-name outcome))
+         (bad (not (string= word "ok")))
+         (mark (if (getf prefs :tools-open) "▾" "▸"))
+         (verb (verb-label name))
+         (subject (or (call-target-of (getf body :call-id))
+                      (format nil "(~a)" (getf body :call-id))))
+         ;; the envelope lines are not output
          (decision (getf facts :decision))
-         ;; the target: what the call was ABOUT. From the call's own arguments
-         ;; when this head saw the proposal, else from the map the walk fills
-         ;; (see `%call-targets`); absent when neither, and absent shows nothing.
-         (target (or (call-target-of (getf body :call-id)) ""))
-         (lines (list (list (cons "    ▸ " '(:dim t))
-                            (cons (verb-label name) '(:bold t))
-                            ;; the target AS IT IS: `display-target` already
-                            ;; quotes an argument that contains whitespace, so
-                            ;; quoting again here gave every card `Ran ""cd …`.
-                            ;; One place does the quoting, and it is the one that
-                            ;; knows whether the value had whitespace.
-                            (cons (if (plusp (length target))
-                                      (format nil " ~a" (%truncate-width target 70))
-                                      "")
-                                  '(:fg :bright-white))
-                            (cons " · " '(:dim t))
-                            (cons (outcome-name outcome) (%outcome-style outcome))
-                            ;; a duration only when one was MEASURED, and a line
-                            ;; count only when there is a payload to count
-                            (cons (if (numberp ms) (format nil " · ~a" (duration ms)) "")
-                                  '(:dim t))
-                            (cons (let ((n (%payload-line-count payload)))
-                                    (if (plusp n) (format nil " · ~d line~p" n n) ""))
-                                  '(:dim t)))))
-         (headline lines)
-         ;; the oracle's brief and reply, on the row rather than on a card that
-         ;; has already left the screen
-         ;; **A refusal says its reason once.**
-         ;;
-         ;; The operator, counting them in one card: *"how many times is 'nothing
-         ;; ran' needed?"* — once. It was three, and the card was 21 lines for one
-         ;; refused command, because a refusal's PAYLOAD is already a complete
-         ;; explanation and two other places said the same paragraph again.
-         ;;
-         ;; Bounded twice, so the check cannot misfire: a SHORT reason is left
-         ;; alone (cheap to repeat, and a short string can appear below by
-         ;; coincidence), and the comparison is on the reason's FIRST LINE,
-         ;; because the envelope's copy is one line while the payload arrives
-         ;; already split — a whole-paragraph containment could never match,
-         ;; which is the kind of check that passes review and never fires.
-         (already-said-p (lambda (reason)
-                           (and reason
-                                (> (length reason) 40)
-                                (let ((first (or (position #\newline reason)
-                                                 (length reason))))
-                                  (search (subseq reason 0 first)
-                                          (or payload ""))))))
-         (decision-line
-          (when decision
-            (let ((basis (getf decision :basis))
-                  (verdict (getf (getf decision :outcome) :outcome)))
-              (list (list (cons "    ⚖ " '(:dim t))
-                          (cons (or verdict "answered") '(:dim t))
-                          ;; the basis only when the payload has not already said
-                          ;; it — a refusal's payload IS its explanation
-                          (cons (if (and basis (not (funcall already-said-p basis)))
-                                    (format nil " — ~a" (%first-line basis))
-                                    "")
-                                '(:dim t)))))))
-         (detail
-          (when (getf prefs :show-tools)
-            (cond
-              ;; a file-editing call: both sides, as a real diff
-              (edit (edit-lines edit cols
-                                :folded (not (getf prefs :tools-open))
-                                :split (string= (or (getf prefs :diff) "unified")
-                                                "split")))
-              (t (let ((preview (%first-line (or payload ""))))
-                   (when (plusp (length preview))
-                     (wrap-segments
-                      (list (cons "    " '(:dim t))
-                            (cons preview '(:dim t)))
-                      (max 4 (- cols 4))))))))))
-    (append headline decision-line detail)))
+         (rows (remove-if #'%envelope-line-p
+                          (uiop:split-string payload :separator '(#\newline))))
+         (n (length rows))
+         (ind (activity-indent cols))
+         (faint '(:dim t))
+         (outcome-style (if bad '(:fg :red) faint))
+         (size-style (if (>= n +big-output-lines+) '(:bold t) faint))
+         ;; the subject gets what the tail does not need, and is measured FIRST
+         (tail-cols (+ 3 (string-width word)
+                       (if (numberp ms) (+ 3 (string-width (duration ms))) 0)
+                       3 6 (length (format nil "~d" n))))
+         (lead (+ (length mark) 1 (length verb) 1))
+         (head (list (cons mark (if bad '(:fg :red) faint))
+                     (cons (format nil " ~a " verb) faint)
+                     (cons (%shorten-subject subject
+                                             (max 8 (- cols ind lead tail-cols)))
+                           nil)
+                     (cons (format nil " · ~a" word) outcome-style)
+                     (cons (if (numberp ms) (format nil " · ~a" (duration ms)) "") faint)
+                     (cons (format nil " · ~d line~p" n n) size-style))))
+    (append
+     ;; the oracle's brief and reply, on the ROW rather than on a card that has
+     ;; already left the screen
+     (when decision
+       (list (list (cons "    ⚖ " '(:dim t))
+                   (cons (or (getf (getf decision :outcome) :outcome) "answered") '(:dim t))
+                   (cons (let ((b (getf decision :basis)))
+                           (if (and b (> (length b) 40)
+                                    (search (subseq b 0 (or (position #\newline b)
+                                                           (length b)))
+                                            payload))
+                               ""
+                               (if b (format nil " — ~a" (%first-line b)) "")))
+                         '(:dim t)))))
+     ;; ONE line of output goes ON the header — `▸ Read .gitignore · ok · 1 line ·
+     ;; /target` is one row where the folded form is two, and at 34 rows that
+     ;; halving is the difference between four calls fitting and eight
+     (if (and (not bad) (= n 1) (not edit) (plusp (length (first rows))))
+         (list (append head (list (cons " · " faint)
+                                  (cons (string-trim " " (first rows)) nil))))
+         (list head))
+     ;; the body: a diff when the call changed a file, else the output
+     (when (getf prefs :tools-open)
+       (cond
+         (edit (edit-lines edit cols
+                           :folded nil
+                           :split (string= (or (getf prefs :diff) "unified") "split")))
+         ((and (> n 1)
+               (getf prefs :tools-open))
+          (let ((keep (if (> n 8) 7 n)))
+            (append
+             (mapcar (lambda (l) (list (cons "  " faint)
+                                       (cons (%truncate-width (or l "") (max 4 (- cols ind 2)))
+                                             faint)))
+                     (subseq rows 0 keep))
+             (when (> n keep)
+               (list (list (cons (format nil "  … +~d lines · ctrl-t" (- n keep))
+                                 faint)))))))
+         (t nil))))))
 
 (defun item-lines (item cols prefs)
   "One transcript row to segment lines."
@@ -614,56 +668,54 @@ line 4 changed when it was line 313\")."
   "Both sides of an edit, as a real diff. See `edit-lines`."
   (edit-lines edit cols))
 
+
+
+
 (defun turn-footer-lines (turn cols)
-  "The line under a finished turn: how it ended, what it cost, how fast.
+  "The line under a finished turn — and only when it ended UNUSUALLY.
 
-The reference moved this off the header and into the footer because the footer was
-REPEATING the header's context and cache numbers next to them — one fact on one
-screen twice is one fact rendered as a question. So the footer keeps only what the
-header cannot show: the finish reason, the token split, and the rate the turn
-actually ran at.
+**Not the numbers.** I put `─ 1.01M in/1.01M cached · 91 out · 17.8 tok/s · 5.1s`
+here, and the comparison against letibot's own screen showed a whole telemetry row
+where it draws NOTHING: measured, row 58, ours 56 columns of numbers and its zero.
+The reference's rule is that an ORDINARY ending reads as ordinary — `eos` and
+`word` produce no line at all — and that the turn's numbers live on the composer
+box's bottom edge while it is running (`turn-status`), not in the transcript.
 
-Every number here is one that was MEASURED. A turn that decoded nothing has no
-`predicted_ms`, and `0 tok/s` would be a number nobody took — the same rule the
-cache percentage and the money meter are held to."
+So one line, yellow, and only for the endings a person must not have to go looking
+for. `Failed` is a different register: red, shouted, and WRAPPED rather than
+truncated, because the reason is the whole content of the event."
   (declare (ignore cols))
   (when turn
     (let* ((state (getf turn :state))
-           (name (getf state :state))
-           (finish (getf state :finish-reason))
-           (usage (getf state :usage))
-           (timings (getf state :timings))
-           (parts nil))
-      ;; how it ended, when it did not end the ordinary way
-      (when (and finish (not (string= finish "eos")))
-        (push (format nil "~a" finish) parts))
-      ;; the split, which the header's `ctx` total cannot show
-      (when usage
-        (let ((p (getf usage :prompt-tokens))
-              (c (getf usage :cached-tokens))
-              (pred (getf usage :predicted-tokens)))
-          (when (and p (plusp p))
-            (push (format nil "~a in~@[/~a cached~]" (thousands p)
-                          (and (numberp c) (plusp c) (thousands c)))
-                  parts))
-          (when (and pred (plusp pred))
-            (push (format nil "~a out" (thousands pred)) parts))))
-      ;; the rate, only when a duration was measured with it
-      (when timings
-        (let ((pred-ms (getf timings :predicted-ms))
-              (pred (getf usage :predicted-tokens)))
-          (when (and (numberp pred-ms) (plusp pred-ms) (numberp pred) (plusp pred))
-            (push (format nil "~,1f tok/s" (/ (* (float pred) 1000.0) pred-ms)) parts)))
-        (let ((wall (getf timings :wall-ms)))
-          (when (and (numberp wall) (plusp wall))
-            (push (duration wall) parts))))
-      (when parts
-        (list (list (cons "  " '(:dim t))
-                    (cons "─ " '(:dim t))
-                    (cons (format nil "~{~a~^ · ~}" (nreverse parts))
-                          (if (string= name "finished")
-                              '(:dim t)
-                              '(:fg :yellow)))))))))
+           (name (and state (getf state :state)))
+           (finish (and state (getf state :finish-reason))))
+      (flet ((say (text style) (list (list (cons text style)))))
+        (cond
+          ;; an ordinary ending is ordinary: no line
+          ((and (string= name "finished")
+                (member finish '("eos" "word") :test #'string=))
+           nil)
+          ((and (string= name "finished") (string= finish "length"))
+           (say "── CUT SHORT — it hit the output limit mid-answer; ask it to continue"
+                '(:fg :yellow)))
+          ((and (string= name "finished") (string= finish "aborted"))
+           (say "── stopped early (aborted)" '(:fg :yellow)))
+          ((string= name "finished")
+           ;; a reason nobody recognises is SHOWN, never normalised
+           (say (format nil "── ended for an unrecognised reason: ~a" finish)
+                '(:fg :yellow)))
+          ((string= name "interrupted")
+           (say (format nil "── interrupted: ~a (~a)" (getf state :reason)
+                        (if (getf state :partial-kept)
+                            "what it had written is kept" "nothing kept"))
+                '(:fg :yellow)))
+          ((string= name "failed")
+           (say (format nil "── FAILED — ~a (~a)" (getf state :error)
+                        (if (getf state :partial-kept)
+                            "what it had written is kept" "nothing was recorded"))
+                '(:fg :red :bold t)))
+          ;; running: the numbers belong on the box's edge, not here
+          (t nil))))))
 
 (defun queued-lines (head cols)
   "Prompts sent that the transcript does not hold yet, marked `queued`.

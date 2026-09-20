@@ -1954,37 +1954,53 @@ change and a save the two disagree, and the pane must show what is true."
 
 ;;; ------------------------------------------- the turn footer and queue (P13) ;;;
 
-(def-test the-turn-footer-says-only-what-was-measured (:suite leticl)
-  "Every number here is one that was TAKEN. A turn that decoded nothing has no
-`predicted_ms`, and `0 tok/s` would be a number nobody measured — the same rule the
-cache percentage and the money meter are held to."
+(def-test an-ordinary-turn-ending-draws-no-footer (:suite leticl)
+  "The comparison against letibot's own screen is what found this: ours drew a
+whole telemetry row (`─ 1.01M in/1.01M cached · 91 out · 17.8 tok/s · 5.1s`) where
+the reference draws NOTHING, because an ordinary ending reads as ordinary and the
+turn's numbers belong on the composer box's edge while it is running."
   (let ((turn (list :turn-id "t" :model "m" :text "" :reasoning "" :calls nil
                     :state (list :state "finished" :finish-reason "eos"
                                  :usage (list :prompt-tokens 40000 :cached-tokens 39000
                                               :predicted-tokens 150)
                                  :timings (list :predicted-ms 3000 :wall-ms 4200)))))
-    (let ((text (segs-of (turn-footer-lines turn 80))))
-      (is (search "40.0k in" text) "the prompt is shown, shortened")
-      (is (search "39.0k cached" text) "and how much of it was free")
-      (is (search "150 out" text) "and what came out")
-      (is (search "50.0 tok/s" text) "and the rate, MEASURED from the timing")
-      (is (search "4.2s" text) "and the wall time")
-      (is (not (search "eos" text)) "a turn that ended the ordinary way says nothing about it")))
-  ;; an unmeasured turn shows no rate at all
-  (let ((turn (list :turn-id "t" :model "m" :text "" :reasoning "" :calls nil
-                    :state (list :state "finished" :finish-reason "eos"
-                                 :usage (list :prompt-tokens 100 :cached-tokens 0
-                                              :predicted-tokens 0)
-                                 :timings (list :predicted-ms 0 :wall-ms 500)))))
-    (let ((text (segs-of (turn-footer-lines turn 80))))
-      (is (not (search "tok/s" text)) "no timing means NO rate, not a zero one"))))
+    (is (null (turn-footer-lines turn 80))
+        "an eos ending produces no line at all")
+    (setf (getf (getf turn :state) :finish-reason) "word")
+    (is (null (turn-footer-lines turn 80)) "and neither does a `word` ending")
+    (setf (getf (getf turn :state) :finish-reason) "length")
+    (is (search "CUT SHORT" (segs-of (turn-footer-lines turn 80)))
+        "but hitting the output limit says so")))
 
-(def-test the-footer-names-an-unusual-ending (:suite leticl)
-  (let ((turn (list :turn-id "t" :model "m" :text "" :reasoning "" :calls nil
-                    :state (list :state "failed" :finish-reason "context_wall"
-                                 :usage nil :timings nil))))
-    (is (search "context_wall" (segs-of (turn-footer-lines turn 80)))
-        "the finish reason is the one thing the header cannot say")))
+(def-test an-unusual-ending-is-shouted-and-a-failure-shouts-redder (:suite leticl)
+  "The endings a person must not have to go looking for. `Failed` is a different
+register: red and bold, because the reason is the whole content of the event."
+  (let ((mk (lambda (state)
+              (list :turn-id "t" :model "m" :text "" :reasoning "" :calls nil
+                    :state state))))
+    (is (search "stopped early" (segs-of (turn-footer-lines (funcall mk (list :state "finished" :finish-reason "aborted")) 80))))
+    (is (search "unrecognised reason" (segs-of (turn-footer-lines (funcall mk (list :state "finished" :finish-reason "weird_new_thing")) 80)))
+        "a reason nobody recognises is SHOWN, never normalised")
+    (let* ((lines (turn-footer-lines (funcall mk (list :state "interrupted" :reason "ctrl+c" :partial-kept t)) 80))
+           (style (cdr (first (first lines)))))
+      (is (search "interrupted: ctrl+c" (segs-of lines)))
+      (is (search "kept" (segs-of lines)) "and whether the partial was kept")
+      (is (equal '(:fg :yellow) style) "in the alarm register"))
+    (let* ((lines (turn-footer-lines (funcall mk (list :state "failed" :error "no route" :partial-kept nil)) 80))
+           (style (cdr (first (first lines)))))
+      (is (search "FAILED — no route" (segs-of lines)))
+      (is (search "nothing was recorded" (segs-of lines)))
+      (is (equal '(:fg :red :bold t) style) "and a failure is red and bold"))))
+
+(def-test a-running-turn-has-no-footer-line (:suite leticl)
+  "While a turn runs its numbers are on the box edge (`turn-status`), so a footer
+row as well would be the same fact twice — the defect the reference names."
+  (let ((turn (list :turn-id "t" :model "m" :text "hi" :reasoning "" :calls nil
+                    :tokens 100 :state (list :state "running"))))
+    (is (null (turn-footer-lines turn 80)) "no footer while running")
+    (is (stringp (turn-status (let ((h (%make-head)))
+                                (setf (session-turn (head-session h)) turn) h)))
+        "and the edge is where the numbers are")))
 
 (def-test a-queued-prompt-is-visible-before-its-row-lands (:suite leticl)
   "Between the enter press and the daemon appending the row, the words existed
