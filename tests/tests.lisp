@@ -365,8 +365,8 @@ mode - subtodos shown, when all subtodos checked section becomes also checked\"*
                (is (some (lambda (l) (search "one" (line-text l))) lines)
                    "and so are its ITEMS, which is the whole of P42")
                (is (integerp sel-line) "and the cursor's line comes back")
-               (is (search "first" (line-text (nth sel-line lines)))
-                   "pointing at the selected session todo")))
+               (is (search "Alpha" (line-text (nth sel-line lines)))
+                   "pointing at the repo's first row — the cursor walks the repo's items, as the reference's does, not the session's plan")))
         (ignore-errors (delete-file path))))))
 
 (def-test decision-card (:suite leticl)
@@ -425,11 +425,13 @@ mode - subtodos shown, when all subtodos checked section becomes also checked\"*
             (list (list :session-id "s-current" :title "current")
                   (list :session-id "s-other" :title "other")))
       (let ((lines (picker-lines session 0 80)))
-        (is (= 3 (length lines)) "header + two rows")
+        (is (= 9 (length lines))
+            "title, blank, two lines per session, blank, two closing hints")
         (let ((text (lines-text lines)))
           (is (search "current" text) "the current session is shown")
           (is (search "other" text) "the other session is shown")
-          (is (search "●" text) "the current one is marked"))))))
+          (is (search "▸  1  current" text) "the cursor's mark is what Enter takes")
+          (is (search "      s-other" text) "and the full id sits under every row"))))))
 
 (def-test ack-seq-round-trips-the-wire (:suite leticl)
   (for-all ((n (gen-integer :min 0 :max 1000000)))
@@ -1605,13 +1607,15 @@ selection the operator cannot see — worse than one that cannot scroll at all."
 by every header above the list. Passing one where the other was meant scrolls to
 the wrong place — the reference found this in its own test."
   (let ((h (%make-head)))
-    (setf (head-subagents h) (list (list :session-id "sub-1" :kind "task")
-                                   (list :session-id "sub-2" :kind "task")))
+    ;; the events, newest first, as `apply-event` keeps them
+    (setf (session-subagents (head-session h))
+          (list (list :subagent-id "sub-2" :state "running" :prompt "second task" :role "worker")
+                (list :subagent-id "sub-1" :state "done" :prompt "first task" :role "worker")))
     (setf (head-picker-sel h) 1)
     (multiple-value-bind (lines sel-line) (subagent-lines h 80)
       (is (< 1 sel-line) "the second ROW is not line 1 — there are headers above it")
       (is (< sel-line (length lines)) "and it is a line that exists")
-      (is (search "sub-2" (format nil "~{~a~}" (mapcar #'car (nth sel-line lines))))
+      (is (search "second task" (format nil "~{~a~}" (mapcar #'car (nth sel-line lines))))
           "the line it names is the row the cursor is on"))))
 
 ;;; ---------------------------------------------------- the todos pane (P42) ;;;
@@ -1662,27 +1666,27 @@ visible. The reference caught it exactly this way."
 (def-test a-folded-item-that-has-more-says-so (:suite leticl)
   "A folded item with detail marks itself `···`; one without does not — so the mark
 means \"there is more\" rather than \"this is an item\"."
-  (let ((*todos-open* nil))
-    (let* ((with (first (leticl::%todo-row-lines (list :indent 4 :mark :open :text "x"
-                                               :body (list "detail") :item t))))
-           (without (first (leticl::%todo-row-lines (list :indent 4 :mark :open :text "y"
-                                                  :body nil :item t)))))
-      (is (search "···" (format nil "~{~a~}" (mapcar #'car with)))
-          "an item with detail says there is more")
-      (is (not (search "···" (format nil "~{~a~}" (mapcar #'car without))))
-          "and one without stays quiet"))))
+  (let* ((with (first (leticl::%todo-row-lines (list :indent 4 :mark :open :text "x"
+                                                    :body (list "detail") :item t))))
+         (without (first (leticl::%todo-row-lines (list :indent 4 :mark :open :text "y"
+                                                       :body nil :item t)))))
+    (is (search " x ···" (format nil "~{~a~}" (mapcar #'car with)))
+        "an item with detail says there is more — ONE space before the dots, as letibot's screen has it")
+    (is (not (search "···" (format nil "~{~a~}" (mapcar #'car without))))
+        "and one without stays quiet")))
 
 (def-test an-unfolded-item-shows-its-detail (:suite leticl)
   "The operator: *\"if a todo has some associated text? should i be able to expand
 it somehow?\"*. Unfolded, the detail is drawn under the row."
-  (let ((*todos-open* (list "item one")))
-    (let* ((row (list :indent 4 :mark :open :text "item one"
-                      :body (list "pin: abc123" "Deps: T2") :item t))
-           (lines (leticl::%todo-row-lines row))
-           (text (format nil "~{~a~^~%~}" (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l))) lines))))
-      (is (= 3 (length lines)) "the row, and both detail lines")
-      (is (search "pin: abc123" text) "the detail is drawn")
-      (is (search "Deps: T2" text) "all of it, in file order"))))
+  (let* ((row (list :indent 4 :mark :open :text "item one"
+                    :body (list "pin: abc123" "Deps: T2") :item t))
+         (lines (leticl::%todo-row-lines row :here t :open t))
+         (text (format nil "~{~a~^~%~}" (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l))) lines))))
+    (is (= 3 (length lines)) "the row, and both detail lines")
+    (is (search "pin: abc123" text) "the detail is drawn")
+    (is (search "Deps: T2" text) "all of it, in file order")
+    (is (search "▸ [ ] item one" text) "under the cursor, which is the only row that can be open")
+    (is (not (search "···" text)) "and an open item does not also say there is more")))
 
 ;;; ------------------------------------------------- pickers (P22, P23) ;;;
 
@@ -1749,7 +1753,7 @@ copied into the head to drift."
 (def-test the-new-chords-reach-the-features-they-name (:suite leticl)
   "A chord bound to a feature that does not exist is worse than no chord, which is
 why these landed AFTER the features."
-  (let ((*pane-scroll* 0) (*todos-open* nil)
+  (let ((*pane-scroll* 0) (*repo-todo-open* nil)
         (h (%make-head)))
     ;; ctrl-r and ctrl-t flip the folds, which now persist (S5)
     (let ((before (getf (head-prefs h) :show-reasoning)))
@@ -1781,10 +1785,12 @@ why these landed AFTER the features."
 
 (def-test the-help-names-the-chords-that-exist (:suite leticl)
   "The help IS the contract surface: a chord it does not name is a chord the
-operator has to guess."
+operator has to guess. The rows are the reference's own (`help_lines`), so the
+list is what ITS help names — ctrl-g, ctrl-q and ctrl-o are bound in both heads
+and named by neither's help, and the panes they open say so themselves."
   (let* ((text (format nil "~{~a~^~%~}" (lines-text (help-lines 100)))))
-    (dolist (chord '("ctrl-r" "ctrl-t" "ctrl-x" "ctrl-s" "ctrl-p" "ctrl-g"
-                     "ctrl-q" "ctrl-o" "ctrl-y" "ctrl-z" "alt+enter" "esc esc"))
+    (dolist (chord '("ctrl-r" "ctrl-t" "ctrl-x" "ctrl-s" "ctrl-p" "ctrl-c"
+                     "ctrl-y" "ctrl-z" "alt+enter" "esc esc" "ctrl-l"))
       (is (search chord text) (format nil "the help names ~a" chord)))))
 
 (def-test promote-says-which-silence-it-is (:suite leticl)
@@ -1900,12 +1906,15 @@ not select a row nobody can see."
                 (list :session-id "s3" :title "three"))
           (head-mode h) :picker
           (session-session-id (head-session h)) "s1")
-    ;; the picker's header is one line, so screen row 2 (line 1) is row 0
-    (is (= 0 (click-row->sel h :picker 1)) "the first row is the first session")
-    (is (= 1 (click-row->sel h :picker 2)) "and the second is the second")
-    (is (= 2 (click-row->sel h :picker 3)) "and the third")
-    (is (null (click-row->sel h :picker 0)) "the header is not a row")
-    (is (null (click-row->sel h :picker 4)) "nor is the blank space below")))
+    ;; the picker's header is two lines (title, blank) and every session is
+    ;; two more (the row, the id under it), so lines 2 and 3 are both row 0
+    (is (= 0 (click-row->sel h :picker 2)) "the first row is the first session")
+    (is (= 0 (click-row->sel h :picker 3)) "and so is the id line under it")
+    (is (= 1 (click-row->sel h :picker 4)) "the second is the second")
+    (is (= 2 (click-row->sel h :picker 6)) "and the third")
+    (is (null (click-row->sel h :picker 0)) "the title is not a row")
+    (is (null (click-row->sel h :picker 1)) "nor is the blank under it")
+    (is (null (click-row->sel h :picker 8)) "nor is the blank space below the list")))
 
 (def-test a-click-is-not-trusted-below-a-truncated-list (:suite leticl)
   "The reference: *\"a click into the blank space below a truncated list must not
@@ -1919,7 +1928,7 @@ select a session nobody can see.\"*"
                 (list :session-id "s4" :title "four")
                 (list :session-id "s5" :title "five"))
           (head-mode h) :picker)
-    (is (integerp (click-row->sel h :picker 1)) "a visible row is selectable")
+    (is (integerp (click-row->sel h :picker 2)) "a visible row is selectable")
     ;; line 3 is past the visible room (3 lines) but before the list's end — a
     ;; click there must still be refused, because it is not on screen
     (is (null (click-row->sel h :picker 3))
@@ -1951,17 +1960,21 @@ HEAD's own rows can be changed here; the daemon's cannot, and the pane says so."
                                :diff "split"))
     (let ((lines (config-lines h nil 80)))
       (let ((text (segs-of lines)))
-        (is (search "settings" text) "the pane names itself")
-        (is (search "editable" text) "and says which half is editable")
-        (is (search "read-only here" text) "and which is not")
-        (is (search "✎" text) "the head's rows are marked changeable")
-        (is (search "diff = split" text) "and their values are shown from the LIVE plist"))
+        (is (search "config" text) "the pane names itself")
+        (is (search "head — this window" text) "and says which half is the head's")
+        (is (search "session — not attached, so nothing to list" text)
+            "and, with no daemon rows yet, says so where the daemon's section would be")
+        (is (search "✎ diff view" text) "the head's rows are marked changeable")
+        (is (search "diff view        split" text)
+            "and their values are shown from the LIVE plist"))
       ;; enter flips the selected row
-      (setf (head-picker-sel h) 0)       ; `diff` is the first head row
-      (leticl::%flip-head-setting h "diff")
+      (setf (head-picker-sel h) 0)       ; `diff view` is the first head row
+      (leticl::config-change h)
       (is (string= "unified" (getf (head-prefs h) :diff)) "enter flipped the diff shape")
-      (is (search "diff = unified" (segs-of (config-lines h nil 80)))
-          "and the pane says so on the next frame"))))
+      (is (search "diff view        unified" (segs-of (config-lines h nil 80)))
+          "and the pane says so on the next frame")
+      (is (search "diff view → unified" (head-status-note h))
+          "and the note says what changed, as the reference's does"))))
 
 (def-test the-config-pane-shows-the-live-value-not-the-file (:suite leticl)
   "The file is where a choice is WRITTEN; the plist is what is in effect. Between a
@@ -1970,8 +1983,8 @@ change and a save the two disagree, and the pane must show what is true."
     (setf (head-prefs h) (list :show-reasoning t :show-tools nil :raw-calls nil
                                :diff "unified"))
     (let ((text (segs-of (config-lines h nil 80))))
-      (is (search "thinking = open" text) "the live fold, not the file's")
-      (is (search "tools = folded" text) "and the other"))))
+      (is (search "thinking         open" text) "the live fold, not the file's")
+      (is (search "tool output      folded" text) "and the other"))))
 
 ;;; ------------------------------------------- the turn footer and queue (P13) ;;;
 
@@ -2558,3 +2571,380 @@ esc start arming an interrupt. The scroll is clamped to what exists."
     (setf (head-scroll h) 100000)
     (leticl::%viewport-lines h 60 10)
     (is (< (head-scroll h) 100000) "and a scroll past the top is clamped to what exists")))
+
+;;; ------------------------------- the full-body panes against letibot's screen ;;;
+;;;
+;;; Every pane below was measured against the reference at 210x63 on the same
+;;; session, both heads captured within a minute of each other. Two of them had
+;;; never rendered at all; the rest differed in text, order, indent or style.
+
+(defun %well-formed-lines-p (lines)
+  "Every LINE is a list of SEGMENTS and every segment is `(string . plist)` — the
+shape `put-segments` can paint. NIL is a blank line and is fine; a line whose
+element is itself a line is not, and is exactly what killed two panes."
+  (every (lambda (line)
+           (every (lambda (seg) (and (consp seg) (stringp (car seg)) (listp (cdr seg))))
+                  line))
+         lines))
+
+(defun %pane-head ()
+  "A head with something in every pane: sessions, settings, jobs, subagents, a
+plan, a peeked scrollback and a workspace with this repo's TODO.md."
+  (let* ((h (%make-head))
+         (s (head-session h)))
+    (setf (session-session-id s) "s-1789639478142928813"
+          (session-head-id s) "h3"
+          (session-wiring s) (list :workspace "/home/dead/Projects/leticl" :model "qwen")
+          (session-sessions s)
+          (list (list :session-id "s-1789639478142928813" :title "hello, what we are doing here"
+                      :live t :stored-items 2647
+                      :status (list :running nil :items 3 :heads 2)
+                      :wiring (list :model "qwen-3.8-27b" :workspace "/home/dead/Projects/leticl"))
+                (list :session-id "s-1789418841049398558" :title "" :live nil :stored-items 0
+                      :status (list :running nil :items 0 :heads 0)
+                      :wiring (list :model "glm-5.3-flash" :workspace "/home/dead/Projects/rano"))
+                (list :session-id "s-child" :title "Fix an auto-compaction failure"
+                      :parent-session-id "s-1789639478142928813" :live t
+                      :status (list :running t :items 1 :heads 0) :wiring (list :model "x")))
+          (session-todos s) (list (list :content "S0 decomposition (DONE)" :status "completed")
+                                  (list :content "S6 panes" :status "in_progress")
+                                  (list :content "P5 sidediff" :status "pending"))
+          (session-subagents s)
+          (list (list :subagent-id "s-child" :state "running" :prompt "Fix an auto-compaction failure" :role "worker")
+                (list :subagent-id "s-child" :state "opening" :prompt "Fix an auto-compaction failure" :role "worker"))
+          (head-settings h)
+          (list (list :key "mode" :value "allow-all (this box, consented)" :source "" :editable "/mode"
+                      :choices (list "read-only" "always-ask" "allow-all"))
+                (list :key "model" :value "deepseek/deepseek-flash" :source "" :editable "/models"
+                      :choices (list "deepseek/deepseek-flash" "local"))
+                (list :key "supervise" :value "on — the guard model answers" :source "" :editable "/supervise")
+                (list :key "session" :value "s-1789639478142928813" :source "" :editable "")
+                (list :key "permission" :value "150 rule(s)" :source "permission.json" :editable "Always allow, from a prompt"))
+          (head-jobs h)
+          (list (list :id "j1" :command "sleep 10" :how "asked" :state "running" :running t
+                      :produced 1500 :elapsed-ms 0)
+                (list :id "j2" :command "ls" :how "promoted" :state "exited 0" :running nil
+                      :produced 20 :elapsed-ms 3456))
+          (head-peeked h) (list (list :event "delta" :text "hello")
+                                (list :event "delta")
+                                (list :event "turn_started")))
+    h))
+
+(def-test every-pane-renders-well-formed-segment-lines (:suite leticl)
+  "The screen showed `render failed — the head is alive; fix and re-push /
+TYPE-ERROR / The value (\"\" :DIM T) is not of type STRING` for BOTH the jobs pane
+and the subagents pane: their header was `(list LINE (list LINE))`, a \"line\"
+whose one segment was itself a line, and `put-segments` handed a list to
+`screen-put-string`. Neither pane had ever rendered. This test calls every pane
+function the way `%render` does and checks the one shape it can paint; it is the
+check that would have caught the bug on the day it landed."
+  (let ((h (%pane-head)))
+    (dolist (mode '(:help :status :config :jobs :subagents :peek :picker :todos
+                    :mode-picker :models-picker))
+      (setf (head-mode h) mode (head-picker-sel h) 1)
+      (let ((lines (case mode
+                     (:help (help-lines 210))
+                     (:status (status-screen-lines h 210))
+                     (:config (config-lines h (head-settings h) 210))
+                     (:jobs (jobs-lines h 210))
+                     (:subagents (subagent-lines h 210))
+                     (:peek (peek-lines h 210))
+                     (:picker (picker-lines (head-session h) (head-picker-sel h) 210))
+                     (:todos (todos-lines h 210))
+                     (:mode-picker (mode-picker-lines h 210))
+                     (:models-picker (models-picker-lines h 210)))))
+        (is (plusp (length lines)) (format nil "the ~(~a~) pane has rows" mode))
+        (is (%well-formed-lines-p lines)
+            (format nil "and every one of the ~(~a~) pane's segments is (string . plist)" mode))))
+    ;; and through the render itself, onto a screen the size of the capture
+    (let ((*stdout* (make-string-output-stream))
+          (*pane-scroll* 0)
+          (h2 (%on-head :cols 210 :rows 63)))
+      (setf (head-jobs h2) (head-jobs h) (head-settings h2) (head-settings h))
+      (dolist (mode '(:jobs :subagents :config :help :status :picker :todos))
+        (setf (head-mode h2) mode)
+        (leticl::%render h2)
+        (is (not (search "render failed" (%screen-text h2)))
+            (format nil "the ~(~a~) pane paints without a render error" mode))))))
+
+(def-test the-jobs-pane-says-none-the-way-the-reference-does (:suite leticl)
+  "letibot's jobs pane, row for row: `background jobs`, a blank, the `none` sentence
+four in and dim, a blank, and the sentence about what `running` means. Ours had
+never drawn; when it had a header it was ` background jobs ` with a stray dim
+empty segment where the blank belongs."
+  (let ((h (%make-head)))
+    (multiple-value-bind (lines sel-line) (jobs-lines h 210)
+      (is (equal '(("background jobs" :bold t)) (first lines)) "the title, bold, no padding")
+      (is (null (second lines)) "then a BLANK — nil, not a line with an empty segment")
+      (is (string= "    none. The model backgrounds a command with bash's `background: true`; ctrl-o moves the running one."
+                   (car (first (third lines))))
+          "the `none` sentence, verbatim")
+      (is (equal '(:dim t) (cdr (first (third lines)))) "dim")
+      (is (null (fourth lines)) "a blank")
+      (is (string= "    a job still shows running until the daemon says it settled — between turns, that saying is the daemon's alone."
+                   (car (first (fifth lines))))
+          "and the closing sentence")
+      (is (= 5 (length lines)) "and nothing else")
+      (is (= 2 sel-line) "the cursor's line is the first row's, under the two-line header"))
+    ;; with jobs: two lines each, the mark painted by state, the picked row reversed
+    (setf (head-jobs h) (list (list :id "j1" :command "sleep 10" :how "asked" :state "running"
+                                    :running t :produced 1500 :elapsed-ms 0)
+                              (list :id "j2" :command "ls" :how "promoted" :state "exited 0"
+                                    :running nil :produced 20 :elapsed-ms 3456))
+          (head-picker-sel h) 1)
+    (multiple-value-bind (lines sel-line) (jobs-lines h 210)
+      (let ((text (lines-text lines)))
+        (is (search "  [~] j1 sleep 10" (nth 2 text)) "a running job's row")
+        (is (search "         asked · running · 1.5 KB out so far" (nth 3 text)) "and its fact line")
+        (is (search "▸ [x] j2 ls" (nth 4 text)) "the picked job carries the mark")
+        (is (search "         promoted · exited 0 · 20 B out · ran 3.4s" (nth 5 text))
+            "a settled job says how it ended and how long it ran"))
+      (is (equal '(:fg :yellow) (cdr (second (nth 2 lines)))) "running is yellow")
+      (is (member :reverse (cdr (second (nth 4 lines)))) "the picked row is reversed")
+      (is (= 4 sel-line) "two lines per row: the second row is line 4"))))
+
+(def-test the-subagents-pane-says-none-the-way-the-reference-does (:suite leticl)
+  "letibot's subagents pane: `subagents`, a blank, `none spawned yet…`, a blank,
+`arrows move, Enter reads…`. Ours had never drawn (the same nested header as the
+jobs pane), and the fold that draws it now is the one the composer's top edge
+counts from — by the event's `subagent_id`, which is the child's, not the
+envelope's `session_id`, which is the parent's."
+  (let ((h (%make-head)))
+    (multiple-value-bind (lines sel-line) (subagent-lines h 210)
+      (is (equal '(("subagents" :bold t)) (first lines)) "the title")
+      (is (null (second lines)) "a blank")
+      (is (string= "    none spawned yet. The model spawns them with the task tool."
+                   (car (first (third lines)))))
+      (is (null (fourth lines)))
+      (is (string= "    arrows move, Enter reads the subagent's output, o switches into it — subagents are hidden from ctrl-s."
+                   (car (first (fifth lines)))))
+      (is (= 2 sel-line)))
+    ;; two children of one parent, each with two state events: two rows, latest state each
+    (setf (session-subagents (head-session h))
+          (list (list :session-id "parent" :subagent-id "s-aaaaaaaaaaaa11111111" :state "done" :prompt "first" :role "worker")
+                (list :session-id "parent" :subagent-id "s-bbbbbbbbbbbb22222222" :state "running" :prompt "second" :role "worker")
+                (list :session-id "parent" :subagent-id "s-bbbbbbbbbbbb22222222" :state "opening" :prompt "second" :role "worker")
+                (list :session-id "parent" :subagent-id "s-aaaaaaaaaaaa11111111" :state "running" :prompt "first" :role "worker")))
+    (let ((rows (subagent-rows h)))
+      (is (= 2 (length rows)) "two subagents, not four events and not one parent")
+      (is (string= "done" (getf (first rows) :state)) "the first, spawned first, is done")
+      (is (string= "running" (getf (second rows) :state)) "the second is running"))
+    (setf (head-picker-sel h) 0)
+    (let ((text (lines-text (subagent-lines h 210))))
+      (is (search "▸ [x] first" (nth 2 text)) "the picked row, its mark by state")
+      (is (search "       …11111111 · role worker · done" (nth 3 text)) "the short id, role and state under it")
+      (is (search "  [~] second" (nth 4 text)) "the other row"))
+    (is (string= " 1 subagent running " (leticl::composer-title h))
+        "and the box's top edge counts the same fold")))
+
+(def-test the-config-pane-renders-every-row-with-its-source-under-the-cursor (:suite leticl)
+  "The screen showed `UNBOUND-VARIABLE / The variable ANAPHORA:IT is unbound.`:
+an `awhen` whose TEST used `it` — `(and (getf r :editable) (plusp (length it)))` —
+so any daemon row with an `editable` verb killed the pane. Against letibot's
+screen the pane is `config`, a blank, a dim section name, `▸ ✎ diff view
+split` reversed with `       from PATH` dim under it, the other head rows, a blank,
+`session — the daemon` with `✎` only on the rows a verb changes, then the daemon's
+files, then the closing sentence."
+  (let ((h (%pane-head)))
+    (setf (head-prefs h) (list :show-reasoning nil :show-tools t :raw-calls nil :diff "split")
+          (head-picker-sel h) 0)
+    (multiple-value-bind (lines sel-line) (config-lines h (head-settings h) 210)
+      (let ((text (lines-text lines)))
+        (is (string= "config" (nth 0 text)) "the title alone")
+        (is (string= "" (nth 1 text)) "a blank")
+        (is (string= "  head — this window" (nth 2 text)) "the head's section, dim")
+        (is (equal '(:dim t) (cdr (first (nth 2 lines)))))
+        (is (string= "▸ ✎ diff view        split" (nth 3 text)) "the cursor row, keyed to the longest key")
+        (is (equal '(:reverse t) (cdr (first (nth 3 lines)))) "reversed whole")
+        (is (uiop:string-prefix-p "       from " (nth 4 text)) "its source under it")
+        (is (string= "  ✎ thinking         folded" (nth 5 text)))
+        (is (string= "  ✎ tool output      open" (nth 6 text)) "the live fold's word")
+        (is (string= "  ✎ raw tool calls   hidden" (nth 7 text)) "shown/hidden, the reference's words")
+        (is (string= "" (nth 8 text)) "a blank between sections")
+        (is (string= "  session — the daemon" (nth 9 text)))
+        (is (string= "  ✎ mode             allow-all (this box, consented)" (nth 10 text))
+            "a daemon row a verb changes carries ✎")
+        (is (string= "    session          s-1789639478142928813" (nth 13 text))
+            "one that takes a restart does not")
+        (is (some (lambda (l) (search "files — edit with an editor" l)) text) "the daemon's files")
+        (is (some (lambda (l) (search "permission.json" l)) text) "by name")
+        (is (search "✎ changes now and is kept" (car (last text))) "and the closing sentence")
+        (is (not (some (lambda (l) (search "NIL" l)) text)) "and nothing prints NIL"))
+      (is (= 3 sel-line) "the cursor's line: title, blank, section, row"))
+    ;; the cursor walks EVERY row, and the source follows it
+    (setf (head-picker-sel h) 4)
+    (multiple-value-bind (lines sel-line) (config-lines h (head-settings h) 210)
+      (is (search "▸ ✎ mode" (nth sel-line (lines-text lines))) "the fifth row is the daemon's mode")
+      (is (= 9 sel-line) "on line 9 — the blank and the second section name are counted, and the source line only follows the cursor"))
+    ;; enter on a daemon row goes through the verb, not around it
+    (setf (head-picker-sel h) 6)        ; supervise
+    (leticl::config-change h)
+    (is (search "supervise off" (head-status-note h)) "supervise flips through its own verb")
+    (setf (head-picker-sel h) 7)        ; session, not editable
+    (leticl::config-change h)
+    (is (search "takes a restart" (head-status-note h)) "a read-only row says why")))
+
+(def-test the-todos-cursor-walks-the-repo-items-and-enter-unfolds-one (:suite leticl)
+  "letibot's screen, three captures: on open no `▸` anywhere (the cursor rests
+on row 0, a heading, and only items show it); after two Downs `▸ [x] T3` — the
+THIRD item, because a cursor on a heading counts from the item below it; after
+Enter, T3's body under it at fourteen columns and its ` ···` gone. Ours put the
+cursor on the session's plan, so Up and Down moved a reversed bar nobody asked for
+and Enter did nothing to the file's items."
+  (let* ((dir-pathname (make-pathname :name nil :type nil
+                                      :directory '(:absolute "tmp" "leticl-todos-cursor-test")))
+         (dir "/tmp/leticl-todos-cursor-test")
+         (path (make-pathname :name "TODO" :type "md"
+                              :directory (pathname-directory dir-pathname)))
+         (*repo-todo-open* nil)
+         (*pane-scroll* 0) (*pane-room* 40) (*pane-lines* 0)
+         (h (%make-head)))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist dir-pathname)
+           (with-open-file (out path :direction :output
+                                :if-does-not-exist :create :if-exists :supersede)
+             (format out "# TODO~%~%## Dependency graph~%~%prose~%~%## Phase 0~%~%- [x] T1 first~%    pinned abc~%~%- [x] T2 second~%~%## Phase 1~%~%- [x] T3 third~%    body one~%    body two~%~%- [ ] T4 fourth~%"))
+           (setf (session-wiring (head-session h)) (list :workspace dir)
+                 (head-mode h) :todos
+                 (head-picker-sel h) 0)
+           (flet ((text () (lines-text (todos-lines h 210)))
+                  (key (k) (leticl::%handle-key h (list :type k))))
+             (let ((text (text)))
+               (is (string= "todos" (first text)) "the title alone — no hint suffix")
+               (is (not (some (lambda (l) (search "▸" l)) text))
+                   "on open the cursor is on a heading and shows nowhere")
+               (is (some (lambda (l) (string= "      Dependency graph" l)) text)
+                   "a heading with no items sits six in, with no box")
+               (is (some (lambda (l) (string= "    [x] Phase 0  [2/2]" l)) text)
+                   "a heading with items sits four in")
+               (is (some (lambda (l) (string= "        [x] T1 first ···" l)) text)
+                   "an item eight in, its `···` one space after the text")
+               (is (string= "  the file itself is in the workspace; this pane never writes it."
+                            (car (last text)))
+                   "and the reference's closing line"))
+             (key :down) (key :down)
+             (is (some (lambda (l) (string= "      ▸ [x] T3 third ···" l)) (text))
+                 "two Downs from the top land on the THIRD item, as letibot's did")
+             (key :enter)
+             (let ((text (text)))
+               (is (some (lambda (l) (string= "      ▸ [x] T3 third" l)) text)
+                   "Enter unfolds it — the `···` goes")
+               (is (some (lambda (l) (string= "              body one" l)) text)
+                   "and the body is drawn fourteen in")
+               (is (some (lambda (l) (string= "              body two" l)) text) "all of it"))
+             (key :down)
+             (is (not (some (lambda (l) (search "body one" l)) (text)))
+                 "moving folds it again")
+             (is (some (lambda (l) (string= "      ▸ [ ] T4 fourth" l)) (text)) "on the fourth")
+             (key :down)
+             (is (some (lambda (l) (string= "      ▸ [x] T1 first ···" l)) (text))
+                 "and past the end it wraps to the first")
+             (key :tab)
+             (is (some (lambda (l) (string= "              pinned abc" l)) (text))
+                 "Tab unfolds too, as the operator asked")
+             (key :up)
+             (is (some (lambda (l) (string= "      ▸ [ ] T4 fourth" l)) (text))
+                 "Up from the first wraps to the last")
+             (multiple-value-bind (lines sel-line) (todos-lines h 210)
+               (is (search "▸ [ ] T4" (nth sel-line (lines-text lines)))
+                   "and the cursor's LINE names the row it is on"))))
+      (ignore-errors (delete-file path)))))
+
+(def-test the-help-is-the-references-row-for-row (:suite leticl)
+  "letibot's help against ours, stripped: 41 non-blank rows against 50. Theirs is
+one title, `keys and commands`, a cyan key column sixteen wide, a plain description
+wrapped under itself at nineteen, no separate list of slash verbs, and `/help or
+esc closes this`. Ours had ` leticl keys `, bold keys, dim text and a `commands`
+section. The two heads must teach the same keys the same way."
+  (let* ((lines (help-lines 210))
+         (text (lines-text lines)))
+    (is (string= "keys and commands" (first text)) "the title")
+    (is (null (second lines)) "a blank under it")
+    (is (= 36 (count-if (lambda (l) (plusp (length l))) text))
+        "36 non-blank rows at the capture's width, as the reference has — 41 on its screen with the header and the four chrome rows")
+    (is (string= "  enter           send what you typed; while a turn runs it is queued as a follow-up"
+                 (third text))
+        "the first row, key sixteen wide after two")
+    (is (equal '(:fg :cyan) (cdr (first (third lines)))) "the key is cyan")
+    (is (null (cdr (second (third lines)))) "and the description plain")
+    (is (string= "  /help or esc closes this" (car (last text))) "the closer")
+    (is (equal '(:dim t) (cdr (first (car (last lines))))) "dim")
+    (is (not (some (lambda (l) (search "/sessions" l)) text))
+        "and no list of every slash verb — the reference names the ones it teaches"))
+  ;; narrow, a description wraps under itself at nineteen columns
+  (let ((text (lines-text (help-lines 80))))
+    (is (some (lambda (l) (and (> (length l) 19)
+                               (string= (subseq l 0 19) (make-string 19 :initial-element #\space))))
+              text)
+        "a continuation line is indented nineteen")))
+
+(def-test the-status-screen-explains-its-counters (:suite leticl)
+  "letibot's /status: `this head`, then one row per counter — session, head, seq,
+filtered, dropped, scrubbed, resync, verbosity, workspace — each with WHY it is
+there wrapped dim under it, and `/status or esc closes this`. 26 non-blank rows on
+its screen against our 18.
+Ours was ` status ` and a bare list of pairs, three of which the reference does not
+have and one of which printed `NIL`."
+  (let* ((h (%pane-head))
+         (*rendered-total* 23144) (*filtered-total* 46) (*scrubbed-total* 0) (*resyncs* 0)
+         (*verbosity* :normal))
+    (setf (session-seq (head-session h)) 27485
+          (session-heads (head-session h)) (list (list :head-id "h3") (list :head-id "h18")))
+    (let* ((lines (status-screen-lines h 210))
+           (text (lines-text lines)))
+      (is (string= "this head" (first text)) "the title")
+      (is (= 21 (count-if (lambda (l) (plusp (length l))) text))
+          "21 non-blank rows — 26 on the reference's screen with the header and the four chrome rows")
+      (is (string= "  session     s-1789639478142928813" (third text)) "the key twelve wide, the value plain")
+      (is (equal '(:dim t) (cdr (first (third lines)))) "the key dim")
+      (is (null (cdr (second (third lines)))) "the value not")
+      (is (uiop:string-prefix-p "              In full, because this is the form a command takes."
+                                (fourth text))
+          "the explanation fourteen in")
+      (is (some (lambda (l) (string= "  head        h3 · 2 attached" l)) text) "the head and how many")
+      (is (some (lambda (l) (string= "  seq         27485 · 23144 rendered" l)) text) "seq and rendered")
+      (is (some (lambda (l) (string= "  filtered    46 (normal)" l)) text) "filtered at the verbosity")
+      (is (some (lambda (l) (string= "  workspace   ~/Projects/leticl" l)) text) "the workspace, with ~")
+      (is (string= "  /status or esc closes this" (car (last text))) "the closer")
+      (is (not (some (lambda (l) (search "NIL" l)) text)) "and nothing prints NIL"))))
+
+(def-test the-picker-hides-subagents-and-right-aligns-the-facts (:suite leticl)
+  "letibot's picker on the same daemon had 28 sessions; ours 58, because ours
+listed the subagents too. Its rows are `▸  1  name` with the facts right-aligned
+to the pane's width and the full id under every row; ours were ` ● name`."
+  (let* ((h (%pane-head))
+         (s (head-session h)))
+    (is (= 2 (length (picker-sessions s))) "the child session is not listed")
+    (multiple-value-bind (lines sel-line) (picker-lines s 0 210)
+      (let ((text (lines-text lines)))
+        (is (string= "sessions in this daemon" (first text)) "the title")
+        (is (string= "" (second text)) "a blank")
+        (is (uiop:string-prefix-p "▸  1  hello, what we are doing here" (third text))
+            "the cursor's row: mark, number, name")
+        (is (= (pane-width 210) (string-width (third text)))
+            "the facts end at the pane's right edge — 206 columns of 210")
+        (is (search "2647 rows · 2 heads · qwen-3.8-27b" (third text))
+            "the store's count, the heads and the model")
+        (is (string= "      s-1789639478142928813  ~/Projects/leticl" (fourth text))
+            "the full id and the workspace under it")
+        (is (uiop:string-prefix-p "   2  …49398558" (fifth text))
+            "an unnamed session shows its short id")
+        (is (search "on disk · glm-5.3-flash" (fifth text)) "and that it is stored")
+        (is (uiop:string-prefix-p "  ↑↓ moves · enter switches" (nth 7 text)) "the hints close it"))
+      (is (member :reverse (cdr (first (third lines)))) "the picked row is reversed")
+      (is (member :bold (cdr (second (third lines)))) "and the session we are in keeps its bold name")
+      (is (= 2 sel-line) "the cursor's line is the first row's"))
+    (is (= 4 (nth-value 1 (picker-lines s 1 210))) "two lines per row: the second is line 4")))
+
+(def-test a-heading-with-no-items-sits-six-in-and-dim (:suite leticl)
+  "letibot draws `      Dependency graph` — six in, dim, no box — where ours drew it
+eight in and plain: its indent is 6 in the reference's `render_todo_md`, and a
+heading with no mark is `{pad}{cursor}{text}` in one dim run."
+  (let ((rows (read-todo-md (format nil "## Empty~%~%prose~%~%## Full~%~%- [ ] a~%"))))
+    (is (= 6 (getf (first rows) :indent)) "an empty heading is indented six")
+    (is (= 4 (getf (second rows) :indent)) "one with items, four")
+    (let ((line (first (leticl::%todo-row-lines (first rows)))))
+      (is (= 1 (length line)) "one segment")
+      (is (string= "      Empty" (car (first line))) "pad and cursor, then the text")
+      (is (equal '(:dim t) (cdr (first line))) "dim"))))

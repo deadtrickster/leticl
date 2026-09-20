@@ -74,8 +74,19 @@ refuses it: 'not an array with a fill pointer'.)"
   (note-snapshot-answered (getf snapshot :items))
   session)
 
+(defvar *scrubbed-total* 0
+  "Interactive-only frames the daemon withheld from this head because it attached
+late — the `ScrubReport` on `Hello` (protocol.rs:706), its four counts summed the
+way the reference's `scrubbed.total()` sums them. Shown on `/status`; a defvar so a
+push can introduce it without a slot.")
+
+(defun %scrub-total (report)
+  "The sum of a `ScrubReport` plist's counts, or 0 for none."
+  (loop for (nil v) on report by #'cddr when (integerp v) sum v))
+
 (defun ingest-hello (session hello)
   (ingest-snapshot session (getf hello :snapshot))
+  (incf *scrubbed-total* (%scrub-total (getf hello :scrubbed)))
   (setf (session-head-id session) (or (getf hello :head-id) "")
         (session-dropped session) (getf hello :dropped)
         (session-sessions session) (getf hello :sessions)

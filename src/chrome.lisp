@@ -140,7 +140,7 @@ rule, from `header_line`: shown for one session too, because \"1/1\" is a fact �
 this daemon holds one session and you are in it — where two absences are not.
 Subagents are children of a session, not sessions a picker lists, so they are not
 counted; the picker filters them the same way."
-  (let* ((all (remove-if (lambda (b) (getf b :parent-session-id)) (session-sessions s)))
+  (let* ((all (picker-sessions s))
          (at (position (session-session-id s) all
                        :key (lambda (b) (getf b :session-id)) :test #'equal)))
     (format nil "~d/~d" (if at (1+ at) 0) (max 1 (length all)))))
@@ -410,16 +410,13 @@ instead of reading the code, and the operator's screen showed a bare `╭──�
 mine said `╭ hello, what we are doing here ───╮`. The reference's top edge carries
 `N subagents running` when any are, and nothing otherwise.
 
-Counted from the SUBAGENT events whose latest state for that session is `running`,
-which is the same fold the subagents pane draws."
-  (let* ((seen (make-hash-table :test #'equal))
-         (running 0))
-    ;; newest first, so the FIRST state seen for a session is its latest
-    (dolist (env (session-subagents (head-session head)))
-      (let ((sid (getf env :session-id)))
-        (when (and sid (not (gethash sid seen)))
-          (setf (gethash sid seen) t)
-          (when (string= (or (getf env :state) "") "running") (incf running)))))
+Counted from the SUBAGENT events whose latest state for that subagent is
+`running` — `subagent-rows`, the same fold the subagents pane draws, so the edge
+and the pane cannot disagree. It used to fold here by the envelope's `session_id`,
+which is the PARENT's (event.rs:841), so two children of one session counted as
+one."
+  (let ((running (count "running" (subagent-rows head)
+                        :key (lambda (r) (or (getf r :state) "")) :test #'string=)))
     ;; NOTHING is nothing: returning a single space put a stray `╭ ───` on the box
     ;; where letibot draws `╭───`. Measured column-by-column against the two
     ;; screens, which is the only way a one-column difference shows up.

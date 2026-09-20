@@ -108,6 +108,11 @@ paints to it, and defvar for the same reason as *head*.")
   "Events this head consumed and did not draw, over its life — what `/verbosity`
 reports beside the level, so \"terse\" is a number and not a mood.")
 
+(defvar *rendered-total* 0
+  "Events this head consumed and DID draw, over its life — the other half of the
+ack's accounting, which `/status` shows as `seq · N rendered` the way the
+reference does. Counted by this head, not by the daemon.")
+
 (defun %input-loop (head)
   "Terminal → keys mailbox."
   (let ((in (sb-sys:make-fd-stream 0 :input t :element-type 'character
@@ -347,7 +352,7 @@ is a resume — the gap arrives as events, or a Resync does (§13.2)."
                    (setf last-seq (getf frame :seq))))
                (handler-case
                    (case (%handle-frame head frame)
-                     (:rendered (incf rendered))
+                     (:rendered (incf rendered) (incf *rendered-total*))
                      (:filtered (incf filtered) (incf *filtered-total*))
                      (t nil))
                  (error (e)

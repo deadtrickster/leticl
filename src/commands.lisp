@@ -59,7 +59,7 @@ on ClientFrame::Slash)."
       ((string= verb "new") (%send head (make-new-session rest "")))
       ((string= verb "sessions")
        (%send head (make-list-sessions))
-       (setf (head-mode head) :picker (head-dirty head) t))
+       (%open-pane head :picker))
       ((string= verb "switch")
        (%send head (make-switch rest 0))
        (setf (head-mode head) :normal))
@@ -67,9 +67,9 @@ on ClientFrame::Slash)."
        (%send head (make-rename-session (session-session-id (head-session head)) rest)))
       ;; the reference's short forms, for the fingers that learnt them there
       ((member verb '("help" "h" "?") :test #'string=)
-       (setf (head-mode head) :help (head-dirty head) t))
+       (%open-pane head :help))
       ((member verb '("status" "stats") :test #'string=)
-       (setf (head-mode head) :status (head-dirty head) t))
+       (%open-pane head :status))
       ((member verb '("think" "r") :test #'string=)
        (%flip-fold head :show-reasoning))
       ;; `/t` folds tool output; `/tools` ASKS what this conversation can call —
@@ -86,7 +86,7 @@ on ClientFrame::Slash)."
        ;; settings on attach now, and a reply that opened the pane would pop
        ;; `/config` at every attach), so the command owns both halves.
        (%send head (make-settings))
-       (setf (head-mode head) :config (head-dirty head) t))
+       (%open-pane head :config))
       ((string= verb "mode")
        (if (plusp (length rest))
            (%send head (list :frame "mode"
@@ -127,15 +127,15 @@ on ClientFrame::Slash)."
        ;; are answered between turns, so `/job` during a long turn arrived after
        ;; it had finished).
        (%send head (make-list-jobs))
-       (setf (head-mode head) :jobs (head-dirty head) t))
-      ((string= verb "subagents") (setf (head-mode head) :subagents (head-dirty head) t))
+       (%open-pane head :jobs))
+      ((string= verb "subagents") (%open-pane head :subagents))
       ((string= verb "todos")
        ;; Ask for the list AND open the pane. The session's plan is carried by
        ;; `todos_updated` events, so a head that attached after the model wrote
        ;; them has none — the bootstrap read is what makes the pane honest about
        ;; a plan written before this head existed.
        (%send head (make-list-todos))
-       (setf (head-mode head) :todos (head-dirty head) t))
+       (%open-pane head :todos))
       ((string= verb "peek")
        ;; One subagent's output without leaving this session: the daemon answers
        ;; with `Peeked`, and `%handle-frame` opens the pane from that. The screen
@@ -192,6 +192,28 @@ on ClientFrame::Slash)."
                            :client-request-id (next-request-id)
                            :expected-seq (session-expected-seq (head-session head))
                            :line line))))))
+
+(defun %open-pane (head mode)
+  "Open the full-body screen MODE with its cursor at the top and nothing scrolled.
+
+The panes share ONE cursor (`head-picker-sel`) and one scroll offset, because only
+one is open at a time — so a position left by the last pane means nothing to the
+next, and opening on it put the todos cursor three items down because the picker
+had been there. The reference keeps a cursor per pane; with one, the top is the
+only honest place to start."
+  (setf (head-mode head) mode
+        (head-picker-sel head) 0
+        (head-dirty head) t)
+  (reset-pane-scroll))
+
+(defun %send-slash (head line)
+  "LINE as a `slash` frame — the line the operator would have typed, minus the
+slash, which is how a daemon-side verb travels (`Action::Slash`). One place, so the
+request id and the expected seq are filled the same way by every caller."
+  (%send head (list :frame "slash"
+                    :client-request-id (next-request-id)
+                    :expected-seq (session-expected-seq (head-session head))
+                    :line line)))
 
 (defun %interrupt (head reason)
   (%send head (make-interrupt (session-expected-seq (head-session head)) reason)))

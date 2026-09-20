@@ -210,17 +210,7 @@ shows the candidates on the status line."
       ;; this head must not need.
       ((member (head-mode head) '(:help :status :config :jobs :subagents :peek :todos :picker
                                        :mode-picker :models-picker))
-       (flet ((rows () (case (head-mode head)
-                         (:subagents (length (head-subagents head)))
-                         (:jobs (length (head-jobs head)))
-                         (:todos (length (session-todos (head-session head))))
-                         (:picker (length (session-sessions (head-session head))))
-                         (:mode-picker (length (setting-choices head "mode")))
-                         (:models-picker (length (setting-choices head "model")))
-                         ;; the config pane's cursor walks the HEAD's own rows,
-                         ;; which are the ones it can change
-                         (:config (length *head-setting-rows*))
-                         (t 0)))
+       (flet ((rows () (pane-row-count head (head-mode head)))
               (move-cursor (n)
                 (setf (head-picker-sel head)
                       (max 0 (min (max 0 (1- (rows))) (+ (head-picker-sel head) n)))
@@ -230,8 +220,15 @@ shows the candidates on the status line."
                 (scroll-pane-into-view (head-picker-sel head))))
          (case type
            ((:esc :q-press) (setf (head-mode head) :normal (head-dirty head) t))
-           ((:up) (move-cursor -1))
-           ((:down) (move-cursor 1))
+           ;; The todos pane's cursor stops only on the repo's ITEMS and wraps
+           ;; at either end — the reference's `stops` (app.rs:3268). Measured:
+           ;; from the top, two Downs land on T3 (T1's stop is where a cursor on
+           ;; the heading above it counts from), and Enter there unfolds T3.
+           ;; Moving folds whatever was open.
+           ((:up :down)
+            (if (eq (head-mode head) :todos)
+                (%todos-move head (if (eq type :up) -1 1))
+                (move-cursor (if (eq type :up) -1 1))))
            ;; PAGE and WHEEL scroll the PANE. They used to be swallowed here,
            ;; which left a pane taller than the body with no way to see the rest
            ;; of it — and the repo's own TODO.md is 98 rows. The polarity is
@@ -259,33 +256,46 @@ shows the candidates on the status line."
               (:config
                ;; ENTER CHANGES IT. The pane lists the head's own choices and it
                ;; can change them in place — which is what was asked for: a pane
-               ;; with runtime-editable configurations, not a list to read.
-               (let ((key (nth (head-picker-sel head) *head-setting-rows*)))
-                 (awhen key (%flip-head-setting head it))))
+               ;; with runtime-editable configurations, not a list to read. The
+               ;; cursor walks EVERY row now, as the reference's does, and
+               ;; `config-change` says what each kind of row does on Enter.
+               (config-change head))
               (:subagents
-               (let ((row (nth (head-picker-sel head) (head-subagents head))))
+               ;; the pane's enter is the one it advertises: read that
+               ;; subagent's scrollback without moving this session there. It is
+               ;; `peek`, the command that existed as a frame nobody sent.
+               (let ((row (nth (head-picker-sel head) (subagent-rows head))))
                  (awhen (and row (getf row :session-id))
                    (%send head (make-peek it))
                    (setf (head-status-note head)
                          (format nil "peeking ~a…" it)))))
+              (:jobs
+               ;; Enter reads the job's output: `/job ID`, the same read the
+               ;; model gets from `job_output`, from the row the operator is
+               ;; looking at. The reply lands on the session log, which the pane
+               ;; is covering, so the pane closes (app.rs:3343).
+               (let ((row (nth (head-picker-sel head) (head-jobs head))))
+                 (awhen (and row (getf row :id))
+                   (setf (head-mode head) :normal)
+                   (%send-slash head (format nil "job ~a" it)))))
               (:todos
-               ;; Enter unfolds a repo item that HAS detail — the operator asked
-               ;; for this directly: *"if a todo has some associated text? should
-               ;; i be able to expand it somehow?"*. Keyed by the row's TEXT, not
-               ;; its index, because the file is re-read while the pane is open
-               ;; and an index would then point at a different line.
+               ;; Enter unfolds the repo item under the cursor — the operator
+               ;; asked for this directly: *"if a todo has some associated text?
+               ;; should i be able to expand it somehow?"*. The cursor is first
+               ;; SNAPPED to an item (a cursor at 0 on a heading counts from the
+               ;; first item below it, as the reference's `stops[at]` does), then
+               ;; the one flag flips: at most one item is open, and moving folds it.
                (let* ((rows (repo-todo-rows-cached
                              (getf (session-wiring (head-session head)) :workspace)))
-                      (row (nth (head-picker-sel head) rows)))
-                 (when (and row (getf row :body) (getf row :item))
-                   (let ((text (getf row :text)))
-                     (if (member text *todos-open* :test #'string=)
-                         (setf *todos-open* (remove text *todos-open* :test #'string=))
-                         (push text *todos-open*))
-                     (setf (head-dirty head) t)))))
+                      (stops (repo-todo-stops rows)))
+                 (when stops
+                   (let ((at (or (position-if (lambda (i) (>= i (head-picker-sel head))) stops)
+                                 0)))
+                     (setf (head-picker-sel head) (nth at stops)
+                           *repo-todo-open* (not *repo-todo-open*))))))
               (:picker
                (let ((hit (nth (head-picker-sel head)
-                               (session-sessions (head-session head)))))
+                               (picker-sessions (head-session head)))))
                  (when hit
                    (%send head (make-switch (getf hit :session-id) 0))
                    (setf (head-mode head) :normal))))
@@ -305,10 +315,7 @@ shows the candidates on the status line."
                ;; have typed, which is how `slash` frames work
                (let ((c (nth (head-picker-sel head) (setting-choices head "model"))))
                  (awhen c
-                   (%send head (list :frame "slash"
-                                     :client-request-id (next-request-id)
-                                     :expected-seq (session-expected-seq (head-session head))
-                                     :line (format nil "models ~a" it)))
+                   (%send-slash head (format nil "models ~a" it))
                    (say head (format nil "model → ~a" it))
                    (setf (head-mode head) :normal)))))
             (setf (head-dirty head) t))
@@ -703,7 +710,7 @@ together."
                  (:todos (todos-lines head 80))
                  (:mode-picker (mode-picker-lines head 80))
                  (:models-picker (models-picker-lines head 80))
-                 (:config (values (config-lines head (head-settings head) 80) 4))
+                 (:config (config-lines head (head-settings head) 80))
                  (t (values nil nil)))
              (declare (ignore lines))
              (or sel-line 0)))
@@ -726,15 +733,50 @@ by a second caller — which is how the reference found this, in its own test."
   (declare (ignore mode))
   (let* ((window-start *pane-scroll*)
          (window-end (+ *pane-scroll* *pane-room*))
-         (sel (- line (click-header-lines head)))
-         (n (case (head-mode head)
-              (:picker (length (session-sessions (head-session head))))
-              (:jobs (length (head-jobs head)))
-              (:subagents (length (head-subagents head)))
-              (:todos (length (session-todos (head-session head))))
-              (:mode-picker (length (setting-choices head "mode")))
-              (:models-picker (length (setting-choices head "model")))
-              (t 0))))
+         ;; the picker, the jobs and the subagents draw TWO lines per row — the
+         ;; row and the dim fact line under it — so a click on either half is
+         ;; the same row
+         (per-row (if (member (head-mode head) '(:picker :jobs :subagents)) 2 1))
+         (sel (floor (- line (click-header-lines head)) per-row))
+         (n (pane-row-count head (head-mode head))))
     (when (and (>= line window-start) (< line window-end)
                (>= sel 0) (< sel n))
       sel)))
+
+(defun pane-row-count (head mode)
+  "How many ROWS the pane MODE has for its cursor to walk — one place, read by the
+arrow keys and the click conversion alike, so the two cannot disagree about what
+the last row is.
+
+The picker's count is the FILTERED list (`picker-sessions`), the config pane's is
+every row (`config-rows`), the todos pane's is the repo's rows, the subagents' is
+the folded tree — each the same list the pane draws from."
+  (case mode
+    (:subagents (length (subagent-rows head)))
+    (:jobs (length (head-jobs head)))
+    (:todos (length (repo-todo-rows-cached
+                     (getf (session-wiring (head-session head)) :workspace))))
+    (:picker (length (picker-sessions (head-session head))))
+    (:mode-picker (length (setting-choices head "mode")))
+    (:models-picker (length (setting-choices head "model")))
+    (:config (length (config-rows head)))
+    (t 0)))
+
+(defun %todos-move (head n)
+  "Up (N = -1) or Down (N = 1) on the todos pane: the cursor walks the repo's
+ITEMS, wrapping at either end, and folds whatever was open — the reference's
+`Key::Up`/`Key::Down` under `todos_pane` (app.rs:3275).
+
+`at` is the first stop at or past the cursor, so a cursor resting on a heading
+(row 0 at open) counts from the item below it: Down from the top goes to the
+SECOND item, which is what letibot's screen shows after two Downs — T3, not T2 —
+and this pane must agree with it."
+  (let* ((rows (repo-todo-rows-cached
+                (getf (session-wiring (head-session head)) :workspace)))
+         (stops (repo-todo-stops rows)))
+    (when stops
+      (let* ((at (or (position-if (lambda (i) (>= i (head-picker-sel head))) stops) 0))
+             (next (mod (+ at n) (length stops))))
+        (setf (head-picker-sel head) (nth next stops)
+              *repo-todo-open* nil
+              (head-dirty head) t)))))

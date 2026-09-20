@@ -60,7 +60,7 @@
    #:composer-rows-needed #:composer-inner #:*notice-ttl-frames* #:hint-bar
    #:*notice-ttl* #:*stall-ms* #:*spent-micros* #:*last-event-ms*
    #:session-seq #:session-expected-seq #:session-session-id #:session-items
-   #:session-dropped #:session-title #:session-turn #:session-heads
+   #:session-dropped #:session-title #:session-turn #:session-heads #:session-head-id
    #:session-warnings #:session-denials #:session-subagents #:session-jobs
    #:session-todos #:session-wiring #:session-open-decisions #:session-sessions
    #:item-lines #:turn-lines #:outcome-name #:edit-lines #:call-lines
@@ -77,7 +77,7 @@
    #:pane-scroll-by #:pane-scroll-max #:pane-view #:reset-pane-scroll
    #:scroll-pane-into-view #:*pane-scroll* #:*pane-lines* #:*pane-room*
    ;; the todos pane's unfold state (P42)
-   #:*todos-open* #:*repo-todo-cache* #:*repo-todo-stamp*
+   #:*repo-todo-open* #:*repo-todo-cache* #:*repo-todo-stamp* #:repo-todo-stops
    ;; clicks (P27)
    #:click-row->sel #:click-header-lines
    ;; the config pane (P21), editable in place
@@ -100,7 +100,10 @@
    #:quit-card-lines #:secret-card-lines
    #:todos-lines #:repo-todo-lines #:repo-todo-rows #:repo-todo-rows-cached
    #:read-todo-md #:strip-todo-markup
-   #:jobs-lines #:subagent-lines #:mode-picker-lines #:models-picker-lines
+   #:jobs-lines #:subagent-lines #:subagent-rows #:mode-picker-lines #:models-picker-lines
+   #:picker-sessions #:config-rows #:config-change #:pane-width #:wrap-text
+   #:tilde-path #:short-id #:bytes-human #:split-row
+   #:*rendered-total* #:*scrubbed-total* #:*filtered-total* #:%send-slash
    #:setting-choices #:setting-value
    #:peek-lines #:config-lines #:status-screen-lines #:help-lines #:picker-lines
    ;; highlight
