@@ -448,7 +448,7 @@ scrolls the transcript by a row every keystroke.
           (put-segments s 0 gutter (top-border head cols)))
         (cond
           ;; full-body screens replace the transcript
-          ((member (head-mode head) '(:help :status :config :jobs :subagents :peek :picker :todos))
+          ((member (head-mode head) '(:help :status :config :jobs :subagents :peek :job-out :picker :todos))
            (let ((room (max 1 (- body-bottom body-top)))
                  (lines nil)
                  (sel-line nil))
@@ -465,17 +465,24 @@ scrolls the transcript by a row every keystroke.
                  ;; the peek pane windows ITSELF, tail-first, because the tail is
                  ;; where a subagent's answer is and the clamp needs the height
                  (:peek (peek-lines head cols room))
+                 ;; and the job-output overlay windows itself for the same
+                 ;; reason: the tail is where a running job's newest bytes are,
+                 ;; and the clamp needs the height
+                 (:job-out (job-out-lines head cols room))
                  (:picker (picker-lines (head-session head)
                                         (head-picker-sel head) cols))
                  (:todos (todos-lines head cols))))
              ;; tell the KEY handler what it may scroll: it clamps without
              ;; re-rendering, and the cursor can then scroll itself into view
-             (setf *pane-lines* (if (eq (head-mode head) :peek)
-                                    *peek-total*
-                                    (length lines))
+             (setf *pane-lines* (case (head-mode head)
+                                  (:peek *peek-total*)
+                                  (:job-out *job-out-total*)
+                                  (t (length lines)))
                    *pane-room* room)
              (when sel-line (scroll-pane-into-view sel-line))
-             (%place-lines s (if (eq (head-mode head) :peek) lines (pane-view lines))
+             (%place-lines s (if (member (head-mode head) '(:peek :job-out))
+                                 lines
+                                 (pane-view lines))
                            body-top (1- (+ body-top room)) cols gutter)))
           ;; transcript empty and nothing has arrived yet: the wait, which is a
           ;; thing to SHOW rather than a banner claiming the session is empty — a

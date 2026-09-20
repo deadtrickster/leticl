@@ -170,6 +170,35 @@ is useless for a pane that opens. Added at protocol 21, which is why the daemon
 refused us with `bye` until this head learned to say 21 too."
   (list :frame "list_jobs"))
 
+(defun make-read-job-output (job offset)
+  "One window of background job JOB's output, starting at OFFSET.
+
+**Why this is a frame and not `/job ID`.** The operator, 2026-09-20: *\"on the job
+pane when i press enter im not shown the tailed job output but brought back to
+the conversation with /job <id> sent\"*. `/job` is a slash line, and a slash
+reply is a `Warning` on the session log — so the pane closed and a 16 KB build
+log scrolled past in the chat. This asks the same read as a COMMAND, and the
+daemon publishes the answer as `SessionEvent::JobOutput` with the OFFSETS beside
+the text, which is what lets a pane draw its own header and its own paging
+instead of parsing `/job`'s footer sentence (protocol.rs on
+`ClientFrame::ReadJobOutput`, event.rs on `SessionEvent::JobOutput`).
+
+It is not answered on this connection the way `Peek`, `Settings` and `Jobs` are:
+those read what the SERVER can reach, and job output lives in the exec host,
+which is the worker's — answering it here would make the server block its own
+read loop on a worker and stall this connection's live events for the duration
+(letibot `bacf495`, the design note).
+
+**No `+protocol-version+` bump**, deliberately: `SessionEvent` is internally
+tagged and `JobOutput` is an additive variant, the way `TranscriptContent` and
+`JobSettled` were added. The cost of that is on the OTHER side and is handled in
+`src/head.lisp`: a daemon older than this frame fails the whole frame in serde
+and drops the connection, which is the same shape `consented: null` had."
+  (list :frame "read_job_output"
+        :client-request-id (next-request-id)
+        :job job
+        :offset offset))
+
 (defun make-new-session (title workspace)
   "A fresh session under TITLE, seated at WORKSPACE.
 

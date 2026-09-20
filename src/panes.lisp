@@ -1133,9 +1133,182 @@ because the header and the footer are not rows a cursor may land on."
 sits ahead of the generic Esc on purpose: **Esc in the peek pane means back to
 the tree, not close everything**. Everywhere else it means `:normal`.
 
+`:job-out` is the same shape one door over: the job-output view is an OVERLAY
+over the jobs list, not a replacement for it, so Esc goes back to the list the
+row was chosen from — *\"and Esc returns to the jobs list, which never closed\"*
+(letibot `3aabe4f`). The list itself survives because `head-jobs` and
+`head-picker-sel` are untouched while the overlay is up.
+
 The key itself is dispatched in `src/editor.lisp:242`, which sends every pane to
 `:normal`; this is the fact that arm needs and the one line it is missing."
-  (if (eq mode :peek) :subagents :normal))
+  (case mode
+    (:peek :subagents)
+    (:job-out :jobs)
+    (t :normal)))
+
+;;; ------------------------------------------------- the job-output overlay ;;;
+
+(defvar *job-out-total* 0
+  "How many LINES the job-output overlay has in total, header and footer
+included — what `*pane-lines*` must be set to for this pane, so `pane-scroll-max`
+clamps against the whole window and not against the slice drawn from it. Set by
+`job-out-lines`, which is the only place the total is known. The same arrangement
+`*peek-total*` has, for the same reason.")
+
+(defun open-job-out (job)
+  "Open the job-output overlay on JOB, empty and waiting.
+
+Opened at the KEYPRESS, before any answer: the pane says `reading…` rather than
+showing nothing, and — the part that matters — `apply-event` takes a `JobOutput`
+window only when an overlay is open for that job, so the overlay has to exist
+before the frame goes out or this head would drop its own answer."
+  (setf *job-out* (list :job job :state "" :from 0 :to 0 :produced 0 :dropped 0
+                        :lines nil :next nil :back nil :loading t :error nil))
+  (reset-pane-scroll)
+  *job-out*)
+
+(defun close-job-out ()
+  (setf *job-out* nil)
+  (reset-pane-scroll))
+
+(defun job-out-body (&optional (view *job-out*))
+  "The overlay's BODY lines — the window the daemon sent, control characters
+neutralised (`%without-control`): a job's output is whatever the command wrote,
+escape sequences included, and a pane that repaints one hands the operator's
+terminal to a build log."
+  (mapcar #'%without-control (getf view :lines)))
+
+(defun job-out-row-count (head)
+  "How many lines the overlay has for its arrows to walk — what `pane-row-count`
+answers for `:job-out`. The BODY's, not the rendered pane's: the header and the
+footer are not rows a cursor may land on. Same as `peek-row-count`, and for the
+same measured reason — a pane that answers 0 here has its arrows clamped to
+`(1- 0)` while its own last line advertises that they scroll."
+  (declare (ignorable head))
+  (length (job-out-body)))
+
+(defun job-out-lines (head cols &optional room)
+  "One background job's retained output — the reference's `job_out_lines`
+(app.rs:6828-6938), which is the pane the operator asked for: *\"on the job pane
+when i press enter im not shown the tailed job output but brought back to the
+conversation with /job <id> sent\"*.
+
+    job output — j3
+        exited 0 — bytes 0..16384 of 40000 (512 earlier bytes gone off the front)
+
+        line one
+        …
+        arrows scroll · → next page · ← back · Esc to jobs
+
+**The header is built from the OFFSETS, not from a parsed sentence.** That is the
+whole of why the read is a `JobOutput` event and not the `Warning` `/job` replies
+with: `/job`'s footer says `[exited 0 — bytes 0..16384 of 40000 produced]` in
+prose a pane would have to take apart, and this arrives as numbers beside the
+text (event.rs on `SessionEvent::JobOutput`).
+
+`dropped` is disclosed in the HEADER rather than the footer: a window that begins
+mid-log is otherwise read as the job's beginning, and that is a lie about what the
+job did, not a detail about paging.
+
+A TERMINAL, NOT A DOCUMENT, like `peek-lines`: the TAIL shows by default and the
+scroll is clamped HERE, where the visible height is actually known. ROOM is the
+rows the frame gave the pane; without it (a test) the whole thing comes back
+unwindowed, which is the shape every other pane has."
+  (declare (ignorable head))
+  (let* ((view *job-out*)
+         (job (or (getf view :job) "?"))
+         (w (pane-width cols))
+         (head-rows (list (list (cons (format nil "job output — ~a" job) '(:bold t))))))
+    (cond
+      ;; **A refusal is not a window.** The daemon could not answer — a job that
+      ;; fell out of the exec host's table between the listing and Enter — so the
+      ;; pane says what it said, rather than drawing an empty log the operator
+      ;; would read as "the job wrote nothing".
+      ((getf view :error)
+       (let ((rows (append head-rows
+                           (list (list (cons "    the daemon refused this read:" '(:dim t)))
+                                 nil)
+                           ;; WRAPPED, not truncated: a refusal is prose the
+                           ;; operator has to read to the end — the window above
+                           ;; is a log and a cut line there costs a byte, while a
+                           ;; cut sentence here costs the reason
+                           (mappend (lambda (l)
+                                      (or (wrap-segments (list (cons l nil)) w)
+                                          (list nil)))
+                                    (uiop:split-string (getf view :error)
+                                                       :separator '(#\newline)))
+                           (list nil
+                                 (list (cons "    Esc back to jobs" '(:dim t)))))))
+         (setf *job-out-total* (length rows))
+         rows))
+      (t
+       (let* ((dropped (or (getf view :dropped) 0))
+              (meta
+                ;; NIL defaults throughout, and a NIL view reads as `reading…`:
+                ;; this pane draws from a plist the daemon fills a field at a
+                ;; time, and a header that says `NIL — bytes NIL..NIL` is a
+                ;; render fault dressed as a measurement
+                (if (or (null view)
+                        (and (getf view :loading)
+                             (zerop (length (or (getf view :state) "")))))
+                    "    reading…"
+                    ;; the state and the measurement on ONE line, because they are
+                    ;; one fact: what the job is, and what window of how much is on
+                    ;; the screen
+                    (format nil "    ~a — bytes ~d..~d of ~d~@[~a~]"
+                            (getf view :state) (or (getf view :from) 0)
+                            (or (getf view :to) 0) (or (getf view :produced) 0)
+                            (when (plusp dropped)
+                              (format nil " (~d earlier byte~:p gone off the front)"
+                                      dropped)))))
+              (body (job-out-body view))
+              (shown
+                (or body
+                    (unless (getf view :loading)
+                      ;; A job that has written nothing is a different statement
+                      ;; from a window of nothing, and the STATE says which.
+                      ;; `running` is the daemon's own word (`JobState::word`),
+                      ;; tested literally for the same reason the jobs pane tests
+                      ;; `exited 0` literally: the head renders the daemon's
+                      ;; vocabulary and keeps no second copy of the enum.
+                      (list (if (equal (getf view :state) "running")
+                                "    it is running and has written nothing yet."
+                                "    it wrote nothing at all.")))))
+              (top (append head-rows
+                           (list (list (cons meta '(:dim t))) nil)))
+              (wrapped (mappend (lambda (l)
+                                  (or (wrap-segments (list (cons l nil)) w) (list nil)))
+                                shown))
+              ;; The footer names only the keys that DO something here. `→` with
+              ;; no `next` would promise a page that does not exist and `←` at the
+              ;; front of the log a page before the first byte.
+              (footer
+                (list nil
+                      (list (cons (format nil "    ~a"
+                                          (cond ((and (getf view :next) (getf view :back))
+                                                 "arrows scroll · → next page · ← back · Esc to jobs")
+                                                ((getf view :next)
+                                                 "arrows scroll · → next page · Esc to jobs")
+                                                ((getf view :back)
+                                                 "arrows scroll · ← back · Esc to jobs")
+                                                (t "arrows scroll · Esc to jobs")))
+                                  '(:dim t))))))
+         (if (null room)
+             (append top wrapped footer)
+             (let* ((visible (max 1 (- room (length top) (length footer))))
+                    (total (length wrapped))
+                    (max-scroll (max 0 (- total visible)))
+                    (scroll (min (max 0 *pane-scroll*) max-scroll))
+                    (end (- total scroll))
+                    (start (max 0 (- end visible))))
+               (setf *pane-scroll* scroll
+                     *job-out-total* (+ (length top) total (length footer)))
+               (append top
+                       (subseq wrapped start end)
+                       ;; pad, so the footer sits on the pane's last row rather
+                       ;; than floating under a short window
+                       (make-list (max 0 (- visible (- end start))))
+                       footer))))))))
 
 (defun peek-lines (head cols &optional room)
   "A peeked subagent's scrollback — the reference's `sub_out_lines`

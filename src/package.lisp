@@ -40,6 +40,7 @@
    #:make-answer-question #:question-answer #:make-list-sessions #:make-list-todos #:make-list-jobs
    #:make-new-session #:make-resume-session #:make-rename-session
    #:make-switch #:make-peek #:make-settings #:make-detach #:make-resync
+   #:make-read-job-output
    #:make-screen-answer
    #:encode-frame #:decode-frame #:frame-name #:event-name
    #:next-request-id
@@ -104,6 +105,9 @@
    #:todos-lines #:repo-todo-lines #:repo-todo-rows #:repo-todo-rows-cached
    #:read-todo-md #:strip-todo-markup
    #:peek-row-count #:pane-escape-target #:pane-initial-sel #:picker-initial-sel
+   ;; the job-output overlay the jobs pane's enter opens
+   #:*job-out* #:*job-out-total* #:open-job-out #:close-job-out
+   #:job-out-lines #:job-out-body #:job-out-row-count
    #:subagent-switch
    #:jobs-lines #:subagent-lines #:subagent-rows #:pick-card-lines #:open-pick #:close-pick
    #:take-pick #:pick-by-text #:pick-key-event #:mode-action #:mode-confirm-key

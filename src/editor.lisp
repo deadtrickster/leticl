@@ -517,6 +517,39 @@ character (app.rs:3696-3706)."
                (%send head (make-switch it 0))
                (setf (head-dirty head) t))))))
 
+(defun %job-out-page (head forward)
+  "The job-output overlay's paging — the reference's `job_out_page`
+(app.rs:6828-6853).
+
+FORWARD asks for the page after the one on screen, or RE-READS the last page
+when the end is already here, because a running job appends and that is how you
+see what it has written since. `(not forward)` walks back the way forward came,
+and does nothing at the front of the log, where there is no page before the first
+byte.
+
+**The `:back` stack lives on the head because the page size is the DAEMON's.**
+The head remembers the offsets it was GIVEN rather than recomputing `from - page`
+— the same reason `next` arrives on the event at all: only the daemon knows how
+much of the ring survives, and a second copy of that number here would page the
+two sides in circles."
+  (let ((view *job-out*))
+    (when view
+      (let ((offset (if forward
+                        (let ((at (getf view :from)))
+                          (when (getf view :next)
+                            (setf (getf view :back)
+                                  (append (getf view :back) (list at))))
+                          (or (getf view :next) at))
+                        (let ((back (getf view :back)))
+                          (when back
+                            (setf (getf view :back) (butlast back))
+                            (car (last back)))))))
+        (when offset
+          (setf (getf view :loading) t
+                (head-dirty head) t)
+          (%send head (make-read-job-output (getf view :job) offset))
+          t)))))
+
 (defun %pane-enter (head)
   "Enter on a full-body screen, per pane."
   (case (head-mode head)
@@ -550,14 +583,34 @@ character (app.rs:3696-3706)."
        (%send head (make-peek it))
        (setf (head-status-note head) (format nil "re-reading ~a…" it))))
     (:jobs
-     ;; Enter reads the job's output: `/job ID`, the same read the
-     ;; model gets from `job_output`, from the row the operator is
-     ;; looking at. The reply lands on the session log, which the pane
-     ;; is covering, so the pane closes (app.rs:3343).
+     ;; **Enter opens the job's output IN A PANE, not in the conversation.**
+     ;;
+     ;; This arm used to send `/job ID` as a slash line and close the pane. A
+     ;; slash reply is a `Warning` on the session log, so for a finished job the
+     ;; operator got a 16 KB build log scrolling past in the chat and the list
+     ;; they were reading gone. Their words, 2026-09-20: *"on the job pane when i
+     ;; press enter im not shown the tailed job output but brought back to the
+     ;; conversation with /job <id> sent"*, and the earlier narrowing that says
+     ;; which half was broken: *"entering the running job works fine - but
+     ;; finished does /job <id>"* — one path served both, and what differed was
+     ;; the size of the reply.
+     ;;
+     ;; Now it is a `ReadJobOutput`: the answer comes back as a `JobOutput` event
+     ;; with the offsets attached and the overlay draws it. The jobs list stays
+     ;; behind it — `head-mode` moves, `head-jobs` and `head-picker-sel` do not —
+     ;; so Esc returns to the row the operator chose (app.rs:3776-3805).
      (let ((row (nth (head-picker-sel head) (head-jobs head))))
        (awhen (and row (getf row :id))
-         (setf (head-mode head) :normal)
-         (%send-slash head (format nil "job ~a" it)))))
+         ;; opened BEFORE the send: `apply-event` folds a window only into an
+         ;; overlay already open for that job
+         (open-job-out it)
+         (setf (head-mode head) :job-out)
+         (%send head (make-read-job-output it 0)))))
+    (:job-out
+     ;; Enter takes the next page, or re-reads the last one when the end is
+     ;; already here — a running job appends, and that is how you see what it
+     ;; has written since (app.rs:3272-3277, the same key on the peek pane).
+     (%job-out-page head t))
     (:todos
      ;; Enter unfolds the repo item under the cursor — the operator
      ;; asked for this directly: *"if a todo has some associated text?
@@ -607,6 +660,10 @@ one thing this head must not need."
            ;; it is `:normal`.
            (shut () (setf (head-mode head) (pane-escape-target (head-mode head))
                           (head-dirty head) t)
+             ;; the overlay goes with the key that leaves it: a window kept open
+             ;; after Esc would quietly take the answer to a read nobody is
+             ;; waiting for any more (app.rs:3277-3281)
+             (when (eq mode :job-out) (close-job-out))
              (reset-pane-scroll)
              t))
       (flet ((move-cursor (n)
@@ -615,7 +672,20 @@ one thing this head must not need."
                      (head-dirty head) t)
                ;; and the offset follows the cursor, so a selection is never
                ;; scrolled off the screen it is being made on
-               (scroll-pane-into-view (head-picker-sel head))))
+               (scroll-pane-into-view (head-picker-sel head)))
+             (scroll (n)
+               ;; **N is "toward the beginning is negative", which is
+               ;; `*pane-scroll*`'s sign for an ordinary pane and the OPPOSITE of
+               ;; it for the job-output overlay.** That pane's origin is its TAIL
+               ;; — `job-out-lines` windows `end = total - scroll`, because a
+               ;; running job appends and the newest bytes are what the pane was
+               ;; opened for — so the offset there counts rows hidden BELOW the
+               ;; bottom, and moving toward the beginning ADDS to it. Every key
+               ;; that scrolls goes through here, so the arrows, the page keys
+               ;; and the wheel cannot disagree about which way is back.
+               (pane-scroll-by (if (eq mode :job-out) (- n) n))
+               (setf (head-dirty head) t)
+               t))
         (case type
           ((:esc :q-press) (shut))
           ;; The todos pane's cursor stops only on the repo's ITEMS and wraps
@@ -633,19 +703,29 @@ one thing this head must not need."
                ;; The polarity is the pane's: up moves toward the beginning,
                ;; the same direction PgUp goes.
                (:peek (pane-scroll-by n) (setf (head-dirty head) t))
+               ;; the job-output overlay is the same shape: a window of bytes
+               ;; with no rows to select, so its arrows scroll the loaded window
+               ;; rather than walking a cursor (app.rs:3256-3268)
+               (:job-out (scroll n))
                (t (move-cursor n))))
            t)
+          ;; **→ and ← PAGE the job-output overlay**, by the offsets the daemon
+          ;; named — and they are the overlay's alone: anywhere else these are the
+          ;; composer's cursor keys, which is why this arm tests the mode rather
+          ;; than claiming the key for every pane.
+          ((:left :right)
+           (when (and (eq mode :job-out) empty)
+             (%job-out-page head (eq type :right)))
+           (and (eq mode :job-out) empty))
           ;; PAGE and WHEEL scroll the PANE. They used to be swallowed here,
           ;; which left a pane taller than the body with no way to see the rest
           ;; of it — and the repo's own TODO.md is 98 rows. The polarity is
           ;; `*pane-scroll*`'s, which is the OPPOSITE of the transcript's: page
           ;; DOWN moves forward through the pane.
-          ((:page-down) (pane-scroll-by (max 1 (- *pane-room* 1)))
-                        (setf (head-dirty head) t) t)
-          ((:page-up) (pane-scroll-by (- (max 1 (- *pane-room* 1))))
-                      (setf (head-dirty head) t) t)
-          ((:wheel-down) (pane-scroll-by 3) (setf (head-dirty head) t) t)
-          ((:wheel-up) (pane-scroll-by -3) (setf (head-dirty head) t) t)
+          ((:page-down) (scroll (max 1 (- *pane-room* 1))))
+          ((:page-up) (scroll (- (max 1 (- *pane-room* 1)))))
+          ((:wheel-down) (scroll 3))
+          ((:wheel-up) (scroll -3))
           ;; Tab unfolds a todo, BESIDE enter and under enter's own condition, so
           ;; the two cannot disagree about whose key it is. On every OTHER pane it
           ;; is not the pane's key at all: it used to set `head-dirty` to NIL
@@ -728,17 +808,22 @@ chords, then a click, then whatever list is on the screen, then the composer."
       ((and (%ctrl-c-p key)
             (or *pick-open*
                 (member (head-mode head)
-                        '(:help :status :config :jobs :subagents :peek :todos :picker))))
+                        '(:help :status :config :jobs :subagents :peek :job-out :todos :picker))))
        (if *pick-open*
            (close-pick head)
-           (setf (head-mode head) :normal (head-dirty head) t))
+           (progn
+             ;; the job-output overlay is a SPECIAL, not a mode flag, so leaving
+             ;; the mode is not leaving the overlay: an open one would go on
+             ;; taking windows into a pane nobody can see (app.rs:3277-3281)
+             (when (eq (head-mode head) :job-out) (close-job-out))
+             (setf (head-mode head) :normal (head-dirty head) t)))
        t)
       ((and (eq type :mouse) (eq (getf key :kind) :press) (%click head key)))
       ;; a picker's own keys; what it does not take is the composer's, so a name
       ;; can be typed under the card
       ((and *pick-open* (pick-key-event head key)))
       ((and (member (head-mode head)
-                    '(:help :status :config :jobs :subagents :peek :todos :picker))
+                    '(:help :status :config :jobs :subagents :peek :job-out :todos :picker))
             (%pane-key head key type)))
       (t (%ladder-key head key type)))))
 
@@ -1321,6 +1406,8 @@ the folded tree — each the same list the pane draws from."
     ;; its arrow keys: `move-cursor` clamped to `(1- 0)` while the pane's own
     ;; last line advertised that they scroll
     (:peek (peek-row-count head))
+    ;; the job-output overlay is the same: a window of bytes, no selectable rows
+    (:job-out (job-out-row-count head))
     (t 0)))
 
 (defun %todos-move (head n)

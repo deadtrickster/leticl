@@ -58,7 +58,7 @@ globals a frame reads.")
   (last-rows-n 0 :type fixnum)
   (scroll 0 :type fixnum)
   (composer (make-composer))
-  (mode :normal :type symbol)            ; :normal :picker :help :status :config :jobs :subagents :peek :todos
+  (mode :normal :type symbol)            ; :normal :picker :help :status :config :jobs :subagents :peek :job-out :todos
   (picker-sel 0 :type fixnum)
   (decision-sel 0 :type fixnum)
   (secret-req nil)
@@ -205,6 +205,37 @@ first."
      (setf (head-connected head) nil
            (head-status-note head) "detached — reconnecting…"
            (head-dirty head) t)
+     ;; **A DAEMON OLDER THAN `read_job_output` DROPS THE SOCKET, and this is the
+     ;; only place that can say so.**
+     ;;
+     ;; `ClientFrame` is an internally-tagged serde enum, so an unknown `frame`
+     ;; value does not fail one frame — it fails the DESERIALIZER, which ends the
+     ;; daemon's read loop and closes the connection. This head has already been
+     ;; bitten by that exact class: `consented: null` on `/mode NAME` broke the
+     ;; read loop the same way, and the whole symptom was a head that went quiet
+     ;; (tests: `a-boolean-field-goes-out-as-a-boolean`).
+     ;;
+     ;; There is deliberately NO version negotiation invented here — the server
+     ;; side landed without a `PROTOCOL_VERSION` bump, so the version cannot tell
+     ;; us and a handshake this head made up would be a second, private protocol.
+     ;; What is chosen instead is HONESTY: the reconnect path below already brings
+     ;; the head back, and the one thing it could not do was say why it went. A
+     ;; read that was in flight when the socket died is named — by frame, and with
+     ;; the verb that still works on an old daemon — in the overlay that asked and
+     ;; on the status line, so the operator is never left with a pane at `reading…`
+     ;; and a head that looks merely slow.
+     (when (and *job-out* (getf *job-out* :loading))
+       (setf (getf *job-out* :loading) nil
+             (getf *job-out* :error)
+             (format nil "the daemon closed the connection on `read_job_output`.~2%~
+                          That frame is newer than this daemon: an unknown frame ~
+                          fails serde's whole read loop rather than one message, ~
+                          so the socket goes with it. Reconnecting — until the ~
+                          daemon is updated, `/job ~a` in the composer still ~
+                          reads this job, into the conversation."
+                     (getf *job-out* :job))
+             (head-status-note head)
+             "read_job_output: the daemon closed the connection — it is older than this frame; reconnecting"))
      :control)
     ((and (consp frame) (string= (frame-name frame) "warning")
           (getf frame :code) (member (getf frame :code)
@@ -251,7 +282,13 @@ first."
          (setf (head-jobs head) nil
                (head-peeked head) nil
                (head-queued head) nil
-               (head-picker-sel head) 0)))
+               (head-picker-sel head) 0)
+         ;; and the job-output overlay, for the reason the job ROWS are cleared:
+         ;; a window belongs to the session that produced it, and a `j12` carried
+         ;; across a switch is a question about a job that was never here
+         (close-job-out)
+         (when (eq (head-mode head) :job-out)
+           (setf (head-mode head) :normal))))
      (ingest-hello (head-session head) frame)
      (setf (head-connected head) t
            (head-status-note head) nil

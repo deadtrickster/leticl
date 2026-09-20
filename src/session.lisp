@@ -19,6 +19,30 @@
 watch start — one that came out of a snapshot. NIL is why the composer's edge can
 say *started before this head attached* instead of a duration nobody measured.")
 
+(defvar *job-out* nil
+  "The job-output overlay: what the jobs pane's Enter asked for and what came
+back, or NIL when no overlay is open. A plist —
+
+    (:job ID :state WORD :from N :to N :produced N :dropped N
+     :lines (STRING…) :next N-or-NIL :back (N…) :loading BOOL :error STRING-or-NIL)
+
+— which is the reference's `JobOut` struct field for field (app.rs:425-462).
+
+**A defvar, and NOT a slot on `session`, because the window is EPHEMERAL.** The
+reference says so in the mechanism rather than in a comment: `scrub::is_interactive`
+returns true for `JobOutput`, so `StoredProjection::keep` strips it from the stored
+projection and counts it in `ScrubReport::job_output` — *a window from four minutes
+ago is a lie about now*. A slot on `session` is exactly the stored projection this
+head has; a special that no snapshot writes and no reconnect carries is the same
+fact expressed where it cannot be got wrong. (It is also what `*peeked-session*`
+and `*peeked-dropped*` already are, for the pane one door over, and a struct layout
+change is a restart — which this head must not need.)
+
+`:back` is a STACK of the offsets this head was given, not `from - page`
+arithmetic: the page size is the DAEMON's (`JOB_OUTPUT_WINDOW`), and recomputing
+it here would be a second copy of a number only the daemon knows — the same
+reason `next` arrives on the event at all.")
+
 (defstruct (session (:constructor %make-session))
   (session-id "" :type string)
   (head-id "" :type string)
@@ -114,7 +138,15 @@ way the reference's `scrubbed.total()` sums them. Shown on `/status`; a defvar s
 push can introduce it without a slot.")
 
 (defun %scrub-total (report)
-  "The sum of a `ScrubReport` plist's counts, or 0 for none."
+  "The sum of a `ScrubReport` plist's counts, or 0 for none.
+
+Summed by SHAPE rather than by a list of field names, which is why
+`job_output` — the count letibot added with `SessionEvent::JobOutput`, for the
+windows `StoredProjection::keep` strips because a window from four minutes ago
+is a lie about now — needed no change here to be counted. A head that enumerated
+the four names it knew would have dropped the fifth silently, and the whole
+point of the number is to keep *\"busy, none of it was for me\"* apart from
+*\"quiet\"*."
   (loop for (nil v) on report by #'cddr when (integerp v) sum v))
 
 (defun ingest-hello (session hello)
@@ -526,6 +558,17 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
                (note-call-decision (getf req :call-id) settled)))))
        :dirty)
       ((:warning)
+       ;; **A refused job-output read is answered IN THE PANE THAT ASKED**, which
+       ;; is still open — otherwise it sits at `reading…` for ever, waiting for a
+       ;; window that is not coming. A job can fall out of the exec host's table
+       ;; between the listing and Enter, and the daemon says so with this code
+       ;; (app.rs:2764-2774). The conversation gets the note as well: the warning
+       ;; is still pushed below, because suppressing it here would make this head's
+       ;; screen disagree with the log every other head sees — which is the first
+       ;; shortcut letibot ruled out (`bacf495`).
+       (when (and *job-out* (equal (getf env :code) "job_output_refused"))
+         (setf (getf *job-out* :loading) nil
+               (getf *job-out* :error) (or (getf env :detail) "")))
        (push (list :code (getf env :code) :detail (getf env :detail)
                    :ts (getf env :ts))
              (session-warnings session))
@@ -582,6 +625,35 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
       ((:job-settled)
        (push env (session-jobs session))
        :dirty)
+      ((:job-output)
+       ;; **The answer to the jobs pane's Enter, folded into the overlay that
+       ;; asked and nowhere else.** The whole window is kept — job, from, to,
+       ;; produced, dropped, state, lines, next — because the pane draws its own
+       ;; header out of the OFFSETS rather than parsing `/job`'s footer sentence
+       ;; (app.rs:2169-2205).
+       ;;
+       ;; Taken only when an overlay is open for THIS job: a head may have closed
+       ;; the pane with Esc before the reply landed, and the event is published to
+       ;; the session, so a head that never asked sees it too. A window for a job
+       ;; nobody is looking at is nothing to keep — and keeping it would be the
+       ;; stale window `scrub::is_interactive` exists to prevent.
+       (cond
+         ((and *job-out* (equal (getf *job-out* :job) (getf env :job)))
+          (setf (getf *job-out* :state) (or (getf env :state) "")
+                (getf *job-out* :from) (or (getf env :from) 0)
+                (getf *job-out* :to) (or (getf env :to) 0)
+                (getf *job-out* :produced) (or (getf env :produced) 0)
+                (getf *job-out* :dropped) (or (getf env :dropped) 0)
+                (getf *job-out* :lines) (getf env :lines)
+                (getf *job-out* :next) (getf env :next)
+                (getf *job-out* :loading) nil
+                (getf *job-out* :error) nil)
+          ;; A window lands at its TAIL: a fresh page, or a re-read of a running
+          ;; job, should show what it has just written. `:back` is left alone, so
+          ;; ← still walks the pages the reader came through.
+          (reset-pane-scroll)
+          :dirty)
+         (t :quiet)))
       ;; screen_requested / secret_requested are answered by the head loop,
       ;; which owns the last frame and the input focus; explain is untyped
       ;; until W14 says what it is (event.rs:698)

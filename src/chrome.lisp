@@ -483,6 +483,12 @@ is worse than no hint at all."
                  ((eq (head-mode head) :subagents) "subagents this session spawned · esc closes")
                  ((eq (head-mode head) :jobs) "background jobs this session started · ↑↓ then enter reads one · esc closes")
                  ((eq (head-mode head) :peek) "arrows scroll · enter re-reads · esc back")
+                 ;; the overlay's row names ESC BACK TO JOBS, not "closes": the
+                 ;; jobs list never closed under it, and a bottom row that says
+                 ;; `esc closes` on a pane that goes back one level teaches the
+                 ;; wrong thing about the key (app.rs:5424)
+                 ((eq (head-mode head) :job-out)
+                  "↑↓ scroll · → next page · ← back · enter re-reads · esc back to jobs")
                  ((head-secret-req head) "enter submits · esc refuses the password")
                  ((%open-decision head) "a row number answers · ↑↓ then enter · or type an option · /help")
                  (t "ctrl-s sessions · ctrl-p todos · ctrl-g subagents · ctrl-r thinking · ctrl-t tool output · ctrl-q jobs · tab completes /commands · /help"))))

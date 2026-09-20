@@ -3087,8 +3087,17 @@ whose one segment was itself a line, and `put-segments` handed a list to
 `screen-put-string`. Neither pane had ever rendered. This test calls every pane
 function the way `%render` does and checks the one shape it can paint; it is the
 check that would have caught the bug on the day it landed."
-  (let ((h (%pane-head)))
-    (dolist (mode '(:help :status :config :jobs :subagents :peek :picker :todos))
+  (let ((h (%pane-head))
+        ;; the job-output overlay is a SPECIAL rather than a head slot — the
+        ;; window is ephemeral, and a slot is exactly the state a snapshot and a
+        ;; reconnect carry (src/session.lisp on `*job-out*`) — so it is bound
+        ;; here rather than seeded in `%pane-head`, where it would leak into
+        ;; every other test that builds one
+        (leticl::*job-out*
+          (list :job "j2" :state "exited 0" :from 0 :to 32 :produced 40000
+                :dropped 512 :lines (list "   Compiling letibot-tui" "    Finished")
+                :next 32 :back (list 0) :loading nil :error nil)))
+    (dolist (mode '(:help :status :config :jobs :subagents :peek :job-out :picker :todos))
       (setf (head-mode h) mode (head-picker-sel h) 1)
       (let ((lines (case mode
                      (:help (help-lines 210))
@@ -3097,11 +3106,20 @@ check that would have caught the bug on the day it landed."
                      (:jobs (jobs-lines h 210))
                      (:subagents (subagent-lines h 210))
                      (:peek (peek-lines h 210))
+                     (:job-out (job-out-lines h 210))
                      (:picker (picker-lines (head-session h) (head-picker-sel h) 210))
                      (:todos (todos-lines h 210)))))
         (is (plusp (length lines)) (format nil "the ~(~a~) pane has rows" mode))
         (is (%well-formed-lines-p lines)
             (format nil "and every one of the ~(~a~) pane's segments is (string . plist)" mode))))
+    ;; the job-output overlay has a SECOND shape — the daemon's refusal drawn in
+    ;; place of the window — and it is a different branch of the same function,
+    ;; so it is painted here too
+    (let ((leticl::*job-out* (list :job "j2" :loading nil :back nil
+                                   :error "no job `j2` here; `/job` with no argument lists them")))
+      (setf (head-mode h) :job-out)
+      (is (%well-formed-lines-p (job-out-lines h 210))
+          "and a refused read draws segments the painter can take too"))
     ;; and the CARDS, which ride in the same chrome slot and go through the same
     ;; `put-segments`: the permission card and the password card are drawn from
     ;; panes.lisp now, and a card whose \"line\" is a list of lines kills the paint
@@ -4850,6 +4868,313 @@ the daemon refused it by name (app.rs:3660-3709)."
     (leticl::%handle-key h (list :type :enter))
     (is (null (%sent wire)) "enter on one still opening sends nothing")
     (is (search "still opening" (head-status-note h)) "and says which silence it is")))
+
+;;; ----------------------------------------- the job-output overlay (R21) ;;;
+;;;
+;;; The operator, 2026-09-20: *"on the job pane when i press enter im not shown
+;;; the tailed job output but brought back to the conversation with /job <id>
+;;; sent. we addressed it in letibot multiple times"*. letibot settled it at
+;;; `3aabe4f`; these are that settlement's checks, on this head.
+
+(defun %job-head (&key (cols 100) (rows 24))
+  "A head with the jobs pane open on two rows, the cursor on the second — the
+state the operator is in when they press Enter."
+  (let ((h (%on-head :cols cols :rows rows)))
+    (setf (session-session-id (head-session h)) "s-1"
+          (head-jobs h)
+          (list (list :id "j1" :command "sleep 10" :how "asked" :state "running"
+                      :running t :produced 1500 :elapsed-ms 0)
+                (list :id "j12" :command "cargo build --release" :how "bash"
+                      :state "exited 0" :running nil :produced 40000
+                      :elapsed-ms 3400))
+          (head-mode h) :jobs
+          (head-picker-sel h) 1)
+    h))
+
+(defun %pane-text (lines)
+  "A pane's segment lines as plain strings — a blank line is NIL."
+  (mapcar (lambda (l) (if (null l) "" (format nil "~{~a~}" (mapcar #'car l))))
+          lines))
+
+(def-test enter-on-a-jobs-row-reads-its-output-into-a-pane (:suite leticl)
+  "The operator, 2026-09-20: *\"on the job pane when i press enter im not shown the
+tailed job output but brought back to the conversation with /job <id> sent\"*, and
+the earlier narrowing that says which half was broken: *\"entering the running job
+works fine - but finished does /job <id>\"*.
+
+One path served both rows — `Action::Slash { line: \"job jID\" }` — and what
+differed was the SIZE of the reply: a slash reply is a `Warning` on the session
+log, one sentence for a running job and a 16 KB dump for a finished one, and the
+pane closed either way. Measured here on the wire: Enter sends `read_job_output`
+for the row under the cursor at offset 0, sends NO slash, and leaves the jobs list
+standing behind the overlay so Esc can come back to it (letibot `3aabe4f`,
+app.rs:3776-3805)."
+  (let* ((leticl::*job-out* nil)
+         (h (%job-head))
+         (wire (%wire h)))
+    (leticl::%handle-key h (list :type :enter))
+    (let ((sent (%sent wire)))
+      (is (= 1 (length sent)) "one frame goes out, and it is not a slash line")
+      (let ((f (first sent)))
+        (is (equal "read_job_output" (getf f :frame))
+            "enter asks for the output as a command, not as a slash line")
+        (is (equal "j12" (getf f :job)) "for the row the cursor was on, by the daemon's id")
+        (is (= 0 (getf f :offset)) "from the first byte")
+        (is (plusp (length (getf f :client-request-id)))
+            "carrying a request id, like every other command")))
+    (is (eq :job-out (head-mode h)) "and the overlay is up at once")
+    (is (equal "j12" (getf leticl::*job-out* :job)) "opened on that job")
+    (is (eq t (getf leticl::*job-out* :loading))
+        "saying it is reading, rather than showing a window it cannot yet fill")
+    (is (= 2 (length (head-jobs h)))
+        "the jobs list is untouched: the overlay covers it, it does not replace it")
+    (is (= 1 (head-picker-sel h)) "and the row stays chosen, for the Esc back to it")))
+
+(def-test the-job-output-window-fills-the-overlay-and-it-pages (:suite leticl)
+  "The answer to Enter is `SessionEvent::JobOutput`, published on the log because
+job output lives in the exec host and a frame answered on the asking connection
+would block the server's own read loop on a worker (letibot `bacf495`).
+
+What it adds over `/job`'s prose is the OFFSETS beside the text, and this is the
+check that the pane draws them rather than parsing a footer sentence. Then the
+paging: `→` takes the page the daemon NAMED and `←` walks back by an offset the
+head was GIVEN — never `from - page`, because the page size is the daemon's
+(`JOB_OUTPUT_WINDOW`) and a second copy of it here would page the two sides in
+circles. At the front of the log there is no page before the first byte, so `←`
+sends nothing."
+  (let* ((leticl::*job-out* nil)
+         (*pane-scroll* 0)
+         (h (%job-head))
+         (wire (%wire h)))
+    (leticl::%handle-key h (list :type :enter))
+    (%sent wire)
+    (leticl::%handle-frame h (list :frame "event" :seq 1 :event "job_output"
+                                   :job "j12" :from 0 :to 32 :produced 40000
+                                   :dropped 0 :state "exited 0"
+                                   :lines (list "   Compiling letibot-tui"
+                                                "    Finished `release`")
+                                   :next 32))
+    (let ((v leticl::*job-out*))
+      (is (null (getf v :loading)) "the answer ends the wait")
+      (is (equal "exited 0" (getf v :state)) "with the daemon's own state word")
+      (is (= 2 (length (getf v :lines)))
+          "and the lines the daemon split, so two heads cannot disagree where one ends")
+      (is (= 32 (getf v :next)) "the offset to ask at next, which the daemon decides"))
+    (let ((text (%pane-text (job-out-lines h 100))))
+      (is (equal "job output — j12" (first text)) "the header names the job")
+      (is (search "exited 0 — bytes 0..32 of 40000" (second text))
+          "and draws the OFFSETS it was sent: ~s" (second text))
+      (is (find-if (lambda (l) (search "Compiling letibot-tui" l)) text)
+          "the window itself is on the pane")
+      (is (find-if (lambda (l) (search "→ next page" l)) text)
+          "and the footer names the key that takes the page the daemon named"))
+    ;; → asks for the page the daemon named, and remembers where it was
+    (leticl::%handle-key h (list :type :right))
+    (let ((f (first (%sent wire))))
+      (is (equal "read_job_output" (getf f :frame)) "→ pages forward")
+      (is (= 32 (getf f :offset)) "by the offset the daemon named, not one computed here"))
+    (is (equal '(0) (getf leticl::*job-out* :back))
+        "and the offset it came from is remembered, so ← can walk back to it")
+    (leticl::%handle-key h (list :type :left))
+    (let ((f (first (%sent wire))))
+      (is (equal "read_job_output" (getf f :frame)) "← pages back")
+      (is (= 0 (getf f :offset)) "to the offset it was given"))
+    (is (null (getf leticl::*job-out* :back)) "the stack is empty at the front of the log")
+    (leticl::%handle-key h (list :type :left))
+    (is (null (%sent wire)) "and there is no page before the first byte, so ← sends nothing")
+    ;; Esc goes back to the JOBS LIST, which never closed
+    (is (eq :jobs (pane-escape-target :job-out))
+        "esc from the overlay means back to the list the row was chosen from")
+    (leticl::%handle-key h (list :type :esc))
+    (is (eq :jobs (head-mode h)) "esc goes back to jobs, not out of everything")
+    (is (null leticl::*job-out*)
+        "and the overlay goes with the key, so a late answer is not taken into a pane nobody watches")))
+
+(def-test the-job-output-overlay-scrolls-and-discloses-what-fell-off (:suite leticl)
+  "Two things the window has to say that `/job`'s reply could only put in prose.
+
+**`dropped` is disclosed in the HEADER**: a window that begins mid-log is
+otherwise read as the job's beginning, which is a lie about what the job did
+rather than a detail about paging (`SessionEvent::JobOutput`, event.rs:924).
+
+**A job that has written nothing is a different statement from a window of
+nothing**, and the daemon's own state word says which — tested literally, for the
+same reason the jobs pane tests `exited 0` literally: the head renders the
+daemon's vocabulary and keeps no second copy of the enum.
+
+And the arrows SCROLL here rather than walking a cursor, because the overlay has
+no rows to select — the same fault `peek-row-count` was written for: a pane that
+answers 0 for its row count has its arrows clamped to `(1- 0)` while its own last
+line advertises that they scroll."
+  (let* ((leticl::*job-out* nil)
+         (*pane-scroll* 0) (*pane-room* 10) (*pane-lines* 100)
+         (h (%job-head)))
+    (leticl::%handle-key h (list :type :enter))
+    (leticl::%handle-frame h (list :frame "event" :seq 1 :event "job_output"
+                                   :job "j12" :from 16384 :to 16400 :produced 40000
+                                   :dropped 512 :state "exited 0"
+                                   :lines (list "a" "b" "c" "d" "e" "f" "g" "h")
+                                   :next 16400))
+    (let ((text (%pane-text (job-out-lines h 100))))
+      (is (search "512 earlier bytes gone off the front" (second text))
+          "the bytes that fell off the ring are disclosed beside the range: ~s" (second text)))
+    (is (= 8 (leticl::pane-row-count h :job-out))
+        "the overlay's rows are its BODY lines, which is what the arrows may scroll")
+    ;; the overlay's origin is its TAIL — `job-out-lines` windows
+    ;; `end = total - scroll` — so the offset counts rows hidden BELOW the
+    ;; bottom and moving toward the beginning ADDS to it. Every scrolling key
+    ;; goes through one sign-aware place for exactly this reason.
+    ;; what the render would have left behind: the pane's total and its room
+    (setf *pane-lines* 13 *pane-room* 6)
+    (leticl::%handle-key h (list :type :up))
+    (is (= 1 *pane-scroll*) "↑ moves back toward the beginning of the loaded window")
+    (leticl::%handle-key h (list :type :down))
+    (is (= 0 *pane-scroll*) "and ↓ comes back to the tail, where a running job appends")
+    (leticl::%handle-key h (list :type :page-up))
+    (is (plusp *pane-scroll*) "PgUp pages the same way, as the hint bar says")
+    (leticl::%handle-key h (list :type :page-down))
+    (is (= 0 *pane-scroll*) "and PgDn comes back")
+    (leticl::%handle-key h (list :type :mouse :kind :wheel-up))
+    (is (plusp *pane-scroll*) "the wheel pages it too — it was swallowed here once")
+    (setf *pane-scroll* 0)
+    ;; a job that produced nothing says WHICH silence it is
+    (leticl::%handle-frame h (list :frame "event" :seq 2 :event "job_output"
+                                   :job "j12" :from 0 :to 0 :produced 0
+                                   :dropped 0 :state "running" :lines nil :next nil))
+    (let ((text (%pane-text (job-out-lines h 100))))
+      (is (find-if (lambda (l) (search "running and has written nothing yet" l)) text)
+          "a running job that wrote nothing says so"))
+    (leticl::%handle-frame h (list :frame "event" :seq 3 :event "job_output"
+                                   :job "j12" :from 0 :to 0 :produced 0
+                                   :dropped 0 :state "exited 0" :lines nil :next nil))
+    (let ((text (%pane-text (job-out-lines h 100))))
+      (is (find-if (lambda (l) (search "wrote nothing at all" l)) text)
+          "and a finished one that wrote nothing says the other thing")
+      (is (find-if (lambda (l) (search "arrows scroll · Esc to jobs" l)) text)
+          "with a footer naming only the keys that do something here"))))
+
+(def-test a-refused-job-output-read-lands-in-the-pane (:suite leticl)
+  "A job can fall out of the exec host's table between the listing and Enter, and
+the daemon then answers the read with a `job_output_refused` warning instead of a
+window. The overlay must SAY so: left alone it sits at `reading…` for ever,
+waiting for a window that is not coming (app.rs:2764-2774).
+
+The warning is still pushed onto the session's own list. Suppressing it here was
+the first shortcut letibot ruled out — *\"suppressing it here would make this
+head's screen disagree with the log every other head sees\"* (`bacf495`)."
+  (let* ((leticl::*job-out* nil)
+         (h (%job-head)))
+    (leticl::%handle-key h (list :type :enter))
+    (is (eq t (getf leticl::*job-out* :loading)) "the overlay is waiting")
+    (leticl::%handle-frame h (list :frame "event" :seq 1 :event "warning"
+                                   :code "job_output_refused"
+                                   :detail "no job `j12` here; `/job` with no argument lists them"))
+    (let ((v leticl::*job-out*))
+      (is (null (getf v :loading)) "the refusal ends the wait")
+      (is (search "no job `j12` here" (getf v :error)) "and the daemon's own sentence is kept"))
+    (let ((text (%pane-text (job-out-lines h 100))))
+      (is (find-if (lambda (l) (search "the daemon refused this read" l)) text)
+          "the pane says it was refused, rather than drawing an empty log")
+      (is (find-if (lambda (l) (search "no job `j12` here" l)) text)
+          "with what the daemon said")
+      (is (find-if (lambda (l) (search "Esc back to jobs" l)) text)
+          "and the way out"))
+    (is (equal "job_output_refused"
+               (getf (first (session-warnings (head-session h))) :code))
+        "and the conversation still gets it: this head's screen must not disagree with the log")
+    ;; ctrl-c leaves a pane the way Esc does, and the overlay has to go with it:
+    ;; it is a SPECIAL, not a mode flag, so leaving the mode is not leaving it —
+    ;; an open one would go on taking windows into a pane nobody can see
+    (leticl::%handle-key h (list :type :ctrl :ch #\c))
+    (is (null leticl::*job-out*) "ctrl-c closes the overlay, not only the mode")
+    (is (eq :normal (head-mode h)) "and closes the screen, as it does for every pane")))
+
+(def-test a-job-output-window-is-ephemeral-and-never-stored (:suite leticl)
+  "*\"A window from four minutes ago is a lie about now\"* — so `scrub::is_interactive`
+returns true for `JobOutput`, `StoredProjection::keep` strips it, and the count
+lands in `ScrubReport::job_output` (letibot `3aabe4f`).
+
+Two halves, measured. **Nothing enters the projection**: the window lives in
+`*job-out*`, which no snapshot writes and no reconnect carries, and a window for a
+job no overlay is open on is dropped rather than kept for a pane that might open
+later. **The scrub count is summed**: `%scrub-total` sums a `ScrubReport` by SHAPE,
+so the field letibot added needed no change here — a head that enumerated the four
+names it knew would have dropped the fifth silently, and the whole point of the
+number is to keep *\"busy, none of it was for me\"* apart from *\"quiet\"*."
+  (let* ((leticl::*job-out* nil)
+         (s (make-session))
+         (leticl::*turn-started-ms* nil))
+    (is (eq :quiet (apply-event s (list :seq 1 :event "job_output" :job "j12" :from 0 :to 4
+                                        :produced 4 :dropped 0 :state "exited 0"
+                                        :lines (list "hi") :next nil)))
+        "a window for a job nobody is looking at moves nothing on the screen")
+    (is (null leticl::*job-out*) "and is not kept against a pane that might open later")
+    (is (null (session-jobs s)) "it is not a job row either — those are the daemon's listing")
+    ;; and with an overlay open it IS taken, for that job only
+    (setf leticl::*job-out* (list :job "j12" :loading t :back nil))
+    (is (eq :quiet (apply-event s (list :seq 2 :event "job_output" :job "j7" :from 0 :to 4
+                                        :produced 4 :dropped 0 :state "exited 0"
+                                        :lines (list "hi") :next nil)))
+        "another job's window is not this overlay's")
+    (is (eq t (getf leticl::*job-out* :loading)) "so the wait is still on")
+    (is (eq :dirty (apply-event s (list :seq 3 :event "job_output" :job "j12" :from 0 :to 4
+                                        :produced 4 :dropped 0 :state "exited 0"
+                                        :lines (list "hi") :next nil)))
+        "its own window moves the screen")
+    ;; the scrub count
+    (let ((*scrubbed-total* 0))
+      (ingest-hello s (list :head-id "h1" :session-id "s-1" :dropped 0
+                            :resumed-from 3
+                            :scrubbed (list :deltas 2 :job-output 3)))
+      (is (= 5 *scrubbed-total*)
+          "and a ScrubReport's job_output is summed with the rest, by shape"))))
+
+(def-test an-old-daemon-drops-the-socket-and-the-head-says-which-frame-did-it (:suite leticl)
+  "**The compatibility cost of an additive frame, paid where it is felt.**
+
+`ClientFrame` is an internally-tagged serde enum, so a daemon that does not know
+`read_job_output` does not fail one message — it fails the DESERIALIZER, which
+ends its read loop and closes the connection. This head has been bitten by that
+exact class once already: `consented: null` on `/mode NAME` broke the read loop
+the same way and the whole symptom was a head that went quiet
+(`a-boolean-field-goes-out-as-a-boolean`).
+
+No version negotiation is invented for it: the server side landed without a
+`PROTOCOL_VERSION` bump, so the version cannot tell us, and a handshake this head
+made up would be a second, private protocol. What is chosen is that the head is
+never left silently dead — the reconnect path brings it back, and the read that
+was in flight is NAMED, in the overlay that asked and on the status line, with the
+verb that still works on an old daemon."
+  (let* ((leticl::*job-out* nil)
+         (h (%job-head)))
+    (leticl::%handle-key h (list :type :enter))
+    (is (eq t (getf leticl::*job-out* :loading)) "the overlay is waiting on the read")
+    (leticl::%handle-frame h (list :disconnected))
+    (let ((v leticl::*job-out*))
+      (is (null (getf v :loading)) "the socket dying ends the wait")
+      (is (search "read_job_output" (getf v :error))
+          "and the pane names the frame that did it: ~s" (getf v :error))
+      (is (search "/job j12" (getf v :error))
+          "with the verb that still reads this job on a daemon that old"))
+    (is (search "read_job_output" (head-status-note h))
+        "the status line says it too, because the overlay may already be closed")
+    (is (null (head-connected h)) "and the head is detached, for the reconnect below it")
+    ;; a disconnect with no read in flight is the ordinary one and says the ordinary thing
+    (setf leticl::*job-out* nil)
+    (leticl::%handle-frame h (list :disconnected))
+    (is (equal "detached — reconnecting…" (head-status-note h))
+        "an ordinary detach is not blamed on a frame nobody sent")))
+
+(def-test the-hint-bar-names-the-job-output-overlays-keys (:suite leticl)
+  "The bottom row is where a key is learned, and this pane's Esc goes BACK ONE
+LEVEL rather than closing everything — a row that said `esc closes` would teach
+the wrong thing about it (app.rs:5421-5426)."
+  (let* ((leticl::*job-out* (list :job "j12" :loading t :back nil))
+         (h (%on-head :cols 100 :rows 24)))
+    (setf (head-mode h) :job-out)
+    (let ((text (format nil "~{~a~}" (mapcar #'car (hint-bar h 100)))))
+      (is (search "→ next page" text) "the page keys are named: ~s" text)
+      (is (search "esc back to jobs" text) "and Esc says where it goes"))))
 
 (def-test a-click-on-the-mode-picker-card-marks-a-row (:suite leticl)
   "G17. The click arm tested `head-mode`, and the mode/model picker runs with

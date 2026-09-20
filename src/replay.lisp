@@ -138,6 +138,8 @@ see this file's header."
          (*mode-confirm* nil)
          (*peeked-session* nil)
          (*peeked-dropped* 0)
+         (*job-out* nil)
+         (*job-out-total* 0)
          (*call-facts* nil)
          (*item-facts* nil)
          (*call-started-ms* nil)
