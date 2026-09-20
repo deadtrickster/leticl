@@ -1216,11 +1216,18 @@ glanced at."
              (max 20 cols)))))
 
 (defun %send-mode (head name consented)
+  "The mode frame. CONSENTED is a JSON **boolean**, never null.
+
+`Mode.consented` is `consented: bool` with `#[serde(default)]` (protocol.rs:452):
+serde's default accepts a MISSING key, not a present `null`. Our encoder writes
+NIL as `null`, so `:consented nil` made the daemon's read loop break with an Err
+and **close the connection** — every mode but `allow-all` went through that path.
+The encoder has `:false` for exactly this, and `t` is the true side."
   (%send head (list :frame "mode"
                     :client-request-id (next-request-id)
                     :expected-seq (session-expected-seq (head-session head))
                     :name name
-                    :consented consented)))
+                    :consented (if consented t :false))))
 
 (defun mode-action (head name)
   "Move the session to mode NAME — `allow-all` asks first (`mode_action`)."

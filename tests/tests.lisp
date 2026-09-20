@@ -3230,12 +3230,19 @@ deleted it, so a head attaching to a two-thousand-item session drew an EMPTY
 screen — indistinguishable from a head on the wrong socket — for the whole wait."
   (let* ((*stdout* (make-string-output-stream))
          (h (%on-head :cols 60 :rows 20))
-         (leticl::*attach-started-ms* (- (internal-real-time-ms) 1500)))
-    (setf (head-connected h) nil)
-    (leticl::%render h)
-    (is (search "asking the daemon for this session" (%screen-text h))
-        "the wait is on the screen while nothing has arrived")
+         (leticl::*attach-started-ms* (- (internal-real-time-ms) 3000)))
+    ;; CONNECTED is about the socket and is T from before the first paint —
+    ;; `%send` refuses to write while disconnected and the ATTACH is the first
+    ;; frame — so the wait keys on the CLOCK, which the `hello` arm clears. Ours
+    ;; required `(not connected)` and the cat therefore never drew at all.
     (setf (head-connected h) t)
+    (leticl::%render h)
+    (let ((text (%screen-text h)))
+      (is (search "asking the daemon for this session" text)
+          "the wait is on the screen while nothing has arrived, connected or not")
+      (is (search "the daemon has not answered. ctrl-c twice, or wait" text)
+          "and past the impatient mark it says how to get out"))
+    (setf leticl::*attach-started-ms* nil)
     (leticl::%render h)
     (is (not (search "asking the daemon" (%screen-text h)))
         "and gone once the hello has landed")))
@@ -3374,3 +3381,53 @@ the first row only, and a continuation row is indented by its width."
       ;; and the box's walls and prompt take four more: 100 columns at 30 is four
       (is (= 4 rows) "the long line wraps to four rows rather than being cut at the box's edge")
       (is (< (cdr leticl::*caret*) 40) "and the caret is on the screen"))))
+
+(def-test a-boolean-field-goes-out-as-a-boolean (:suite leticl)
+  "`/mode NAME` closed the connection. `Mode.consented` is `consented: bool` with
+`#[serde(default)]` (protocol.rs:452) — serde's default accepts a MISSING key, not
+a present `null` — and our encoder writes NIL as `null`, so the daemon's read loop
+broke with an Err and dropped the socket. Every mode but `allow-all` took that
+path. Measured by encoding the frame."
+  (let ((h (%make-head))
+        (wire (make-string-output-stream)))
+    (setf (leticl::head-stream h) wire (head-connected h) t)
+    (leticl::%send-mode h "always-ask" nil)
+    (let ((line (string-trim '(#\newline) (get-output-stream-string wire))))
+      (is (search "\"consented\":false" line) "false, not null: ~a" line)
+      (is (not (search "null" line)) "and nothing else on the frame is null either"))
+    (leticl::%send-mode h "allow-all" t)
+    (is (search "\"consented\":true" (get-output-stream-string wire)) "and the true side")))
+
+(def-test the-head-says-what-it-has-to-say (:suite leticl)
+  "**21 write sites of `head-status-note` went nowhere.** They rode `status-line`,
+which `%render` drew only when there was no composer box — and a box is any screen
+of eight rows or more, so on every real terminal the head was silent: `resync: …`,
+`bye: …`, `detached — reconnecting…`, every `say`. The reference puts the notice
+and the stall sentence in the chrome above the box (app.rs:5069-5075)."
+  (let* ((*stdout* (make-string-output-stream))
+         (h (%on-head :cols 80 :rows 24)))
+    (say h "resync: the daemon lost our place")
+    (leticl::%render h)
+    (is (search "· resync: the daemon lost our place" (%screen-text h))
+        "the note is on the screen, above the box")
+    (is (search "╭" (%screen-text h)) "and the box is still whole")
+    ;; and it is the magenta the reference paints it
+    (is (equal '(:fg :magenta) (cdr (first (first (notice-line h 80))))))
+    ;; the stall sentence only while a turn is RUNNING: a head between turns is
+    ;; quiet because nothing is happening, and calling that a stall is an alarm
+    ;; about ordinary rest
+    (let ((*now-ms* 100000) (*last-event-ms* 0))
+      (is (null (stall-row h 80)) "no running turn, no stall")
+      (setf (session-turn (head-session h))
+            (list :turn-id "t1" :model "deepseek/deepseek-flash"
+                  :state (list :state "running")))
+      (let ((text (lines-text (stall-row h 200))))
+        (is (search "deepseek/deepseek-flash" (car text)) "with one, it names the model")
+        (is (search "nothing received for" (car text)) "how long the silence has been")
+        (is (search "esc esc interrupts it" (car text)) "and the key that ends it"))
+      ;; and it is TRIMMED to the width, as the reference's is: a narrow screen
+      ;; gets the front of the sentence rather than a wrapped paragraph
+      (is (<= (string-width (car (lines-text (stall-row h 80)))) 80)
+          "trimmed to the width it has")
+      (leticl::%render h)
+      (is (search "nothing received for" (%screen-text h)) "and it reaches the screen"))))

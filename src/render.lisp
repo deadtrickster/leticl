@@ -311,13 +311,21 @@ scrolls the transcript by a row every keystroke.
          ;; ever. They fall back to their own rows only when there is no box (a
          ;; screen too short for one), where there is no edge to carry them.
          (boxed (>= rows 8))
+         ;; **The chrome above the box**, in the reference's own order (app.rs:
+         ;; 5069-5075): the stall sentence, then the head's note. These used to
+         ;; ride `status-line`, which `%render` drew only when there was NO box —
+         ;; i.e. never on a real screen — so every note this head writes went
+         ;; nowhere, `detached — reconnecting…` included.
+         (extra (append (stall-row head cols) (notice-line head cols)))
+         (extra-rows (length extra))
          (status-text (and status (not boxed)
                            (string-trim " ─" (apply #'concatenate 'string
                                                     (mapcar #'car status)))))
          (status-row (when (and status-text (plusp (length status-text))) (1- cursor)))
          (alarm-row (when (and alarm (not boxed)) (- (or status-row cursor) 1)))
          (body-top 1)
-         (body-bottom (or alarm-row status-row cursor))
+         (body-bottom (max (1+ body-top)
+                           (- (or alarm-row status-row cursor) extra-rows)))
          (card-lines nil))
     (screen-clear s)
     ;; top border, inside the gutter like everything else
@@ -398,6 +406,9 @@ scrolls the transcript by a row every keystroke.
            (when card-lines
              (%place-lines s card-lines (- body-bottom card-rows) (1- body-bottom) cols))))))
     ;; the chrome, each row where the layout above put it
+    (loop for row in extra
+          for r from (- (or alarm-row status-row cursor) extra-rows)
+          do (put-segments s r +gutter+ row))
     (when alarm-row (put-segments s alarm-row +gutter+ alarm))
     (when status-row (put-segments s status-row +gutter+ status))
     (loop for row in composer

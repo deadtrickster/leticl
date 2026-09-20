@@ -305,10 +305,41 @@ line never fired. A test caught it, which is the reason the test is a test."
   (when (and *last-event-ms* (plusp *now-ms*) (>= *now-ms* *last-event-ms*))
     (- *now-ms* *last-event-ms*)))
 
-(defun stall-text ()
+(defun stall-text (&optional head)
+  "The stall sentence, or NIL — the reference's `stuck_line`.
+
+Only while a TURN IS RUNNING, and it names the model, how long the silence has
+been, and the key that ends it: a head between turns is quiet because nothing is
+happening, and calling that a stall is an alarm about ordinary rest. Without the
+head (a test of the clock alone) the old shorter form stands."
   (let ((ms (stalled-ms)))
     (when (and ms (>= ms *stall-ms*))
-      (format nil " · no frames for ~a" (duration ms)))))
+      (if (null head)
+          (format nil " · no frames for ~a" (duration ms))
+          (let ((turn (session-turn (head-session head))))
+            (when (and turn (string= (turn-state-name turn) "running"))
+              (format nil "~a — nothing received for ~a. The turn is still marked running; esc esc interrupts it."
+                      (%model-name (head-session head)) (duration ms))))))))
+
+(defun notice-line (head cols)
+  "The head's own note, above the composer — `· resync: …`, `· bye: …`, `· mode →
+allow-all`, every `say`.
+
+**It had nowhere to go.** `status-line` carried it and `%render` drew that row
+only on a screen too short for the composer's box (`(and … (not boxed))`, and
+`boxed` is any screen of eight rows or more), so on every real terminal the note,
+the stall and 21 other write sites of `head-status-note` went into silence —
+including `detached — reconnecting…`. The reference puts the notice and the stall
+in the chrome above the box, where the card is (app.rs:5069-5075)."
+  (let ((note (head-status-note head)))
+    (when (and note (plusp (length note)))
+      (list (list (cons (%truncate-width (format nil "· ~a" note) cols)
+                        '(:fg :magenta)))))))
+
+(defun stall-row (head cols)
+  (let ((text (stall-text head)))
+    (when text
+      (list (list (cons (%truncate-width text cols) '(:fg :yellow)))))))
 
 ;;; --------------------------------------------------------------- status ;;;
 
@@ -664,19 +695,43 @@ on its own width made a 7-wide and an 8-wide cat jitter instead of walk.")
   "When this head sent its ATTACH, or NIL once a Hello has arrived. A defvar: the
 clock the cat walks to.")
 
+(defparameter +attach-impatient-ms+ 2000
+  "How long a wait goes before the screen says the daemon has not answered — the
+reference's `ATTACH_IMPATIENT`.")
+
 (defun attaching-p (head)
-  (and *attach-started-ms* (not (head-connected head))))
+  "Has this head asked for a session and not been answered?
+
+**The clock IS the flag.** This also required `(not (head-connected head))`, and
+`run` sets `connected` to T the moment the socket opens — deliberately, because
+`%send` refuses to write while disconnected and the ATTACH is the first frame —
+so `attaching-p` was false from before the first paint and the walking cat NEVER
+DREW. The blank screen it exists to replace is what the operator got on every
+attach to a big session. `*attach-started-ms*` is set when the ATTACH goes out and
+cleared by the `hello` arm, which is exactly the reference's `attaching` flag
+(app.rs:1559, 1653)."
+  (declare (ignore head))
+  (and *attach-started-ms* t))
 
 (defun attach-lines (head cols)
   "The wait, or NIL when there is nothing to wait for."
   (when (attaching-p head)
     (let* ((elapsed (max 0 (- (internal-real-time-ms) *attach-started-ms*)))
-           (slot (format nil "~v@a" +cat-slot+ (cat-frame elapsed))))
-      (list (list (cons "" nil))                 ; the caller centres vertically
+           ;; LEFT-justified in a fixed slot (`{cat:<CAT_SLOT$}`): the frames are
+           ;; different widths, and right-justifying moves the cat's own centre
+           ;; as it walks — the jitter the fixed slot exists to prevent.
+           (slot (format nil "~va" +cat-slot+ (cat-frame elapsed))))
+      (append
+       (list (list (cons "" nil))                ; the caller centres vertically
             (%centred-row slot cols)
             (list (cons "" nil))
             (%centred-row "· · · · ›" cols)        ; a pawprint trail, so a still
             (list (cons "" nil))                   ; frame still reads as going
             (%centred-row "asking the daemon for this session" cols)
             (list (cons "" nil))
-            (%centred-row (duration elapsed) cols)))))
+             (%centred-row (duration elapsed) cols))
+       ;; past the impatient mark the frame says how to get OUT, so a wait on a
+       ;; daemon that will never answer is not a screen you have to guess at
+       (when (>= elapsed +attach-impatient-ms+)
+         (list (list (cons "" nil))
+               (%centred-row "the daemon has not answered. ctrl-c twice, or wait" cols)))))))

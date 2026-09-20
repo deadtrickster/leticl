@@ -54,7 +54,8 @@
    #:composer-line #:hint-bar #:alarm-line #:alarm-counts #:alarmed-p
    #:spent-text #:note-turn-cost #:reset-spent
    #:*resyncs* #:*spent-micros* #:*spent-seen* #:*now-ms* #:*last-event-ms*
-   #:note-frame-arrived #:stalled-ms #:stall-text #:tick-notice #:say
+   #:note-frame-arrived #:stalled-ms #:stall-text #:stall-row #:notice-line
+   #:tick-notice #:say
    #:turn-status #:composer-title #:composer-wiring
    #:attach-lines #:cat-frame #:attaching-p #:*attach-started-ms* #:+cat-frames+
    #:composer-rows-needed #:composer-inner #:*notice-ttl-frames* #:hint-bar

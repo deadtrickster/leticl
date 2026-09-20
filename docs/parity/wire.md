@@ -1,0 +1,455 @@
+# Wire and session state — leticl against letibot
+
+**Reference** `/home/dead/Projects/letibot/letibot` at `8af671e3467ce0a139ba25d99a18378ba39c910b`
+(verified with `git -C … rev-parse HEAD`).
+**Subject** `/home/dead/Projects/leticl` at `dc62ddf`.
+
+Surface: the frames, the events, the session fold, the exchange. Not keys, not
+commands, not rendering, not panes — those are measured elsewhere.
+
+Every claim below is `file:line` on both sides. Where a fact was *executed*
+rather than read it is quoted as `probe:` / `probe2:` — two throwaway ASDF
+loads of `:leticl` that fold synthetic envelopes through `apply-event` and
+`ingest-hello`, encode frames with `encode-frame`, and print what the plists and
+the wire actually hold. Nothing in `src/` was modified to measure any of it.
+
+---
+
+## Summary
+
+| measure | count |
+|---|---|
+| `ClientFrame` variants in the reference (`protocol.rs:319-712`) | **29** |
+| …constructed by leticl | **26** |
+| …of the 3 missing, also not sent by the reference TUI | 2 (`Askpass`, `FetchRow`) |
+| …genuinely missing | **1** (`ReadJobOutput`) |
+| `ServerFrame` variants (`protocol.rs:735-879`) | **13** |
+| …handled by `%handle-frame` with a named arm | **11** |
+| …reaching the `(t :control)` wildcard, which is what the reference also does | 2 (`secret`, `row_fetched`) |
+| `SessionEvent` variants (`event.rs:945-973`) | **29** |
+| …folded by `apply-event` (`session.lisp:170-400`) | **24** |
+| …answered by `%handle-frame` instead (`head.lisp:184-192`) | 2 (`screen_requested`, `secret_requested`) |
+| …deliberately nothing on both sides | 1 (`explain`) |
+| …**reaching nothing at all** | **2** (`secret_settled`, `job_output`) |
+| `Snapshot` fields (`view.rs:278-297`) ingested by `ingest-snapshot` | **10 of 10** |
+| dead constructors (`make-*` with no caller) | **0** — but `ack-frame` (`session.lisp:411`) is a dead wrapper |
+| session slots written by the fold and **read by nothing** | **5** |
+
+The headline: the *frame* vocabulary is close to complete and the *fold* is
+close to complete, and four classes of defect sit underneath that —
+
+- **(a) two frames that do not survive contact with the daemon.** A `Hello`
+  answering a resume (`snapshot: null`) raises a `TYPE-ERROR` in `ingest-hello`,
+  so no reconnect and no resume has ever actually worked (**W25**); and
+  `/mode NAME` puts `"consented":null` on the wire, which the daemon cannot
+  deserialise and answers by closing the connection (**W1**). Both measured.
+- **(b) folds that write into a place that is not there.** `ToolProgress`'s note
+  goes to a `getf` place that does not exist (**W11**); `ToolStarted` never moves
+  a proposed call to running (**W9**); `turn.appended` is initialised and never
+  written (**W20**); `turn.progress` outlives its turn (**W18**).
+- **(c) five session slots that the fold fills and nothing reads** — warnings,
+  notices, settled decisions, denials, job settlements (**W13**, **W12**,
+  **W15**). Every daemon-side `Slash` reply lands in one of them.
+- **(d) the job-output round trip**, missing at both ends (**W2**).
+
+---
+
+## 1. Every frame in the protocol
+
+`PROTOCOL_VERSION` is `21` (`protocol.rs:210`); leticl sends `21`
+(`protocol.lisp:14`, measured on the wire — `probe:` `{"frame":"attach","protocol_version":21,…}`).
+See §5 for what a mismatch does.
+
+### 1a. `ClientFrame` — constructed, and sent?
+
+| reference | citation | leticl | citation | verdict |
+|---|---|---|---|---|
+| `Attach{protocol_version,session_id,since_seq,kind,identity,caps}` | `protocol.rs:325` | `make-attach`, sent at first attach and on every reconnect | `protocol.lisp:72`, `head.lisp:440`, `head.lisp:300` | SAME |
+| `Ack{seq,rendered,filtered}` | `protocol.rs:337`,`722` | `make-ack`, sent after the paint | `protocol.lisp:83`, `head.lisp:385` | SAME |
+| `Resync` | `protocol.rs:340` | `make-resync`, `/resync` | `protocol.lisp:88`, `commands.lisp:133` | SAME |
+| `Prompt{client_request_id,expected_seq,text}` | `protocol.rs:343` | `make-prompt` | `protocol.lisp:91`, `commands.lisp:48` | SAME |
+| `WithdrawPrompts{client_request_id,expected_seq}` | `protocol.rs:354` | `make-withdraw-prompts`, ctrl-u | `protocol.lisp:103`, `editor.lisp:440` | DIFFERS — frame identical, local bookkeeping is not; see §4f |
+| `Stop{client_request_id,expected_seq,who}` | `protocol.rs:379` | `make-stop`, quit card | `protocol.lisp:110`, `editor.lisp:178` | DIFFERS — `who` is the literal `"leticl"`; the reference sends `client.identity()` (`driver.rs:208`), which is the name it attached under. leticl's attach identity is also `"leticl"` (`head.lisp:441`), so the strings agree today by coincidence, not by construction |
+| `Interrupt{client_request_id,expected_seq,reason}` | `protocol.rs:387` | `make-interrupt` | `protocol.lisp:97`, `commands.lisp:203` | SAME |
+| `Promote{client_request_id,expected_seq}` | `protocol.rs:395` | inline plist | `commands.lisp:159` | SAME |
+| `CompactSession{client_request_id,expected_seq}` | `protocol.rs:407` | inline plist | `commands.lisp:142` | SAME |
+| `ReseatSession{…,summarise}` | `protocol.rs:418` | inline plist, `summarise` omitted | `commands.lisp:146` | SAME — omission is the lossless fork, which is what `protocol.rs:927` asserts an old head gets. `/reseat summarise` is unreachable, which is a commands-surface gap |
+| `Mode{client_request_id,expected_seq,name,consented}` | `protocol.rs:438` | inline plist | `panes.lisp:517`, `panes.lisp:1218` | **DIFFERS — broken.** `%send-mode` with `consented = nil` puts `"consented":null` on the wire. `probe:` `{"frame":"mode",…,"consented":null}`. `consented: bool` with `#[serde(default)]` accepts a *missing* key, not a present `null`; the frame fails to deserialise and `server.rs:898` breaks the connection loop with `Err`. See gap **W1** |
+| `Slash{client_request_id,expected_seq,line}` | `protocol.rs:460` | `%send-slash`, and the unknown-verb fallthrough | `commands.lisp:197`, `commands.lisp:173` | SAME |
+| `Askpass{prompt,command}` | `protocol.rs:473` | — | — | MISSING, correctly: it is `letibot-askpass`'s frame, not a TUI's. The reference TUI does not send it either (`client.rs:351` is the helper's) |
+| `Secret{req_id,secret}` | `protocol.rs:478` | inline plist; `secret` is the buffer or `nil` | `editor.lisp:159`, `editor.lisp:164` | SAME — `probe:` `{"frame":"secret","req_id":"r","secret":null}`; `Option<String>` reads `null` |
+| `Screen{req_id,cols,rows_n,rows}` | `protocol.rs:492` | `make-screen-answer` | `protocol.lisp:196`, `head.lisp:186` | DIFFERS — the answer is sent during the *drain*, from `head-last-rows`, i.e. the previous frame. The reference queues the id and answers after `screen()` with the rows it just drew (`driver.rs:97-99`, `app.rs:2723-2732`). See gap **W6** |
+| `Answer{client_request_id,req_id,option_id,pattern,note}` | `protocol.rs:505` | `make-answer`, `pattern`/`note` omitted when nil | `protocol.lisp:118`, `editor.lisp:71`,`106` | SAME |
+| `AnswerQuestion{client_request_id,req_id,answer}` | `protocol.rs:558` | `make-answer-question` | `protocol.lisp:136`, `editor.lisp:68` | DIFFERS — only `{"option":N}` is ever built (`probe:` `"answer":{"option":0}`). `QuestionAnswer` also has `note` and `free` (`question.rs:55-65`), and `free` is the half the operator's requirement names (`question.rs:10-12`). See gap **W7** |
+| `ListSessions` | `protocol.rs:569` | `make-list-sessions` | `protocol.lisp:145`, `commands.lisp:61` | SAME |
+| `ListTodos` | `protocol.rs:577` | `make-list-todos` | `protocol.lisp:148`, `commands.lisp:119` | SAME |
+| `ListJobs` | `protocol.rs:585` | `make-list-jobs` | `protocol.lisp:151`, `commands.lisp:111` | SAME |
+| `NewSession{client_request_id,title,workspace}` | `protocol.rs:592` | `make-new-session`, **`workspace` always `""`** | `protocol.lisp:160`, `commands.lisp:59`, `head.lisp:446` | DIFFERS — the reference sends its own cwd (`driver.rs:147-150`), and `protocol.rs:599-607` records what an empty one costs: the new session's read-only tools are seated at the daemon's directory, "and every path in it resolved, so the only symptom was answers about the wrong tree". See gap **W3** |
+| `ResumeSession{client_request_id,session_id}` | `protocol.rs:624` | `make-resume-session` | `protocol.lisp:166`, `commands.lisp:139` | SAME |
+| `RenameSession{client_request_id,session_id,title}` | `protocol.rs:633` | `make-rename-session` | `protocol.lisp:171`, `commands.lisp:67` | SAME |
+| `Switch{session_id,since_seq}` | `protocol.rs:645` | `make-switch`, always `since_seq 0` | `protocol.lisp:177`, `commands.lisp:64`, `editor.lisp:320` | SAME — the reference also sends `0` (`driver.rs:156`) |
+| `Peek{session_id}` | `protocol.rs:660` | `make-peek` | `protocol.lisp:182`, `commands.lisp:126`, `editor.lisp:289` | SAME |
+| `FetchRow{session_id,row,at,len}` | `protocol.rs:680` | — | — | MISSING on both sides. The reference documents its own absence at `app.rs:1794-1807` and files it as `TODO.md` R19.2 |
+| `Settings` | `protocol.rs:697` | `make-settings` | `protocol.lisp:185`, `head.lisp:178` | SAME — asked once, from the `hello` arm, which covers attach, switch and reconnect |
+| `ReadJobOutput{client_request_id,job,offset}` | `protocol.rs:704` | — | — | **MISSING.** leticl's jobs-pane Enter sends `/job ID` as a `Slash` (`editor.lisp:300`), which is exactly the behaviour `event.rs:896-900` records the operator rejecting. See gap **W2** |
+| `Detach` | `protocol.rs:711` | `make-detach` | `protocol.lisp:188`, `head.lisp:455` | SAME |
+
+**Dead code check.** Every `make-*` in `protocol.lisp` has at least one `%send`
+caller (grep over `src/`, cross-checked against `package.lisp:37-42`). The one
+dead item is `ack-frame` (`session.lisp:411`) — exported at `package.lisp:48`,
+documented as *the* read mark, and called by nothing: `run-loop` builds
+`(make-ack last-seq …)` directly (`head.lisp:385`). Harmless today, and a trap
+tomorrow, because the two spellings disagree about where the seq comes from —
+`ack-frame` reads `session-seq` (the last seq *folded*) and the loop reads
+`last-seq` (the last seq *read*). `cursor.rs` / `protocol.rs:717-720` say the
+second is the only correct one. Verdict: **DEAD-CODE, and the dead copy is the
+wrong one.**
+
+### 1b. `ServerFrame` — handled?
+
+| reference | citation | leticl | citation | verdict |
+|---|---|---|---|---|
+| `Hello{protocol_version,session_id,head_id,dropped,snapshot,resumed_from,scrubbed,wiring,sessions}` | `protocol.rs:744-781` | `ingest-hello` | `head.lisp:162-179`, `session.lisp:87-109` | DIFFERS — `protocol_version` is never read; `dropped` is assigned, not accumulated; the session list is not filtered. See §3 and §5 |
+| `Secret{secret}` | `protocol.rs:791` | wildcard `(t :control)` | `head.lisp:267` | SAME — the reference also does nothing (`app.rs:1836`); it is only ever written to an `askpass` head |
+| `Sessions{sessions,current,created}` | `protocol.rs:792` | named arm | `head.lisp:230-234` | DIFFERS — `current` and `created` are both dropped. The reference sets `session_id = current` and, when `created` is this head's `/new`, queues a `Switch` to it (`app.rs:1736-1744`). leticl's `/new` and `--new TITLE` therefore create a session and leave you where you were. See gap **W4** |
+| `Todos{session_id,todos}` | `protocol.rs:803` | named arm | `head.lisp:239-242` | DIFFERS — `session_id` is not checked. The reference ignores a reply for a session it has since left (`app.rs:1775`) |
+| `Settings{rows}` | `protocol.rs:813` | named arm, stamps `*model-from-settings-at*` | `head.lisp:243-253` | SAME (`app.rs:1786-1792`) |
+| `Jobs{session_id,jobs}` | `protocol.rs:816` | named arm | `head.lisp:235-238` | DIFFERS — `session_id` not checked (`app.rs:1767`) |
+| `Peeked{session_id,dropped,events}` | `protocol.rs:820` | named arm, opens `:peek` | `head.lisp:254-261` | SAME — all three fields kept |
+| `RowFetched{…}` | `protocol.rs:839` | wildcard | `head.lisp:267` | SAME by effect; the reference keeps an explicit arm *so an unhandled frame is visible* (`app.rs:1804-1807`), and leticl's wildcard is the swallowing that comment warns about |
+| `Event(Envelope)` | `protocol.rs:852` | named arm → `apply-event` | `head.lisp:180-203` | SAME |
+| `Resync{reason,dropped,snapshot,scrubbed}` | `protocol.rs:856` | named arm | `head.lisp:204-212` | DIFFERS — `dropped` and `scrubbed` are both dropped on this path. The reference adds both (`app.rs:1843-1845`). See gap **W8** |
+| `Accepted{client_request_id,seq,note}` | `protocol.rs:863` | named arm, suppresses `NOTE_PROMPT_QUEUED` | `head.lisp:213-222` | SAME (`app.rs:1862-1870`) |
+| `Rejected{client_request_id,reason,expected_seq,actual_seq}` | `protocol.rs:871` | named arm, both numbers said | `head.lisp:223-229` | SAME (`app.rs:1872-1884`) |
+| `Bye{reason}` | `protocol.rs:878` | named arm: note + `connected = nil` | `head.lisp:262-266` | **DIFFERS.** The reference sets `quit = true` and the head leaves (`app.rs:1886-1889`); the pump also stops on a `Bye` (`client.rs:548`). leticl stays running and `%try-reconnect` re-attaches every 2 s (`head.lisp:283-316`), so a refusal the daemon meant as final becomes a loop. See gap **W5** and §5 |
+
+---
+
+## 2. Every event
+
+`apply-event` returns `:dirty`/`:quiet`; `%handle-frame` maps those to
+`:rendered`/`:filtered` (`head.lisp:201-203`), which is the reference's
+`Disposition` (`driver.rs:57-61`). The classification is compared below only
+where it changes what the ack reports.
+
+| reference | citation | leticl | citation | verdict |
+|---|---|---|---|---|
+| `TurnStarted{turn_id,model,ledger_head}` | `event.rs:396` | new turn plist; `*turn-started-ms*` set | `session.lisp:178-194` | DIFFERS — `(getf env :snapshot)` at `session.lisp:183` tests a key an `Envelope` never carries (`event.rs:983-990`), so the guard is always true and the clock is always set. And `ingest-snapshot` never *clears* `*turn-started-ms*`, so a switch or resync leaves the previous session's start time running. The reference stores `started_ms` per `TurnPane` (`app.rs:2251`) and drops the pane on a session change (`app.rs:1914`) |
+| `PromptProgress{turn_id,…}` | `event.rs:403` | sets `turn.progress` | `session.lisp:218-224` | DIFFERS — no `turn_id` check. The reference and the view both require the id to match (`app.rs:2265`, `view.rs:404-410`) |
+| `TokensGenerated{turn_id,tokens}` | `event.rs:415` | `setf turn.tokens` | `session.lisp:195-202` | DIFFERS — no `turn_id` check and no `max`. `probe:` two frames `50` then `10` leave `tokens = 10`; the reference and the view both use `max` so a reordered or duplicated frame cannot move it backwards (`app.rs:2281`, `view.rs:419`) |
+| `Delta{turn_id,target,text}` | `event.rs:419` | three targets, terse filters reasoning | `session.lisp:203-217` | DIFFERS — no `turn_id` check. `probe:` a delta carrying `turn_id "OTHER"` appends to the current turn's text and returns `:dirty`. The reference returns `Filtered` (`app.rs:2295-2297`). Targets and the terse rule are otherwise identical |
+| `ToolCallProposed{turn_id,call_id,name,args_digest,target}` | `event.rs:424` | pushes a `CallView`-shaped plist, `target` kept, `note-call-target` | `session.lisp:225-235` | SAME |
+| `DecisionRequested{req_id,kind,call_id,summary,target,detail,options,choices,because,advice,deadline,on_timeout}` | `event.rs:442-524` | all twelve kept, plus `asked-ts` from the envelope | `session.lisp:313-329` | SAME, and better than the live reference arm, which hard-codes `asked_ts: 0` (`app.rs:2492`). `endp-open` (`session.lisp:405`) is a no-op with a docstring — harmless, but it does not do what the name says; the reference's `self.open.retain(…)` dedup by `req_id` (`app.rs:2471`) has no counterpart here |
+| `DecisionAnswered{req_id,outcome,by,basis,late}` | `event.rs:525` | settles, pushes to `settled-decisions`, attaches to the call | `session.lisp:330-349` | DIFFERS — the settled record drops `call_id` and **`advice`**. `view.rs:494-505` and `app.rs:2503-2514` both read three things off the open decision before removing it *because the answer event carries only the `req_id`*, and advice is the one "which nothing downstream can recover". See gap **W10** |
+| `ToolStarted{turn_id,call_id,name,access}` | `event.rs:540` | `ensure-call` | `session.lisp:236-243` | **DIFFERS — broken.** `ensure-call` (`session.lisp:139-146`) is `(or (call-view …) (push …))`: a call that already exists as `proposed` is *returned unchanged*. `probe:` after `tool_call_proposed` then `tool_started`, the state is still `"proposed"`. The card therefore draws `○ … · proposed` for the whole run instead of `◐ … · 1.4s` (`cards.lisp:938-952`). The reference sets `Running`, restarts the clock and clears the note (`app.rs:2356-2400`); the view does the same (`view.rs:523-536`). `access` is dropped on both sides. See gap **W9** |
+| `ToolProgress{turn_id,call_id,note}` | `event.rs:553` | `(setf (getf call :progress-note) …)` | `session.lisp:244-247` | **DIFFERS — broken.** `call` is a local variable holding the plist and `:progress-note` is not one of its keys, so `setf getf` conses a new head onto the *local* and the list inside `turn.calls` is untouched. `probe:` the note is `NIL` immediately after. Every tool-progress note leticl has ever folded has gone nowhere. See gap **W11** |
+| `ToolFinished{turn_id,call_id,outcome,payload_digest,inline_bytes,full_bytes,spill,repairs,edit}` | `event.rs:561` | sets `Finished` state with outcome/inline/full/spill/edit | `session.lisp:248-261` | DIFFERS — `payload_digest` and `repairs` dropped, and **the progress note is not cleared**. `app.rs:2445` clears it and `app.rs:2365-2386` is a 20-line record of what a stale note cost ("the operator read the screen exactly as it was written and reported the session hung requesting the oracle … the diagnosis cost an hour"). leticl cannot suffer it today only because **W11** means the note never arrives; fix W11 without W12 and the injury lands here |
+| `TurnFinished{turn_id,finish_reason,usage,timings}` | `event.rs:590` | state + `note-turn-cost` | `session.lisp:262-274` | DIFFERS — `turn.progress` is **not** cleared. `probe:` after a `prompt_progress` then a `turn_finished`, `:progress` still holds `(:TOTAL 10 :CACHE 2 …)`. The reference clears it in all three terminal arms (`app.rs:2565`, `2596`, `2619`) and so does the view (`view.rs:572`, `588`, `608`), with the reason on the field itself: "a progress frame is true only while it is happening" (`view.rs:254-256`). No `turn_id` check either |
+| `TurnInterrupted{turn_id,reason,partial_kept}` | `event.rs:596` | state | `session.lisp:275-281` | DIFFERS — progress not cleared (as above) |
+| `TurnFailed{turn_id,error,partial_kept}` | `event.rs:617` | state | `session.lisp:282-288` | DIFFERS — progress not cleared. The empty-`turn_id` rule (`view.rs:595-606`: a turn can fail before it published a `TurnStarted`) is satisfied by accident, since leticl checks no id at all |
+| `TranscriptAppended{item_id,kind,ledger_head}` | `event.rs:628` | pushes a row with `:item nil` | `session.lisp:289-295` | DIFFERS — the id is **not** appended to `turn.appended`. `probe:` `:appended` is `NIL` before and after. The turn plist initialises `:appended nil` at `session.lisp:192` and nothing ever writes it, so the field is dead. `view.rs:246-253` says what it is for: *"a head shows a running turn from `text`/`reasoning` and a finished one from the transcript, and it needs to know which rows are the finished form or it renders the answer twice"*. leticl also does the tool-result hand-over by `call_id` at `transcript_content` (`session.lisp:302-306`) rather than positionally at `transcript_appended` (`app.rs:2647-2678`) — a different mechanism with the same intent, and `%round-boundary` (`cards.lisp:221`) is what keeps the reused ids apart |
+| `TranscriptContent{item_id,item}` | `event.rs:665` | `fill-item`, then hand-over + round boundary | `session.lisp:296-312` | SAME in effect. Unlike the reference (`app.rs:4744-4751`) it does **not** retire a queued prompt here; see §4f |
+| `HeadAttached{head_id,kind,identity}` | `event.rs:669` | adds to `session-heads`, loud-only | `session.lisp:365-373` | SAME — leticl keeps the whole presence row, the reference keeps only a count (`app.rs:2700`) |
+| `HeadDetached{…}` | `event.rs:674` | removes, loud-only | `session.lisp:374-378` | SAME |
+| `Warning{code,detail}` | `event.rs:680` | pushes to `session-warnings` | `session.lisp:350-354` | **DIFFERS — the fold writes into a slot nothing reads.** `session-warnings` is set by `ingest-snapshot` (`session.lisp:67`) and pushed here, and grep over `render.lisp`/`cards.lisp`/`chrome.lisp`/`panes.lisp` finds no reader. The reference puts every warning into the transcript where it happened (`app.rs:2766-2803`), and splits `slash`/`slash_refused` listings into a pane and `job_output_refused` into the jobs pane. See gap **W13** |
+| `ScreenRequested{req_id}` | `event.rs:685` | answered in `%handle-frame` | `head.lisp:185-188` | DIFFERS — answers with the previous frame; see **W6** |
+| `SecretRequested{req_id,prompt,command,deadline}` | `event.rs:690` | raises the secret card | `head.lisp:189-192` | SAME |
+| `SecretSettled{req_id,given,by}` | `event.rs:699` | — | falls to `(t :quiet)` `session.lisp:400` | **MISSING.** `probe:` disposition `:QUIET`, nothing else. The reference dismisses its own card when somebody else answered first and posts who (`app.rs:2750-2765`). Without it leticl's masked password field stays up over a `sudo` that has already been answered — and the daemon's own `secret_late` warning (`server.rs:403-410`), which would explain it, is a `Warning`, which leticl also does not render (**W13**). See gap **W14** |
+| `Explain{turn_id,plan}` | `event.rs:705` | `(t :quiet)` | `session.lisp:400` | SAME — the reference is `Disposition::Filtered` and nothing else (`app.rs:2825`) |
+| `CommandIssued{head_id,identity,command,client_request_id,note}` | `event.rs:726` | pushes to `session-notices`, always `:dirty` | `session.lisp:385-390` | DIFFERS twice. (i) `session-notices` has no reader — see **W13**. (ii) The reference says it out loud **only when `head_id` is not its own** (`app.rs:2815`), because your own routine acceptances are already covered by `Accepted`; and it is `Filtered` below loud. leticl counts every one as rendered |
+| `DenialRaised{request_id,turn_id,call_id,tool,summary,baseline,by,basis,tier,outcome,repeat_count,breaker_open,grant}` | `event.rs:801-832` | pushes ten of thirteen to `session-denials` | `session.lisp:355-364` | **DIFFERS — and this is the one with a requirement behind it.** `breaker_open` and `grant` are dropped, and `session-denials` has no reader. `event.rs:772-791` and the reference's own arm (`app.rs:2841-2909`) turn on exactly the two dropped fields: the breaker line, and *"what the operator can do about it right now"*. `docs/boundary-and-adjudication.md` §4b, quoted at `event.rs:773`: *"a denial the operator cannot see manufactures the workaround"*. leticl renders none of them, at any verbosity. See gap **W12** |
+| `Subagent{subagent_id,state,prompt,role}` | `event.rs:840` | pushes the whole envelope | `session.lisp:391-393` | SAME by effect — `probe:` two events for one id leave two entries, but `subagent-rows` (`panes.lisp:595-617`) folds by `subagent_id` at draw time and says so. The reference folds at apply (`app.rs:2145-2168`). Both are `Filtered`-equivalent; leticl returns `:dirty`, so it counts as rendered where the reference counts it filtered |
+| `JobSettled{job,state,produced,elapsed_ms}` | `event.rs:884` | pushes the envelope to `session-jobs` | `session.lisp:394-396` | **DIFFERS.** `session-jobs` has no reader: the jobs pane draws `head-jobs`, which is only ever the `Jobs` reply (`head.lisp:236`, `panes.lisp:555`, `editor.lisp:297`). The reference folds the settlement **into the row the daemon gave it** — `state`, `running = false`, `produced`, `elapsed_ms` (`app.rs:2187-2192`) — so an open pane updates. leticl's pane freezes at `running` until `/jobs` is re-run, which is the exact lie `event.rs:857-864` says the event exists to prevent. See gap **W15** |
+| `JobOutput{job,from,to,produced,dropped,state,lines,next}` | `event.rs:916-938` | — | `(t :quiet)` | **MISSING**, at both ends of the round trip (see `ReadJobOutput` in §1a). See gap **W2** |
+
+---
+
+## 3. The session view
+
+`ingest-snapshot` (`session.lisp:56-75`) against `Snapshot` (`view.rs:278-297`):
+
+| `Snapshot` field | citation | leticl | verdict |
+|---|---|---|---|
+| `session_id` | `view.rs:279` | `session.lisp:59` | SAME |
+| `seq` | `view.rs:282` | `session.lisp:60-61` — sets both `seq` and `expected-seq` | SAME |
+| `dropped` | `view.rs:285` | `session.lisp:62` | DIFFERS — assigned. The reference takes `max` in `load` and `+=` in the two frame arms (`app.rs:1937`, `1672`, `1844`) |
+| `items_dropped` | `view.rs:287` | `session.lisp:63` | Stored, never read — no `… +N rows above` disclosure anywhere in `src/` |
+| `items` | `view.rs:288` | `session.lisp:69`, `%items-vector` | SAME — rows stay raw plists, every `SnapshotItem` field (`view.rs:60-77`) included |
+| `turn` | `view.rs:289` | `session.lisp:64` | SAME — the whole `TurnView` plist is kept raw, so `raw_calls`, `appended`, `tokens`, `progress` and each `CallView.edit` survive a snapshot even where the *live* fold drops them |
+| `open_decisions` | `view.rs:291` | `session.lisp:65` | SAME |
+| `settled_decisions` | `view.rs:294` | `session.lisp:66` | Stored, never read. The reference partitions them: call-bound ones ride the call's card, the rest become notes (`app.rs:2002-2005`) |
+| `warnings` | `view.rs:295` | `session.lisp:67` | Stored, never read — see **W13** |
+| `heads` | `view.rs:296` | `session.lisp:68` | SAME (read at `panes.lisp:255`, `cards.lisp:1197`) |
+
+**10 of 10 ingested. 3 of 10 write-only.**
+
+`ingest-hello` (`session.lisp:87-109`) against `Hello` (`protocol.rs:744-781`):
+
+| field | leticl | verdict |
+|---|---|---|
+| `protocol_version` | never read | DIFFERS — see §5 |
+| `session_id` | via the snapshot only | **BROKEN on the resume path** — see **W25** below. `ingest-hello` calls `ingest-snapshot` unconditionally (`session.lisp:88`), and on a resume served from the scrollback the snapshot is `null` (`protocol.rs:752-753`, `hub.rs:636-643`). `ingest-snapshot` then assigns `session-session-id` ← `""` and immediately `session-seq` ← `NIL` into a `:type fixnum` slot, which raises. The reference assigns the id explicitly on that path instead (`app.rs:1680-1685`) |
+| `head_id` | `session.lisp:90` | Stored. Nothing uses it. The reference uses it twice: it re-seats the client so later acks are attributed (`driver.rs:71-73`, `client.rs:530`) and it suppresses its own `CommandIssued` (`app.rs:2815`) |
+| `dropped` | `session.lisp:91` | DIFFERS — assigned, overwriting the snapshot's; the reference accumulates |
+| `snapshot` | `session.lisp:88` | SAME |
+| `resumed_from` | `session.lisp:104-108` | SAME |
+| `scrubbed` | `session.lisp:89`, `%scrub-total` | SAME — `ScrubReport` is five `u64` counts and nothing else (`scrub.rs:134-150`), so summing every integer in the plist equals `total()` (`scrub.rs:153-159`) |
+| `wiring` | `session.lisp:93` | SAME — all four of `SessionWiring` (`registry.rs:255-260`) kept raw |
+| `sessions` | `session.lisp:92`, title lookup at 100-103 | DIFFERS — kept unfiltered. The reference drops rows with a `parent_session_id` before storing, twice (`app.rs:1668-1671`, `1732-1735`), because subagents are not sessions a picker lists. leticl also never reads `SessionBrief.context_tokens`/`context_cached` (`registry.rs:238-244`), which is how the reference shows a context figure after a daemon restart when the snapshot has no turn (`app.rs:1692-1713`) |
+
+**What `ingest-snapshot` does not do that `load` does:** clear the session-scoped
+state that is not in the snapshot. `app.rs:1902-1934` clears call tables, usage,
+the spend meter, the model, the turn, the head count, the subagent tree, the
+jobs table and the queued prompts whenever the id changes, each with a measured
+reason attached. `ingest-snapshot` clears none of `session-denials`,
+`session-notices`, `session-subagents`, `session-jobs`, and nothing clears
+`head-jobs`, `head-queued`, `head-peeked`, `head-settings` or
+`*turn-started-ms*`. A `/switch` therefore carries the old session's subagent
+tree, job rows and queue onto the new one's screen — `app.rs:1916-1919` records
+that exact symptom: *"1 subagent running" on the composer of the very subagent
+being looked at*. (`reset-spent` is called from the `hello` arm at
+`head.lisp:166`, so the money meter is the one thing that is cleared.)
+
+---
+
+## 4. Correctness of the exchange
+
+### 4a. Acks
+
+`run-loop` (`head.lisp:332-385`) is `driver.rs:35-108` arm for arm: drain and
+classify, then draw, then ack. `last-seq` is taken from the frame that was
+**read** (`head.lisp:356-358`) and not from what was drawn, and the ack goes out
+only when it is positive (`head.lisp:384`), which is `driver.rs:102`. **SAME**,
+including the rule that makes it matter — a head at terse still advances.
+
+Two differences, neither in the ordering: the ack carries no head identity and
+leticl never learns one (see `head_id`, §3); and `ack-frame` is a second,
+wrong-by-construction spelling of the same frame (§1a).
+
+### 4b. Resync
+
+`/resync` sends `ClientFrame::Resync` (`commands.lisp:133`); a `resync` frame is
+ingested through the same `ingest-snapshot` the attach uses
+(`head.lisp:204-212`), which is the reference's *"they are the same path, which
+is why resync is not special"* (`app.rs:1894-1896`). The counter `*resyncs*` is
+bumped, matching `app.rs:1843`. **SAME**, except that `dropped` and `scrubbed`
+on the frame are discarded (**W8**).
+
+### 4c. Reconnect and backoff
+
+The reference TUI **does not reconnect**: `pump` returns on any read error
+(`client.rs:544-555`), the next `client.ack` fails, and `tick` returns `Err`,
+which ends `main`. leticl reconnects — `%try-reconnect` (`head.lisp:283-316`),
+gated at one attempt per 2 s of `get-universal-time`, re-attaching with
+`since_seq = session-seq` so the gap arrives as events or as a `Resync`, and
+restarting the reader thread. This is **leticl ahead of the reference**, and the
+two comments at `head.lisp:294-298` and `head.lisp:308-311` record the two ways
+it was got wrong. The flat 2 s is not a backoff; against a daemon that is gone
+it is a 30-attempt-per-minute spin with a status line that keeps changing. That
+is a small cost, and it is the mechanism that makes **W5** (a `Bye` becoming a
+loop) worse than it would otherwise be.
+
+**And the reconnect does not work.** `%try-reconnect` attaches with
+`since_seq = (session-seq …)`, which is nonzero, so the daemon serves the gap
+from the ring and answers `Hello { snapshot: null, resumed_from: N }`
+(`hub.rs:628-652`, `server.rs:929-942`) — and that Hello raises a `TYPE-ERROR`
+inside `ingest-hello` before it reaches any of its own assignments. Measured
+(`scratchpad/probe2.lisp`, two hellos differing only in `snapshot`):
+
+```
+RESUME-ERROR: TYPE-ERROR              ; "snapshot":null
+SNAPSHOT-OK id="s-1" seq=7 dropped=2  ; a snapshot present
+```
+
+`ingest-snapshot` is called unconditionally (`session.lisp:88`) and its first
+`setf` pair assigns `session-session-id` ← `""`, then the second assigns
+`(getf nil :seq)` = `NIL` into a `:type fixnum` slot and signals.
+`run-loop`'s `handler-case` (`head.lisp:359-366`) swallows it into
+`*last-render-error*`, so the head neither crashes nor recovers: the session id
+has already been wiped, and `head-id`, `dropped`, `sessions`, `wiring`, the
+title and `resumed_from` are never read, the `hello` arm's
+`(%send head (make-settings))` never runs, and `*attach-started-ms*` is never
+cleared — so the attach indicator walks forever over a head that is folding the
+backlog into a session whose id it has just forgotten. This is **W25**, and it
+is the highest-value single fix in this document: it is the whole of §4c.
+
+### 4d. `expected_seq`
+
+Every mutating frame leticl builds carries `(session-expected-seq
+(head-session head))`, which `apply-event` sets to the last folded seq
+(`session.lisp:175-176`) and `ingest-snapshot` sets to the snapshot's seq
+(`session.lisp:61`). The reference carries `app.seq`, set at
+`app.rs:1851` from the same place. **SAME.** A `Rejected` with
+`REJECT_STALE_SEQ` is surfaced with both numbers (`head.lisp:223-229` vs
+`app.rs:1881-1883`) — SAME; neither side branches on the code, and
+`protocol.lisp:25-29` has the constants ready for the day one does.
+
+### 4e. Interrupt and stop
+
+`Interrupt` — SAME (`commands.lisp:203`, ctrl-c on a running turn at
+`editor.lisp:431`). `Stop` — the frame and the order are SAME (ask, then leave:
+`editor.lisp:178-180`, `driver.rs:205-211`), with the `who` literal noted in
+§1a. leticl does **not** send `Detach` on the stop path before quitting; it
+sends it from the `unwind-protect` in `run` (`head.lisp:455`), which runs either
+way, so the effect matches.
+
+### 4f. Queued prompts and withdraw
+
+| | reference | leticl |
+|---|---|---|
+| queue is pushed | `app.rs:4435` on send | `commands.lisp:47`, newest first |
+| an entry is retired | on `TranscriptContent` / `record_item`, **by matching the row's text**, one row per entry, with a prefix rule for the daemon's coalescing (`app.rs:4685-4703`, `4744-4751`) | on `TranscriptAppended` with `kind == "user"`, by `pop` — i.e. the **newest** entry, for the row that is almost certainly the **oldest** prompt (`head.lisp:194-199`) |
+| ctrl-u / Up recall | joins **all** pending, clears **all**, puts them in the composer, then sends `WithdrawPrompts` (`app.rs:3851-3860`) | takes `(first (last …))` — the oldest — into the composer, `butlast`s that one, sends `WithdrawPrompts` (`editor.lisp:436-445`) |
+
+The frame is identical and the daemon drops **every** unconsumed prompt from
+this head (`protocol.rs:348-357`). leticl removes one from its own list, so
+after a withdraw with two queued the head goes on announcing a prompt the daemon
+has already dropped. And the retire-by-`pop` means that with two queued prompts
+of different lengths the wrong one is retired first. See gap **W16**.
+
+### 4g. The decision answer path
+
+Permission: `make-answer` with `option_id`, plus `pattern` for `AllowAlways` and
+`note` for `deny_and_tell`, each omitted otherwise (`protocol.lisp:118-134`,
+`editor.lisp:44-59`, `106`) — **SAME** as `driver.rs:127-134` /
+`protocol.rs:505-549`. Question: `make-answer-question` with `{option: N}` only
+— see **W7**. `can_decide: true` is advertised and honoured, so the
+`REJECT_READ_ONLY` path is not reachable; neither side advertises
+`FEATURE_QUESTION_ANSWERS` (`protocol.rs:259`), and the reference's
+`Caps::default()` (`protocol.rs:277-285`) is `queue 1024, can_decide true,
+features []`, which is byte-for-byte what leticl sends. **SAME.**
+
+### 4h. Secrets
+
+`SecretRequested` → masked field → `Secret{req_id, secret|null}`: SAME
+(`head.lisp:189-192`, `editor.lisp:147-167` vs `app.rs:2734-2748`,
+`driver.rs:195`). `SecretSettled` is unhandled — **W14**. `ServerFrame::Secret`
+is ignored on both sides. `Askpass` belongs to the helper, not here.
+
+### 4i. `Peeked`, `Settings`, `Slash`, jobs and subagents
+
+- **`Peeked`** — SAME: `Peek` is sent from `/peek` and from the subagent tree's
+  Enter (`commands.lisp:126`, `editor.lisp:289`), the reply opens the pane with
+  all three fields kept (`head.lisp:254-261`), and the connection does not move.
+- **`Settings`** — SAME: asked from the `hello` arm so attach, switch and
+  reconnect are covered by one send (`head.lisp:178`), the reply stores rows and
+  stamps the seq and does **not** open the pane (`head.lisp:243-253`), which is
+  `app.rs:1786-1792` and `app.rs:1661`. `SettingRow.choices`
+  (`protocol.rs:242-243`) is read at `panes.lisp:510-515` — the drift this field
+  exists to stop is not present here.
+- **`Slash`** — SAME on the way out (`commands.lisp:173`, `197`). **DIFFERS on
+  the way back**: the reply is a `Warning` on the log (`app.rs:2777-2790`) and
+  leticl renders no warnings at all (**W13**), so every daemon-side verb —
+  `/tools`, `/models`, `/supervise`, `/job` — is sent into silence.
+- **Jobs** — the `ListJobs`/`Jobs` half is SAME; `JobSettled` folds nowhere
+  useful (**W15**) and `ReadJobOutput`/`JobOutput` do not exist (**W2**).
+- **Subagents** — SAME by effect (fold at draw rather than at apply), with the
+  switch-carryover noted in §3.
+
+---
+
+## 5. Protocol version
+
+- The reference speaks `PROTOCOL_VERSION = 21` (`protocol.rs:210`).
+- leticl sends `21` (`protocol.lisp:14`; measured on the encoded attach).
+- **Daemon side of a mismatch:** `server.rs:332-342` compares the two, writes
+  `Bye{reason: "protocol version N, this daemon speaks M"}` and returns — the
+  connection closes without a `Hello`. Deliberate: *"a silent version skew looks
+  like a bug in the other half, forever"*.
+- **Reference head side:** a `Bye` instead of a `Hello` is `ClientError::Refused`
+  and the process exits with the daemon's sentence on a restored terminal
+  (`client.rs:101`, `letibot-tui.rs:658-661`, and the launcher refuses to route
+  around it).
+- **leticl side:** nothing checks `Hello.protocol_version`, and the `bye` arm
+  only writes a status note and drops `connected` (`head.lisp:262-266`).
+  `%try-reconnect` then re-attaches with the same version every two seconds,
+  forever. The operator sees `bye: protocol version 21, this daemon speaks 22`
+  flashing under a head that never attaches and never exits. The stale header
+  in `protocol.lisp:1` and `leticl.asd:7` still says *protocol 18*, which is a
+  comment, not a fact — the constant is right.
+
+---
+
+## Gaps worth closing
+
+Sized S (a function), M (a function plus a place to put the result), L (a new
+frame, a new pane, or a fold that changes shape).
+
+| id | gap | why it matters | reference | leticl | size |
+|---|---|---|---|---|---|
+| **W25** | a `Hello` with `snapshot: null` raises `TYPE-ERROR` | this is the **reconnect** answer and the resume answer — every `since_seq > 0` attach whose gap is in the daemon's ring (`hub.rs:636-643`). The head is left half-attached with its session id wiped, no settings asked, and the attach indicator walking forever. Measured: `probe2:` `RESUME-ERROR: TYPE-ERROR` against `SNAPSHOT-OK` for the same Hello with a snapshot | `protocol.rs:752-753`, `app.rs:1680-1685`, `hub.rs:628-652` | `session.lisp:56-75`, `session.lisp:88` | **S** |
+| **W1** | `Mode` sends `"consented":null` | `consented: bool` does not accept a present `null`; the daemon's read loop breaks with `Err` and **the connection closes** (`server.rs:897-898`). Every `/mode NAME` that is not `allow-all` — which is every mode an operator normally picks — takes the head down. Measured: `probe:` `{"frame":"mode",…,"consented":null}` | `protocol.rs:438-453` | `panes.lisp:1218-1223`, `json.lisp:84-86` | **S** |
+| **W2** | no `ReadJobOutput`, no `job_output` fold, no window | jobs-pane Enter sends `/job ID` as a slash, whose reply is a `Warning` on the log — precisely the complaint that created the frame: *"im brought back to the main conversation with /job <id> posted - this is not what i want"*. And leticl does not render warnings, so the pane's Enter is silent | `protocol.rs:704-708`, `event.rs:894-938`, `app.rs:2200-2233`, `driver.rs:167-169` | `editor.lisp:300`, `session.lisp:400` | **L** |
+| **W3** | `NewSession.workspace` always `""` | the new session's read-only tools get seated at the daemon's cwd, *"and every path in it resolved, so the only symptom was answers about the wrong tree"* | `protocol.rs:599-607`, `driver.rs:147-150` | `protocol.lisp:160-164` | **S** |
+| **W4** | `Sessions.created` and `.current` dropped | `/new` and `--new TITLE` create a session and leave you in the old one — a command whose effect is invisible | `app.rs:1736-1744` | `head.lisp:230-234` | **S** |
+| **W5** | `Bye` is not terminal | a refusal the daemon meant as final becomes a 2 s reconnect loop; a version skew is then unreadable and unescapable | `app.rs:1886-1889`, `client.rs:548` | `head.lisp:262-266`, `head.lisp:283-316` | **S** |
+| **W6** | `Screen` answers with the previous frame | the one frame in the system whose whole point is *what the operator is looking at right now* answers with what they were looking at one tick ago; at 30 ms a tick this is usually harmless and at a resize or a pane change it is a lie | `driver.rs:93-99`, `app.rs:2723-2732` | `head.lisp:185-188` | **M** |
+| **W7** | `AnswerQuestion` can only carry `option` | `note` and `free` are two thirds of the vocabulary and `free` is the half the requirement names: *"opencode style free user reply input"*. Without it a typed answer to a question is unreachable | `question.rs:55-65`, `question.rs:10-20` | `editor.lisp:68-69` | **M** |
+| **W8** | `Resync.dropped` / `.scrubbed` discarded | `/status`'s `dropped` and `scrubbed` under-report after any resync, which is exactly when they are worth reading | `app.rs:1843-1845` | `head.lisp:204-212` | **S** |
+| **W9** | `ToolStarted` leaves a proposed call `proposed` | the running card never appears: `○ bash ls · proposed` for the whole call instead of `◐ bash ls · 3.2s`. Measured: `probe:` `CALL-STATE-AFTER-STARTED = "proposed"` | `app.rs:2356-2400`, `view.rs:523-536` | `session.lisp:139-146`, `236-243` | **S** |
+| **W10** | `DecisionAnswered` drops `advice` and `call_id` | the oracle's verdict is on the *request* and never on the answer; both the view and the head read it off the open decision before removing it because *"nothing downstream can recover"* it | `view.rs:494-516`, `app.rs:2503-2524` | `session.lisp:330-349` | **S** |
+| **W11** | `ToolProgress` note goes nowhere | `setf getf` on a local plist with an absent key mutates the local, not the list in the turn. Measured: `probe:` `PROGRESS-NOTE-AFTER-FINISH = NIL`. The card has a slot for it (`cards.lisp:942`) that is always nil | `app.rs:2409-2421` | `session.lisp:244-247` | **S** |
+| **W12** | a denial reaches no screen; `breaker_open` and `grant` are not even folded | `docs/boundary-and-adjudication.md` §4b is a requirement: *"a denial the operator cannot see manufactures the workaround"*. The two dropped fields are the two the reference's arm turns on — the breaker sentence and *"what the operator can do about it right now"* | `event.rs:772-832`, `app.rs:2841-2909` | `session.lisp:355-364`, and no reader | **M** (fold) / **L** (with the render) |
+| **W13** | `warnings`, `notices`, `settled-decisions`, `items-dropped`, `jobs` are write-only | every daemon-side slash reply, every post-flight assertion, every `secret_late`, every `job_output_refused` and every settled question with no call is folded and then never drawn. This is one root cause behind W2, W12 and W14 looking like separate silences | `app.rs:2766-2803`, `app.rs:2002-2016` | `session.lisp:33-35`, `350-354`, `385-390`; no reader in `render.lisp`/`cards.lisp`/`chrome.lisp`/`panes.lisp` | **L** |
+| **W14** | `SecretSettled` unhandled | the password card stays up after another head has answered, over a `sudo` that is already through. Measured: `probe:` `:QUIET` | `app.rs:2750-2765` | `session.lisp:400` | **S** |
+| **W15** | `JobSettled` folded into a list nobody draws | an open jobs pane shows `running` for a job that exited — *"a panel built from the tool events alone would still show a build as running an hour after it exited"* | `app.rs:2176-2195` | `session.lisp:394-396`, `panes.lisp:555` | **S** |
+| **W16** | withdraw removes one entry; retire pops the wrong end | after `WithdrawPrompts` the daemon has dropped every queued prompt and leticl still announces the rest; and the first user row to land retires the newest entry instead of the oldest | `app.rs:3851-3860`, `4685-4703`, `4744-4751` | `editor.lisp:436-445`, `head.lisp:194-199` | **M** |
+| **W17** | no `turn_id` on `Delta`, `PromptProgress`, `TokensGenerated`, `TurnFinished`, `TurnInterrupted` | a frame from a turn this head is no longer watching is folded into the one it is. Measured: `probe:` a delta for turn `OTHER` appends to the current turn's text and reports `:dirty`. Benign today, load-bearing the moment §8.4's concurrent subagents publish on one hub | `app.rs:2278-2297`, `view.rs:406-419` | `session.lisp:203-224`, `262-288` | **S** |
+| **W18** | `turn.progress` survives the turn | *"a progress frame is true only while it is happening"*. Measured: `probe:` `PROGRESS-AFTER-TURN-FINISH = (:TOTAL 10 …)` | `app.rs:2565`,`2596`,`2619`; `view.rs:572`,`588`,`608` | `session.lisp:262-288` | **S** |
+| **W19** | `TokensGenerated` is `setf`, not `max` | a reordered or duplicated frame walks the counter backwards. Measured: `probe:` `50` then `10` ⇒ `10` | `app.rs:2281`, `view.rs:419` | `session.lisp:195-202` | **S** |
+| **W20** | `turn.appended` never written | the head cannot tell which transcript rows are the finished form of the turn it is drawing live — `view.rs:246-253`'s "renders the answer twice" | `app.rs:2650-2651`, `view.rs:632-634` | `session.lisp:289-295` | **M** |
+| **W21** | `ingest-snapshot` clears nothing that is not in the snapshot | a `/switch` carries the old session's subagent tree, job rows, denials, notices and queue onto the new one — *"1 subagent running" on the composer of the very subagent being looked at* | `app.rs:1902-1934` | `session.lisp:56-75` | **M** |
+| **W22** | `Hello.sessions` unfiltered; `head_id` unused; `dropped` assigned not accumulated | the picker lists subagents as sessions; `dropped` resets on every reattach; `CommandIssued` cannot suppress this head's own | `app.rs:1662-1673`, `2815`, `driver.rs:71-73` | `session.lisp:87-109` | **S** each |
+| **W23** | `ack-frame` is a dead second spelling, and it reads the wrong seq | `protocol.rs:717-720`: *"there is deliberately no other way to obtain one"*. Two ways exist here and the unused one is the bug the rule names | `protocol.rs:714-730` | `session.lisp:411-414` | **S** (delete it) |
+| **W24** | no `protocol_version` check on `Hello`; stale "protocol 18" headers | a skew is only ever reported by the daemon's `Bye`, which W5 turns into a loop | `server.rs:332-342`, `letibot-tui.rs:658-661` | `head.lisp:162`, `protocol.lisp:1`, `leticl.asd:7` | **S** |
+
+---
+
+## How each gap should be tested
+
+The repo already has the two shapes this needs.
+
+**A fake daemon** — `tests/tests.lisp:1772-1781` is the pattern: build a head,
+`(setf (leticl::head-stream h) (make-string-output-stream) (head-connected h) t)`,
+drive the head, then decode every line written and assert on the *frames*. Use
+it wherever the assertion is "what went out on the wire".
+
+**A pure fold** — build a `session` with `make-session`, push envelopes through
+`apply-event`, assert on the plists. No head, no stream. Use it wherever the
+assertion is "what state the fold left".
+
+| gap | assertion that proves it closed | kind |
+|---|---|---|
+| **W25** | `(ingest-hello (make-session) H)` for a `H` decoded from a real `{"snapshot":null,"resumed_from":42,…}` line returns without signalling, and leaves `session-session-id` = `"s-1"`, `session-seq` = `42`, `session-expected-seq` = `42`, `session-head-id` = `"h1"` and `session-wiring` non-nil. Then, at the head level: after a `hello` with a null snapshot, `(head-connected h)` is `t`, `*attach-started-ms*` is nil, and a `settings` frame is on the wire | pure fold, then fake daemon |
+| **W1** | `(search "\"consented\"" (encode-frame …))` is nil for a non-consented mode, **or** the value is `false`. Strongest form: assert the encoder never emits a bare `null` for a field the reference types `bool` — a table of `(frame-builder . boolean-key)` and a check that each either omits the key or writes `true`/`false` | fake daemon (encode only) |
+| **W2** | driving Enter on a jobs row writes a `{"frame":"read_job_output","job":"j1","offset":0}` and **not** a `slash`; then folding a `job_output` envelope for `j1` leaves the window's `lines`, `from`, `to`, `next` where the pane reads them | fake daemon + fold |
+| **W3** | the `new_session` frame's `workspace` is non-empty and equals the head's cwd | fake daemon |
+| **W4** | after a `sessions` frame with `created: "s-2"` following a `/new`, a `{"frame":"switch","session_id":"s-2"}` is on the wire; after a plain `/sessions` list, nothing is | fake daemon |
+| **W5** | after a `bye` frame, `(head-running h)` is nil and no further `attach` is written even after `(setf (head-last-reconnect h) 0)` and another loop pass | fake daemon |
+| **W6** | with `head-last-rows` set to `("old")`, a `screen_requested` envelope followed by a paint writes a `screen` frame whose `rows` are the **painted** rows, not `("old")` | fake daemon (the existing `*stdout*` string-stream paint harness at `tests.lisp:1411` composes with it) |
+| **W7** | a typed reply with no option selected writes `"answer":{"free":"…"}`; an option plus text writes `{"option":N,"note":"…"}`; neither writes an empty object | fake daemon |
+| **W8** | `*scrubbed-total*` and `session-dropped` both increase after a `resync` frame carrying `dropped: 3` and a `ScrubReport` summing 4 | fake daemon (the `resync` arm is in `%handle-frame`) |
+| **W9** | `proposed` → `tool_started` ⇒ `(getf (getf (call-view turn "c1") :state) :state)` is `"running"`, and the second call to `ToolStarted` for an unseen id still creates a row | pure fold |
+| **W10** | a `decision_requested` carrying `advice` and `call_id`, answered, leaves a settled record whose `:advice` and `:call-id` are both non-nil | pure fold |
+| **W11** | after `tool_progress`, `(getf (call-view turn "c1") :progress-note)` is the note — read back off the **turn**, never off the return value of the setter | pure fold |
+| **W12** | the folded denial has `:breaker-open` and `:grant`; and (with W13) a denial produces a line in the body at every verbosity including `:terse` | pure fold, then a render assertion |
+| **W13** | a `warning` envelope produces a row in `(render-body …)`; a `slash` warning with more than three body lines opens the pane; a `job_output_refused` reaches the jobs pane | pure fold + render |
+| **W14** | with a secret card up, a `secret_settled` for the same `req_id` clears `head-secret-req`; for a different one it does not | pure fold at the head level (`%handle-frame`), no stream needed |
+| **W15** | `/jobs` reply with one running row, then a `job_settled` for its id ⇒ that row in `head-jobs` has `running` false and the new `state`/`produced`/`elapsed_ms`; a settlement for an unknown id invents no row | fake daemon (for the `jobs` frame) + fold |
+| **W16** | two queued prompts, then ctrl-u ⇒ the composer holds both joined, `head-queued` is empty, one `withdraw_prompts` on the wire. Separately: two queued prompts of different text, then a `transcript_content` carrying the **first** ⇒ the first is retired, not the last | fake daemon + fold |
+| **W17** | a `delta` with a foreign `turn_id` returns `:quiet` and leaves `(getf turn :text)` unchanged; same for `prompt_progress`, `tokens_generated`, `turn_finished` | pure fold |
+| **W18** | `prompt_progress` then `turn_finished` ⇒ `(getf turn :progress)` is nil; repeat for `turn_interrupted` and `turn_failed` | pure fold |
+| **W19** | `tokens_generated 50` then `10` ⇒ `(getf turn :tokens)` is `50` | pure fold |
+| **W20** | `turn_started`, two `transcript_appended` ⇒ `(getf turn :appended)` is those two ids in order | pure fold |
+| **W21** | fold a session full of subagents, jobs, denials and notices, then `ingest-snapshot` with a **different** `session_id` ⇒ all four are empty, and `*turn-started-ms*` is nil; with the **same** id, the queue survives (the reference keeps it, `app.rs:1938-1942`) | pure fold |
+| **W22** | a `hello` whose `sessions` include a row with `parent_session_id` leaves that row out of `session-sessions`; two `hello`s carrying `dropped: 2` leave `session-dropped` at 4; `session-head-id` is non-empty and a `command_issued` from that head id is not said | fake daemon + fold |
+| **W23** | none — delete `ack-frame` and its export. The guard is the existing ack test: the seq acked is the last seq **read**, asserted by feeding an event the head filters and checking the ack still names it | fake daemon (exists in spirit; worth pinning) |
+| **W24** | a `hello` whose `protocol_version` is not `+protocol-version+` stops the head with a note naming both numbers; and a grep test that `protocol.lisp`'s header comment and `leticl.asd`'s `:long-description` name the same number as `+protocol-version+` — the same shape as `live-state-tables-are-defvar` (`tests.lisp`, per `HACKING.md`), which greps the sources so a rule in a document cannot rot | fake daemon + a source grep |
+
+**Order.** Two of these break the head outright and are each a few lines:
+**W25** (no reconnect or resume works at all) and **W1** (`/mode NAME` closes
+the connection). Then the three one-line folds with one-line assertions:
+**W9**, **W11**, **W19**. Then **W18**, **W14**, **W15**, **W8** and **W3**,
+which are the same shape. **W13** is the one that has to be done before W2, W12
+and several of the `Slash` replies stop looking like separate silences; it is
+the only **L** here that other gaps are waiting on.
