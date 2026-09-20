@@ -684,11 +684,18 @@ never flattened; the caller lifts it out whole."
                                     (push item items) (incf i))
                                    ;; blank lines, kept only when another item
                                    ;; follows them
+                                   ;; …and only for another item of the SAME
+                                   ;; kind: a bullet list under an ordered one
+                                   ;; is a second list, and merging them
+                                   ;; renumbers the bullets into it.
                                    ((and items (%blank-p (line i))
                                          (let ((k i))
                                            (loop while (and (more k) (%blank-p (line k)))
                                                  do (incf k))
-                                           (and (more k) (%list-item-of (line k)))))
+                                           (let ((next (and (more k) (%list-item-of (line k)))))
+                                             (and next
+                                                  (eq (not (getf next :ordered))
+                                                      (not (getf (first items) :ordered)))))))
                                     (loop while (and (more i) (%blank-p (line i)))
                                           do (incf i)))
                                    ((and items (not (%blank-p (line i)))

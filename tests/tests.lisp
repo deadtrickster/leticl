@@ -4045,7 +4045,17 @@ blank rows between them, twice the height of the reference's."
   (let ((lines (markdown-lines (format nil "1. one~%~%2. two~%~%3. three") :width 80)))
     (is (= 3 (length lines)) "a loose list is one block: three rows, no blanks between")
     (is (equal '("1. " "2. " "3. ") (mapcar (lambda (l) (car (first l))) lines))
-        "and the numbering runs across the blanks")))
+        "and the numbering runs across the blanks"))
+  ;; …but only for another item of the SAME kind. A bullet list under an ordered
+  ;; one is a second list, and swallowing the blank between them renumbers the
+  ;; bullets into it.
+  (let ((blocks (leticl::markdown-blocks (format nil "- a~%- b~%~%1. one~%2. two"))))
+    (is (= 2 (length blocks)) "two lists, not one")
+    (is (not (getf (first (getf (first blocks) :items)) :ordered)))
+    (is (getf (first (getf (second blocks) :items)) :ordered)))
+  (let ((lines (markdown-lines (format nil "- a~%~%1. one") :width 80)))
+    (is (= 3 (length lines)) "and the blank row between them survives")
+    (is (null (second lines)))))
 
 (def-test a-fence-inside-a-quote-is-a-code-box (:suite leticl)
   "M2. `%fence-at` never fired on a `>` line, so a fence inside a quote rendered
