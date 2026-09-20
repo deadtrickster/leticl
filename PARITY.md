@@ -16,6 +16,7 @@ the screen rather than the surface:
 |---|---|---|---|
 | 3 | `e9ee3c4` (2026-09-20) | `1be0293` | 60 of 63 rows byte-identical; the rest self-measured numbers |
 | 4 | `2deceb8` (2026-09-20) | `5a52ae2` | every pane row-identical but for each head's own numbers — see §8 |
+| 5 | `03cb812` (2026-09-20) | this tree | the eleven commits after `2deceb8`, by reading — see §9 |
 
 An earlier pass measured `82ff650e` (2026-09-19); §7 is what the 19 commits
 between the two changed, and the gaps it added are `P41`–`P46` in `TODO.md`.
@@ -731,3 +732,21 @@ net of it.
 **The lesson this round adds to §1's:** *"S6 panes done"* was recorded against
 code that had never drawn a frame. A pane is done when it has been opened on the
 head and captured, and `compare-heads` is how that is measured.
+
+---
+
+## 9. What `2deceb8..03cb812` changed, and what of it is ours (2026-09-20)
+
+Eleven commits, read rather than captured: the operator's running letibot binary
+predates them (its `/help` still shows 36 rows), so the source is the reference
+here and the screen cannot be.
+
+| commit | what | leticl |
+|---|---|---|
+| `4146bf5` R19.1 | render from the END, back-fill on scroll-up (`fill_backward`); 1200 rows: full walk 9.6 ms, tail 0.1 ms | already ours by architecture: `%viewport-lines` walks backwards and stops at the window. What we lack is its `hist_lines` cache — we re-render the visible rows every frame (0.46 ms/frame after the declaration pass, so not urgent) |
+| `0c5d4d0` R19.3 | the daemon's view bounded in BYTES (8 MB) as well as rows; `TranscriptItem::bytes` | daemon-side; nothing for a head to do |
+| `03cb812` R20.1 | the header's model is whichever the head was told more recently, by seq — the settings row is never pushed after attach, `TurnStarted` is | **ported**: `%model-name`, `*model-from-settings-at*` / `*model-from-turn-at*`, with the reference's reproduction as a test |
+| `ce31f1a` R20.2 | `/config` in `/help`, naming the diff toggle | **ported** |
+| `2ac6200` | a subagent's ANSWER is its output: the peek pane draws assistant text beside tool results; the empty case says *neither an answer nor tool output* | **ported**: `subagent-out-lines`, `peek-lines` to `sub_out_lines`'s shape |
+| `b279829` `7d98500` `1a300f7` | harnessd behind an HTTP endpoint; the http head uses the server's slots | daemon-side |
+| `10d5a1e` `7315874` `108901f` | TODO and merges | — |

@@ -181,6 +181,7 @@ Second value is the cursor's LINE: two lines per session, after a two-line heade
     ("/status" . "this head's counters — dropped, scrubbed, resync — and what each means")
     ("/verbosity" . "terse → normal → loud; /status counts what has been filtered")
     ("/interrupt" . "interrupt, when a key is awkward")
+    ("/config" . "every setting and where it came from; the first row toggles the diff view between split and unified")
     ("/compact" . "summarize this session down to one record; the old transcript is forked, not lost")
     ("/mode" . "move this project to a point: read-only, always-ask, writes-allowed, automode, automode-edits, allow-all (next session)")
     ("/supervise" . "the guard model answers every gated call before you do, from the next call — on, off, status")
@@ -1014,32 +1015,73 @@ unfolded, because only the row under it can be."
             out)
       (values (nreverse out) (+ repo-first sel)))))
 
-(defun peek-lines (head cols)
-  "A peeked scrollback: the deltas and the transcript bodies, wrapped.
+(defvar *peeked-session* nil
+  "The subagent whose scrollback `head-peeked` holds — for the title. A defvar
+beside the slot rather than a second slot: a struct layout change is a restart.")
 
-`wrap-segments` returns a LIST OF LINES, so the events are `mappend`ed, not
-`mapcar`ed — mapcar left a list of lists, a \"line\" whose segments were lines,
-the same shape that killed the jobs and subagents panes. Found by the test that
-renders every pane through the same check, the day it was written. A delta with
-no text is an empty row, not a NIL segment."
-  (let ((events (head-peeked head)))
+(defvar *peeked-dropped* 0
+  "How many of that subagent's events fell off the daemon's ring before the read.")
+
+(defun subagent-out-lines (events)
+  "A subagent's scrollback as the reference draws it (`subagent_out_lines`,
+letibot `2ac6200`): every tool result as `· name — outcome` over its payload, and
+the model's ANSWER text in order beside them — a `digest` subagent calls no tools
+by design and its whole product is prose, and the pane that drew only tool results
+told the operator there was nothing (*\"when i enter - no output\"*). Reasoning
+stays out: it is the model thinking rather than its answer. Spills are listed at
+the end, so the full output is one path away."
+  (let ((out nil) (spills nil))
+    (dolist (env events)
+      (case (event-name env)
+        ((:transcript-content)
+         (let ((item (getf env :item)))
+           (when item
+             (switch ((getf item :type) :test #'string=)
+               ("tool_result"
+                (push (format nil "· ~a — ~a" (getf item :name)
+                              (%outcome-word (outcome-name (getf item :outcome))))
+                      out)
+                (dolist (l (%payload-lines (getf item :payload)))
+                  (push (format nil "  ~a" l) out))
+                (push "" out))
+               ("assistant"
+                (let ((text (or (getf item :text) "")))
+                  (when (plusp (length (string-trim " " text)))
+                    (dolist (l (uiop:split-string text :separator '(#\newline)))
+                      (push l out))
+                    (push "" out))))))))
+        ((:tool-finished)
+         (awhen (getf env :spill) (push it spills)))))
+    (when spills
+      (push "full output on disk:" out)
+      (dolist (sp (nreverse spills)) (push (format nil "  ~a" sp) out))
+      (push "" out))
+    (nreverse out)))
+
+(defun peek-lines (head cols)
+  "A peeked subagent's scrollback — the reference's `sub_out_lines`: the title
+names the subagent, a dropped count when the ring lost events before the read,
+then the output oldest first, and the empty case SAYS what it means — *neither an
+answer nor tool output* — and names the two reasons that can be true of, because
+\"no tool output\" reads as a fault for a subagent that was never going to produce
+any."
+  (let* ((events (head-peeked head))
+         (body (or (subagent-out-lines events)
+                   (list "    this subagent's scrollback has neither an answer nor tool output. It may still be running, or its rows may have fallen off the daemon's ring."))))
     (append
-     (list (list (cons " peeked scrollback " '(:bold t))
-                 (cons "  (esc closes)" '(:dim t))))
-     (if events
-         (let ((lines nil))
-           (dolist (env events)
-             (let ((name (event-name env)))
-               (case name
-                 ((:delta) (push (or (getf env :text) "") lines))
-                 ((:transcript-content)
-                  (awhen (getf env :item)
-                    (push (or (getf it :text) (getf it :payload) "") lines)))
-                 (t (push (format nil "[~a]" name) lines)))))
-           (mappend (lambda (l) (or (wrap-segments (list (cons l nil)) cols)
-                                    (list nil)))
-                    (nreverse lines)))
-         (list (list (cons "  nothing" '(:dim t))))))))
+     (list (list (cons (format nil "subagent output — ~a"
+                               (if *peeked-session* (short-id *peeked-session*) "?"))
+                       '(:bold t))))
+     (when (plusp *peeked-dropped*)
+       (list (list (cons (format nil "    ~d earlier event~:p fell off the daemon's scrollback before this read"
+                                 *peeked-dropped*)
+                         '(:dim t)))))
+     (list nil)
+     (mappend (lambda (l) (or (wrap-segments (list (cons l nil)) (pane-width cols))
+                              (list nil)))
+              body)
+     (list nil
+           (list (cons "    arrows scroll, Enter re-reads, Esc back" '(:dim t)))))))
 
 ;;; ------------------------------------------------------------ pickers ;;;
 ;;;

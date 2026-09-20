@@ -36,26 +36,29 @@ that may be outside the head pass nil for the rows; see `%model-name`."
                       (and (stringp v) (plusp (length v)) v)))))))
 
 (defun %model-name (s)
-  "The model this session is ACTUALLY on, best known first.
+  "The model this session is ACTUALLY on: whichever the head was told MORE
+RECENTLY, by seq — the reference's rule since letibot `03cb812`.
 
-The wiring's model arrives on `Hello` and never changes; the turn's arrives on
-`TurnStarted` and is the truth while (and after) a turn runs. Reading only the
-wiring is what put `qwen-3.8-27b` on the header of a session running
-`deepseek/deepseek-flash` — a number on screen that was wrong, which is the
-defect class this head exists against.
+`ServerFrame::Settings` has exactly one send site and it is the ANSWER to a
+request, so an attached head reads the `model` row once, at attach, and is never
+told again: a provider switch updated the daemon, the turns and the config pane —
+which asks again when opened — and left every attached head drawing what it read
+at attach. `TurnStarted` is the exception: it arrives unprompted and names the
+model answering that turn. So the two are ranked by the only clock a head has,
+and the wiring's model from `Hello` is the fallback when neither has spoken.
 
-Once the settings rows land (§7.4) the live `model` row is the third and best
-source; until then the turn is the newest thing we have.
-
-`SettingRow` carries the flag's own name in `key` and its rendered value in
-`value` (protocol.rs:214) — `row(\"model\", …)` is emitted by the daemon
-(config.rs:825), and `mode` beside it."
-  (or (%model-from-settings)
-      (let ((turn-model (getf (session-turn s) :model)))
-        (and (stringp turn-model) (plusp (length turn-model)) turn-model))
-      (let ((wire (getf (session-wiring s) :model)))
-        (and (stringp wire) wire))
-      ""))
+Measured on the operator's screen: the `/config` row said `deepseek/deepseek-flash`
+while the header said `qwen-3.8-27b`."
+  (let* ((row (%model-from-settings))
+         (turn-model (let ((m (getf (session-turn s) :model)))
+                       (and (stringp m) (plusp (length m)) m)))
+         (turn-newer (> *model-from-turn-at* *model-from-settings-at*)))
+    (cond ((and row (not turn-newer)) row)
+          ((and row (null turn-model)) row)
+          (row turn-model)
+          (turn-model turn-model)
+          (t (let ((wire (getf (session-wiring s) :model)))
+               (if (stringp wire) wire ""))))))
 
 ;;; -------------------------------------------------------------- counters ;;;
 ;;;

@@ -246,12 +246,18 @@ to signal a dead socket, and any code that assumes `consp` means `plist` will ca
      ;; ever sent in reply to a request, §7.4), and a reply that opened the pane
      ;; would pop `/config` at every attach.
      (setf (head-settings head) (getf frame :rows)
+           ;; when the rows were last heard, so the header can rank them against
+           ;; the turn's own word for the model (`%model-name`)
+           *model-from-settings-at* (session-seq (head-session head))
            (head-dirty head) t)
      :control)
     ((string= (frame-name frame) "peeked")
      (setf (head-peeked head) (getf frame :events)
+           *peeked-session* (getf frame :session-id)
+           *peeked-dropped* (or (getf frame :dropped) 0)
            (head-mode head) :peek
            (head-dirty head) t)
+     (reset-pane-scroll)
      :control)
     ((string= (frame-name frame) "bye")
      (setf (head-connected head) nil

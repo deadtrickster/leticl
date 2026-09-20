@@ -147,6 +147,11 @@ CallView.target) — add it rather than dropping the fact it runs."
 
 ;;; ------------------------------------------------------ event application ;;;
 
+(defvar *model-from-settings-at* 0
+  "The session seq when the `model` settings row was last received.")
+(defvar *model-from-turn-at* 0
+  "The session seq when a TurnStarted last named the model answering.")
+
 (defvar *verbosity* :normal
   "How much of the event stream is drawn: `:terse`, `:normal` or `:loud` — the
 reference's `Verbosity`, cycled by `/verbosity`. Terse drops the model's reasoning
@@ -176,6 +181,10 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
        ;; start time — `*turn-started-ms*` stays NIL and the edge says "started
        ;; before this head attached" rather than a duration nobody measured.
        (setf *turn-started-ms* (and (not (getf env :snapshot)) (internal-real-time-ms)))
+       ;; the turn names the model answering it, unprompted — the one word about
+       ;; the model a head is told after attach, so the header ranks it by seq
+       (when (plusp (length (or (getf env :model) "")))
+         (setf *model-from-turn-at* seq))
        (setf (session-turn session)
              (list :turn-id (getf env :turn-id) :model (getf env :model)
                    :ledger-head (getf env :ledger-head)

@@ -2861,8 +2861,11 @@ section. The two heads must teach the same keys the same way."
          (text (lines-text lines)))
     (is (string= "keys and commands" (first text)) "the title")
     (is (null (second lines)) "a blank under it")
-    (is (= 36 (count-if (lambda (l) (plusp (length l))) text))
-        "36 non-blank rows at the capture's width, as the reference has — 41 on its screen with the header and the four chrome rows")
+    ;; 36 measured against letibot `2deceb8`'s screen; `ce31f1a` added the
+    ;; `/config` row (the operator's running binary predates it, so its screen
+    ;; still shows 36 — the source is the reference here, the binary the evidence)
+    (is (= 37 (count-if (lambda (l) (plusp (length l))) text))
+        "37 non-blank rows at the capture's width: the reference's 36 plus /config")
     (is (string= "  enter           send what you typed; while a turn runs it is queued as a follow-up"
                  (third text))
         "the first row, key sixteen wide after two")
@@ -3150,3 +3153,54 @@ screen — indistinguishable from a head on the wrong socket — for the whole w
     (leticl::%render h)
     (is (not (search "asking the daemon" (%screen-text h)))
         "and gone once the hello has landed")))
+
+;;; ------------------------- what landed in letibot 2deceb8..03cb812 (2026-09-20) ;;;
+
+(def-test a-provider-switch-reaches-an-already-attached-head (:suite leticl)
+  "The reference's own reproduction (`03cb812`): the `model` settings row is read
+once at attach and never pushed again, so a provider switch left the header on
+`qwen-3.8-27b` while `/config` said `deepseek/deepseek-flash`. The header takes
+whichever it was told more recently, by seq."
+  (let* ((leticl::*model-from-settings-at* 0) (leticl::*model-from-turn-at* 0)
+         (h (%make-head))
+         (s (head-session h))
+         (*head* h))
+    (setf (session-seq s) 5
+          (head-settings h) (list (list :key "model" :value "qwen-3.8-27b"))
+          leticl::*model-from-settings-at* 5)
+    (is (string= "qwen-3.8-27b" (leticl::%model-name s)) "the attach state")
+    ;; a turn starts on another provider, later in the stream
+    (apply-event s (list :seq 9 :event "turn_started" :turn-id "t1"
+                         :model "deepseek/deepseek-flash" :ledger-head "0000"))
+    (is (string= "deepseek/deepseek-flash" (leticl::%model-name s))
+        "the switch reaches the header: the turn's word is newer")
+    ;; and a fresh settings row, newer still, wins back
+    (setf (session-seq s) 12
+          (head-settings h) (list (list :key "model" :value "grok/grok-4"))
+          leticl::*model-from-settings-at* 12)
+    (is (string= "grok/grok-4" (leticl::%model-name s)) "the row is the newest again")))
+
+(def-test a-subagents-answer-is-its-output (:suite leticl)
+  "letibot `2ac6200`: *\"when i go to subagents pane … when i enter - no output\"*.
+A digest subagent calls no tools and answers in prose; the pane drew only tool
+results and said there was nothing. Its answer is rendered in order beside them,
+reasoning stays out, and the empty case says what it means."
+  (let ((lines (leticl::subagent-out-lines
+                (list (list :seq 1 :event "transcript_content" :item-id "a"
+                            :item (list :type "reasoning" :text "hmm"))
+                      (list :seq 2 :event "transcript_content" :item-id "b"
+                            :item (list :type "tool_result" :name "bash"
+                                        :outcome (list :outcome "ok")
+                                        :payload (format nil "one~%two~%")))
+                      (list :seq 3 :event "transcript_content" :item-id "c"
+                            :item (list :type "assistant"
+                                        :text "**Nothing here bears on it.**"))))))
+    (is (equal '("· bash — ok" "  one" "  two" "" "**Nothing here bears on it.**" "") lines)
+        "tool result, then the answer, in order; the reasoning is not there"))
+  (let* ((h (%make-head))
+         (leticl::*peeked-session* "s-1#sub-42") (leticl::*peeked-dropped* 0))
+    (setf (head-peeked h) nil)
+    (let ((text (lines-text (peek-lines h 120))))
+      (is (search "subagent output — " (first text)) "the title names the subagent")
+      (is (some (lambda (l) (search "neither an answer nor tool output" l)) text)
+          "and the empty case says what it means, not \"no tool output\""))))
