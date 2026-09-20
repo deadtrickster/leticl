@@ -471,12 +471,25 @@ down a line on every keystroke."
                     (uiop:split-string buf :separator '(#\newline)))))
     (loop for line in lines
           for shown = (%truncate-width line inner)
-          collect (list (cons "│ " '(:dim t))
-                        (cons "› " '(:fg :bright-cyan :bold t))
+          ;; the wall and the prompt are DIM, and the wall is its own segment with
+          ;; a plain space after it — read off the two screens' escapes, which is
+          ;; the only place the difference shows: ours was `ESC[2m│ ESC[0;1mESC[96m›`
+          ;; against letibot's `ESC[2m│ESC[0m space ESC[2m›ESC[0m`.
+          collect (list (cons "│" '(:dim t))
+                        (cons " " nil)
+                        (cons "› " '(:dim t))
                         (cons shown nil)
-                        (cons (make-string (max 0 (- inner (string-width shown)))
+                        ;; `inner - shown + 1`: the closing wall used to carry its
+                        ;; own leading space (`" │"`), and splitting it into the
+                        ;; pad is what makes the escape boundaries match letibot's
+                        ;; without changing the row's width
+                        (cons (make-string (max 0 (1+ (- inner (string-width shown))))
                                            :initial-element #\space) nil)
-                        (cons " │" '(:dim t))))))
+                        ;; the closing wall is its OWN dim segment with the space
+                        ;; in the pad, not `" │"` together — one space inside the
+                        ;; escape is the last column of difference between the two
+                        ;; screens' box rows
+                        (cons "│" '(:dim t))))))
 
 (defun composer-line (head cols)
   "The composer, as the rows it occupies — box plus body, or one bare line.
