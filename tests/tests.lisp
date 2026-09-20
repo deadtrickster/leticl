@@ -1718,3 +1718,67 @@ copied into the head to drift."
     (is (null (setting-choices h "mode")) "with no rows, there is nothing to list")
     (setf (head-settings h) (list (list :key "mode" :value "x" :choices (list "x" "y"))))
     (is (equal '("x" "y") (setting-choices h "mode")) "and once asked, there is")))
+
+;;; ------------------------------------------------------- bindings (S9) ;;;
+
+(defun %press (head &rest keys)
+  "Press each key in order on HEAD, as the key loop would."
+  (dolist (k keys) (leticl::%normal-key head k)))
+
+(def-test the-new-chords-reach-the-features-they-name (:suite leticl)
+  "A chord bound to a feature that does not exist is worse than no chord, which is
+why these landed AFTER the features."
+  (let ((*pane-scroll* 0) (*todos-open* nil)
+        (h (%make-head)))
+    ;; ctrl-r and ctrl-t flip the folds, which now persist (S5)
+    (let ((before (getf (head-prefs h) :show-reasoning)))
+      (%press h (list :type :ctrl :ch #\r))
+      (is (not (eq before (getf (head-prefs h) :show-reasoning)))
+          "ctrl-r flips the thinking fold"))
+    (let ((before (getf (head-prefs h) :show-tools)))
+      (%press h (list :type :ctrl :ch #\t))
+      (is (not (eq before (getf (head-prefs h) :show-tools)))
+          "ctrl-t flips the tool fold"))
+    ;; ctrl-p/g/q open their panes through the one command path
+    (%press h (list :type :ctrl :ch #\p))
+    (is (eq :todos (head-mode h)) "ctrl-p opens the todos pane")
+    (setf (head-mode h) :normal)
+    (%press h (list :type :ctrl :ch #\g))
+    (is (eq :subagents (head-mode h)) "ctrl-g opens the subagents pane")
+    (setf (head-mode h) :normal)
+    (%press h (list :type :ctrl :ch #\q))
+    (is (eq :jobs (head-mode h)) "ctrl-q opens the jobs pane")
+    (setf (head-mode h) :normal)
+    (%press h (list :type :ctrl :ch #\s))
+    (is (eq :picker (head-mode h)) "ctrl-s opens the session list")
+    ;; ctrl-x reveals raw markup, which is NOT a fold
+    (setf (head-mode h) :normal)
+    (let ((before (getf (head-prefs h) :raw-calls)))
+      (%press h (list :type :ctrl :ch #\x))
+      (is (not (eq before (getf (head-prefs h) :raw-calls)))
+          "ctrl-x flips the raw-call reveal"))))
+
+(def-test the-help-names-the-chords-that-exist (:suite leticl)
+  "The help IS the contract surface: a chord it does not name is a chord the
+operator has to guess."
+  (let* ((text (format nil "~{~a~^~%~}" (lines-text (help-lines 100)))))
+    (dolist (chord '("ctrl-r" "ctrl-t" "ctrl-x" "ctrl-s" "ctrl-p" "ctrl-g"
+                     "ctrl-q" "ctrl-o" "ctrl-y" "ctrl-z" "alt+enter" "esc esc"))
+      (is (search chord text) (format nil "the help names ~a" chord)))))
+
+(def-test promote-says-which-silence-it-is (:suite leticl)
+  "The reference's own distinction: a head that says the same thing for 'no
+command running' and 'the model is still working' sends the operator looking for
+a command that was never started."
+  (let ((h (%make-head)))
+    ;; no turn at all
+    (leticl::%command h "promote")
+    (is (search "nothing is running" (head-status-note h))
+        "with no turn, it says nothing is running")
+    ;; a turn running, no calls yet
+    (setf (session-turn (head-session h))
+          (list :turn-id "t" :text "" :reasoning "" :calls nil
+                :state (list :state "running")))
+    (leticl::%command h "promote")
+    (is (search "still working" (head-status-note h))
+        "with a turn but no command, it says the MODEL is working")))

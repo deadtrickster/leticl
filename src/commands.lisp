@@ -39,6 +39,7 @@
     ("resume" . "SESSION-ID — bring a stored session back to life")
     ("compact" . "summarise this session and fork it")
     ("reseat" . "rebuild the prompt from the tools seated now")
+    ("promote" . "move the RUNNING COMMAND to the background (ctrl-o)")
     ("interrupt" . "stop the running turn")
     ("quit" . "leave the head")))
 
@@ -145,6 +146,27 @@ on ClientFrame::Slash)."
        (%send head (list :frame "reseat_session"
                          :client-request-id (next-request-id)
                          :expected-seq (session-expected-seq (head-session head)))))
+      ((string= verb "promote")
+       ;; Move the running COMMAND to the background. The fact to guard is a
+       ;; command running, and the daemon honours this inside bash's own wait
+       ;; loop — so a call still executing is not a proxy for the thing being
+       ;; promoted, it IS it. Between turns the daemon announces idle, so this
+       ;; says what it can see rather than guessing.
+       (let ((call (find-if (lambda (c) (string= (getf (getf c :state) :state) "running"))
+                            (getf (session-turn (head-session head)) :calls))))
+         (if call
+             (progn
+               (%send head (list :frame "promote"
+                                 :client-request-id (next-request-id)
+                                 :expected-seq (session-expected-seq (head-session head))))
+               (say head (format nil "moving ~a to the background" (getf call :name))))
+             ;; TWO different silences, and saying the same thing for both sends
+             ;; the operator looking for a command that was never started
+             (say head (if (and (session-turn (head-session head))
+                                (string= (turn-state-name (session-turn (head-session head)))
+                                         "running"))
+                           "the model is still working — no command running to move yet"
+                           "nothing is running to move to the background")))))
       ((string= verb "interrupt") (%interrupt head "interrupted from the head"))
       ((string= verb "quit") (setf (head-running head) nil))
       ;; unknown verbs travel; the daemon acts and announces on the log

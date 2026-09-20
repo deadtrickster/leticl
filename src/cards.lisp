@@ -376,7 +376,17 @@ would show the answer twice."
        (when (plusp (length it))
          (markdown-lines it nil)))
      (mappend (lambda (c) (call-lines c cols))
-              (getf turn :calls)))))
+              (getf turn :calls))
+     ;; The raw `<function=…>` markup the model wrote, when ctrl-x has asked for
+     ;; it. NOT a fold: a fold hides something the reader knows is there, while
+     ;; this reveals markup the default view is required never to show, so it is
+     ;; off unless asked for by name.
+     (when (getf prefs :raw-calls)
+       (let ((raw (getf turn :raw-calls)))
+         (when (and (stringp raw) (plusp (length raw)))
+           (mapcar (lambda (l) (list (cons "    " '(:fg :bright-black))
+                                     (cons l '(:fg :bright-black))))
+                   (uiop:split-string raw :separator '(#\newline)))))))))
 
 (defun decision-card-lines (head cols)
   "The ask card: transcript visible above, one list on the screen at a time

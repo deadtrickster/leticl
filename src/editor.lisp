@@ -328,7 +328,28 @@ shows the candidates on the status line."
          ((#\z) (when (composer-undo c) (setf (head-dirty head) t)))
          ((#\a) (composer-move c :home) (setf (head-dirty head) t))
          ((#\e) (composer-move c :end) (setf (head-dirty head) t))
-         ((#\l) (setf (head-full-repaint head) t (head-dirty head) t)))
+         ((#\l) (setf (head-full-repaint head) t (head-dirty head) t))
+         ;; ---- the chords the reference has and this head did not (S9) ----
+         ;;
+         ;; Bound HERE rather than in a table, because the ladder above is the
+         ;; one place a key's owner is decided, and a chord bound to a feature
+         ;; that does not exist is worse than no chord — which is why they landed
+         ;; after the features.
+         ((#\r) (%flip-fold head :show-reasoning))          ; fold the thinking
+         ((#\t) (%flip-fold head :show-tools))              ; fold tool output
+         ((#\o) (%command head "promote"))                  ; promote the command
+         ((#\s) (%command head "sessions"))                 ; the session list
+         ((#\p) (%command head "todos"))                    ; the todos pane
+         ((#\g) (%command head "subagents"))                ; the subagent tree
+         ((#\q) (%command head "jobs"))                     ; the jobs pane
+         ((#\x)
+          ;; raw `<function=…>` markup, which is NOT a fold: a fold hides
+          ;; something the reader knows is there, while this reveals markup the
+          ;; default view is required never to show. Off by default and behind a
+          ;; chord, both halves of what was asked for.
+          (setf (getf (head-prefs head) :raw-calls)
+                (not (getf (head-prefs head) :raw-calls))
+                (head-dirty head) t)))
        ;; a ctrl chord that means nothing here must not become text
        )
       (t nil))))
