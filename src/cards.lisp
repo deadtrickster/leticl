@@ -513,7 +513,7 @@ under eight settled ones, in the same order, saying less.")
          (edit (getf facts :edit))
          (word (outcome-name outcome))
          (bad (not (string= word "ok")))
-         (mark (if (getf prefs :tools-open) "▾" "▸"))
+         (mark (if (getf prefs :show-tools) "▾" "▸"))
          (verb (verb-label name))
          (subject (or (call-target-of (getf body :call-id))
                       (format nil "(~a)" (getf body :call-id))))
@@ -556,18 +556,33 @@ under eight settled ones, in the same order, saying less.")
      ;; ONE line of output goes ON the header — `▸ Read .gitignore · ok · 1 line ·
      ;; /target` is one row where the folded form is two, and at 34 rows that
      ;; halving is the difference between four calls fitting and eight
+     ;; ONE line of output goes ON the header whether or not the card is folded:
+     ;; `▸ Read .gitignore · ok · 1.1s · /target` is one row where the folded form
+     ;; is two, and the second carried the count and a chord for a fold with
+     ;; nothing to fold.
      (if (and (not bad) (= n 1) (not edit) (plusp (length (first rows))))
          (list (append head (list (cons " · " faint)
                                   (cons (string-trim " " (first rows)) nil))))
-         (list head))
-     ;; the body: a diff when the call changed a file, else the output
-     (when (getf prefs :tools-open)
+         ;; folded and there IS more: say how much, and name the chord that shows
+         ;; it. No chord on a card with nothing folded — eight columns of every row
+         ;; spent advertising a key that would do nothing.
+         (if (and (not (getf prefs :show-tools)) (> n 1))
+             (list (append head
+                           (list (cons (format nil "  … +~d lines · ctrl-t" (- n 1))
+                                       faint))))
+             (list head)))
+     ;; **FOLDED BY DEFAULT**, which is letibot's default and now ours: the header
+     ;; carries the count and a `… +N lines · ctrl-t` marker, and the output is one
+     ;; chord away. A card that prints two hundred lines where the reference prints
+     ;; one row is a transcript nobody can scan — and the count is the size signal,
+     ;; so the folded row still says how much there is.
+     (when (getf prefs :show-tools)
        (cond
          (edit (edit-lines edit cols
                            :folded nil
                            :split (string= (or (getf prefs :diff) "unified") "split")))
          ((and (> n 1)
-               (getf prefs :tools-open))
+               (getf prefs :show-tools))
           (let ((keep (if (> n 8) 7 n)))
             (append
              (mapcar (lambda (l) (list (cons "  " faint)

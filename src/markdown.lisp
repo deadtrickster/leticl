@@ -118,21 +118,32 @@ in a terminal with no syntax colour."
                ;; message ends without one (a streaming turn is often mid-fence,
                ;; and dropping the lines would blank the code on screen)
                (when code-buf
-                 (dolist (l (highlight-fence (nreverse code-buf) code-lang))
-                   (push l lines))
-                 (setf code-buf nil))))
+               (dolist (l (highlight-fence (nreverse code-buf) code-lang))
+                 (push (cons (cons "│ " '(:dim t)) l) lines))
+               (setf code-buf nil))))
       (dolist (line (uiop:split-string text :separator '(#\newline)))
         (cond
           ;; fenced code
           ((and (>= (length line) 3) (string= (subseq line 0 3) "```"))
            (flush-table)
            (if in-code
-               (progn (flush-code) (setf in-code nil))
+               (progn
+                 (flush-code)
+                 ;; and it CLOSES. Without this the code ran straight into the
+                 ;; prose under it with nothing saying where it stopped.
+                 (push (list (cons "└─" '(:dim t))) lines)
+                 (setf in-code nil))
                (progn (setf in-code t
                             code-lang (string-trim " `" (subseq line 3)))
+                      ;; **A BOXED FENCE.** The reference draws `┌─ lang`, a faint
+                      ;; `│ ` on every line, and `└─` at the end — the same faint
+                      ;; frame as the quote rail and the table rule, so a fence sits
+                      ;; in a turn rather than shouting from it. It used to be a
+                      ;; bare `── lang` header with nothing to close it, which left
+                      ;; the code unseparated from the prose below.
                       (push (list (cons (if (plusp (length code-lang))
-                                            (format nil "── ~a " code-lang)
-                                            "── ")
+                                            (format nil "┌─ ~a" code-lang)
+                                            "┌─ code")
                                         '(:dim t)))
                             lines))))
           (in-code
@@ -192,10 +203,12 @@ in a terminal with no syntax colour."
            (flush-table)
            (push (%inline-spans line base-style) lines))))
     (flush-table)
-    ;; an UNCLOSED fence still has to render: a streaming turn is often
-    ;; mid-fence, and the alternative is code that vanishes until the closing
-    ;; backticks arrive
-    (flush-code)
+    ;; an UNCLOSED fence still has to render, and SAYS it is unclosed: a streaming
+    ;; turn is often mid-fence, and the alternative is code that vanishes until the
+    ;; closing backticks arrive — or, worse, code whose box looks finished
+    (when in-code
+      (flush-code)
+      (push (list (cons "└─ (still writing…)" '(:dim t))) lines))
     (nreverse lines))))
 
 (defun %table-row-p (line)

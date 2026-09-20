@@ -260,9 +260,14 @@
 plain")))
     (is (equal (first lines) (list (cons "Title" '(:bold t :underline t)))) "heading")
     (is (member (cons "• " '(:fg :bright-cyan)) (second lines) :test #'equal) "list bullet")
-    (is (member (cons "── lisp " '(:dim t)) (third lines) :test #'equal) "fence marker")
-    (is (member (cons "│ " '(:dim t)) (fifth lines) :test #'equal) "blockquote")
-    (is (= 6 (length lines)) "one line in, one line out per construct")))
+    (is (equal "┌─ lisp" (car (first (third lines))))
+        "the fence OPENS, naming the language")
+    (is (equal "│ " (car (first (fourth lines))))
+        "and every line of code carries its rail")
+    (is (equal "└─" (car (first (fifth lines)))) "and it CLOSES")
+    (is (member (cons "│ " '(:dim t)) (sixth lines) :test #'equal)
+        "the quote's rail is the faint one, the same weight as the fence's frame")
+    (is (= 7 (length lines)) "seven lines out for seven in")))
 
 (def-test todos-screen (:suite leticl)
   "The pane draws the ITEMS, rolls them up the way org does, and reports the
@@ -2196,3 +2201,35 @@ opencode's rule and would take the diff away on a narrow terminal."
         "split is the two-panel view")
     (is (not (search "│" (segs-of (edit-lines edit 60 :split nil))))
         "and unified is the one-panel view")))
+
+(def-test a-folded-card-says-how-much-it-is-hiding (:suite leticl)
+  "Folded by default, like letibot: the header carries the count and names the
+chord, and the output is one press away. A card that prints two hundred lines
+where the reference prints one row is a transcript nobody can scan."
+  (let* ((*item-facts* nil)
+         (body (list :type "tool_result" :call-id "c" :name "bash"
+                     :outcome (list :outcome "ok")
+                     :payload (format nil "~{~a~^~%~}"
+                                      (loop for i from 1 to 30 collect (format nil "line ~a" i)))))
+         (item (list :item-id "fold1" :kind "tool_result" :item body)))
+    (let ((folded (segs-of (item-lines item 80 (list :show-tools nil)))))
+      (is (search "30 line" folded) "the count says how much there is")
+      (is (search "… +29 lines" folded) "and the fold names how many are hidden")
+      (is (search "ctrl-t" folded) "and the chord that shows them")
+      (is (= 1 (length (item-lines item 80 (list :show-tools nil))))
+          "one row while folded"))
+    (let ((open (segs-of (item-lines item 80 (list :show-tools t)))))
+      (is (search "line 1" open) "open, the output is there"))))
+
+(def-test the-fold-key-is-the-one-the-head-sets (:suite leticl)
+  "`:tools-open` was read in four places and SET NOWHERE — the head's plist key is
+`:show-tools`, so card bodies never rendered at all and ctrl-t flipped a key nothing
+read. A test that presses the chord and looks for the output is what catches that
+class; this one asserts the key itself."
+  (let ((h (%make-head)))
+    ;; BOUND, not true: folded is the new default, and the point is that the key
+    ;; the card READS is the key the head SETS.
+    (is (member :show-tools (head-prefs h) :test #'eq)
+        "the head binds :show-tools, which is what the card must read"))
+  (is (search ":SHOW-TOOLS" (string-upcase (source-of "cards")))
+      "and the card reads that key, not a second spelling of it"))

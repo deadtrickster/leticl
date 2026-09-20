@@ -56,7 +56,7 @@ paints to it, and defvar for the same reason as *head*.")
   (settings nil)
   (jobs nil)
   (subagents nil)
-  (prefs (list :show-reasoning t :show-tools t))
+  (prefs (list :show-reasoning nil :show-tools nil :diff "split"))
   (status-note nil)
   (queued nil :type list)                ; prompts sent, user row not yet seen
   (connected nil :type boolean)
@@ -155,6 +155,8 @@ to signal a dead socket, and any code that assumes `consp` means `plist` will ca
      ;; CONVERSATION's — carrying one session's bill onto another's header is
      ;; wrong in the direction that costs money. Cleared, not guessed.
      (reset-spent)
+     ;; the wait is over: the cat stands down
+     (setf *attach-started-ms* nil)
      (ingest-hello (head-session head) frame)
      (setf (head-connected head) t
            (head-status-note head) nil
@@ -415,6 +417,8 @@ push ran `(defparameter *stdout* nil)` and the operator's head exited)."
     ;; by witnessing the head's writes against a fake daemon. The hello hook is
     ;; the right home because a `Switch` also lands as a hello, so one send
     ;; covers attach, switch and reconnect.
+    ;; the clock the attach indicator walks to; cleared when a Hello lands
+    (setf *attach-started-ms* (internal-real-time-ms))
     (%send head (make-attach :session-id (or session-id "")
                              :identity "leticl"))
     (hack-start head)

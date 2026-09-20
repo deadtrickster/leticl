@@ -237,7 +237,15 @@ scrolls the transcript by a row every keystroke.
                 (lines (%viewport-lines head cols want)))
            (%place-lines s lines body-top (+ body-top (length lines) -1) cols)
            (when card-lines
-             (%place-lines s card-lines (- body-bottom card-rows -1) body-bottom cols))))))
+             (%place-lines s card-lines (- body-bottom card-rows -1) body-bottom cols))))
+        ;; transcript empty and nothing has arrived yet: the wait, which is a
+        ;; thing to SHOW rather than a banner claiming the session is empty — a
+        ;; claim a head that has not been answered is in no position to make
+        (t
+         (let* ((wait (attach-lines head cols))
+                (room (max 1 (- body-bottom body-top)))
+                (skip (max 0 (- (floor room 2) (floor (length wait) 2)))))
+           (%place-lines s wait (+ body-top skip) body-bottom cols)))))
     ;; the chrome, each row where the layout above put it
     (when alarm-row (put-segments s alarm-row +gutter+ alarm))
     (when status-row (put-segments s status-row +gutter+ status))

@@ -547,3 +547,65 @@ rather than about something that just happened."
   (setf (head-status-note head) text
         *notice-ttl* *notice-ttl-frames*
         (head-dirty head) t))
+
+;;; ------------------------------------------------------- the attach wait ;;;
+;;;
+;;; The `Hello` carries the WHOLE SNAPSHOT, so on a session of thousands of rows
+;;; there is a real wait before the first frame — and this head drew an empty
+;;; screen with a status line, which is indistinguishable from a head attached to
+;;; the wrong socket.
+;;;
+;;; The reference's shape, and its four properties are each a bug it had:
+;;;
+;;;  · **centred horizontally on the indicator's OWN row**, so "centred" is a
+;;;    statement about the cat and not about whatever else shares the line (the
+;;;    first version put ` attach` beside it);
+;;;  · **walking in place** — the frames differ in width, so the SLOT is what is
+;;;    centred and the cat sits at its left edge. Centring each frame on its own
+;;;    made it jitter sideways, which reads as a drawing bug rather than a walk;
+;;;  · **moved by the CLOCK**, not a frame counter, so the screen stays a pure
+;;;    function of time;
+;;;  · **vertically in the conversation**, not pinned under the header.
+;;;
+;;; A cat rather than a spinner glyph because this is the one wait where a spinner
+;;; is the honest answer: the work is client-side and the head genuinely cannot say
+;;; more, having been told nothing.
+
+(defparameter +cat-frames+
+  #("(=^.^=)" "(=^.-.=)" "(=^o^=)" "(=^-.-=)" "(=^.^=)~" "(=^.-.=)~" "(=^o^=)~" "(=^-.-=)~")
+  "A cat walking right, one leg changing per frame.")
+
+(defparameter +cat-slot+ (loop for f across +cat-frames+ maximize (length f))
+  "The width of the SLOT the cat walks in: the widest frame. Centring each frame
+on its own width made a 7-wide and an 8-wide cat jitter instead of walk.")
+
+(defun cat-frame (elapsed-ms)
+  (aref +cat-frames+ (mod (floor (or elapsed-ms 0) 120) (length +cat-frames+))))
+
+(defun %centred-row (text cols)
+  "TEXT centred in COLS columns."
+  (let* ((w (string-width text))
+         (pad (max 0 (floor (- cols w) 2))))
+    (list (cons (make-string pad :initial-element #\space) nil)
+          (cons text nil))))
+
+(defvar *attach-started-ms* nil
+  "When this head sent its ATTACH, or NIL once a Hello has arrived. A defvar: the
+clock the cat walks to.")
+
+(defun attaching-p (head)
+  (and *attach-started-ms* (not (head-connected head))))
+
+(defun attach-lines (head cols)
+  "The wait, or NIL when there is nothing to wait for."
+  (when (attaching-p head)
+    (let* ((elapsed (max 0 (- (internal-real-time-ms) *attach-started-ms*)))
+           (slot (format nil "~v@a" +cat-slot+ (cat-frame elapsed))))
+      (list (list (cons "" nil))                 ; the caller centres vertically
+            (%centred-row slot cols)
+            (list (cons "" nil))
+            (%centred-row "· · · · ›" cols)        ; a pawprint trail, so a still
+            (list (cons "" nil))                   ; frame still reads as going
+            (%centred-row "asking the daemon for this session" cols)
+            (list (cons "" nil))
+            (%centred-row (duration elapsed) cols)))))
