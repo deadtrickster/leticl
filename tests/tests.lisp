@@ -1163,3 +1163,176 @@ of, and a paste that arrives truncated is worse than one that is awkward."
         (is (not (search "pasted" out)) "every occurrence is expanded")
         (is (= 2 (count-substring body out))
             "both of them — the whole paste, twice")))))
+
+;;; ------------------------------------------------- chrome (S8) ;;;
+
+(defun %screen-text (head)
+  "Every row of the head's screen, as one string — the cells, which is what the
+head actually drew, not the segments that were put there."
+  (format nil "~{~a~^~%~}"
+          (loop for r from 0 below (head-rows head)
+                collect (let ((row (screen-row (head-screen head) r)))
+                          (if row
+                              (format nil "~{~a~}" (mapcar #'cell-ch row))
+                              "")))))
+
+(defun %on-head (&key (cols 60) (rows 20) (buffer ""))
+  "A head with a screen of the given size and an optional composer buffer."
+  (let ((h (%make-head)))
+    (setf (head-cols h) cols (head-rows h) rows)
+    (screen-resize (head-screen h) cols rows)
+    (screen-resize (head-prev-screen h) cols rows)
+    (leticl::%undo-push (head-composer h))
+    (composer-insert (head-composer h) buffer)
+    h))
+
+(def-test the-composer-is-a-box-that-grows-with-the-buffer (:suite leticl)
+  "A box with a title, whose bottom edge carries the wiring — the reference's
+shape, and the most visible structural difference this head had: a bare `›` line
+against a framed one."
+  (let ((h (%on-head :rows 20)))
+    (let ((rows (composer-line h 60)))
+      (is (>= (length rows) 3) "a top edge, a body, a bottom edge")
+      (let ((text (format nil "~{~a~^~%~}"
+                          (mapcar (lambda (l) (apply #'concatenate 'string
+                                                     (mapcar #'car l)))
+                                  rows))))
+        (is (search "╭" text) "the top edge opens")
+        (is (search "╮" text) "and closes")
+        (is (search "╰" text) "the bottom edge opens")
+        (is (search "╯" text) "and closes")
+        (is (search "›" text) "the prompt is inside")
+        ;; every row is exactly COLS: a row one column over wraps in a terminal
+        ;; and pushes the whole frame down a line on every keystroke
+        (dolist (row rows)
+          (is (= 60 (string-width
+                     (apply #'concatenate 'string (mapcar #'car row))))
+              "a composer row is exactly the frame's width"))))
+    ;; the box grows with a multi-line buffer
+    (let ((h2 (%on-head :rows 20)))
+      (composer-insert (head-composer h2) (format nil "one~%two~%three"))
+      (is (= 5 (length (composer-line h2 60)))
+          "three lines of buffer means three body rows, plus two edges")
+      (dolist (row (composer-line h2 60))
+        (is (= 60 (string-width
+                   (apply #'concatenate 'string (mapcar #'car row))))
+            "and every one of them is still exactly the width")))))
+
+(def-test a-short-screen-gets-the-bare-line-not-a-box (:suite leticl)
+  "A box costs two rows its edges, and a composer must not eat the last row of
+the transcript to draw a border."
+  (let ((h (%on-head :rows 7)))
+    (is (= 1 (length (composer-line h 60))) "one row, not three")
+    (is (search "›" (format nil "~{~a~}"
+                            (mapcar #'car (first (composer-line h 60)))))
+        "and it is still the prompt")))
+
+(def-test the-alarm-exists-only-when-something-is-wrong (:suite leticl)
+  "A row that is always present is a row that costs the transcript a line to say
+nothing."
+  (let ((*resyncs* 0)
+        (h (%on-head)))
+    (setf (head-connected h) t)         ; a fresh head starts disconnected
+    (is (null (alarm-line h 60)) "nothing wrong, no row")
+    (setf (session-dropped (head-session h)) 3)
+    (is (search "dropped 3" (format nil "~{~a~}" (mapcar #'car (alarm-line h 60))))
+        "a non-zero counter shows")
+    (setf (session-dropped (head-session h)) 0)
+    (setf (head-connected h) nil)
+    (is (search "detached" (format nil "~{~a~}" (mapcar #'car (alarm-line h 60))))
+        "a disconnect shows even with clean counters")))
+
+(def-test the-money-meter-lights-only-when-a-cost-was-seen (:suite leticl)
+  "Free and unpriced are both 'no number', and `$0.0000` on every local header
+would be noise."
+  (let ((*spent-micros* 0) (*spent-seen* nil))
+    (is (null (spent-text)) "no cost seen means no meter")
+    (is (null (note-turn-cost (list :prompt-tokens 10))) "an absent cost adds nothing")
+    (is (null (spent-text)) "and still lights nothing")
+    (is (eq t (note-turn-cost (list :cost-micros-usd 42100))))
+    (is (equal "$0.0421" (spent-text)) "42,100 micro-USD is $0.0421")
+    (note-turn-cost (list :cost-micros-usd 1000))
+    (is (equal "$0.0431" (spent-text)) "and costs accumulate")
+    ;; the total belongs to the CONVERSATION: a switch clears it
+    (reset-spent)
+    (is (null (spent-text)) "a new conversation has its own bill")))
+
+(def-test the-meters-total-is-cleared-by-a-hello (:suite leticl)
+  "Carrying one session's bill onto another's header is wrong in the direction
+that costs money, so a Switch — which lands as a Hello — clears it."
+  (let ((*spent-micros* 0) (*spent-seen* nil) (h (%make-head)))
+    (note-turn-cost (list :cost-micros-usd 5000000))
+    (is (equal "$5.0000" (spent-text)))
+    (leticl::%handle-frame h (list :frame "hello" :head-id "h1" :dropped 0
+                           :snapshot (list :session-id "s2" :seq 0 :dropped 0
+                                           :items-dropped 0 :items nil
+                                           :turn nil :open-decisions nil
+                                           :settled-decisions nil :warnings nil
+                                           :heads nil)
+                           :sessions nil :wiring nil))
+    (is (null (spent-text)) "the new session starts at nothing")))
+
+(def-test a-stall-is-a-claim-about-the-clock (:suite leticl)
+  "A head nobody has told the time to must not guess, because a stall is a claim
+about the clock."
+  (let ((*now-ms* 0) (*last-event-ms* nil))
+    (is (null (stalled-ms)) "no frames yet is not a stall")
+    (setf *now-ms* 100000 *last-event-ms* 100000)
+    (is (= 0 (stalled-ms)) "a frame just arrived")
+    (setf *last-event-ms* 50000)
+    (is (= 50000 (stalled-ms)) "50s of silence is measured")
+    (is (search "no frames for 50" (stall-text)) "and said in words")
+    (setf *last-event-ms* 95000)
+    (is (null (stall-text)) "under the threshold it says nothing")
+    ;; and a head with no clock refuses rather than guessing
+    (setf *now-ms* 0)
+    (is (null (stalled-ms)) "no clock means no claim")))
+
+(def-test a-notice-expires-and-an-alarm-does-not (:suite leticl)
+  "A notice that never expires becomes furniture — the old head pinned one to the
+status line for the rest of the session."
+  (let ((*notice-ttl* 0) (h (%make-head)))
+    (say h "hello")
+    (is (equal "hello" (head-status-note h)) "the note is there")
+    (is (= *notice-ttl-frames* *notice-ttl*) "and its clock started")
+    ;; it survives its TTL and then goes
+    (dotimes (i (1- *notice-ttl-frames*)) (tick-notice h))
+    (is (equal "hello" (head-status-note h)) "still there before the last tick")
+    (tick-notice h)
+    (is (null (head-status-note h)) "and gone on it")
+    ;; a note with no TTL is not aged — an alarm persists
+    (setf (head-status-note h) "detached" *notice-ttl* 0)
+    (dotimes (i 100) (tick-notice h))
+    (is (equal "detached" (head-status-note h))
+        "a note nobody started a clock on is not on the TTL")))
+
+(def-test the-hint-names-the-keys-that-work-here (:suite leticl)
+  "A hint that names the wrong key is worse than no hint: the card's second
+ctrl+c CLOSES it, so the editor's 'again to exit' would be a lie."
+  (let ((h (%make-head)))
+    (is (search "ctrl-s" (format nil "~{~a~}" (mapcar #'car (hint-bar h 100))))
+        "the normal hint names the real chords")
+    (setf (head-quit-open h) t)
+    (is (search "esc stays" (format nil "~{~a~}" (mapcar #'car (hint-bar h 100))))
+        "and the card's hint is about the card")
+    (setf (head-quit-open h) nil (head-mode h) :help)
+    (is (search "esc closes" (format nil "~{~a~}" (mapcar #'car (hint-bar h 100))))
+        "a screen says how to leave it")))
+
+(def-test the-frame-lays-out-backwards-from-the-composer (:suite leticl)
+  "The composer's height is not fixed, so the transcript gets what is left —
+getting that order wrong scrolls the transcript by a row on every keystroke."
+  (let* ((*stdout* (make-string-output-stream))
+         (h (%on-head :cols 60 :rows 20)))
+    (leticl::%render h)
+    (let ((text (%screen-text h)))
+      (is (search "leticl" text) "the top border is drawn")
+      (is (search "╭" text) "the composer's box is drawn")
+      (is (search "›" text) "and its prompt")
+      (is (search "╰" text) "and its bottom edge"))
+    ;; with a taller composer, the transcript's last row moves UP
+    (composer-insert (head-composer h) (format nil "a~%b~%c~%d"))
+    (leticl::%render h)
+    (let ((text (%screen-text h)))
+      (is (search "╭" text) "the box is still there")
+      (is (search "╰" text) "and complete"))))

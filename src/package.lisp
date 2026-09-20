@@ -14,12 +14,12 @@
    ;; width
    #:char-width #:string-width
    ;; progress — the numbers a turn produces, said in a way a person reads
-   #:thousands #:duration #:spinner
+   #:thousands #:duration #:spinner #:internal-real-time-ms
    #:prefill-fraction #:prefill-cached-fraction #:prefill-computed
    #:prefill-rate #:prefill-eta-ms #:progress-bar #:prefill-line #:decode-line
    ;; cells
    #:make-screen #:screen-resize #:screen-clear
-   #:screen-cols #:screen-rows #:screen-cell #:screen-put #:screen-put-string
+   #:screen-cols #:screen-rows #:screen-cell #:screen-row #:screen-put #:screen-put-string
    #:cell-ch #:cell-style
    #:style-index #:paint-diff #:paint-full
    ;; the two parallel style tables — a restyle may want to read or extend them,
@@ -46,7 +46,16 @@
    #:make-prefs #:default-prefs-path #:load-prefs #:save-prefs
    #:prefs-diff #:prefs-thinking #:prefs-tools #:prefs-raw-calls #:prefs-path
    #:load-prefs-into #:save-head-prefs #:head-into-prefs #:prefs-into-head
+   ;; chrome (S8) — the alarm, the stall, the money meter, the boxed composer
+   #:composer-line #:hint-bar #:alarm-line #:alarm-counts #:alarmed-p
+   #:spent-text #:note-turn-cost #:reset-spent
+   #:*resyncs* #:*spent-micros* #:*spent-seen* #:*now-ms* #:*last-event-ms*
+   #:note-frame-arrived #:stalled-ms #:stall-text #:tick-notice #:say
+   #:composer-rows-needed #:composer-inner #:*notice-ttl-frames* #:hint-bar
+   #:*notice-ttl* #:*stall-ms* #:*spent-micros* #:*last-event-ms*
    #:session-seq #:session-expected-seq #:session-session-id #:session-items
+   #:session-dropped #:session-title #:session-turn #:session-heads
+   #:session-warnings #:session-denials #:session-subagents #:session-jobs
    #:session-todos #:session-wiring #:session-open-decisions #:session-sessions
    #:item-lines #:turn-lines #:outcome-name #:edit-lines #:call-lines
    ;; engines a model may want to call directly while restyling
@@ -74,7 +83,8 @@
    #:%make-head #:run #:*head* #:head-session #:head-prefs #:head-dirty #:head-screen
    #:head-prev-screen
    #:head-last-rows #:head-cols #:head-rows #:head-mode #:head-composer
-   #:head-quit-open #:head-secret-req
+   #:head-quit-open #:head-secret-req #:head-connected #:head-status-note
+   #:head-settings #:head-queued #:head-scroll #:head-resyncs
    ;; hack
    #:hack-start #:hack-stop #:hack-socket-path #:list-live-heads #:hack-handle))
 

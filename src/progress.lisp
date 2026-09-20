@@ -52,6 +52,15 @@ of anything."
   (let ((frames "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"))
     (char frames (mod (floor (or elapsed-ms 0) 80) (length frames)))))
 
+(defun internal-real-time-ms ()
+  "The monotonic clock in milliseconds.
+
+`get-universal-time` is one-second resolution, which is fine for a filesystem
+timestamp and wrong for anything a person watches — a five-second window measured
+in whole seconds is a four-to-five-second window. This is the clock the ESC
+decoder and the stall line both need."
+  (round (* 1000 (/ (get-internal-real-time) internal-time-units-per-second))))
+
 ;;; ----------------------------------------------------------- prefill ;;;
 
 ;; A "Prefill" is the plist the daemon sends; these are the four questions the

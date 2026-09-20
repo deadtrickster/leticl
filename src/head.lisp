@@ -142,6 +142,10 @@ paints to it, and defvar for the same reason as *head*.")
            (head-dirty head) t)
      :control)
     ((string= (frame-name frame) "hello")
+     ;; A Switch lands as a Hello on the new session, and the money meter is the
+     ;; CONVERSATION's — carrying one session's bill onto another's header is
+     ;; wrong in the direction that costs money. Cleared, not guessed.
+     (reset-spent)
      (ingest-hello (head-session head) frame)
      (setf (head-connected head) t
            (head-status-note head) nil
@@ -178,6 +182,9 @@ paints to it, and defvar for the same reason as *head*.")
            (progn (setf (head-dirty head) t) :rendered)
            :filtered)))
     ((string= (frame-name frame) "resync")
+     ;; a resync means this head lost its place; the count is on /status and in
+     ;; the alarm, because "it happened at all" is the operator's business
+     (incf *resyncs*)
      (ingest-snapshot (head-session head) (getf frame :snapshot))
      (setf (head-full-repaint head) t
            (head-dirty head) t
@@ -297,11 +304,17 @@ is a resume — the gap arrives as events, or a Resync does (§13.2)."
         do (let ((rendered 0)
                  (filtered 0)
                  (last-seq 0))            ; the read mark, from step 1 only
+             ;; the clock, and the arrival of anything at all: the stall line is
+             ;; about the DAEMON going quiet, so it is measured from the last
+             ;; frame to land, on OUR clock and not on the event's own `ts`
+             (setf *now-ms* (internal-real-time-ms))
+             (tick-notice head)
              ;; 1. drain. An error while FOLDING a frame must not kill the loop
              ;; either: a frame this head cannot handle is one bad frame, not a
              ;; reason to lose the session. The failure is remembered so the
              ;; gate can say so, and the loop reads the next one.
              (dolist (frame (%drain (head-frames head)))
+               (note-frame-arrived)
                (when (and (consp frame) (string= (frame-name frame) "event")
                           (getf frame :seq))
                  (setf last-seq (getf frame :seq)))

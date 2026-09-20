@@ -100,12 +100,27 @@ terminal: the newest content sat at row 1 and the oldest at row 57.)"
       (subseq all start end))))
 
 (defun %render (head)
-  "State to the cell buffer."
+  "State to the cell buffer.
+
+The bottom of the frame is laid out BACKWARDS from the last row, because the
+composer's height is not fixed: it is a box whose body grows with the buffer, so
+the transcript gets what is left. Getting that order wrong is how a composer
+scrolls the transcript by a row every keystroke.
+"
   (let* ((s (head-screen head))
          (cols (head-cols head))
          (rows (head-rows head))
+         (composer (composer-line head cols))
+         (composer-rows (length composer))
+         (hint (hint-bar head cols))
+         (alarm (alarm-line head cols))
+         ;; from the bottom: composer, hint, status, alarm (if any)
+         (cursor (- rows composer-rows))
+         (hint-row (1- cursor))
+         (status-row (- hint-row 1))
+         (alarm-row (when alarm (- status-row 1)))
          (body-top 1)
-         (body-bottom (- rows 3))            ; top border, status, composer
+         (body-bottom (or alarm-row status-row))
          (card-lines nil))
     (screen-clear s)
     ;; top border
@@ -129,9 +144,9 @@ terminal: the newest content sat at row 1 and the oldest at row 57.)"
                         (:picker (picker-lines (head-session head)
                                                (head-picker-sel head) cols))
                         (:todos (todos-lines head cols)))))
-           (%place-lines s lines body-top body-bottom cols)))
+           (%place-lines s lines body-top (max body-top (1- body-bottom)) cols)))
         (t
-         ;; transcript viewport, then the card just above the status line
+         ;; transcript viewport, then the card just above the chrome
          (let* ((card-lines (if (head-quit-open head)
                                 (quit-card-lines head cols)
                                 card-lines))
@@ -140,9 +155,13 @@ terminal: the newest content sat at row 1 and the oldest at row 57.)"
            (%place-lines s lines body-top (+ body-top (length lines) -1) cols)
            (when card-lines
              (%place-lines s card-lines (- body-bottom card-rows -1) body-bottom cols))))))
-    ;; status + composer
-    (put-segments s (- rows 2) 0 (status-line head cols))
-    (put-segments s (1- rows) 0 (composer-line head cols))))
+    ;; the chrome, each row where the layout above put it
+    (when alarm-row (put-segments s alarm-row 0 alarm))
+    (put-segments s status-row 0 (status-line head cols))
+    (put-segments s hint-row 0 hint)
+    (loop for row in composer
+          for r from cursor
+          do (put-segments s r 0 row))))
 
 (defun %place-lines (screen lines top bottom cols)
   "Segment lines into rows top..bottom, clipping both ends."

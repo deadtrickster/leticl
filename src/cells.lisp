@@ -253,6 +253,15 @@ styles are tracked across the whole frame so SGR is emitted only on change."
 (defun move-to (out row col)
   (format out "~C[~D;~DH" +esc+ (1+ row) (1+ col)))
 
+(defun screen-row (screen row)
+  "ROW of SCREEN as a list of cells. NIL for a row off the screen, rather than an
+error: a caller rendering a frame that just shrank is asking a reasonable
+question."
+  (let ((cols (screen-cols screen))
+        (rows (screen-rows screen)))
+    (when (and (>= row 0) (< row rows))
+      (loop for c from 0 below cols collect (screen-cell screen row c)))))
+
 (defun screen-rows-ansi (screen)
   "One string per row, escape codes included — the answer to ScreenRequested
 and the body of /cells: what this head actually drew, at its real size, not a
