@@ -492,7 +492,7 @@ Ported and disconnected — `PARITY.md` §2.4, §2.5, §3.9.
 **Live**: push, then `--screen` on a session with an edit in it and read the diff
 out of the capture.
 
-### S3 — cards ✅ **P8–P12 done** (2026-09-20)
+### S3 — cards ✅ **P8–P13, P45, P46 done** (2026-09-20)
 
 The item-id maps: a settled row keeps its duration, its diff and the decision
 that gated it, keyed by ITEM id. **P13 (the rest of the card vocabulary), P45
@@ -565,7 +565,7 @@ Tests 273 → 301.
 
 **Live**: `/think`, quit the head, restart, `/think` is still off.
 
-### S6 — panes ✅ **P41, P42, P22, P23 done** (2026-09-20)
+### S6 — panes ✅ **P41, P42, P21, P22, P23, P27 done** (2026-09-20)
 
 Panes scroll (one offset, counting from the TOP — the opposite polarity to the
 transcript's), the todos pane draws its items with org's roll-up and cookie and
@@ -688,7 +688,7 @@ a hint bar, and the body carries a gutter. This one draws `› `.
   A head that attached late shows only what it watched, and that is the honest
   answer rather than a total that is quietly too low.
 
-### S9 — bindings (needs S1, S3, S6, S8)
+### S9 — bindings ✅ **done** (2026-09-20, with P26 promote)
 
 `PARITY.md` §3.3. Cheap, but strictly **after** the features: a chord bound to
 nothing is worse than no chord.
