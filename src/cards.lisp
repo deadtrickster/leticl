@@ -450,6 +450,39 @@ row at the bottom of every open card, against letibot's screen."
   "How many lines PAYLOAD is, which is the number the fold marker counts."
   (length (%payload-lines payload)))
 
+(defun %without-control (line)
+  "LINE with every control character replaced by a SPACE — the reference's
+`without_control` (app.rs:369), applied where it applies it (app.rs:9712).
+
+**A tool's output cannot be allowed to reconfigure the operator's terminal.** A
+payload is whatever the command wrote, escape sequences included; the reference
+counted them in the operator's own store, 2026-09-20 — 44 `tool_result` rows
+carry an escape and **20 carry a MODE string**: `?1002` and `?1006` are mouse
+reporting, `?1049` the alternate screen, `?2004` bracketed paste. That is the
+bug they reported as *\"when i expand tools with Ct scroll stops working, even
+after collapsing back\"*: ctrl-t renders payloads that were folded away, one of
+them turns mouse reporting off, the wheel stops scrolling, and folding back
+cannot undo what the terminal has already been told.
+
+**This head's painter does not put an escape on the wire** — `clusters` carries
+a sequence in the cluster's `esc`, `screen-put-string` writes only the cluster's
+`text`, and a zero-width cluster draws nothing (`src/cells.lisp:209-224`). So
+the mode string was already not reaching the terminal. But that is the painter
+being incidentally lucky with bytes nobody sanitised, one refactor away from not
+being true, and it is not free either: the escape vanished whole, so a row
+carrying `ESC[?1002l` measured 0 columns here and 8 there, and every wrap and
+every truncation downstream of it disagreed with the reference's. A space rather
+than a deletion for exactly that reason — the wrapper about to measure these
+lines counts columns.
+
+Sanitised at RENDER, never in the store: the record is what the tool wrote and
+must stay that.
+
+A control character is Unicode's `Cc` — C0, DEL and C1 — which is what
+`char::is_control` is and what `%c1-control-p` already answers."
+  (map 'string (lambda (c) (if (%c1-control-p (char-code c)) #\space c))
+       (or line "")))
+
 ;;; The settled tool row, to the reference's own weighting.
 ;;;
 ;;; Read from `crates/tui/src/app.rs`'s transcript arm rather than inferred, after
@@ -494,9 +527,18 @@ a bigger fraction than the hierarchy is worth.")
 The envelope is addressed to the MODEL, not the operator: it is how a result says
 where the harness's text stops and the payload starts, with a per-call nonce so a
 payload cannot forge one. On a screen it is noise in the middle of the two lines a
-folded row has."
-  (let ((trimmed (string-left-trim " " line)))
-    (and (>= (length trimmed) 3) (string= (subseq trimmed 0 3) "<<<"))))
+folded row has.
+
+Matched by SHAPE, and by the WHOLE shape — `<<<` at the front, `>>>` at the
+back and something between them (`is_envelope`, app.rs:7925-7928). Ours tested
+the opening only, so a payload line that merely begins `<<<` — a heredoc, a
+diff conflict marker, a model quoting this very format — was silently dropped
+from the output. A body line cannot forge a real marker: the envelope rewrites
+every `<<<` in a payload to `< < <` precisely so it cannot."
+  (let ((trimmed (string-trim '(#\space #\tab #\return #\newline) line)))
+    (and (> (length trimmed) 6)
+         (string= (subseq trimmed 0 3) "<<<")
+         (string= (subseq trimmed (- (length trimmed) 3)) ">>>"))))
 
 (defun %shorten-subject (subject max)
   "SUBJECT cut to MAX columns the way a person reads it.
@@ -603,8 +645,12 @@ header, also printed `· 1 line` — a count for a fold with nothing to fold."
          (subject (or (call-target-of (getf body :call-id))
                       (format nil "(~a)" (getf body :call-id))))
          (decision (getf facts :decision))
-         ;; the envelope lines are not output
-         (rows (remove-if #'%envelope-line-p (%payload-lines payload)))
+         ;; Sanitised FIRST and filtered second, the reference's order
+         ;; (app.rs:9712) — a payload's bytes are the command's, not this
+         ;; terminal's (`%without-control`) — and then the envelope lines, which
+         ;; are addressed to the model, are not output.
+         (rows (remove-if #'%envelope-line-p
+                          (mapcar #'%without-control (%payload-lines payload))))
          (n (length rows))
          (ind (activity-indent cols))
          (w (max 20 (- cols ind)))

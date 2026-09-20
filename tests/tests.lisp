@@ -3431,3 +3431,97 @@ and the stall sentence in the chrome above the box (app.rs:5069-5075)."
           "trimmed to the width it has")
       (leticl::%render h)
       (is (search "nothing received for" (%screen-text h)) "and it reaches the screen"))))
+
+;;; =========================================================================
+;;; The parity pass of 2026-09-20, closing `docs/parity/rendering.md`.
+;;;
+;;; Every test below names what was MEASURED against
+;;; `~/Projects/letibot/letibot` @ `8af671e` and the reference function that
+;;; settles the question. Segment-level assertions where the style is part of
+;;; the finding: a segment is `(TEXT . STYLE)`, so one `is` pins both.
+;;; =========================================================================
+
+(defun %draw-segs (lines &key (cols 100))
+  "LINES painted onto a real screen and read back as ANSI — what the head
+ACTUALLY draws, cells and all, rather than the segments handed to the painter.
+
+The distinction is the whole point of the sanitising test below: a segment can
+hold any bytes at all, and the question is which of them reach a terminal."
+  (let ((s (make-screen cols (max 1 (length lines)))))
+    (loop for line in lines
+          for r from 0
+          do (let ((c 0))
+               (dolist (seg line)
+                 (setf c (screen-put-string s r c (car seg)
+                                            (leticl::style-index (cdr seg)))))))
+    (format nil "~{~a~^~%~}" (leticl::screen-rows-ansi s))))
+
+(def-test a-tool-payload-cannot-reconfigure-the-operators-terminal (:suite leticl)
+  "**The reference's `f36d927`, ported.** A payload is whatever the command
+wrote. Counted in the operator's own store, 2026-09-20: 44 `tool_result` rows
+carry an escape and 20 carry a MODE string — `?1002`/`?1006` are mouse
+reporting, `?1049` the alternate screen, `?2004` bracketed paste. Turning mouse
+reporting off is why *\"when i expand tools with Ct scroll stops working, even
+after collapsing back\"*.
+
+`without_control` (app.rs:369) maps every control character to a SPACE before
+the row is built (app.rs:9712) — a space and not a deletion, because the wrapper
+about to measure these lines counts columns.
+
+Asserted as the PAIRING, as the reference asserts it: `[?1002l` as text is six
+harmless characters and it is the `ESC` in front of it that a terminal acts on.
+Deliberately not \"no ESC anywhere in the frame\" — this head's own colour is
+made of them."
+  (let* ((*item-facts* nil)
+         (esc (%ch 27))
+         (payload (format nil "before~C[?1002l~C[?1006l~%~C[1;1Hmoved~%~C[0;90mdim~%after"
+                          esc esc esc esc))
+         (body (list :type "tool_result" :call-id "c" :name "bash"
+                     :outcome (list :outcome "ok") :payload payload))
+         (lines (item-lines (list :item-id "p1" :kind "tool_result" :item body)
+                            100 (list :show-tools t)))
+         (drawn (%draw-segs lines :cols 100))
+         (segs (segs-of lines)))
+    (dolist (bad '("[?1002" "[?1006" "[?1049" "[?2004" "[1;1H"))
+      (let ((seq (format nil "~C~a" esc bad)))
+        (is (not (search seq drawn))
+            (format nil "a payload's ESC~a reached a drawn cell" bad))
+        ;; and it never even reaches the segment: sanitised at render, which is
+        ;; where the record stops being the record and starts being a screen
+        (is (not (search seq segs))
+            (format nil "a payload's ESC~a survived into a segment" bad))))
+    ;; And the text itself survives, which is the point of showing it at all.
+    (is (search "before" segs) "the words before the escape")
+    (is (search "moved" segs) "the words after a cursor move")
+    (is (search "after" segs) "and the last line")))
+
+(def-test a-control-character-in-a-payload-costs-a-column (:suite leticl)
+  "Gap 28. The painter drops an escape-only cluster, so an unsanitised
+`ESC[?1002l` measured ZERO columns here and eight there — and every wrap and
+truncation downstream of the row then disagreed with the reference's. A SPACE
+per control character is what `without_control` leaves behind, so the columns
+agree again."
+  (let ((esc (%ch 27)))
+    (is (equal "a  b" (leticl::%without-control (format nil "a~C~Cb" esc (%ch 7))))
+        "two control characters, two spaces")
+    (is (= 8 (string-width (leticl::%without-control (format nil "~C[?1002l" esc))))
+        "a mode string is eight columns of spaces, as the reference measures it")
+    (is (equal "plain" (leticl::%without-control "plain")) "and prose is untouched")))
+
+(def-test an-envelope-line-is-matched-by-its-whole-shape (:suite leticl)
+  "`is_envelope` (app.rs:7925-7928) is `<<<` AND `>>>` AND longer than six. Ours
+tested the opening alone, so a payload line that merely begins `<<<` — a
+heredoc, a conflict marker, a model quoting this very format — was dropped from
+the output with nothing to say it had been."
+  (is (leticl::%envelope-line-p "<<<TOOL_ERROR 5ebfdef6>>>") "a real marker")
+  (is (leticl::%envelope-line-p "  <<<END_OK abc>>>  ") "trimmed first")
+  (is (not (leticl::%envelope-line-p "<<<EOF")) "an opening alone is content")
+  (is (not (leticl::%envelope-line-p "<<<<<<< HEAD")) "and so is a conflict marker")
+  (is (not (leticl::%envelope-line-p "<<<>>>")) "six characters is no envelope")
+  (let* ((*item-facts* nil)
+         (body (list :type "tool_result" :call-id "c" :name "bash"
+                     :outcome (list :outcome "ok")
+                     :payload (format nil "<<<EOF~%body")))
+         (lines (item-lines (list :item-id "e1" :kind "tool_result" :item body)
+                            80 (list :show-tools t))))
+    (is (search "<<<EOF" (segs-of lines)) "and it survives onto the screen")))
