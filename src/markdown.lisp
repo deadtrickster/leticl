@@ -160,7 +160,13 @@ in a terminal with no syntax colour."
                        (cons (string-trim " " (subseq line 1))
                              '(:italic t :dim t)))
                  lines))
-          ;; table rows collect until the table ends
+          ;; A table collects until it ends. The DELIMITER row belongs to the
+          ;; table that is already open — `%table-row-p` rejects it (it is syntax,
+          ;; not a row, and a table cannot START with one), so without this arm it
+          ;; fell through to the paragraph case, FLUSHED the table, and the next
+          ;; row started a second one with its own rule. Measured: a two-row table
+          ;; rendered as two tables with an `|---|---|` line between them.
+          ((and table-rows (%delimiter-line-p line)) (push line table-rows))
           ((%table-row-p line) (push line table-rows))
           ;; list item
           ((and (> (length line) 1)
@@ -199,35 +205,67 @@ in a terminal with no syntax colour."
        (not (every (lambda (c) (member c '(#\space #\- #\: #\|))) line))))
 
 (defun render-table (rows)
-  "Rows to aligned lines: header bold, columns padded to the widest cell.
-The column count is the header's; a row with more cells keeps them
-(render.rs:360 keeps them too)."
+  "A GFM pipe table, to aligned lines — ported from `render.rs::table_lines`.
+
+Three rules, each one the reason the reference rewrote its own:
+
+  · **No outer box.** The header gets a faint rule UNDER it and a faint `│` between
+    columns, the same weight as the quote rail and the code fence, so a table sits
+    in a turn rather than shouting from it. Ours drew a leading `│` and a trailing
+    one and no rule.
+  · **The delimiter row is CONSUMED, not drawn.** `|---|---|` is the table's
+    syntax; ours painted it as a literal line of pipes, which is one mangled row
+    per table.
+  · **Only the header is Strong.** Ours bolded the header AND dimmed every body
+    cell, so a table read as one grey block with a bold top — the operator's
+    *\"tables mangled and no color\"*.
+
+A cell wraps rather than being cut: a row is as tall as its tallest cell, and
+truncation would lose bytes the model wrote, which in a table is where the numbers
+are."
   (when rows
-    (let* ((cells (mapcar #'split-cells rows))
+    (let* ((cells (remove-if #'%delimiter-row-p (mapcar #'split-cells rows)))
            (header (first cells))
-           (ncols (length header))
-           (widths (make-array ncols :initial-element 0)))
-      (loop for row in cells
-            do (loop for i from 0
-                     for c in row
-                     while (< i ncols)
-                     do (setf (aref widths i)
-                              (max (aref widths i) (string-width c)))))
+           (ncols (max 1 (or (and header (length header)) 1)))
+           (widths (make-array ncols :initial-element 1)))
+      (dolist (row cells)
+        (loop for i from 0
+              for c in row
+              while (< i ncols)
+              do (setf (aref widths i)
+                       (max (aref widths i) (string-width c)))))
       (flet ((emit (row style)
                (let ((segs nil))
-                 (loop for i from 0
-                       for c in row
-                       while (< i ncols)
+                 (loop for i from 0 below ncols
+                       for c = (or (nth i row) "")
                        do (push (cons (pad-to c (aref widths i)) style) segs)
                           (unless (= i (1- ncols))
                             (push (cons " │ " '(:dim t)) segs)))
                  (list (nreverse segs)))))
         (append
-         (emit header '(:bold t))
-         (emit (make-list ncols :initial-element "") '(:dim t))
+         (when header (emit header '(:bold t)))
+         ;; the rule UNDER the header, faint, joined by ┼
+         (list (list (cons (format nil "~{~a~^─┼─~}"
+                                   (loop for i from 0 below ncols
+                                         collect (make-string (aref widths i)
+                                                              :initial-element #\─)))
+                           '(:dim t))))
          (loop for row in (rest cells)
                append (emit row nil)))))))
 
+(defun %delimiter-line-p (line)
+  "A raw delimiter LINE: `|---|---|`. See `%delimiter-row-p`."
+  (%delimiter-row-p (split-cells line)))
+
+(defun %delimiter-row-p (cells)
+  "A GFM delimiter row: every cell is only `-`, `:` and spaces. It is the
+table's SYNTAX, never a line of it."
+  (and cells
+       (every (lambda (c)
+                (let ((cell (string-trim " " c)))
+                  (and (plusp (length cell))
+                       (every (lambda (ch) (member ch '(#\- #\:))) cell))))
+              cells)))
 (defun split-cells (line)
   "The cells of one table row, outer pipes dropped, \\| kept literal
 (markdown.rs:481)."

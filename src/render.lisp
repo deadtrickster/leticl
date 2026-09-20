@@ -77,6 +77,23 @@ lines; each returned line is independently paintable."
       (incf r))))
 
 ;;; ------------------------------------------------------------ rendering ;;;
+(defun segs-text-of (line)
+  "A segment-line's text, for asking whether it renders as nothing."
+  (if line (format nil "~{~a~}" (mapcar #'car line)) ""))
+
+(defun item-row-class (item)
+  "Which KIND of row this is, for the one question the layout asks of its
+neighbours: does a blank line belong between them. The reference's `RowClass`."
+  (let ((body (item-body item)))
+    (if (null body)
+        :other
+        (case (intern (string-upcase (getf body :type)) :keyword)
+          ((:user) :speech)
+          ((:assistant) (if (plusp (length (string-trim " " (or (getf body :text) ""))))
+                            :speech :activity))
+          ((:reasoning :tool_result) :activity)
+          (t :other)))))
+
 (defun %viewport-lines (head cols want)
   "The conversation's last WANT lines (scrolled up by head-scroll), as
 segment lines oldest-first. The running turn is the newest thing there is, so
@@ -97,10 +114,31 @@ terminal: the newest content sat at row 1 and the oldest at row 57.)"
                       (queued-lines head cols))))
     ;; prepend committed rows, newest first, until enough lines exist; the
     ;; accumulator stays oldest-first because each older row goes in front
-    (loop for i from (1- (length (session-items s))) downto 0
-          while (< (length all) need)
-          do (let ((il (item-lines (aref (session-items s) i) cols (head-prefs head))))
-               (setf all (append il all))))
+    ;;
+    ;; **AIR WHERE THE KIND CHANGES**, which is the reference's `RowClass` rule and
+    ;; the spacing this head was missing: a blank line goes before a row unless
+    ;; BOTH it and the row above are `Activity`. Two tool cards in a row are one
+    ;; block and read as one — a blank between each was a third of the vertical
+    ;; budget spent separating what a glyph in the first column already separates —
+    ;; while prose against a card is a change of kind and gets the air.
+    ;;
+    ;; A row that renders NOTHING gets no separator either. An assistant row whose
+    ;; text is whitespace and whose every call is drawn by its own result is a
+    ;; common shape (it is what a tool-calling round looks like), and paying two
+    ;; blank lines for it puts a hole in the transcript.
+    (let ((class-above nil))
+      (loop for i from (1- (length (session-items s))) downto 0
+            while (< (length all) need)
+            do (let* ((item (aref (session-items s) i))
+                      (il (item-lines item cols (head-prefs head)))
+                      (class (item-row-class item)))
+                 (unless (every (lambda (l) (zerop (length (string-trim " " (segs-text-of l)))))
+                                il)
+                   (when (and all class-above
+                              (not (and (eq class :activity) (eq class-above :activity))))
+                     (setf all (cons nil all)))
+                   (setf class-above class))
+                 (setf all (append il all)))))
     (let* ((n (length all))
            (end (max 0 (- n (head-scroll head))))
            (start (max 0 (- end want))))
