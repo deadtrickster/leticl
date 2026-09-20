@@ -89,6 +89,8 @@ text — which is what makes the ledger safe to forget about."
     (setf (composer-buffer (head-composer head)) ""
           (composer-cursor (head-composer head)) 0)
     (cond
+      ;; A PICKER IS UP: the line is a row's number or a name, as the card says
+      (*pick-open* (pick-by-text head line))
       ((zerop (length line)))
       ;; A DECISION IS OPEN: the line is an answer to it, not a prompt.
       ;;
@@ -164,6 +166,8 @@ shows the candidates on the status line."
                             :secret nil))
           (setf (head-secret-req head) nil)))
        (setf (head-dirty head) t))
+      ;; the `allow-all` question owns every key while it is up
+      (*mode-confirm* (mode-confirm-key head key))
       ;; the quit card: leave, or leave and stop the daemon (v20)
       ((head-quit-open head)
        (flet ((leave (choice)
@@ -204,8 +208,7 @@ shows the candidates on the status line."
       ;; and offset from the last paint rather than from the click.
       ((and (eq type :mouse)
             (eq (getf key :kind) :press)
-            (member (head-mode head) '(:picker :jobs :subagents :todos
-                                       :mode-picker :models-picker :config)))
+            (member (head-mode head) '(:picker :jobs :subagents :todos :config)))
        (let* ((row (getf key :y))
               ;; the pane starts at screen row 1 (row 0 is the top border), and
               ;; the offset says how many pane LINES are hidden above it
@@ -223,8 +226,10 @@ shows the candidates on the status line."
       ;; the same argument the pane scroll offset makes. A per-pane cursor would
       ;; be a `head` slot each, and a struct slot is a RESTART: the one thing
       ;; this head must not need.
-      ((member (head-mode head) '(:help :status :config :jobs :subagents :peek :todos :picker
-                                       :mode-picker :models-picker))
+      ;; a picker's own keys; what it does not take is the composer's, so a name
+      ;; can be typed under the card
+      ((and *pick-open* (pick-key-event head key)))
+      ((member (head-mode head) '(:help :status :config :jobs :subagents :peek :todos :picker))
        (flet ((rows () (pane-row-count head (head-mode head)))
               (move-cursor (n)
                 (setf (head-picker-sel head)
@@ -313,25 +318,6 @@ shows the candidates on the status line."
                                (picker-sessions (head-session head)))))
                  (when hit
                    (%send head (make-switch (getf hit :session-id) 0))
-                   (setf (head-mode head) :normal))))
-              (:mode-picker
-               ;; the mode travels as its own frame with the name the daemon
-               ;; listed, so the head keeps no vocabulary of its own to drift
-               (let ((c (nth (head-picker-sel head) (setting-choices head "mode"))))
-                 (awhen c
-                   (%send head (list :frame "mode"
-                                     :client-request-id (next-request-id)
-                                     :expected-seq (session-expected-seq (head-session head))
-                                     :name it))
-                   (say head (format nil "mode → ~a" it))
-                   (setf (head-mode head) :normal))))
-              (:models-picker
-               ;; /models is a daemon-side verb: the head sends the line it would
-               ;; have typed, which is how `slash` frames work
-               (let ((c (nth (head-picker-sel head) (setting-choices head "model"))))
-                 (awhen c
-                   (%send-slash head (format nil "models ~a" it))
-                   (say head (format nil "model → ~a" it))
                    (setf (head-mode head) :normal)))))
             (setf (head-dirty head) t))
            ((:char) (when (eql (getf key :ch) #\q)
@@ -599,16 +585,6 @@ text is remembered here, then SUBSTITUTED BACK on submit. The point is that a
 three-thousand-line paste is one visible token while you are typing and still
 arrives whole — the operator sees a marker, the model receives the paste.")
 
-(defvar *esc-at* nil
-  "When the last bare ESC arrived, for the double-tap interrupt.
-
-Kept next to the key handler rather than in the head, because it is about the
-KEY STREAM and not about the session.")
-(defparameter *esc-double-ms* 5000
-  "How long a second `esc` still counts as the same gesture. The reference's
-number: a double tap is one intent, and five seconds is the width of a hesitation
-rather than a second thought.")
-
 (defun composer-buffer-set (c text)
   "Replace the buffer wholesale, for undo."
   (setf (composer-buffer c) text
@@ -723,8 +699,6 @@ together."
                  (:jobs (jobs-lines head 80))
                  (:subagents (subagent-lines head 80))
                  (:todos (todos-lines head 80))
-                 (:mode-picker (mode-picker-lines head 80))
-                 (:models-picker (models-picker-lines head 80))
                  (:config (config-lines head (head-settings head) 80))
                  (t (values nil nil)))
              (declare (ignore lines))
@@ -772,8 +746,6 @@ the folded tree — each the same list the pane draws from."
     (:todos (length (repo-todo-rows-cached
                      (getf (session-wiring (head-session head)) :workspace))))
     (:picker (length (picker-sessions (head-session head))))
-    (:mode-picker (length (setting-choices head "mode")))
-    (:models-picker (length (setting-choices head "model")))
     (:config (length (config-rows head)))
     (t 0)))
 

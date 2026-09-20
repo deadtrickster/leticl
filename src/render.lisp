@@ -281,15 +281,22 @@ scrolls the transcript by a row every keystroke.
     ;; tail ends where the box's right edge does, and ours stopped three short
     (put-segments s 0 +gutter+ (top-border head cols))
     ;; the ask card rides at the front of the chrome, transcript visible above
+    ;; the `allow-all` question sits at the FRONT of the chrome, above any card:
+    ;; while it is up every key belongs to it, and a question that owns the
+    ;; keyboard has to be the thing on the screen
     (cond ((head-secret-req head)
            (setf card-lines (secret-card-lines head cols)))
           ((%open-decision head)
-           (setf card-lines (decision-card-lines head cols))))
+           (setf card-lines (decision-card-lines head cols)))
+          ;; the pickers are CARDS, with the transcript visible above them, as the
+          ;; reference draws them — ours were full-body panes
+          (*pick-open*
+           (setf card-lines (pick-card-lines head cols))))
+    (setf card-lines (append (mode-confirm-lines cols) card-lines))
     (let ((card-rows (length card-lines)))
       (cond
         ;; full-body screens replace the transcript
-        ((member (head-mode head) '(:help :status :config :jobs :subagents :peek :picker :todos
-                                     :mode-picker :models-picker))
+        ((member (head-mode head) '(:help :status :config :jobs :subagents :peek :picker :todos))
          (let* ((lines nil)
                 (sel-line nil)
                 (room (max 1 (- body-bottom body-top))))
@@ -306,9 +313,7 @@ scrolls the transcript by a row every keystroke.
                (:peek (peek-lines head cols))
                (:picker (picker-lines (head-session head)
                                       (head-picker-sel head) cols))
-               (:todos (todos-lines head cols))
-               (:mode-picker (mode-picker-lines head cols))
-               (:models-picker (models-picker-lines head cols))))
+               (:todos (todos-lines head cols))))
            ;; tell the KEY handler what it may scroll: it clamps without
            ;; re-rendering, and the cursor can then scroll itself into view
            (setf *pane-lines* (length lines)

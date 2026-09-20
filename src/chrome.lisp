@@ -13,6 +13,17 @@
 
 (in-package #:leticl)
 
+(defvar *esc-at* nil
+  "When the last bare ESC arrived, for the double-tap interrupt.
+
+About the KEY STREAM, not the session, so not a head slot. Defined here, before
+`editor.lisp`, because the hint bar reads it: a special referenced before its
+defvar is a full compile-time WARNING.")
+(defparameter *esc-double-ms* 5000
+  "How long a second `esc` still counts as the same gesture. The reference's
+number: a double tap is one intent, and five seconds is the width of a hesitation
+rather than a second thought.")
+
 (defvar *resyncs* 0
   "How many Resync frames this head has taken. A counter the reference keeps on
 its status line and shows on /status; a non-zero value means this head lost its
@@ -327,48 +338,41 @@ ever on a number that is zero."
 (defun hint-bar (head cols)
   "The line under the composer that says what the keys do HERE.
 
-The reference's `hint_bar`, and its point is that the hint is per-context: a key
-that closes a card is not the key that interrupts a turn, and a hint that names
-the wrong key is worse than no hint at all. It is the first thing dropped on a
-narrow screen."
+The reference's `hint_bar`, row for row: the composer's own hint first (`enter
+send · ctrl+c exit`, or the interrupt/clear pair while a turn runs, or `esc again
+to interrupt` while esc is armed), then ` · ` and the context's tail — a key that
+closes a card is not the key that interrupts a turn, and a hint that names the
+wrong key is worse than no hint at all. The quit card stands alone: its second
+ctrl-c closes it, so the prefix's `ctrl+c exit` would be a lie there. Measured
+against letibot's row 63 with the mode picker up: ours had dropped the prefix."
   (declare (ignore cols))
-  (list
-   (cons
-    (cond
-      ((head-quit-open head) "1/2 or ↑↓ then enter · esc stays")
-      ((eq (head-mode head) :help) "esc closes this")
-      ((eq (head-mode head) :status) " esc closes this · every counter, and what it means")
-      ((eq (head-mode head) :config) "arrows move · enter changes a row marked ✎ · esc closes")
-      ((eq (head-mode head) :jobs) "↑↓ then enter reads one · esc closes")
-      ((eq (head-mode head) :subagents) "↑↓ then enter peeks one · esc closes")
-      ((eq (head-mode head) :todos) "↑↓ moves · enter or tab unfolds · esc closes")
-      ((eq (head-mode head) :peek) "esc closes")
-      ((eq (head-mode head) :picker) "↑↓ then enter switches · esc closes")
-      ((eq (head-mode head) :mode-picker) "↑↓ then enter · esc closes")
-      ((eq (head-mode head) :models-picker) "↑↓ then enter · esc closes")
-      ((head-secret-req head) "enter submits · esc refuses the password")
-      ((%open-decision head) "a row number answers · ↑↓ then enter · or type an option")
-      ;; the ordinary line, in letibot's own order and wording — measured off
-      ;; its screen: `enter send · ctrl+c exit` FIRST, because those are the two
-      ;; keys a person needs before any chord, then the chords, then completion
-      ;; and help last.
-      (t "enter send · ctrl+c exit · ctrl-s sessions · ctrl-p todos · ctrl-g subagents · ctrl-r thinking · ctrl-t tool output · ctrl-q jobs · tab completes /commands · /help"))
-    '(:dim t))))
-
-;;; ---------------------------------------------------------- turn status ;;;
-;;;
-;;; Ported from `App::turn_status`. It rides the composer box's BOTTOM edge,
-;;; beside the alarm triangle — which is why the reference has no separate status
-;;; row: the box's edge is the status line when the box is there, and a plain row
-;;; only when the screen is too short for a box.
-;;;
-;;; Two refusals, both measured in the reference's own comment:
-;;;
-;;;  · a turn out of a SNAPSHOT has no timestamps, so `now - 0` is an epoch
-;;;    difference and the line read `Responding · 496940h16m`. Unmeasured means
-;;;    *started before this head attached*, never a number nobody took;
-;;;  · a zero count is a zero field wearing a measurement's clothes: nothing yet
-;;;    is NO field, not `· 0 tok`.
+  (let* ((running (and (session-turn (head-session head))
+                       (string= (turn-state-name (session-turn (head-session head))) "running")))
+         (prefix (cond ((head-quit-open head) nil)
+                       ((and *esc-at*
+                             (< (- (get-internal-real-time) *esc-at*)
+                                (* *esc-double-ms* (/ internal-time-units-per-second 1000.0))))
+                        (cons "esc again to interrupt" '(:bold t :fg :yellow)))
+                       (running (cons "esc interrupt · ctrl+c clear" '(:dim t)))
+                       ((zerop (length (composer-buffer (head-composer head))))
+                        (cons "enter send · ctrl+c exit" '(:dim t)))
+                       (t (cons "enter send · alt+enter newline · ctrl+c clear" '(:dim t)))))
+         (tail (cond
+                 ((head-quit-open head) "1/2 or ↑↓ then enter · esc stays")
+                 ((member (head-mode head) '(:help :status)) "esc closes this")
+                 ((eq (head-mode head) :picker) "type a number to switch · /new [title] · esc closes")
+                 (*pick-open* "a row number switches · ↑↓ then enter · or type a name · esc closes")
+                 ((eq (head-mode head) :todos) "↑↓ moves · enter or tab unfolds · pgup/pgdn and the wheel scroll · esc closes")
+                 ((eq (head-mode head) :config) "arrows move · enter changes a row marked ✎ · esc closes")
+                 ((eq (head-mode head) :subagents) "subagents this session spawned · esc closes")
+                 ((eq (head-mode head) :jobs) "background jobs this session started · ↑↓ then enter reads one · esc closes")
+                 ((eq (head-mode head) :peek) "arrows scroll · enter re-reads · esc back")
+                 ((head-secret-req head) "enter submits · esc refuses the password")
+                 ((%open-decision head) "a row number answers · ↑↓ then enter · or type an option · /help")
+                 (t "ctrl-s sessions · ctrl-p todos · ctrl-g subagents · ctrl-r thinking · ctrl-t tool output · ctrl-q jobs · tab completes /commands · /help"))))
+    (if prefix
+        (list prefix (cons (format nil " · ~a" tail) '(:dim t)))
+        (list (cons tail '(:dim t))))))
 
 (defun turn-status (head)
   "The running turn in a few words, or NIL when no turn is running."

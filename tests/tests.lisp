@@ -1695,49 +1695,118 @@ it somehow?\"*. Unfolded, the detail is drawn under the row."
 (defun %head-with-settings ()
   (let ((h (%make-head)))
     (setf (head-settings h)
-          (list (list :key "mode" :value "automode-edits"
-                      :choices (list "read-only" "always-ask" "automode-edits"))
+          (list (list :key "mode" :value "automode-edits (this box)"
+                      :choices (list "read-only" "always-ask" "writes allowed" "automode"
+                                     "automode-edits" "allow-all"))
                 (list :key "model" :value "deepseek/deepseek-flash"
                       :choices (list "local" "deepseek/deepseek-flash" "glm/glm-5.3-flash"))))
     h))
 
-(def-test the-mode-picker-lists-the-daemons-own-choices (:suite leticl)
-  "The head keeps no list of modes to drift: `SettingRow.choices` is the
-daemon's, and this is why the head asks for the settings at attach."
-  (let* ((h (%head-with-settings)))
-    (multiple-value-bind (lines sel-line) (mode-picker-lines h 80)
-      (let ((text (format nil "~{~a~^~%~}" (lines-text lines))))
-        (is (search "read-only" text) "a choice is listed")
-        (is (search "automode-edits" text) "and another")
-        (is (search "●" text) "the CURRENT value is marked")
-        (is (integerp sel-line) "and the cursor's line comes back")))))
+(def-test the-mode-picker-is-a-card-with-the-references-rows (:suite leticl)
+  "The operator: *\"mode switch doesnt work and it doesnt look like the one from
+letibot … i cant change selection, and in letibot it is not a full pane\"*. The
+reference's `mode_picker_lines`: a bold title, `▸  1  name` rows with the
+cursor's text reversed and `← now` on the one in force, two dim hint rows — a
+CARD above the composer, the transcript still above it."
+  (let* ((h (%head-with-settings))
+         (leticl::*pick-open* nil) (leticl::*mode-confirm* nil))
+    (open-pick h :mode)
+    (is (eq :normal (head-mode h)) "no full-body pane: the transcript stays")
+    (is (= 4 (head-picker-sel h)) "seeded on what answers now (automode-edits is the fifth)")
+    (let* ((lines (pick-card-lines h 100))
+           (text (lines-text lines)))
+      (is (string= "the mode this session runs under" (first text)) "the title")
+      (is (uiop:string-prefix-p "   1  read-only" (second text))
+          "a row: mark, number, name — padded to the width, as `split_row` pads")
+      (is (uiop:string-prefix-p "▸  5  automode-edits" (sixth text)) "the cursor's row")
+      (is (search "← now" (sixth text)) "says it is the one in force")
+      (is (= 100 (string-width (sixth text))) "and is padded to the card's width")
+      (is (getf (cdr (first (sixth lines))) :reverse) "the mark and number are in reverse video")
+      (is (getf (cdr (second (sixth lines))) :reverse) "and so is the name")
+      (is (not (getf (cdr (third (sixth lines))) :reverse))
+          "but the padding is plain, as the reference's raw row has it")
+      (is (search "↑↓ moves · enter switches · or type a name or the number on the left · esc closes" (eighth text))
+          "the hint row")
+      (is (search "a mode change moves THIS session" (ninth text)) "and what a change means"))))
 
 (def-test a-picker-with-no-choices-says-why-not-guesses (:suite leticl)
   "A picker whose list is empty because nobody asked the daemon is a picker that
-looks broken — so it says which it is."
-  (let ((h (%make-head)))                ; no settings at all
-    (let ((text (format nil "~{~a~^~%~}" (lines-text (mode-picker-lines h 80)))))
-      (is (search "reports no choices" text) "it names the problem")
-      (is (search "asked" text) "and points at the cause"))))
+looks broken — so it says which it is, in the reference's words."
+  (let ((h (%make-head)) (leticl::*pick-open* :mode))
+    (let ((text (format nil "~{~a~^~%~}" (lines-text (pick-card-lines h 120)))))
+      (is (search "this daemon has not named its modes" text) "it names the problem")
+      (is (search "/mode NAME" text) "and the way through"))))
 
 (def-test the-models-picker-lists-models-not-modes (:suite leticl)
-  (let* ((h (%head-with-settings)))
-    (let ((text (format nil "~{~a~^~%~}" (lines-text (models-picker-lines h 80)))))
+  (let* ((h (%head-with-settings)) (leticl::*pick-open* :model))
+    (let ((text (format nil "~{~a~^~%~}" (lines-text (pick-card-lines h 120)))))
+      (is (search "what answers this conversation" text) "its own title")
       (is (search "deepseek/deepseek-flash" text) "the model row's choices")
       (is (search "glm/glm-5.3-flash" text) "all of them")
-      (is (not (search "read-only" text)) "and NOT the mode row's"))))
+      (is (not (search "read-only" text)) "and NOT the mode row's")
+      (is (search "/default-model NAME" text) "and the third hint, which is the models'"))))
 
-(def-test a-picker-selection-travels-as-the-daemons-own-word (:suite leticl)
-  "The mode goes as its own frame carrying the name the daemon LISTED, and the
-model as the slash line the operator would have typed — so neither vocabulary is
-copied into the head to drift."
-  (let* ((h (%head-with-settings)))
-    (setf (head-mode h) :mode-picker (head-picker-sel h) 1)
-    ;; the key handler builds the frame; assert on what it would send
-    (is (string= "always-ask" (nth (head-picker-sel h) (setting-choices h "mode")))
-        "the cursor picks a choice by the daemon's word")
-    (is (string= "automode-edits" (setting-value h "mode"))
-        "and the current value is the daemon's, not the head's")))
+(def-test the-picker-moves-and-takes-its-pick (:suite leticl)
+  "↑↓ wrap, a digit takes that row, enter takes the cursor's, esc closes — and a
+name typed under the card is matched at enter (`pick_mode`): the number, an exact
+name with `_`/space/case forgiven, or a unique prefix. The frames are witnessed on
+the head's own stream, a string stream standing in for the socket."
+  (let* ((h (%head-with-settings))
+         (leticl::*pick-open* nil) (leticl::*mode-confirm* nil)
+         (wire (make-string-output-stream)))
+    (setf (leticl::head-stream h) wire (head-connected h) t)
+    (flet ((sent ()
+             ;; every frame written so far, decoded, newest first
+             (let ((text (get-output-stream-string wire)))
+               (nreverse (mapcar #'json-decode
+                                 (remove "" (uiop:split-string text :separator '(#\newline))
+                                         :test #'string=))))))
+      (open-pick h :mode)
+      (is (= 4 (head-picker-sel h)) "seeded on the mode in force")
+      (leticl::%handle-key h (list :type :down))
+      (is (= 5 (head-picker-sel h)) "down moves the cursor")
+      (leticl::%handle-key h (list :type :down))
+      (is (= 0 (head-picker-sel h)) "and wraps")
+      (leticl::%handle-key h (list :type :up))
+      (is (= 5 (head-picker-sel h)) "up wraps the other way")
+      ;; a digit takes that row
+      (leticl::%handle-key h (list :type :char :ch #\2))
+      (is (null leticl::*pick-open*) "the card closes")
+      (let ((f (first (sent))))
+        (is (equal "mode" (getf f :frame)) "a mode frame went out")
+        (is (equal "always-ask" (getf f :name)) "carrying the row's name")
+        (is (null (getf f :consented)) "not consented — only allow-all asks"))
+      ;; the mode in force is said, not sent
+      (open-pick h :mode)
+      (leticl::%handle-key h (list :type :enter))
+      (is (null (sent)) "enter on the mode already in force sends nothing")
+      ;; a typed name
+      (open-pick h :mode)
+      (composer-insert (head-composer h) "Writes_Allowed")
+      (leticl::%handle-key h (list :type :enter))
+      (is (equal "writes allowed" (getf (first (sent)) :name))
+          "a typed name matches with case, `_` and spaces forgiven")
+      ;; a unique prefix
+      (open-pick h :mode)
+      (composer-insert (head-composer h) "read")
+      (leticl::%handle-key h (list :type :enter))
+      (is (equal "read-only" (getf (first (sent)) :name)) "a unique prefix")
+      ;; allow-all asks first
+      (open-pick h :mode)
+      (leticl::%handle-key h (list :type :char :ch #\6))
+      (is (equal "allow-all" leticl::*mode-confirm*) "allow-all opens the question")
+      (is (null (sent)) "and sends nothing yet")
+      (is (search "[y] or [enter] confirm" (format nil "~{~a~^~%~}" (lines-text (mode-confirm-lines 200))))
+          "the question is on the screen")
+      (leticl::%handle-key h (list :type :char :ch #\y))
+      (let ((f (first (sent))))
+        (is (equal "allow-all" (getf f :name)))
+        (is (eq t (getf f :consented)) "y sends it consented"))
+      (is (null leticl::*mode-confirm*) "and the question is gone")
+      ;; esc closes
+      (open-pick h :mode)
+      (leticl::%handle-key h (list :type :esc))
+      (is (null leticl::*pick-open*) "esc closes the card"))))
 
 (def-test a-picker-opens-only-when-the-rows-are-asked-for (:suite leticl)
   "The picker's list IS the daemon's choices, so opening it asks if it has to."
@@ -2641,8 +2710,7 @@ whose one segment was itself a line, and `put-segments` handed a list to
 function the way `%render` does and checks the one shape it can paint; it is the
 check that would have caught the bug on the day it landed."
   (let ((h (%pane-head)))
-    (dolist (mode '(:help :status :config :jobs :subagents :peek :picker :todos
-                    :mode-picker :models-picker))
+    (dolist (mode '(:help :status :config :jobs :subagents :peek :picker :todos))
       (setf (head-mode h) mode (head-picker-sel h) 1)
       (let ((lines (case mode
                      (:help (help-lines 210))
@@ -2652,9 +2720,7 @@ check that would have caught the bug on the day it landed."
                      (:subagents (subagent-lines h 210))
                      (:peek (peek-lines h 210))
                      (:picker (picker-lines (head-session h) (head-picker-sel h) 210))
-                     (:todos (todos-lines h 210))
-                     (:mode-picker (mode-picker-lines h 210))
-                     (:models-picker (models-picker-lines h 210)))))
+                     (:todos (todos-lines h 210)))))
         (is (plusp (length lines)) (format nil "the ~(~a~) pane has rows" mode))
         (is (%well-formed-lines-p lines)
             (format nil "and every one of the ~(~a~) pane's segments is (string . plist)" mode))))

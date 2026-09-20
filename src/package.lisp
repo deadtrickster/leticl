@@ -100,7 +100,9 @@
    #:quit-card-lines #:secret-card-lines
    #:todos-lines #:repo-todo-lines #:repo-todo-rows #:repo-todo-rows-cached
    #:read-todo-md #:strip-todo-markup
-   #:jobs-lines #:subagent-lines #:subagent-rows #:mode-picker-lines #:models-picker-lines
+   #:jobs-lines #:subagent-lines #:subagent-rows #:pick-card-lines #:open-pick #:close-pick
+   #:take-pick #:pick-by-text #:pick-key-event #:mode-action #:mode-confirm-key
+   #:mode-confirm-lines #:pick-choices #:pick-current
    #:picker-sessions #:config-rows #:config-change #:pane-width #:wrap-text
    #:tilde-path #:short-id #:bytes-human #:split-row
    #:*rendered-total* #:*scrubbed-total* #:*filtered-total* #:%send-slash

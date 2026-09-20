@@ -1085,14 +1085,24 @@ any."
 
 ;;; ------------------------------------------------------------ pickers ;;;
 ;;;
-;;; The MODE and MODELS pickers, the session picker's twins for one question each.
-;;; Both read their choices from the daemon's own settings rows — `SettingRow`
-;;; carries `choices` from protocol 18 — so the head keeps no list to drift.
+;;; The MODE and MODELS pickers, to the reference's shape (`mode_picker_lines`,
+;;; app.rs): a CARD above the composer with the transcript still visible, not a
+;;; full-body pane — the operator, looking at ours: *"in letibot it is not a full
+;;; pane"*. Both read their choices from the daemon's own settings rows
+;;; (`SettingRow.choices`, protocol 18), so the head keeps no list to drift.
 ;;;
-;;; The reference has one flag per picker for the same reason it has one cursor
-;;; for all of them: the choices, the cursor, the scroll offset and the drawing
-;;; are shared, because the one thing this file has already been burned by is a
-;;; second copy of a list that then drifts.
+;;; One flag for both, one cursor (`head-picker-sel`), one drawing, because the
+;;; one thing this file has already been burned by is a second copy of a list that
+;;; then drifts. The flag is a defvar: a head slot is a struct layout change, which
+;;; is a restart.
+
+(defvar *pick-open* nil
+  "Which picker is up: NIL, `:mode` or `:model`.")
+
+(defvar *mode-confirm* nil
+  "The mode name awaiting the operator's [y]/[enter], or NIL. `allow-all` is the
+one mode that asks first — it is the point where privilege escalation, deletes
+outside the project and first contact with a new host all stop asking.")
 
 (defun setting-choices (head key)
   "The choices the daemon reports for setting KEY, or NIL.
@@ -1111,36 +1121,198 @@ looks broken (P44 in TODO.md is the same bug one layer down)."
                         :key (lambda (r) (getf r :key)) :test #'string=))))
     (getf row :value)))
 
-(defun %choice-lines (head label key cols)
-  "A picker body: every choice, the CURRENT one marked, the cursor reversed.
+(defun pick-key (which)
+  (ecase which (:mode "mode") (:model "model")))
 
-Returns the lines and, as a second value, the cursor's LINE — see
-`subagent-lines` for why the two are different numbers."
-  (declare (ignore cols))
-  (let* ((choices (setting-choices head key))
-         (current (setting-value head key))
-         (sel (head-picker-sel head))
-         (header (list (list (cons (format nil " ~a " label) '(:bold t))
-                             (cons "  ↑↓ then enter · esc closes" '(:dim t)))
-                       nil)))
-    (values
-     (append header
-             (if choices
-                 (loop for c in choices
-                       for i from 0
-                       for here = (and current (string= c current))
-                       collect (list (cons (format nil "  ~a ~a" (if here "●" " ") c)
-                                           (cond ((= i sel) '(:reverse t :bold t))
-                                                 (here '(:fg :bright-cyan :bold t))
-                                                 (t nil)))))
-                 (list (list (cons (format nil "  (the daemon reports no choices for ~a — has it been asked?)" key)
-                                   '(:dim t))))))
-     (+ (length header) sel))))
+(defun pick-choices (head &optional (which *pick-open*))
+  (and which (setting-choices head (pick-key which))))
 
-(defun mode-picker-lines (head cols)
-  "The modes this session's project can be moved to."
-  (%choice-lines head "mode" "mode" cols))
+(defun pick-current (head &optional (which *pick-open*))
+  "The choice that answers NOW, as the picker's list spells it: the mode row's
+value is `allow-all (this box, consented)` and the list says `allow-all`, so the
+first word; the model row's is `local (qwen-3.8-27b)` or `deepseek/…`, and the
+list says the bare form the header shows."
+  (let ((v (or (and which (setting-value head (pick-key which))) "")))
+    (ecase which
+      (:mode (subseq v 0 (or (position #\space v) (length v))))
+      (:model (%header-model v))
+      ((nil) ""))))
 
-(defun models-picker-lines (head cols)
-  "The models this daemon can reach."
-  (%choice-lines head "model" "model" cols))
+(defun %header-model (value)
+  "`local (qwen-3.8-27b)` → `qwen-3.8-27b`; anything else as written — the
+reference's `header_model`."
+  (if (and (alexandria:starts-with-subseq "local (" value)
+           (alexandria:ends-with #\) value))
+      (subseq value 7 (1- (length value)))
+      value))
+
+(defun open-pick (head which)
+  "Open the picker for WHICH, seeded on what answers now so enter on an untouched
+list is a no-op — the courtesy the reference pays. One list on the screen at a
+time: any pane closes."
+  (unless (head-settings head) (%send head (make-settings)))
+  (setf *pick-open* which
+        (head-mode head) :normal
+        (head-picker-sel head)
+        (or (position (pick-current head which) (pick-choices head which) :test #'string=) 0)
+        (head-dirty head) t))
+
+(defun close-pick (head)
+  (setf *pick-open* nil (head-dirty head) t))
+
+(defun pick-card-lines (head cols)
+  "The picker's card — `mode_picker_lines` row for row: a bold title, each choice
+as `▸  1  name` with the cursor's row reversed whole and `← now` at the right of
+the one that answers, then the two dim hint rows (three for models)."
+  (let* ((models (eq *pick-open* :model))
+         (choices (pick-choices head))
+         (current (pick-current head))
+         (n (length choices))
+         (sel (min (head-picker-sel head) (max 0 (1- n))))
+         (w (max 20 cols)))
+    (append
+     (list (list (cons (if models "what answers this conversation"
+                           "the mode this session runs under")
+                       '(:bold t))))
+     (unless choices
+       (list (list (cons (if models
+                             "  this daemon has not named its models — `/models PROVIDER/MODEL` still works, if you know the name."
+                             "  this daemon has not named its modes — `/mode NAME` still works, if you know the name.")
+                         '(:dim t)))))
+     (loop for name in choices
+           for i from 0
+           for here = (string= name current)
+           for picked = (= i sel)
+           collect (let* ((left (list (cons (format nil "~a ~2d  " (if picked "▸" " ") (1+ i)) nil)
+                                      (cons name (if here '(:bold t) nil))))
+                          (right (if here (list (cons "← now" '(:dim t))) nil))
+                          ;; the cursor's row is reversed over its TEXT — mark,
+                          ;; number, name — and the padding is plain: the
+                          ;; reference wraps `left` in REVERSE…RESET before
+                          ;; `split_row` pads it. Measured on its raw row.
+                          (left (if picked
+                                    (mapcar (lambda (seg) (cons (car seg) (append (cdr seg) '(:reverse t))))
+                                            left)
+                                    left)))
+                     (split-row left right w)))
+     (list (list (cons "  ↑↓ moves · enter switches · or type a name or the number on the left · esc closes"
+                       '(:dim t)))
+           (list (cons (if models
+                           "  this conversation only, from the next turn; the transcript and the tools are untouched"
+                           "  a mode change moves THIS session from its next call, and every later session in this project.")
+                       '(:dim t))))
+     (when models
+       (list (list (cons "  `/default-model NAME` is what new sessions start on · this is not that"
+                         '(:dim t))))))))
+
+(defun mode-confirm-lines (cols)
+  "The `allow-all` question, wrapped rather than trimmed: this one is read, not
+glanced at."
+  (when *mode-confirm*
+    (mapcar (lambda (l) (mapcar (lambda (seg) (cons (car seg) '(:bold t :fg :yellow))) l))
+            (wrap-segments
+             (list (cons "allow-all: privilege escalation, deletes outside the project and first contact with a new host all stop asking. On this box that is this box. It lasts for this session only, and a daemon restart drops it.  [y] or [enter] confirm   [esc] or any other key cancels"
+                         nil))
+             (max 20 cols)))))
+
+(defun %send-mode (head name consented)
+  (%send head (list :frame "mode"
+                    :client-request-id (next-request-id)
+                    :expected-seq (session-expected-seq (head-session head))
+                    :name name
+                    :consented consented)))
+
+(defun mode-action (head name)
+  "Move the session to mode NAME — `allow-all` asks first (`mode_action`)."
+  (if (string= name "allow-all")
+      (setf *mode-confirm* name (head-dirty head) t)
+      (progn (%send-mode head name nil)
+             (say head (format nil "mode → ~a" name)))))
+
+(defun take-pick (head name)
+  "The picker's choice NAME, taken: the card closes; a mode already in force is
+said and not sent; a model goes as the slash line the operator would have typed
+(`take_pick`, `take_mode`)."
+  (let ((which *pick-open*))
+    (close-pick head)
+    (ecase which
+      (:mode (if (string= name (pick-current head :mode))
+                 (say head "already that mode")
+                 (mode-action head name)))
+      (:model (say head (format nil "switching to ~a…" name))
+              (%send-slash head (format nil "models ~a" name))
+              (%send head (make-settings))))))
+
+(defun pick-by-text (head typed)
+  "What the operator TYPED while the picker was up, at enter — `pick_mode`: the
+row's number, an exact name (case, `_` and spaces forgiven), or a unique prefix;
+otherwise say why not and keep the card."
+  (let* ((choices (pick-choices head))
+         (typed (string-trim " " typed)))
+    (cond
+      ((zerop (length typed)) (close-pick head))
+      ((null choices)
+       (say head (if (eq *pick-open* :model)
+                     "this daemon does not send the model list; use `/models PROVIDER/MODEL`"
+                     "this daemon does not send the mode list; use `/mode NAME`")))
+      (t
+       (let* ((n (ignore-errors (parse-integer typed)))
+              (norm (lambda (s) (substitute #\- #\space (substitute #\- #\_ (string-downcase s)))))
+              (want (funcall norm typed))
+              (exact (find want choices :key norm :test #'string=))
+              (hits (remove-if-not (lambda (c) (alexandria:starts-with-subseq want (funcall norm c)))
+                                   choices)))
+         (cond
+           ((and n (<= 1 n (length choices))) (take-pick head (nth (1- n) choices)))
+           (exact (take-pick head exact))
+           ((= (length hits) 1) (take-pick head (first hits)))
+           ((null hits)
+            (say head (format nil "no ~a matches ~s — esc closes the list"
+                              (if (eq *pick-open* :model) "model" "mode") typed)))
+           (t (say head (format nil "~d ~as match ~s; type the number on the left instead"
+                                (length hits) (if (eq *pick-open* :model) "model" "mode") typed)))))))))
+
+(defun pick-key-event (head key)
+  "The picker's own keys — the reference's arm: ↑↓ wrap, enter takes the cursor's
+row and a digit takes that row, both only when nothing is typed; esc closes.
+Returns T when the key was the picker's; anything else is the composer's, which is
+how a name gets typed."
+  (let* ((type (getf key :type))
+         (n (length (pick-choices head)))
+         (empty (zerop (length (composer-buffer (head-composer head))))))
+    (cond
+      ((and (eq type :up) (plusp n))
+       (setf (head-picker-sel head) (mod (1- (head-picker-sel head)) n) (head-dirty head) t) t)
+      ((and (eq type :down) (plusp n))
+       (setf (head-picker-sel head) (mod (1+ (head-picker-sel head)) n) (head-dirty head) t) t)
+      ((and (eq type :enter) empty)
+       (if (zerop n)
+           (say head (if (eq *pick-open* :model)
+                         "this daemon does not send the model list; use `/models PROVIDER/MODEL`"
+                         "this daemon does not send the mode list; use `/mode NAME`"))
+           (take-pick head (nth (min (head-picker-sel head) (1- n)) (pick-choices head))))
+       t)
+      ((and (eq type :char) empty (digit-char-p (getf key :ch))
+            (<= 1 (digit-char-p (getf key :ch)) n))
+       (let ((at (1- (digit-char-p (getf key :ch)))))
+         (setf (head-picker-sel head) at)
+         (take-pick head (nth at (pick-choices head))))
+       t)
+      ((eq type :esc) (close-pick head) t)
+      (t nil))))
+
+(defun mode-confirm-key (head key)
+  "The `allow-all` question owns every key while it is up: [y] or [enter] send the
+mode with consent; anything else cancels."
+  (let ((type (getf key :type)))
+    (if (or (eq type :enter)
+            (and (eq type :char) (member (getf key :ch) '(#\y #\Y))))
+        (let ((name *mode-confirm*))
+          (setf *mode-confirm* nil)
+          (%send-mode head name t)
+          (say head (format nil "mode → ~a (consented)" name)))
+        (progn (setf *mode-confirm* nil)
+               (say head "allow-all not taken")))
+    (setf (head-dirty head) t)
+    t))
+

@@ -89,36 +89,18 @@ on ClientFrame::Slash)."
        (%open-pane head :config))
       ((string= verb "mode")
        (if (plusp (length rest))
-           (%send head (list :frame "mode"
-                             :client-request-id (next-request-id)
-                             :expected-seq (session-expected-seq (head-session head))
-                             :name rest))
+           ;; a NAME goes straight to `mode-action` — `allow-all` asks first,
+           ;; whichever way it was chosen
+           (mode-action head rest)
            ;; with no name, OPEN THE PICKER rather than printing a list to copy a
            ;; name out of. The reference made the same change: *"for starters i
            ;; want it to be usual menu, like /mode"* — the wall of text was the
            ;; least visible part of the thing anybody types it for.
-           (progn
-             ;; make sure the rows are here: the picker's list IS the daemon's
-             ;; choices, and a head that never asked has none to show
-             (unless (head-settings head) (%send head (make-settings)))
-             (setf (head-mode head) :mode-picker
-                   (head-picker-sel head) 0)
-             (reset-pane-scroll)
-             (setf (head-dirty head) t))))
+           (open-pick head :mode)))
       ((or (string= verb "models") (string= verb "model"))
-       ;; `/models` with no name opens the picker; with a name it is the daemon's
-       ;; verb and travels as the line the operator would have typed
        (if (plusp (length rest))
-           (%send head (list :frame "slash"
-                             :client-request-id (next-request-id)
-                             :expected-seq (session-expected-seq (head-session head))
-                             :line (format nil "models ~a" rest)))
-           (progn
-             (unless (head-settings head) (%send head (make-settings)))
-             (setf (head-mode head) :models-picker
-                   (head-picker-sel head) 0)
-             (reset-pane-scroll)
-             (setf (head-dirty head) t))))
+           (%send-slash head (format nil "models ~a" rest))
+           (open-pick head :model)))
       ((string= verb "jobs")
        ;; ASK, then open. The jobs pane drew `N out` from JobSettled events, which
        ;; a head that attached after the jobs started never saw — so the pane was
@@ -201,6 +183,8 @@ one is open at a time — so a position left by the last pane means nothing to t
 next, and opening on it put the todos cursor three items down because the picker
 had been there. The reference keeps a cursor per pane; with one, the top is the
 only honest place to start."
+  ;; one list on the screen at a time, the rule the pickers keep between themselves
+  (setf *pick-open* nil)
   (setf (head-mode head) mode
         (head-picker-sel head) 0
         (head-dirty head) t)
