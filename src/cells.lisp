@@ -161,24 +161,40 @@ render function that overshoots by one column should not take the head down."
 
 (defun screen-put-string (screen row col string &optional (style 0))
   "Write STRING at row,col; returns the column after the last written cell.
-Zero-width characters (combining marks, joiners) are skipped for now — the
-cluster-aware renderer will attach them properly at T19/T20. A wide character
-that does not fit degrades to a space rather than wrapping the line."
+
+**Walks CLUSTERS, not characters.** A ZWJ emoji sequence or a flag is one glyph
+of two columns, so placing it per CHARACTER writes six cells for something the
+terminal draws in two — and since the border arithmetic measures with
+`string-width` (cluster-aware), the two would disagree and the border would land
+inside the text. Measurement and placement have to count the same thing or fixing
+one just moves the defect.
+
+The cluster's FIRST character goes in the first cell and the second cell is the
+continuation marker. **The rest of the cluster's code points are not written**, so
+a ZWJ sequence renders as its first component rather than as the joined glyph —
+`👨‍👩‍👧` shows a man, at the right width, where it used to show three people
+stitched into six columns. The exact glyph needs a cell that holds a STRING, and
+that is a struct change (a restart); it is recorded in TODO.md rather than
+half-done here.
+
+A wide cluster that does not fit degrades to a space rather than wrapping."
   (let ((c col) (cols (screen-cols screen)))
-    (map nil (lambda (ch)
-               (let ((w (char-width ch)))
-                 (cond ((zerop w))                       ; combining/control: skip
-                       ((and (= w 2) (< (1+ c) cols))
-                        (screen-put screen row c ch style)
-                        (screen-put screen row (1+ c) +wide-cont+ style)
-                        (incf c 2))
-                       ((= w 2)                          ; does not fit
-                        (screen-put screen row c #\space style)
-                        (incf c))
-                       (t
-                        (screen-put screen row c ch style)
-                        (incf c)))))
-         string)
+    (dolist (cl (clusters string))
+      (let ((w (cluster-cols cl))
+            (text (cluster-text cl)))
+        (cond
+          ((or (zerop w) (zerop (length text)))
+           ;; an escape-only cell, or a zero-width cluster with nothing to draw
+           nil)
+          ((= w 2)
+           (if (< (1+ c) cols)
+               (progn (screen-put screen row c (char text 0) style)
+                      (screen-put screen row (1+ c) +wide-cont+ style)
+                      (incf c 2))
+               (progn (screen-put screen row c #\space style)
+                      (incf c))))
+          (t (screen-put screen row c (char text 0) style)
+             (incf c)))))
     c))
 
 ;;; ---------------------------------------------------------------- paint ;;;

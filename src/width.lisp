@@ -1,13 +1,21 @@
-;;;; width.lisp — per-character display width, ported from
-;;;; crates/ui/src/width.rs (is_zero_width / is_wide / char_width). The Rust
-;;;; file's own doc comment is the design rationale: a char is not a column,
-;;;; and the failure mode of a miss is a line one column narrow, once.
+;;;; width.lisp — display width, ported from crates/ui/src/width.rs.
 ;;;;
-;;;; This is the per-character table only. Cluster handling (ZWJ sequences,
-;;;; regional-indicator pairs, escape-aware walking) is a render-layer concern
-;;;; and arrives with T19/T20; TODO.md keeps that half open on purpose.
+;;;; **A character is not a column, and a character is not a cell either.** An
+;;;; emoji is a ZWJ sequence of several code points; a flag is two regional
+;;;; indicators; an accented letter may be a base plus a combining mark. Measured
+;;;; per CHARACTER, `👨‍👩‍👧` is six columns and a flag is four — and the failure
+;;;; mode of a miss is not an error but a line that is wrong by a few columns,
+;;;; which in a frame with a right border is a border drawn through the text.
+;;;;
+;;;; So the unit is the ESCAPE-PREFIXED GRAPHEME CLUSTER, as the reference's
+;;;; `clusters()` has it.
 
 (in-package #:leticl)
+
+(defparameter +esc-zwj+ (code-char #x200d)
+  "ZERO WIDTH JOINER. Named because `#\\u200d` is not reader syntax on this box;
+`(code-char #x200d)` is.")
+(defparameter +zwsp+ (code-char #x200b))   ; not used yet; here so it is named
 
 (defun %ranges (spec)
   "SPEC is a list of (lo hi) integer pairs; returns a sorted simple-vector of
@@ -90,17 +98,149 @@ conses for binary search."
     nil))
 
 (defun char-width (ch)
-  "Columns one character claims, standing alone: zero, one or two. C0/C1 and
-DEL are zero — a head should never be measuring these (width.rs:191)."
+  "Columns one character claims, STANDING ALONE: zero, one or two. C0/C1 and DEL
+are zero — a head should never be measuring these (width.rs:191). A cluster is
+wider than the sum of its parts only in the direction of being NARROWER; see
+`cells`."
   (let ((u (char-code ch)))
-    (cond ((or (< u #x20) (and (>= u #x7f) (< u #xa0))) 0)
+    (cond ((%c1-control-p u) 0)
           ((%in-ranges-p *zero-width-ranges* u) 0)
           ((%in-ranges-p *wide-ranges* u) 2)
           (t 1))))
 
+;;; ------------------------------------------------------------- clusters ;;;
+
+(defstruct (cluster (:constructor %make-cluster (esc text cols)))
+  (esc "" :type string)                 ; escapes carried WITH the cluster
+  (text "" :type string)
+  (cols 0 :type fixnum))
+
+(defun %c1-control-p (u)
+  "C0, C1 and DEL. Zero columns, and never part of the cluster beside them."
+  (or (< u #x20) (and (>= u #x7f) (< u #xa0))))
+
+(defun %regional-indicator-p (ch)
+  (<= #x1f1e6 (char-code ch) #x1f1ff))
+
+(defun %skip-escape (string i)
+  "Index past the escape sequence starting at I.
+
+CSI (`ESC[…` ended by `@`-`~`), OSC (`ESC]…` ended by BEL or ST) and the
+two-byte forms. An UNTERMINATED sequence consumes the rest, which is the right
+answer for a partially-arrived frame: it is not content."
+  (let ((n (length string)))
+    (if (>= (1+ i) n)
+        n
+        (case (char string (1+ i))
+          (#\[ (loop for j from (+ i 2) below n
+                     when (<= #x40 (char-code (char string j)) #x7e)
+                       return (min n (1+ j))
+                     finally (return n)))
+          (#\] (loop for j from (+ i 2) below n
+                     when (char= (char string j) (code-char 7)) return (1+ j)
+                     when (and (char= (char string j) +esc+)
+                               (< (1+ j) n)
+                               (char= (char string (1+ j)) #\\))
+                       return (+ j 2)
+                     finally (return n)))
+          (t (min n (+ i 2)))))))
+
+(defun clusters (string)
+  "STRING to a list of `cluster`s: escape-prefixed grapheme clusters, in order.
+
+A cluster begins at the first character that occupies a column and EXTENDS with
+anything that does not. Three rules, each one the reference states and each one a
+bug it had:
+
+  · a **control character is not a combining mark.** A newline measures zero
+    columns for the same reason a combining mark does, and that is the whole of
+    the resemblance: absorbing one into the cluster before it hides a row break
+    inside a cell, and a break inside a cell is not a break — which is how a
+    two-line composer once wrapped to one row with a literal newline in it;
+  · a **ZWJ joins whatever follows it** into the cluster, which is what makes an
+    emoji family one cell of two columns;
+  · two **regional indicators** are a flag: two columns however wide each half
+    claims to be.
+
+A trailing run of escapes with no text after it becomes an escape-only cell,
+because dropping it would leave attributes open on the terminal."
+  (let ((n (length string))
+        (out nil)
+        (i 0))
+    (loop while (< i n) do
+      (let* ((esc-start i))
+        (loop while (and (< i n) (char= (char string i) +esc+))
+              do (setf i (%skip-escape string i)))
+        (let ((esc (subseq string esc-start i)))
+          (if (>= i n)
+              (when (plusp (length esc))
+                (push (%make-cluster esc "" 0) out))
+              (let ((cluster-start i)
+                    (cols 0)
+                    (prev-ri nil)
+                    (first t))
+                (loop while (< i n) do
+                  (let ((ch (char string i)))
+                    (if (char= ch +esc+)
+                        (return)
+                        (let ((w (char-width ch)))
+                          (cond
+                            (first
+                             (setf cols w
+                                   first nil
+                                   prev-ri (%regional-indicator-p ch))
+                             (incf i))
+                            ((and prev-ri (%regional-indicator-p ch))
+                             (setf cols 2
+                                   prev-ri nil)
+                             (incf i))
+                            ;; a ZWJ immediately before this one joins it in
+                            ((char= (char string (1- i)) +esc-zwj+)
+                             (setf cols (max cols w))
+                             (incf i))
+                            ;; extend with anything that stands alone at zero —
+                            ;; but NOT a control character, per the rule above
+                            ((zerop w)
+                             (if (%c1-control-p (char-code ch))
+                                 (return)
+                                 (incf i)))
+                            (t (return)))))))
+                (push (%make-cluster esc (subseq string cluster-start i) cols) out))))))
+    (nreverse out)))
+
+;;; ---------------------------------------------------------------- width ;;;
+
 (defun string-width (string)
-  "Columns a string occupies, escapes excluded. Per-character for now; the
-cluster-aware, escape-aware version arrives with the markdown/diff ports."
+  "Columns STRING occupies on a terminal, escapes excluded, CLUSTERS measured.
+
+The cluster-aware answer: a ZWJ emoji is one cell of two columns, a flag is two,
+and an escape sequence is none — which is what makes a right border land where
+the frame put it."
   (let ((w 0))
-    (map nil (lambda (ch) (incf w (char-width ch))) string)
+    (dolist (c (clusters string)) (incf w (cluster-cols c)))
     w))
+
+(defun truncate-to-width (string cols)
+  "STRING cut to at most COLS columns, escapes kept whole, no cluster split.
+
+A cluster is never cut in half: half a ZWJ sequence is a different glyph, and half
+a flag is a letter. Styles are carried with their cluster, so a cut does not leave
+an attribute open."
+  (if (<= (string-width string) cols)
+      string
+      (let ((out (make-string-output-stream))
+            (w 0))
+        (dolist (c (clusters string))
+          (when (> (+ w (cluster-cols c)) cols) (return))
+          (write-string (cluster-esc c) out)
+          (write-string (cluster-text c) out)
+          (incf w (cluster-cols c)))
+        (get-output-stream-string out))))
+
+(defun fit-to-width (string cols)
+  "STRING padded or truncated to EXACTLY COLS columns."
+  (let* ((cut (truncate-to-width string cols))
+         (w (string-width cut)))
+    (if (< w cols)
+        (concatenate 'string cut (make-string (- cols w) :initial-element #\space))
+        cut)))

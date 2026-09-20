@@ -1996,3 +1996,93 @@ swallowed them. Not lost and VISIBLE are different requirements."
           "and oldest first, so the order they will land in is the order they read")))
   ;; nothing queued is nothing drawn
   (is (null (queued-lines (%make-head) 80)) "an empty queue draws no rows"))
+
+;;; ------------------------------------------------- cluster-aware width (P7) ;;;
+
+(defun %ch (code) (code-char code))
+
+(def-test a-cluster-is-not-a-chain-of-characters (:suite leticl)
+  "The visible win, and the reason this matters at all: measured per CHARACTER a
+ZWJ emoji family is six columns and a flag is four, so a right border lands three
+columns inside the text."
+  ;; 👨‍👩‍👧 — three emoji joined by ZWJ: ONE cluster, TWO columns
+  (let ((family (format nil "~C~C~C~C~C" (%ch #x1f468) (%ch #x200d)
+                        (%ch #x1f469) (%ch #x200d) (%ch #x1f467))))
+    (is (= 1 (length (clusters family))) "the family is one cluster")
+    (is (= 2 (string-width family)) "and two columns, not six"))
+  ;; 🇬🇧 — two regional indicators: one cluster, two columns
+  (let ((flag (format nil "~C~C" (%ch #x1f1ec) (%ch #x1f1e7))))
+    (is (= 1 (length (clusters flag))) "a flag is one cluster")
+    (is (= 2 (string-width flag)) "and two columns, not four"))
+  ;; a combining mark rides with its base
+  (let ((accented (format nil "e~C" (%ch #x301))))
+    (is (= 1 (length (clusters accented))) "e + combining acute is one cluster")
+    (is (= 1 (string-width accented)) "one column")))
+
+(def-test a-control-character-is-not-a-combining-mark (:suite leticl)
+  "A newline measures zero columns for the same reason a combining mark does, and
+that is the whole of the resemblance: absorbing one into the cluster before it
+hides a row break INSIDE a cell, and a break inside a cell is not a break. The
+reference records the consequence — a two-line composer wrapped to one row with a
+literal newline in it."
+  (let ((two-lines (format nil "a~%b")))
+    (is (= 3 (length (clusters two-lines)))
+        "the newline is its own cluster, not absorbed into `a`")
+    (is (= 2 (string-width two-lines)) "and it takes no columns")
+    (is (find #\newline (mapcar #'cluster-text (clusters two-lines))
+              :test (lambda (a b) (search (string a) b)))
+        "it is present as text, which is what lets a caller SEE the break")))
+
+(def-test escapes-measure-zero-and-stay-attached (:suite leticl)
+  "An escape is not content, and dropping it would leave attributes open."
+  (let ((styled (format nil "~C[0;1;36mred~C[0m" (%ch 27) (%ch 27))))
+    (is (= 3 (string-width styled)) "the escapes take no columns")
+    (is (= 4 (length (clusters styled)))
+        "and they ride with their cluster rather than becoming text")
+    (is (search (format nil "~C[0;1;36m" (%ch 27)) (cluster-esc (first (clusters styled))))
+        "the opening escape is carried on the cluster it styles"))
+  ;; a TRAILING escape with no text after it is kept as its own cluster, because
+  ;; dropping it would leave attributes open on the terminal
+  (let ((trailing (clusters (format nil "ab~C[0m" (%ch 27)))))
+    (is (= 3 (length trailing)) "a, b, and the escape")
+    (is (zerop (cluster-cols (car (last trailing)))) "the escape takes no columns")
+    (is (plusp (length (cluster-esc (car (last trailing)))))
+        "and its bytes are carried, which is what closes the attribute")))
+
+(def-test truncation-never-cuts-a-cluster-in-half (:suite leticl)
+  "Half a ZWJ sequence is a different glyph and half a flag is a letter."
+  (let ((family (format nil "~C~C~C~C~C" (%ch #x1f468) (%ch #x200d)
+                        (%ch #x1f469) (%ch #x200d) (%ch #x1f467))))
+    (is (string= family (truncate-to-width family 2))
+        "a two-column cluster survives a two-column budget whole")
+    (is (string= "" (truncate-to-width family 1))
+        "and is dropped rather than halved when it does not fit")
+    (is (= 2 (string-width (truncate-to-width (concatenate 'string family family) 2)))
+        "two of them in a two-column budget is one of them")))
+
+(def-test fit-reaches-exactly-the-columns-asked-for (:suite leticl)
+  (is (string= "ab   " (fit-to-width "ab" 5)) "padded")
+  (is (string= "abc" (fit-to-width "abcdef" 3)) "truncated")
+  (is (= 5 (string-width (fit-to-width "中文" 5)))
+      "and measured in columns, not characters"))
+
+(def-test measurement-and-placement-count-the-same-thing (:suite leticl)
+  "The property that matters, and the reason both halves had to change together:
+`string-width` decides where a border goes and `screen-put-string` decides where
+the text goes. If they count different things, fixing one just moves the defect —
+the border lands inside the text instead of the text overflowing the border."
+  (let ((s (make-screen 40 1)))
+    (dolist (case (list (cons "ascii" "hello")
+                        (cons "cjk" (format nil "~C~C" (%ch #x4e2d) (%ch #x6587)))
+                        (cons "family" (format nil "~C~C~C~C~C" (%ch #x1f468) (%ch #x200d)
+                                               (%ch #x1f469) (%ch #x200d) (%ch #x1f467)))
+                        (cons "flag" (format nil "~C~C" (%ch #x1f1ec) (%ch #x1f1e7)))
+                        (cons "combining" (format nil "e~C" (%ch #x301)))
+                        (cons "escaped" (format nil "~C[1mx~C[0m" (%ch 27) (%ch 27)))))
+      (let* ((label (car case))
+             (text (cdr case))
+             (end (screen-put-string s 0 0 text))
+             (measured (string-width text)))
+        (is (= measured end)
+            (format nil "~a: the columns MEASURED (~a) are the columns PLACED (~a)"
+                    label measured end))))))

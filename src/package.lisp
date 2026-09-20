@@ -13,6 +13,9 @@
    #:sync-begin #:sync-end
    ;; width
    #:char-width #:string-width
+   ;; clusters (P7): the unit of measurement is a grapheme cluster, not a char
+   #:clusters #:cluster-esc #:cluster-text #:cluster-cols
+   #:truncate-to-width #:fit-to-width
    ;; progress — the numbers a turn produces, said in a way a person reads
    #:thousands #:duration #:spinner #:internal-real-time-ms
    #:prefill-fraction #:prefill-cached-fraction #:prefill-computed
