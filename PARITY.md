@@ -8,6 +8,15 @@ what is actually missing.
 **Measured against `letibot` @ `756441720c7b53d39eca045185ed9b4168d09cc1`
 (2026-09-20), from `leticl` @ `074bbf6`.**
 
+**Screen comparison rounds** (`scripts/compare-heads`, both heads on the same
+session, 210×63, escapes included) are pinned separately, because they measure
+the screen rather than the surface:
+
+| round | letibot | leticl | result |
+|---|---|---|---|
+| 3 | `e9ee3c4` (2026-09-20) | `1be0293` | 60 of 63 rows byte-identical; the rest self-measured numbers |
+| 4 | `2deceb8` (2026-09-20) | this tree | the panes — see §8 |
+
 An earlier pass measured `82ff650e` (2026-09-19); §7 is what the 19 commits
 between the two changed, and the gaps it added are `P41`–`P46` in `TODO.md`.
 Everything cited in §1–§6 that predates that pass still holds unless §7 says
@@ -656,3 +665,61 @@ exists against. So: keep it, and re-measure it against a new pinned commit when
 the reference moves in a way that matters — not edit it line by line, which is
 how a measurement becomes a memory. `TODO.md` §7 already carries the sync
 procedure for the same reason.
+
+---
+
+## 8. What the screens said (compare rounds 3 and 4, 2026-09-20)
+
+Measured with `scripts/compare-heads`: both heads on `s-1789639478142928813`,
+210×63, the same instant, `tmux capture-pane -e`, rows compared **with their
+escapes**. This is a different instrument from §1–§7, which read the reference's
+*surface* (its bindings, commands, struct fields); this reads its *output*, and
+it found things the surface could not — every one of them a function that
+existed, was called, and drew the wrong thing.
+
+### Round 3 — the transcript (letibot `e9ee3c4`, fixed in leticl `1be0293`)
+
+Start: 42 of the 45 shared rows differed. End: 60 of 63 rows byte-identical in
+both fold states; the three left carry numbers each head measured for itself.
+
+| what the row showed | cause | fix |
+|---|---|---|
+| paragraphs cut at column 210, no continuation | `markdown-lines` called with no width; `%place-lines` clips | the block model wraps every paragraph to its width |
+| `What I measured` bold, letibot `## What I measured` faint hashes + bold blue | heading dropped its marker and level | hashes faint, text by level (cyan/blue/bold) |
+| `**1.6–2.7 s**` literal in a table cell | cells were strings, not runs | cells are inline runs, columns measured painted, water-filled, wrapping |
+| `` `activity-indent` `` literal backticks inside bold | inline spans did not nest | grammar with `nest` (code inside bold is cyan, not bold) |
+| `▸ Ran … · ok · 9 lines  … +8 lines · ctrl-t` on one row | seam appended to header, first line dropped | header / first line / seam, three rows |
+| `· 1 line` beside an inlined one-line result | count printed for a fold with nothing to fold | inline form carries no count |
+| `<<'MSG' the step` where letibot has `<<'MSG'\nthe step` | `~s` then control-char flattening | Rust-Debug quoting |
+| all-bold header; no `1/71`; three columns short | one register; `%turn-index` counted decisions | blue bar / bold title / dim path / dim tail; position from the session list |
+| prose on row 59, box on 60 | no gap after committed rows | one blank row, always |
+| one extra blank row at the bottom of every open card | `split-string` keeps the trailing "" that `str::lines` drops | `%payload-lines` |
+| `▸ ` dim on the reasoning fold; `3 lines` for three paragraphs | mark dimmed; source lines counted | plain mark; screen lines |
+
+Not a rendering difference, and left alone: the `⚠` on our box edge is
+`Hello.dropped` > 0, which the reference also alarms on — letibot had attached
+before the log wrapped, so its count was 0.
+
+### Round 4 — the panes (letibot `2deceb8`)
+
+Every full-body pane opened on both heads, captured, compared. Three of ours
+did not render at all:
+
+| pane | letibot | leticl |
+|---|---|---|
+| jobs | `background jobs`, the two dim sentences | `TYPE-ERROR The value ("" :DIM T) is not of type STRING` — the header's second element was `(list LINE)`, a line whose segment is a line; **never rendered** |
+| subagents | `subagents`, the two dim sentences | the same error, the same cause |
+| config | `▸ ✎ diff view  split` / `from …/head.toml`, `✎` on the editable rows, then the read-only session rows | `UNBOUND-VARIABLE The variable ANAPHORA:IT is unbound` — **never rendered** |
+| todos | cursor `▸` on the **repo's items**, ↑↓ moves it, enter/tab unfolds; session plan indented 6; ` ···` one space | cursor on the *session plan*, no `▸`, ↑↓ clamped to that list — *"todos pane not browsable"*; indent 4; two spaces before `···`; title carries a hint suffix; closing sentence differs |
+| help | 41 rows | 50 rows |
+| status | 26 rows | 18 rows |
+
+The wheel, found in the same session: a burst of SGR wheel events leaked
+`[<65;120;30M` into the composer (`%poll-char` consulted the deadline before the
+buffer; the input thread had been stopped past the 60 ms window), and a decoded
+wheel did nothing anyway (`:wheel-up` arms keyed on `:type`, which is `:mouse`).
+Fixed in `3ec5791`, with the reference's `── scrolled back` banner.
+
+**The lesson this round adds to §1's:** *"S6 panes done"* was recorded against
+code that had never drawn a frame. A pane is done when it has been opened on the
+head and captured, and `compare-heads` is how that is measured.
