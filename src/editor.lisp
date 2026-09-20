@@ -132,7 +132,14 @@ shows the candidates on the status line."
         (setf (head-dirty head) t)))))
 
 (defun %handle-key (head key)
-  (let ((type (getf key :type)))
+  ;; A wheel event is `(:type :mouse :kind :wheel-up)`, and the ladders below
+  ;; dispatch on TYPE — so their `:wheel-up` / `:wheel-down` arms never matched
+  ;; and a wheel did NOTHING, in the transcript and in every pane. The kind is
+  ;; the key for a wheel; a press keeps `:mouse`, which the click arm reads.
+  (let ((type (let ((k (getf key :kind)))
+                (if (and (eq (getf key :type) :mouse) (member k '(:wheel-up :wheel-down)))
+                    k
+                    (getf key :type)))))
     (cond
       ((eq type :eof) (setf (head-running head) nil))
       ;; the secret card owns everything while it is up: a password field is
@@ -333,8 +340,13 @@ shows the candidates on the status line."
            (t (%normal-key head key))))))))
 
 (defun %normal-key (head key)
-  (let ((c (head-composer head)))
-    (case (getf key :type)
+  (let ((c (head-composer head))
+        ;; a wheel is its KIND, as `%handle-key` reads it — see there
+        (type (let ((k (getf key :kind)))
+                (if (and (eq (getf key :type) :mouse) (member k '(:wheel-up :wheel-down)))
+                    k
+                    (getf key :type)))))
+    (case type
       ((:char)
        ;; one undo snapshot per word: push when the character before the cursor
        ;; ends a word, so ctrl-z takes back a word rather than a letter
@@ -358,7 +370,13 @@ shows the candidates on the status line."
       ((:tab) (%complete head))
       ((:left :right :home :end) (composer-move c type) (setf (head-dirty head) t))
       ((:up) (composer-history-step c -1) (setf (head-dirty head) t))
-      ((:down) (composer-history-step c 1) (setf (head-dirty head) t))
+      ((:down)
+       ;; parked in the scrollback, ↓ follows the stream again — it is what the
+       ;; banner says it does; only then does it step the history
+       (if (plusp (head-scroll head))
+           (setf (head-scroll head) 0)
+           (composer-history-step c 1))
+       (setf (head-dirty head) t))
       ((:alt)
        ;; alt+enter is a newline inside the prompt. Any other alt chord is not
        ;; the composer's, and must not become text — an unhandled chord that
@@ -368,9 +386,12 @@ shows the candidates on the status line."
          (composer-insert c (string #\newline))
          (setf (head-dirty head) t)))
       ((:esc)
-       ;; `esc esc` interrupts — twice within the gesture window. A single esc
-       ;; does nothing yet; it MAY become "return to the following the stream",
-       ;; and the double tap has to be decided first or the two fight.
+       ;; Esc while parked in the scrollback means "follow the stream again",
+       ;; which is what the banner says it means. Only then does esc start
+       ;; arming an interrupt: `esc esc` — twice within the gesture window.
+       (when (plusp (head-scroll head))
+         (setf (head-scroll head) 0 (head-dirty head) t)
+         (return-from %normal-key nil))
        (let ((now (get-internal-real-time))
              (ms (/ internal-time-units-per-second 1000.0)))
          (if (and *esc-at* (< (- now *esc-at*) (* *esc-double-ms* ms)))

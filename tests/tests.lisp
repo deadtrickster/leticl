@@ -2496,3 +2496,65 @@ The reference always puts one gap after the committed rows."
     (let ((lines (leticl::%viewport-lines h 60 10)))
       (is (null (car (last lines))) "the last line of the viewport is the gap")
       (is (search "hi" (segs-of (butlast lines))) "and the row is above it"))))
+
+;;; ------------------------------------------------- the wheel (2026-09-20) ;;;
+
+(def-test a-sequence-already-in-the-buffer-decodes-after-the-deadline (:suite leticl)
+  "The operator: *\"scrolling codes go straight to prompt input\"*. Under a burst of
+wheel events the input thread was stopped past the 60 ms gesture window — the main
+thread renders a frame per event, and the collector stops every thread — and
+`%poll-char` consulted the clock before the buffer, so the byte after an ESC was
+there and was reported absent. The ESC became a lone escape and `[<65;120;30M`
+became text. Reproduced by injecting fifteen events: eight leaked."
+  (let ((*escape-wait-ms* 0))          ; every deadline has already passed
+    (let* ((burst (format nil "~{~C[<65;120;30M~}" (make-list 15 :initial-element (code-char 27))))
+           (in (make-string-input-stream burst))
+           (keys (loop repeat 15 collect (read-key in))))
+      (is (every (lambda (k) (eq (getf k :type) :mouse)) keys)
+          "fifteen wheel events, none of them text: ~s" (remove :mouse keys :key (lambda (k) (getf k :type))))
+      (is (every (lambda (k) (eq (getf k :kind) :wheel-down)) keys)))))
+
+(def-test the-wheel-scrolls-the-transcript-and-the-pane (:suite leticl)
+  "A wheel event is `(:type :mouse :kind :wheel-up)` and the key ladders dispatched
+on TYPE, so their `:wheel-up` arms never matched and a wheel did nothing anywhere —
+the same dead-code class as `:tools-open`."
+  (let ((h (%make-head)))
+    (setf (head-scroll h) 0)
+    (leticl::%handle-key h (list :type :mouse :x 5 :y 5 :kind :wheel-up))
+    (is (= 3 (head-scroll h)) "wheel up scrolls the transcript back three")
+    (leticl::%handle-key h (list :type :mouse :x 5 :y 5 :kind :wheel-down))
+    (is (= 0 (head-scroll h)) "and wheel down follows again")
+    (is (equal "" (composer-buffer (head-composer h))) "and nothing landed in the composer"))
+  (let ((*pane-scroll* 0) (*pane-lines* 40) (*pane-room* 10)
+        (h (%make-head)))
+    (setf (head-mode h) :help)
+    (leticl::%handle-key h (list :type :mouse :x 5 :y 5 :kind :wheel-down))
+    (is (= 3 *pane-scroll*) "in a pane the wheel scrolls the pane")))
+
+(def-test parked-in-the-scrollback-the-last-row-says-so (:suite leticl)
+  "The reference's banner: `── scrolled back · N lines below · ↓ or esc to follow`,
+yellow, in the transcript's last row; esc and ↓ follow again, and only then does
+esc start arming an interrupt. The scroll is clamped to what exists."
+  (let* ((h (%make-head))
+         (s (head-session h)))
+    (setf (session-items s)
+          (coerce (loop for i from 1 to 20
+                        collect (list :item-id (format nil "u~d" i) :kind "user"
+                                      :item (list :type "user"
+                                                  :parts (list (list :kind "text"
+                                                                     :text (format nil "message ~d" i))))))
+                  'vector))
+    (setf (head-scroll h) 6)
+    (let ((lines (leticl::%viewport-lines h 60 10)))
+      (is (search "── scrolled back · 6 lines below" (segs-of (last lines)))
+          "the last row is the banner, with how far behind")
+      (is (equal '(:fg :yellow) (cdr (first (car (last lines))))) "in yellow"))
+    (leticl::%handle-key h (list :type :esc))
+    (is (= 0 (head-scroll h)) "esc follows the stream again")
+    (is (null leticl::*esc-at*) "and does not start arming an interrupt")
+    (setf (head-scroll h) 6)
+    (leticl::%handle-key h (list :type :down))
+    (is (= 0 (head-scroll h)) "so does ↓")
+    (setf (head-scroll h) 100000)
+    (leticl::%viewport-lines h 60 10)
+    (is (< (head-scroll h) 100000) "and a scroll past the top is clamped to what exists")))

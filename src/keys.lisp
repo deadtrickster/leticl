@@ -19,22 +19,39 @@
 ;;; (:type :mouse :x 3 :y 7 :button 0 :kind :press) …
 (defun %poll-char (stream deadline)
   "One char when one is available before DEADLINE (internal-time units).
-Waits on the fd rather than polling listen — the same race wait-for-input
-exists for (smoke-head, measured). nil on timeout or EOF; callers already
-read nil as \"nothing came\"."
-  (let ((now (get-internal-real-time)))
-    (if (> now deadline)
-        nil
-        (when (wait-for-input stream
-                              (/ (- deadline now) internal-time-units-per-second))
+
+**What is already in the buffer is taken before the clock is consulted.** The
+first version checked the deadline first, and under a burst of wheel events the
+input thread was stopped for longer than the 60 ms gesture window — the main
+thread renders a full frame per event and the collector stops every thread — so
+the byte after an ESC was on the fd, and this returned NIL anyway. `read-key` then
+called the ESC a lone escape and the rest of the sequence arrived as text:
+`[<65;120;30M` in the composer, once per event. Measured on the operator's head,
+and reproduced with fifteen events injected into the pane: eight leaked.
+
+Waits on the fd rather than polling listen — the same race wait-for-input exists
+for (smoke-head, measured). nil on timeout or EOF; callers already read nil as
+\"nothing came\"."
+  (or (read-char-no-hang stream nil nil)
+      (let ((now (get-internal-real-time)))
+        (when (and (<= now deadline)
+                   (wait-for-input stream
+                                   (/ (- deadline now) internal-time-units-per-second)))
           (read-char stream nil nil)))))
+
+(defparameter *csi-wait-ms* 1000
+  "How long to wait for the NEXT byte once inside a CSI. A CSI is never a lone
+escape — `ESC[` has committed to a sequence — so the gesture window that tells a
+lone ESC from an ESC-prefixed key does not apply here, and a byte that is late
+because the terminal, the pty or ssh split the write must still be waited for
+rather than turned into text.")
 
 (defun %read-csi (stream)
   "Everything after ESC[ up to the final byte (0x40-0x7E), as a string."
   (with-output-to-string (s)
     (loop
       for deadline = (+ (get-internal-real-time)
-                        (* *escape-wait-ms* (/ internal-time-units-per-second) 0.001))
+                        (* *csi-wait-ms* (/ internal-time-units-per-second) 0.001))
       for ch = (%poll-char stream deadline)
       while ch
       do (write-char ch s)

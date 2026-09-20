@@ -157,10 +157,24 @@ terminal: the newest content sat at row 1 and the oldest at row 57.)"
     ;; on the last settled row. Measured on letibot's screen: row 59 blank, row
     ;; 60 the box's top edge; ours had prose on 59.
     (let* ((all (append hist (and hist (list nil)) tail))
-           (n (length all))
-           (end (max 0 (- n (head-scroll head))))
-           (start (max 0 (- end want))))
-      (subseq all start end))))
+           (n (length all)))
+      ;; the scroll is clamped to what exists: past the top there is nothing to
+      ;; show, and a wheel that kept counting would need as many turns back
+      (setf (head-scroll head) (max 0 (min (head-scroll head) (- n want))))
+      (let* ((end (max 0 (- n (head-scroll head))))
+             (start (max 0 (- end want)))
+             (out (subseq all start end)))
+        ;; **PARKED IN THE SCROLLBACK, the last row says so** — the reference's
+        ;; banner, in yellow, in the transcript's own last row: how far behind
+        ;; the tail is, and how to follow it again. Without it a scrolled head is
+        ;; indistinguishable from a quiet one, which is the shape the operator
+        ;; reads straight past.
+        (when (and (plusp (head-scroll head)) out)
+          (setf (car (last out))
+                (list (cons (format nil "── scrolled back · ~d lines below · ↓ or esc to follow · wheel scrolls · shift+drag selects"
+                                    (- n end))
+                            '(:fg :yellow)))))
+        out))))
 
 (defun %render (head)
   "State to the cell buffer.
