@@ -251,23 +251,30 @@
       "the paste is one key event, terminator consumed"))
 
 (def-test markdown-structure (:suite leticl)
+  "The block model, to the reference's shapes (`render_block_with`)."
   (let ((lines (markdown-lines "# Title
 - item one
 ```lisp
 (+ 1 2)
 ```
 > quoted
-plain")))
-    (is (equal (first lines) (list (cons "Title" '(:bold t :underline t)))) "heading")
-    (is (member (cons "• " '(:fg :bright-cyan)) (second lines) :test #'equal) "list bullet")
-    (is (equal "┌─ lisp" (car (first (third lines))))
+plain" :width 80)))
+    ;; a heading keeps its hashes, faint, and colours the text by level
+    (is (equal (first lines) (list (cons "#" '(:dim t)) (cons " " nil)
+                                   (cons "Title" '(:bold t :fg :cyan))))
+        "heading: faint hash, then the text in Role::Heading")
+    (is (null (second lines)) "blocks are separated by one blank row")
+    (is (member (cons "· " '(:dim t)) (third lines) :test #'equal)
+        "the bullet is `·`, faint: it marks the indent and is not read")
+    (is (equal "┌─ lisp" (car (first (fifth lines))))
         "the fence OPENS, naming the language")
-    (is (equal "│ " (car (first (fourth lines))))
+    (is (equal "│ " (car (first (sixth lines))))
         "and every line of code carries its rail")
-    (is (equal "└─" (car (first (fifth lines)))) "and it CLOSES")
-    (is (member (cons "│ " '(:dim t)) (sixth lines) :test #'equal)
+    (is (equal "└─" (car (first (seventh lines)))) "and it CLOSES")
+    (is (member (cons "│ " '(:dim t)) (ninth lines) :test #'equal)
         "the quote's rail is the faint one, the same weight as the fence's frame")
-    (is (= 7 (length lines)) "seven lines out for seven in")))
+    (is (equal "plain" (car (first (nth 10 lines)))) "and the paragraph")
+    (is (= 11 (length lines)) "five blocks, four separators, eleven rows")))
 
 (def-test todos-screen (:suite leticl)
   "The pane draws the ITEMS, rolls them up the way org does, and reports the
@@ -1435,7 +1442,10 @@ the call began, \"that grep took 4.1s\" leaves the screen the moment the row lan
       (is (search "ok" text) "and its outcome")
       (is (search "4.1s" text)
           "and the DURATION, which only the head could have kept")
-      (is (search "1 line" text) "and how many lines came back"))))
+      ;; a ONE-line result rides the header, and the count does not: `· 1 line`
+      ;; beside an inlined line is a count for a fold with nothing to fold
+      (is (search "a match" text) "and the one line it returned, inlined")
+      (is (not (search "1 line" text)) "with no count beside it"))))
 
 (def-test a-row-this-head-did-not-watch-shows-no-duration (:suite leticl)
   "An absent fact shows NOTHING rather than a fabricated `0ms` — the same rule the
@@ -1491,8 +1501,10 @@ card had the pair and the transcript row does not."
                                    :name "bash" :outcome (list :outcome "ok")
                                    :payload "done")))
            (text (segs-of (item-lines item 80 (list :show-tools t)))))
-      (is (search "⚖" text) "the decision is marked on the row")
-      (is (search "selected" text) "with its outcome")
+      ;; the reference's `decision_lines`: `· allowed, by model oracle`, and the
+      ;; basis under it while the tools are open
+      (is (search "allowed" text) "the decision is marked on the row, by its word")
+      (is (search "by model oracle" text) "with who made it")
       (is (search "the operator authorised this" text) "and its basis"))))
 
 (def-test the-item-id-is-what-survives-the-round (:suite leticl)
@@ -1848,20 +1860,24 @@ command."
                        :item (list :type "tool_result" :call-id "c" :name "bash"
                                    :outcome (list :outcome "not_run") :payload payload))))
       (setf *item-facts* (list (cons "r1" (list :decision (list :req-id "a"
-                                                                :outcome (list :outcome "denied")
+                                                                :outcome (list :outcome "selected"
+                                                                               :option-id "deny_once")
+                                                                :by (list :kind "operator")
                                                                 :basis basis)))))
       (let ((text (segs-of (item-lines item 120 (list :show-tools t)))))
         (is (<= (count-substring basis text) 1)
             "the reason is said at most ONCE, not once per place that knows it —
 and here it is not repeated at all, because the payload renders its first line
 and the decision line would have been the second copy")
-        (is (search "⚖ denied" text)
+        (is (search "refused, by operator" text)
             "and the verdict is still there, which is what the row adds"))))
   ;; and a reason the payload does NOT carry is still said
   (let ((*item-facts* nil))
     (let ((basis "the operator declined this because the path is outside every grant the session holds"))
       (setf *item-facts* (list (cons "r2" (list :decision (list :req-id "a"
-                                                                :outcome (list :outcome "denied")
+                                                                :outcome (list :outcome "selected"
+                                                                               :option-id "deny_once")
+                                                                :by (list :kind "operator")
                                                                 :basis basis)))))
       (let* ((item (list :item-id "r2" :kind "tool_result"
                          :item (list :type "tool_result" :call-id "c" :name "bash"
@@ -2216,8 +2232,13 @@ where the reference prints one row is a transcript nobody can scan."
       (is (search "30 line" folded) "the count says how much there is")
       (is (search "… +29 lines" folded) "and the fold names how many are hidden")
       (is (search "ctrl-t" folded) "and the chord that shows them")
-      (is (= 1 (length (item-lines item 80 (list :show-tools nil))))
-          "one row while folded"))
+      ;; the reference's three rows: the header, the FIRST LINE (which is where a
+      ;; tool puts what it did), and the seam with the chord on it. Ours had put
+      ;; the seam on the header and dropped the line, so a folded row said how
+      ;; much there was and nothing of what.
+      (is (search "line 1" folded) "and the first line, so the fold says WHAT as well as how much")
+      (is (= 3 (length (item-lines item 80 (list :show-tools nil))))
+          "three rows while folded: header, first line, seam"))
     (let ((open (segs-of (item-lines item 80 (list :show-tools t)))))
       (is (search "line 1" open) "open, the output is there"))))
 
@@ -2294,3 +2315,184 @@ every line is a bigger fraction than the hierarchy is worth."
   (let ((stepped (step-in-lines (list nil (list (cons "x" nil))) 2)))
     (is (null (first stepped)) "the blank row stays blank")
     (is (equal "  " (car (first (second stepped)))) "and the text row moves")))
+
+;;; ------------------------------------ what the two screens said (2026-09-20) ;;;
+;;;
+;;; Each test here is one row where letibot's screen and ours differed, captured
+;;; with `tmux capture-pane -e` on the same session at the same size and compared
+;;; byte for byte. The reference is crates/tui/src/render.rs and app.rs at
+;;; e9ee3c4; the shapes below are read off its raw escapes, not its plain text.
+
+(def-test a-paragraph-wraps-to-the-width-it-is-given (:suite leticl)
+  "Measured: every long paragraph on our screen was exactly 210 columns wide with
+no continuation row — CUT at the terminal's edge — where letibot's wrapped to two.
+`markdown-lines` was called with no width at all, and `%place-lines` clips."
+  (let* ((text (format nil "~{~a~^ ~}" (loop repeat 40 collect "word")))
+         (lines (markdown-lines text :width 50)))
+    (is (> (length lines) 1) "a 200-column paragraph is more than one row at 50")
+    (is (every (lambda (l) (<= (leticl::%segs-width l) 50)) lines)
+        "and no row is wider than the width")
+    (is (equal text (format nil "~{~a~^ ~}" (mapcar #'segs-of (mapcar #'list lines))))
+        "and nothing was lost"))
+  ;; the source's own line breaks are a wrap the model did not mean
+  (let ((lines (markdown-lines (format nil "one~%two") :width 80)))
+    (is (= 1 (length lines)) "two source lines are one paragraph")
+    (is (equal "one two" (segs-of lines)) "joined with a space")))
+
+(def-test a-heading-keeps-its-hashes-and-its-level-colour (:suite leticl)
+  "letibot: `ESC[2m##ESC[0m ESC[1;34mWhat I measured`. Ours drew the text bold
+and nothing else — no hashes, no colour, and so no level once the terminal is
+monochrome."
+  (let ((h1 (first (markdown-lines "# One" :width 80)))
+        (h2 (first (markdown-lines "## Two" :width 80)))
+        (h3 (first (markdown-lines "### Three" :width 80))))
+    (is (equal (cons "#" '(:dim t)) (first h1)) "the hashes stay, faint")
+    (is (equal '(:bold t :fg :cyan) (cdr (third h1))) "level one is Role::Heading")
+    (is (equal (cons "##" '(:dim t)) (first h2)))
+    (is (equal '(:bold t :fg :blue) (cdr (third h2))) "level two is Role::Subheading")
+    (is (equal '(:bold t) (cdr (third h3))) "and deeper is Strong")))
+
+(def-test inline-markup-nests (:suite leticl)
+  "letibot: `ESC[36mactivity-indentESC[1mESC[39m was defined…` — a code span
+inside a bold run. Ours rendered the whole `**…**` as one bold segment with the
+backticks still in it."
+  (let ((segs (inline-spans "**`code` was defined** and *it* `x`")))
+    (is (equal (cons "code" '(:fg :cyan)) (first segs))
+        "the code span inside the bold is cyan, and not bold: `nest` says the container entered decides")
+    (is (equal (cons " was defined" '(:bold t)) (second segs)) "the rest of the run is bold")
+    (is (member (cons "it" '(:italic t)) segs :test #'equal) "italic")
+    (is (equal (cons "x" '(:fg :cyan)) (car (last segs))) "a plain code span")
+    (is (not (find #\* (segs-of (list segs)))) "and no marker survives"))
+  (is (equal (list (cons "snake_case is fine" nil)) (inline-spans "snake_case is fine"))
+      "an underscore inside a word is not emphasis")
+  (is (equal (list (cons "a " nil) (cons "link" nil)) (inline-spans "a [link](http://x)"))
+      "a link is its text")
+  (is (equal (list (cons "┃ " '(:fg :cyan))) (inline-spans "`┃ `"))
+      "a code span keeps a single trailing space, by the GFM rule — measured, the reference paints it inside the cyan")
+  (is (equal (list (cons "a" '(:fg :cyan))) (inline-spans "` a `"))
+      "and one space comes off each end when both are there"))
+
+(def-test a-table-cell-is-runs-and-the-columns-are-measured-painted (:suite leticl)
+  "letibot: `ESC[0;1m1.6–2.7 sESC[0m of lexing`. Ours printed `**1.6–2.7 s**` with
+the asterisks, and measured the column on them."
+  (let* ((lines (markdown-lines (format nil "| a | b |~%|---|---|~%| **x** | y |") :width 80))
+         (text (segs-of lines)))
+    (is (not (find #\* text)) "no marker in a cell")
+    (is (member (cons "x" '(:bold t)) (third lines) :test #'equal) "the cell's run is bold")
+    (is (equal (cons "a" '(:bold t)) (first (first lines))) "the header is Strong")
+    (is (search "─┼─" text) "one faint rule under the header")
+    (is (not (search "|" text)) "and no pipe from the source")
+    ;; the last column is not padded: trailing whitespace is trailing whitespace
+    ;; in a copy-paste
+    (is (every (lambda (l) (let ((s (segs-of (list l))))
+                             (string= s (string-right-trim " " s))))
+               lines)
+        "no row ends in spaces"))
+  ;; a wide column gives way first, and a cell wraps rather than being cut
+  (let* ((long (format nil "~{~a~^ ~}" (loop repeat 20 collect "wide")))
+         (lines (markdown-lines (format nil "| n | text |~%|---|---|~%| 1 | ~a |" long) :width 40)))
+    (is (every (lambda (l) (<= (leticl::%segs-width l) 40)) lines) "nothing exceeds the width")
+    (is (> (length lines) 3) "the wide cell wrapped to more than one row")
+    (is (search "wide" (segs-of (last lines))) "and its tail is still there")))
+
+(def-test list-markers-are-the-references (:suite leticl)
+  "`·` faint for a bullet — it marks the indent and is not read — and the number
+the model WROTE for an ordered item, plain. Ours drew `•` bright-cyan and the
+number in the same colour. Continuation lines sit under the text."
+  (let ((lines (markdown-lines (format nil "- one~%- two") :width 80)))
+    (is (equal (cons "· " '(:dim t)) (first (first lines))) "the faint middle dot")
+    (is (= 2 (length lines)) "two items, no blank between"))
+  (let ((lines (markdown-lines "4. four" :width 80)))
+    (is (equal (cons "4. " nil) (first (first lines))) "the written number, plain"))
+  (let ((lines (markdown-lines (format nil "- ~{~a~^ ~}" (loop repeat 30 collect "w")) :width 20)))
+    (is (> (length lines) 1) "a long item wraps")
+    (is (equal "  " (car (first (second lines)))) "and its continuation is indented by the marker's columns")))
+
+(def-test blocks-are-separated-and-bounded (:suite leticl)
+  "One blank row between blocks whether or not the source had one, none at the
+end; and a block over the budget is a title, a count and its tail."
+  (let ((lines (markdown-lines (format nil "para~%# head~%- item") :width 80)))
+    (is (= 5 (length lines)) "three blocks, two separators")
+    (is (null (second lines)))
+    (is (null (fourth lines))))
+  (let* ((text (format nil "~{~a~^~%~}" (loop for i from 1 to 30 collect (format nil "- item ~d" i))))
+         (lines (markdown-lines text :width 80 :limit 10)))
+    (is (= 10 (length lines)) "bounded to the limit")
+    (is (search "▸ item 1" (car (first (first lines)))) "the title")
+    (is (search "… 22 lines elided …" (segs-of (list (second lines)))) "the count")
+    (is (search "item 30" (segs-of (last lines))) "and the tail")))
+
+(def-test the-header-has-three-registers-and-a-position (:suite leticl)
+  "letibot's row 1, raw: `ESC[34m▌ ESC[1mhello…ESC[0;2m  ~/Projects/leticlESC[0m`
+then `ESC[2m1/71 · model · …`. Ours painted the whole left half bold and had no
+position; and it was three columns short of the box's edge, with a trailing space."
+  (let* ((h (%make-head))
+         (s (head-session h)))
+    (setf (session-title s) "hello"
+          (session-session-id s) "s-1"
+          (session-sessions s) (list (list :session-id "s-0" :title "other")
+                                     (list :session-id "s-1" :title "hello")
+                                     (list :session-id "s-1-sub" :title "child"
+                                           :parent-session-id "s-1")))
+    (let* ((line (top-border h 100))
+           (text (segs-of (list line))))
+      (is (equal (cons "▌ " '(:fg :blue)) (first line)) "the bar is UserAccent, blue")
+      (is (equal (cons "hello" '(:bold t)) (second line)) "the title Strong")
+      (is (search "2/2" text) "the position among the daemon's sessions, subagents not counted")
+      (is (= 100 (leticl::%segs-width line)) "and the row is exactly as wide as the body")
+      (is (equal '(:dim t) (cdr (car (last line)))) "the tail faint")
+      (is (string= text (string-right-trim " " text)) "with nothing trailing"))))
+
+(def-test the-tool-row-is-three-rows-folded-and-one-inlined (:suite leticl)
+  "letibot, folded: the header with the count, the FIRST line dim, then `… +N
+lines · ctrl-t` as its own seam row. A one-line result rides the header with no
+count. Ours had the seam on the header and the line nowhere."
+  (let* ((*item-facts* nil)
+         (many (list :type "tool_result" :call-id "c" :name "bash"
+                     :outcome (list :outcome "ok")
+                     :payload (format nil "first~%second~%third")))
+         (lines (item-lines (list :item-id "t1" :kind "tool_result" :item many)
+                            80 (list :show-tools nil))))
+    (is (= 3 (length lines)) "header, first line, seam")
+    (is (search "· 3 lines" (segs-of (list (first lines)))) "the count on the header")
+    (is (not (search "ctrl-t" (segs-of (list (first lines))))) "no chord on the header")
+    (is (search "first" (segs-of (list (second lines)))) "the first line")
+    (is (equal "    … +2 lines · ctrl-t" (segs-of (list (third lines)))) "the seam, stepped in, with the chord"))
+  (let* ((*item-facts* nil)
+         (two (list :type "tool_result" :call-id "c" :name "bash"
+                    :outcome (list :outcome "ok") :payload (format nil "a~%b")))
+         (lines (item-lines (list :item-id "t2" :kind "tool_result" :item two)
+                            80 (list :show-tools nil))))
+    (is (= 3 (length lines)) "two lines fit under the limit: both shown, no seam")
+    (is (not (search "ctrl-t" (segs-of lines))) "and nothing to unfold")))
+
+(def-test a-whitespace-bearing-target-is-debug-quoted (:suite leticl)
+  "letibot shows a heredoc command as `<<'MSG'\\nthe step…`, Rust's `{:?}`; ours
+printed the newline and then flattened it to a space."
+  (is (equal "\"a\\nb\"" (leticl::%debug-quote (format nil "a~%b"))) "newline as \\n")
+  (is (equal "\"say \\\"hi\\\"\"" (leticl::%debug-quote "say \"hi\"")) "quotes escaped")
+  (is (search "<<'MSG'\\nthe step" (display-target "{\"command\":\"cd x <<'MSG'\\nthe step\\nMSG\"}"))
+      "and so on the row"))
+
+(def-test the-reasoning-header-counts-screen-lines-and-its-mark-is-plain (:suite leticl)
+  "letibot: `▸ ESC[1mThoughtESC[0;2m · 13 lines · ctrl-r` — the mark carries no
+escape, and 13 is how many ROWS the fold would cost, not how many paragraphs."
+  (let* ((text (format nil "~a~%short" (make-string 150 :initial-element #\x)))
+         (line (reasoning-header text 80 nil nil)))
+    (is (equal (cons "▸ " nil) (first line)) "the mark is plain")
+    (is (equal (cons "Thought" '(:bold t)) (second line)))
+    (is (search "· 3 lines · ctrl-r" (segs-of (list line)))
+        "150 columns at 78 is two rows, plus one: three screen lines")))
+
+(def-test the-transcript-does-not-sit-on-the-box (:suite leticl)
+  "letibot row 59 is blank and row 60 the box's top edge; ours had prose on 59.
+The reference always puts one gap after the committed rows."
+  (let* ((h (%make-head))
+         (s (head-session h)))
+    (setf (session-items s)
+          (coerce (list (list :item-id "a" :kind "user"
+                              :item (list :type "user" :parts (list (list :kind "text" :text "hi")))))
+                  'vector))
+    (let ((lines (leticl::%viewport-lines h 60 10)))
+      (is (null (car (last lines))) "the last line of the viewport is the gap")
+      (is (search "hi" (segs-of (butlast lines))) "and the row is above it"))))

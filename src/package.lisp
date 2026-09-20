@@ -94,7 +94,8 @@
    #:expand-pastes #:*kill-ring* #:*kill-ring-max* #:*undo-stack*
    #:*paste-ledger* #:*esc-at* #:*esc-double-ms*
    ;; render
-   #:markdown-lines #:wrap-segments #:top-border #:status-line
+   #:markdown-lines #:inline-spans #:reasoning-header #:reasoning-lines
+   #:wrap-segments #:top-border #:status-line
    #:decision-card-lines #:picker-lines #:help-lines *slash-commands*
    #:quit-card-lines #:secret-card-lines
    #:todos-lines #:repo-todo-lines #:repo-todo-rows #:repo-todo-rows-cached

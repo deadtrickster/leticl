@@ -134,16 +134,24 @@ columns not spent on the session's name."
            (concatenate 'string "~" (subseq ws (length home))))
           (t ws))))
 
-(defun %turn-index (s)
-  "`1/71` — which turn of how many the session has reached, or NIL.
+(defun %session-position (s)
+  "`1/71` — which of the daemon's sessions this is, of how many. The reference's
+rule, from `header_line`: shown for one session too, because \"1/1\" is a fact —
+this daemon holds one session and you are in it — where two absences are not.
+Subagents are children of a session, not sessions a picker lists, so they are not
+counted; the picker filters them the same way."
+  (let* ((all (remove-if (lambda (b) (getf b :parent-session-id)) (session-sessions s)))
+         (at (position (session-session-id s) all
+                       :key (lambda (b) (getf b :session-id)) :test #'equal)))
+    (format nil "~d/~d" (if at (1+ at) 0) (max 1 (length all)))))
 
-From the SETTLED decisions' turn ids and the transcript's, which is the only
-number the head has; the daemon does not send a turn count."
-  (let ((turns (remove-duplicates
-                (remove nil (mapcar (lambda (d) (getf d :turn-id))
-                                    (session-settled-decisions s)))
-                :test #'string=)))
-    (when turns (format nil "1/~d" (length turns)))))
+(defun %ellipsise-left (path room)
+  "PATH shortened from its LEFT to ROOM columns: the end of a path is the part
+that identifies it, and `~/Projects/…` names nothing."
+  (if (<= (string-width path) room)
+      path
+      (let ((keep (max 1 (- room 1))))
+        (concatenate 'string "…" (subseq path (max 0 (- (length path) keep)))))))
 
 (defun %usage-numbers (s)
   "The four telemetry numbers the header shows, each present only when measured:
@@ -188,29 +196,48 @@ rate nobody took, and it is the rule the meter and the footer are both held to."
 (defun top-border (head cols)
   "The header: what this session IS on the left, what it is COSTING on the right.
 
-The shape is letibot's, measured against its live screen: `▌ <title>  <workspace>`
-then `N/M · model · $cost · ctx · cached% · rate · elapsed · out`. Ours showed
-the session ID and `seq N · N heads`, which is instrumentation where the reference
-has information — the operator can read the title of their own session and cannot
-read a seq number."
+    ▌ the cache question  ~/Projects/letibot   2/4 · glm-5.3-flash · 41.2k ctx · 92% cached · 45 tok/s · 12.3s · 1.2k out
+
+The shape is letibot's `header_line`, and so are the three registers, read off its
+raw escapes rather than its plain text: the bar is `Role::UserAccent` (blue), the
+title `Strong`, the workspace `Faint`, and the whole tail `Faint`. Ours painted the
+left half bold from the bar to the path, which is one register where the reference
+has three — and it is the row the eye crosses on every return to the field.
+
+**It degrades by deletion, one field at a time**, from the tail's END: the path is
+shortened from its left before anything is dropped — a path is recognisable from
+its end, and a token count is not recoverable from anywhere else on the screen."
   (let* ((s (head-session head))
-         (title (if (plusp (length (session-title s)))
-                    (session-title s) (session-session-id s)))
+         (name (if (plusp (length (session-title s)))
+                   (session-title s) (session-session-id s)))
          (model (%model-name s))
-         (ws (%workspace s))
-         (turn (%turn-index s))
-         (money (spent-text))
-         (left (format nil "▌ ~a~@[  ~a~]" title ws))
-         (right (format nil "~{~a~^ · ~} "
-                        (remove nil
-                                (append (list turn)
-                                        (list (and (plusp (length model)) model))
-                                        (list money)
-                                        (%usage-numbers s)))))
-         (pad (max 0 (- cols (string-width left) (string-width right)))))
-    (list (cons left '(:bold t))
-          (cons (make-string pad :initial-element #\space) nil)
-          (cons right '(:dim t)))))
+         (right (remove nil
+                        (append (list (%session-position s))
+                                (list (and (plusp (length model)) model))
+                                (list (spent-text))
+                                (%usage-numbers s))))
+         (name-cols (+ 2 (string-width name))))
+    ;; drop from the end until it leaves room for the name
+    (loop while (and (> (length right) 1)
+                     (> (+ name-cols (string-width (format nil "~{~a~^ · ~}" right)) 2) cols))
+          do (setf right (butlast right)))
+    (let* ((tail (format nil "~{~a~^ · ~}" right))
+           (tail-cols (if (plusp (length tail)) (+ 2 (string-width tail)) 0))
+           (left (list (cons "▌ " '(:fg :blue))
+                       (cons name '(:bold t))))
+           (left-cols name-cols)
+           (ws (%workspace s)))
+      ;; the workspace fills whatever is left, shortened from its LEFT
+      (when ws
+        (let ((room (- cols left-cols tail-cols 2)))
+          (when (>= room 8)
+            (let ((shown (%ellipsise-left ws room)))
+              (setf left (append left (list (cons (format nil "  ~a" shown) '(:dim t)))))
+              (incf left-cols (+ 2 (string-width shown)))))))
+      (let ((pad (max 0 (- cols left-cols (string-width tail)))))
+        (append left
+                (list (cons (make-string pad :initial-element #\space) nil)
+                      (cons tail '(:dim t))))))))
 
 ;;; ----------------------------------------------------------- alarm line ;;;
 ;;;

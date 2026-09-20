@@ -51,6 +51,29 @@ arguments string is JSON like any other, so `{\"path\": \"a\"}` arrives as
 object/array ambiguity (PLAN §7)."
   (%plist-p x))
 
+(defun %debug-quote (s)
+  "S as Rust's `{:?}` prints a string: quoted, with `\\n`, `\\t`, `\\\"` and `\\\\`
+written as escapes.
+
+The reference's `display_target` quotes a whitespace-bearing argument this way,
+so a heredoc command reads `<<'MSG'\\nthe step…` on its screen. Ours used `~s`,
+which prints the newline itself, and `truncate-target` then flattened it to a
+space — so the same call read `<<'MSG' the step…` here, one of the differences a
+side-by-side of the two heads showed."
+  (with-output-to-string (o)
+    (write-char #\" o)
+    (loop for c across s
+          do (case c
+               (#\" (write-string "\\\"" o))
+               (#\\ (write-string "\\\\" o))
+               (#\newline (write-string "\\n" o))
+               (#\tab (write-string "\\t" o))
+               (#\return (write-string "\\r" o))
+               (t (if (< (char-code c) 32)
+                      (format o "\\u{~(~x~)}" (char-code c))
+                      (write-char c o)))))
+    (write-char #\" o)))
+
 (defun %scalar-label (json)
   "One scalar value as a label, or :elided for a nested one."
   (cond
@@ -59,7 +82,7 @@ object/array ambiguity (PLAN §7)."
      ;; quoted when it has whitespace, so `grep \"two words\" src` cannot be
      ;; misread as three arguments
      (if (find-if (lambda (c) (member c '(#\space #\tab #\newline))) json)
-         (format nil "~s" json)
+         (%debug-quote json)
          json))
     ((numberp json) (format nil "~a" json))
     ((eq json t) "true")
@@ -413,11 +436,19 @@ folded text, or the text unchanged when it holds no screen."
         (if running (third (cdr hit)) (second (cdr hit)))
         (or tool "tool"))))
 
+(defun %payload-lines (payload)
+  "PAYLOAD split as Rust's `str::lines` splits it: a final newline ends the last
+line and does not start an empty one, and an empty payload is NO lines.
+`uiop:split-string` gives a trailing \"\" for both — measured as one extra blank
+row at the bottom of every open card, against letibot's screen."
+  (let ((rows (uiop:split-string (or payload "") :separator '(#\newline))))
+    (if (and rows (zerop (length (car (last rows)))))
+        (butlast rows)
+        rows)))
+
 (defun %payload-line-count (payload)
   "How many lines PAYLOAD is, which is the number the fold marker counts."
-  (if (or (null payload) (zerop (length payload)))
-      0
-      (1+ (count #\newline payload))))
+  (length (%payload-lines payload)))
 
 ;;; The settled tool row, to the reference's own weighting.
 ;;;
@@ -503,96 +534,252 @@ under eight settled ones, in the same order, saying less.")
   (when (and call-id (not (call-answered-p call-id)))
     (push call-id *answered-calls*)))
 
+(defun %outcome-why (outcome)
+  "The reason a call's outcome carries, or NIL — the reference's `outcome_why`."
+  (when (consp outcome)
+    (switch ((outcome-name outcome) :test #'string=)
+      ("ok" nil)
+      ("timeout" nil)
+      ("denied" (format nil "the call was denied (~a)" (or (getf outcome :req-id) "")))
+      ("backgrounded" (format nil "as `~a` — ~a" (or (getf outcome :handle) "")
+                              (or (getf outcome :next) "")))
+      (t (or (getf outcome :reason) (getf outcome :why))))))
+
+(defun %outcome-word (word)
+  "The word the row prints for an outcome name — `outcome_word`. Shouted where the
+reference shouts (§8.2: abstention must not read like success)."
+  (switch (word :test #'string=)
+    ("abstained" "ABSTAINED")
+    ("denied" "REFUSED")
+    ("not_run" "not run")
+    ("backgrounded" "STILL RUNNING")
+    (t word)))
+
+(defun %first-sentence (basis)
+  "The first sentence of BASIS's first line, capped at 140 characters."
+  (let* ((line (string-trim " " (%first-line basis)))
+         (dot (search ". " line))
+         (s (if dot (subseq line 0 (1+ dot)) line)))
+    (if (<= (length s) 140)
+        s
+        (format nil "~a…" (string-right-trim " " (subseq s 0 140))))))
+
+(defun %strip-gutter (line)
+  "A leading line-number gutter — `     1| ` — off ONE line of tool output.
+
+Only ever applied to a one-line preview inlaid on a header, never to a body: a
+body's gutter is how a reader refers to a line. On a header it is `1|` before the
+only line there is, which is three columns saying \"this is line one of one\"."
+  (let* ((t0 (string-left-trim " " line))
+         (digits (or (position-if-not #'digit-char-p t0) (length t0))))
+    (if (and (plusp digits) (> (length t0) (1+ digits))
+             (char= (char t0 digits) #\|) (char= (char t0 (1+ digits)) #\space))
+        (string-right-trim " " (subseq t0 (+ digits 2)))
+        (string-trim " " line))))
+
 (defun %tool-result-lines (item body cols prefs)
-  "One settled tool-result row, weighted the way the reference weights it."
+  "One settled tool-result row — the reference's `TranscriptItem::ToolResult` arm,
+followed step for step, because a screen comparison showed ours had folded the
+reference's three rows into one:
+
+    ▸ Ran \"cd … && python3 - <<'PY'…\" · ok · 13 lines     (header)
+      P5 recorded                                        (the first line, dim)
+      … +12 lines · ctrl-t                               (the seam, and the chord)
+
+Ours put the seam ON the header and dropped the first line, so a folded row said
+how much there was and nothing of what. And a ONE-line result, inlined on the
+header, also printed `· 1 line` — a count for a fold with nothing to fold."
   (let* ((facts (item-facts (getf item :item-id)))
          (name (getf body :name))
          (outcome (getf body :outcome))
          (payload (or (getf body :payload) ""))
          (ms (getf facts :ms))
-         (edit (getf facts :edit))
+         (edit (or (getf facts :edit) (getf body :edit)))
+         (open (getf prefs :show-tools))
          (word (outcome-name outcome))
          (bad (not (string= word "ok")))
-         (mark (if (getf prefs :show-tools) "▾" "▸"))
+         (mark (if open "▾" "▸"))
          (verb (verb-label name))
          (subject (or (call-target-of (getf body :call-id))
                       (format nil "(~a)" (getf body :call-id))))
-         ;; the envelope lines are not output
          (decision (getf facts :decision))
-         (rows (remove-if #'%envelope-line-p
-                          (uiop:split-string payload :separator '(#\newline))))
+         ;; the envelope lines are not output
+         (rows (remove-if #'%envelope-line-p (%payload-lines payload)))
          (n (length rows))
          (ind (activity-indent cols))
+         (w (max 20 (- cols ind)))
          (faint '(:dim t))
          (outcome-style (if bad '(:fg :red) faint))
          (size-style (if (>= n +big-output-lines+) '(:bold t) faint))
-         ;; the subject gets what the tail does not need, and is measured FIRST
-         (tail-cols (+ 3 (string-width word)
-                       (if (numberp ms) (+ 3 (string-width (duration ms))) 0)
+         (shown-word (%outcome-word word))
+         (took (if (numberp ms) (format nil " · ~a" (duration ms)) ""))
+         ;; the tail is measured FIRST and the subject is given what is left
+         (tail-cols (+ 3 (string-width shown-word) (string-width took)
                        3 6 (length (format nil "~d" n))))
          (lead (+ (length mark) 1 (length verb) 1))
+         (subject (%shorten-subject subject (max 8 (- w lead tail-cols))))
          (head (list (cons mark (if bad '(:fg :red) faint))
                      (cons (format nil " ~a " verb) faint)
-                     (cons (%shorten-subject subject
-                                             (max 8 (- cols ind lead tail-cols)))
-                           nil)
-                     (cons (format nil " · ~a" word) outcome-style)
-                     (cons (if (numberp ms) (format nil " · ~a" (duration ms)) "") faint)
-                     (cons (format nil " · ~d line~p" n n) size-style))))
-    (append
-     ;; the oracle's brief and reply, on the ROW rather than on a card that has
-     ;; already left the screen
-     (when decision
-       (list (list (cons "    ⚖ " '(:dim t))
-                   (cons (or (getf (getf decision :outcome) :outcome) "answered") '(:dim t))
-                   (cons (let ((b (getf decision :basis)))
-                           (if (and b (> (length b) 40)
-                                    (search (subseq b 0 (or (position #\newline b)
-                                                           (length b)))
-                                            payload))
-                               ""
-                               (if b (format nil " — ~a" (%first-line b)) "")))
-                         '(:dim t)))))
-     ;; ONE line of output goes ON the header — `▸ Read .gitignore · ok · 1 line ·
-     ;; /target` is one row where the folded form is two, and at 34 rows that
-     ;; halving is the difference between four calls fitting and eight
-     ;; ONE line of output goes ON the header whether or not the card is folded:
-     ;; `▸ Read .gitignore · ok · 1.1s · /target` is one row where the folded form
-     ;; is two, and the second carried the count and a chord for a fold with
-     ;; nothing to fold.
-     (if (and (not bad) (= n 1) (not edit) (plusp (length (first rows))))
-         (list (append head (list (cons " · " faint)
-                                  (cons (string-trim " " (first rows)) nil))))
-         ;; folded and there IS more: say how much, and name the chord that shows
-         ;; it. No chord on a card with nothing folded — eight columns of every row
-         ;; spent advertising a key that would do nothing.
-         (if (and (not (getf prefs :show-tools)) (> n 1))
-             (list (append head
-                           (list (cons (format nil "  … +~d lines · ctrl-t" (- n 1))
-                                       faint))))
-             (list head)))
-     ;; **FOLDED BY DEFAULT**, which is letibot's default and now ours: the header
-     ;; carries the count and a `… +N lines · ctrl-t` marker, and the output is one
-     ;; chord away. A card that prints two hundred lines where the reference prints
-     ;; one row is a transcript nobody can scan — and the count is the size signal,
-     ;; so the folded row still says how much there is.
-     (when (getf prefs :show-tools)
-       (cond
-         (edit (edit-lines edit cols
-                           :folded nil
-                           :split (string= (or (getf prefs :diff) "unified") "split")))
-         ((and (> n 1)
-               (getf prefs :show-tools))
-          (let ((keep (if (> n 8) 7 n)))
-            (append
-             (mapcar (lambda (l) (list (cons "  " faint)
-                                       (cons (%truncate-width (or l "") (max 4 (- cols ind 2)))
-                                             faint)))
-                     (subseq rows 0 keep))
-             (when (> n keep)
-               (list (list (cons (format nil "  … +~d lines · ctrl-t" (- n keep))
-                                 faint)))))))
-         (t nil))))))
+                     (cons subject nil)
+                     (cons (format nil " · ~a" shown-word) outcome-style)
+                     (cons took faint)))
+         (head-width (%segs-width head))
+         (why (%outcome-why outcome))
+         (out nil))
+    (labels ((emit (line) (push line out))
+             (dim-line (text)
+               (list (cons "  " faint)
+                     (cons (%truncate-width (or text "") (max 4 (- w 2))) faint)))
+             (decision-lines ()
+               ;; the approval this call was gated by, in the dim register — the
+               ;; same block the live card draws, carried across with the card
+               (when decision
+                 (let* ((o (getf decision :outcome))
+                        (option (and (consp o) (getf o :option-id)))
+                        (dword (cond ((and option (alexandria:starts-with-subseq "allow" option))
+                                      "allowed")
+                                     (option "refused")
+                                     ((equal (outcome-name o) "cancelled") "cancelled")
+                                     ((equal (outcome-name o) "timed_out") "not answered")
+                                     (t "answered")))
+                        (by (getf decision :by))
+                        (who (format nil "~a~@[ ~a~]" (or (getf by :kind) "")
+                                     (let ((id (getf by :identity)))
+                                       (and id (plusp (length id)) id)))))
+                   (emit (list (cons (format nil "  · ~a, by ~a" dword who) faint)))
+                   ;; the basis under it while the tools are open — unless the
+                   ;; payload already says it: the operator, counting the repeats
+                   ;; in one card, *"how many times is 'nothing ran' needed?"*
+                   (when open
+                     (let* ((b (getf decision :basis))
+                            (first (and b (string-trim " " (%first-line b))))
+                            (echoed (and first (>= (length first) 40)
+                                         (some (lambda (l) (search first l)) rows))))
+                       (when (and b (plusp (length b)) (not echoed))
+                         (dolist (l (wrap-segments (list (cons (format nil "~a: ~a"
+                                                                       (or (getf by :kind) "decided")
+                                                                       b)
+                                                               nil))
+                                                   (max 4 (- w 4))))
+                           (emit (cons (cons "    " faint)
+                                       (mapcar (lambda (seg) (cons (car seg) faint)) l)))))))))))
+      ;; A result of ONE line goes on the header — one row where the folded form
+      ;; is two, and the second carried the count and a chord for a fold with
+      ;; nothing to fold. Not for an edit with an excerpt: that draws its diff.
+      (let ((inline (and (not bad) (= n 1) (null edit)
+                         (let ((l (%strip-gutter (first rows))))
+                           (and (plusp (length l))
+                                (<= (+ head-width 3 (string-width l)) w)
+                                l)))))
+        (when inline
+          (emit (append head (list (cons " · " faint) (cons inline nil))))
+          (decision-lines)
+          (return-from %tool-result-lines (nreverse out))))
+      ;; the count, Strong once the output is big enough to be worth a fold. No
+      ;; `· ctrl-t` here: the chord belongs on the seam row below, which exists
+      ;; exactly when something is hidden.
+      (emit (%truncate-segs
+             (append head (list (cons (format nil " · ~d line~:p" n) size-style)))
+             w))
+      ;; The reason, on its own wrapping line, in the outcome's role: the first
+      ;; sentence always, the rest with ctrl-t — a refusal's reason is a DOCUMENT
+      ;; addressed to the model, and printing it whole "throws up on the chat".
+      ;; When the payload says the same line it is not said twice.
+      (let* ((why-folded nil))
+        (when why
+          (let* ((first (string-trim " " (%first-line why)))
+                 (echoed (and (>= (length first) 40)
+                              (some (lambda (l) (search first l)) rows)))
+                 (shown (if (and open (not echoed))
+                            why
+                            (let ((gist (%first-sentence why)))
+                              (setf why-folded (< (length gist) (length why)))
+                              gist))))
+            (dolist (l (wrap-segments (list (cons shown nil)) (max 4 (- w 2))))
+              (emit (cons (cons "  " outcome-style)
+                          (mapcar (lambda (seg) (cons (car seg) outcome-style)) l))))))
+        (decision-lines)
+        ;; a file edit draws its DIFF, not the tool's prose: folded keeps the
+        ;; first hunk's opening rows, open shows it whole
+        (when (and edit (member (car (cdr (assoc (string-downcase (or name "")) *verb-map*
+                                                 :test #'string=)))
+                                '(:edit :write))
+                   (not bad))
+          (let* ((rows (edit-lines edit (- w 2) :folded nil
+                                   :split (string= (or (getf prefs :diff) "unified") "split")))
+                 (keep (if open (length rows) (min 8 (length rows))))
+                 (hidden (- (length rows) keep)))
+            (dolist (l (subseq rows 0 keep))
+              (emit (cons (cons "  " nil) l)))
+            (when (plusp hidden)
+              (emit (list (cons (format nil "  … +~d diff rows · ctrl-t" hidden) faint)))))
+          (return-from %tool-result-lines (nreverse out)))
+        ;; Folded shows the first line, which is where a tool puts what it did,
+        ;; then the seam: `… +N lines`, a separator row and not a sentence — it is
+        ;; not content, it is where content was taken out — and the chord goes on
+        ;; it, where there is something for it to do. Open, or a failure with no
+        ;; reason printed above it, shows the body up to the budget.
+        (let ((limit (if (or open (and bad (null why))) 40 2)))
+          (if (and (> n limit) (>= limit 2))
+              (progn
+                (dolist (l (subseq rows 0 (1- limit))) (emit (dim-line l)))
+                (emit (list (cons (format nil "  … +~d lines · ctrl-t" (- n (1- limit)))
+                                  faint))))
+              (progn
+                (dolist (l rows) (emit (dim-line l)))
+                ;; the payload was short enough to show whole, but the REASON was
+                ;; cut — so the affordance has to be here
+                (when why-folded
+                  (emit (list (cons "  … the rest of the reason · ctrl-t" faint))))))))
+      ;; `item-lines` steps the whole row in by the activity indent
+      (nreverse out))))
+
+(defparameter +body-lines-budget+ 40
+  "The reference's `Budget::body_lines`: a block over this many rows is shown as
+its title, an elision count and its tail.")
+
+(defparameter +reasoning-lines-budget+ 8
+  "The reference's `Budget::reasoning_lines`, the same bound for a reasoning block.")
+
+(defun reasoning-header (text cols open running)
+  "`▸ Thought · 13 lines · ctrl-r` — the fold's own header, which is also where
+its key is advertised: there is no pointer here and no selection, so the header
+naming its chord is the whole discoverability mechanism.
+
+The count is SCREEN lines, not source lines, as the reference counts them: the
+model writes its working-out as a handful of very long paragraphs, so \"3 lines\"
+beside a fold that opens to half a screen answers the wrong question. And the
+mark is PLAIN, not dim — measured against letibot's row, where only the tail after
+the word is faint."
+  (let* ((w (max 20 (- cols (activity-indent cols))))
+         (n (max 1 (reduce #'+ (mapcar (lambda (l) (max 1 (ceiling (string-width l) w)))
+                                       (uiop:split-string (or text "") :separator '(#\newline)))
+                           :initial-value 0))))
+    (%truncate-segs
+     (list (cons (if open "▾ " "▸ ") nil)
+           (if running
+               (cons "Thinking…" '(:dim t :italic t))
+               (cons "Thought" '(:bold t)))
+           (cons (format nil " · ~d line~:p · ctrl-r" n) '(:dim t)))
+     w)))
+
+(defun reasoning-lines (text cols prefs &key running)
+  "A reasoning block: the header, and — open — its body under the `┃ ` rail, in
+the dim-italic register, rendered as markdown two columns narrower than the row so
+the wrap and the rail agree. Folded, the header alone."
+  (let ((open (getf prefs :show-reasoning)))
+    (cons (reasoning-header text cols open running)
+          (when open
+            (mapcar (lambda (l)
+                      (cons (cons "┃ " '(:dim t))
+                            (mapcar (lambda (seg)
+                                      (cons (car seg)
+                                            (if (cdr seg)
+                                                (append (cdr seg) '(:dim t :italic t))
+                                                '(:dim t :italic t))))
+                                    l)))
+                    (markdown-lines text :width (max 20 (- cols (activity-indent cols) 2))
+                                         :limit +reasoning-lines-budget+))))))
 
 (defun step-in-lines (lines n)
   "LINES set N columns further in — the model's WORKING, under what it SAYS.
@@ -675,8 +862,15 @@ a terminal-native palette."
           ;; RESULT, and drawing it here too is two rows and one fact. `→` therefore
           ;; means exactly "asked for, nothing came back" — the turn was
           ;; interrupted, or the body has not arrived.
+          ;;
+          ;; **Wrapped to the width it has**, and bounded at the reference's
+          ;; `body_lines` budget. `markdown-lines` used to be called with no width
+          ;; at all and `%place-lines` clips, so every paragraph longer than the
+          ;; terminal was CUT at its edge — measured against letibot's screen,
+          ;; where the same paragraphs wrapped to two rows.
           (let ((rows (when (plusp (length (getf body :text)))
-                        (markdown-lines (getf body :text) nil))))
+                        (markdown-lines (getf body :text) :width cols
+                                                          :limit +body-lines-budget+))))
             (append
              rows
              (loop for tc in (getf body :tool-calls)
@@ -695,29 +889,9 @@ a terminal-native palette."
           ;; terminal-native palette, so the attribute is what carries it.
           ;;
           ;; Folded by default, like a card and like letibot: `▸ Thought · 20
-          ;; lines · ctrl-r`. We printed the whole working-out inline, which is
-          ;; the flat wall of text the operator complained about, and the fold is
-          ;; the same affordance the tool cards already have.
-          (let* ((text (getf body :text))
-                 (body-rows (if (plusp (length text))
-                                (uiop:split-string text :separator '(#\newline))
-                                nil))
-                 ;; a SETTLED row is by definition not running, so the word is
-                 ;; `Thought`; `Thinking…` belongs to the live turn
-                 (word "Thought"))
-            (if (getf prefs :show-reasoning)
-                (cons (list (cons word '(:bold t)))
-                      (mapcar (lambda (l)
-                                (list (cons "┃ " '(:dim t))
-                                      (cons l '(:italic t :dim t))))
-                              body-rows))
-                (list (list (cons "▸ " '(:dim t))
-                            (cons word '(:bold t))
-                            (cons (if body-rows
-                                      (format nil " · ~d lines · ctrl-r"
-                                              (length body-rows))
-                                      "")
-                                  '(:dim t)))))))
+          ;; lines · ctrl-r`. A settled row is by definition not running, so the
+          ;; word is `Thought`; `Thinking…` belongs to the live turn.
+          (reasoning-lines (getf body :text) cols prefs :running nil))
          ((:tool_result) (%tool-result-lines item body cols prefs))
          ((:system)
           (wrap-segments
@@ -732,30 +906,63 @@ a terminal-native palette."
           ((:reasoning :tool_result) (activity-indent cols))
           (t 0)))))))
 
+(defun %call-elapsed-ms (call)
+  "How long a running call has been going, from the moment its ToolStarted arrived."
+  (let ((start (cdr (assoc (getf call :call-id) *call-started-ms* :test #'string=))))
+    (and (numberp start) (max 0 (- (internal-real-time-ms) start)))))
+
 (defun call-lines (call cols)
-  "One tool call of the running turn, with its state."
-  (let* ((state (getf (getf call :state) :state))
-         (style (if (string= state "finished")
-                    (%outcome-style (getf (getf call :state) :outcome))
-                    '(:fg :yellow)))
-         (target (getf call :target))
+  "One tool call of the running turn — the reference's `card::Card::header`:
+
+    ○ Read src/cards.lisp · proposed
+    ◐ Reading src/cards.lisp · 1.2s
+    ● Read src/cards.lisp · 27ms
+
+The mark carries the phase (faint / pending / the outcome's role), the verb is
+Strong and in the running TENSE — a card that says `Ran` while the command is
+still going lies about the one thing it exists to say — the target is Plain, and
+the tail is faint unless the outcome is not `ok`. Ours drew `· bash → running` in
+three colours, none of them the reference's."
+  (let* ((st (getf call :state))
+         (state (getf st :state))
+         (running (string= state "running"))
+         (finished (string= state "finished"))
+         (outcome (getf st :outcome))
+         (word (and finished (outcome-name outcome)))
+         (bad (and finished (not (string= word "ok"))))
+         (outcome-style (cond ((not finished) '(:fg :yellow))
+                              (bad (case (intern (string-upcase word) :keyword)
+                                     ((:failed :timeout) '(:fg :red))
+                                     (t '(:bold t :fg :yellow))))
+                              (t '(:fg :green))))
+         (mark (cond (running (cons "◐" '(:fg :yellow)))
+                     (finished (cons "●" outcome-style))
+                     (t (cons "○" '(:dim t)))))
+         (target (or (getf call :target) ""))
          (note (getf call :progress-note))
-         (label (switch (state :test #'string=)
-                  ("finished" "done")
-                  ("running" (or note "running"))
-                  (t "proposed"))))
+         (ms (and finished (getf (alexandria:assoc-value *call-facts* (getf call :call-id)
+                                                          :test #'string=)
+                                 :ms)))
+         (tail (remove nil
+                       (cond
+                         (running (list (duration (or (%call-elapsed-ms call) 0)) note))
+                         (finished (append (and (numberp ms) (list (duration ms)))
+                                           (and bad (list (%outcome-word word)))
+                                           (and bad (list (%outcome-why outcome)))))
+                         (t (list (or note "proposed"))))))
+         (head (list mark
+                     (cons " " nil)
+                     (cons (verb-label (getf call :name) :running running) '(:bold t))
+                     (cons (if (plusp (length target)) (format nil " ~a" target) "") nil)))
+         (joined (and tail (format nil " · ~{~a~^ · ~}" tail)))
+         (tail-style (if bad outcome-style '(:dim t))))
     (append
-     (wrap-segments
-      (list (cons "  · " '(:dim t))
-            (cons (getf call :name) '(:bold t))
-            (cons (if (plusp (length target))
-                      (format nil " ~a" target) "")
-                  '(:fg :bright-white))
-            (cons (format nil " — ~a" label) style))
-      cols)
+     (list (if (and joined (<= (+ (%segs-width head) (string-width joined)) cols))
+               (append head (list (cons joined tail-style)))
+               (%truncate-segs head cols)))
      ;; a file-editing call carries both sides of the change, bounded to what
      ;; differs (event.rs:75) — the raw material of the diff view
-     (awhen-edit-lines (getf (getf call :state) :edit) cols))))
+     (awhen-edit-lines (getf st :edit) cols))))
 
 (defun %edit-lines-text (text)
   "TEXT as a list of lines. An empty side is NO lines, not one empty line:
@@ -880,34 +1087,53 @@ different requirements, and this is the second one."
           (reverse (head-queued head))))
 
 (defun turn-lines (turn cols prefs)
-  "The running turn, live: reasoning, text, calls. A finished turn renders
-from the transcript instead (view.rs on TurnView.appended) — rendering both
-would show the answer twice."
+  "The running turn, live, in the reference's order: the working first —
+reasoning, then the calls, each stepped in — and the answer under it, with a
+blank row after each part that is there. A finished turn renders from the
+transcript instead (view.rs on TurnView.appended) — rendering both would show the
+answer twice.
+
+Folded reasoning still shows its LAST line under the header, on the rail: the
+operator can see the model is still thinking and what about, without opening it.
+Calls are drawn oldest first — the session pushes them, so the list is newest
+first and was drawn that way."
   (when (and turn (string= (turn-state-name turn) "running"))
-    (append
-     (when (getf prefs :show-reasoning)
-       (alet (getf turn :reasoning)
-         (when (plusp (length it))
-           (mapcar (lambda (segs)
-                     (cons (cons "  " '(:dim t)) segs))
-                   (wrap-segments
-                    (list (cons it '(:italic t :dim t)))
-                    (max 2 (- cols 2)))))))
-     (alet (getf turn :text)
-       (when (plusp (length it))
-         (markdown-lines it nil)))
-     (mappend (lambda (c) (call-lines c cols))
-              (getf turn :calls))
-     ;; The raw `<function=…>` markup the model wrote, when ctrl-x has asked for
-     ;; it. NOT a fold: a fold hides something the reader knows is there, while
-     ;; this reveals markup the default view is required never to show, so it is
-     ;; off unless asked for by name.
-     (when (getf prefs :raw-calls)
-       (let ((raw (getf turn :raw-calls)))
-         (when (and (stringp raw) (plusp (length raw)))
-           (mapcar (lambda (l) (list (cons "    " '(:dim t))
-                                     (cons l '(:dim t))))
-                   (uiop:split-string raw :separator '(#\newline)))))))))
+    (let ((ind (activity-indent cols))
+          (out nil))
+      (flet ((emit (lines) (setf out (append out lines))))
+        (alet (getf turn :reasoning)
+          (when (plusp (length it))
+            (emit (step-in-lines
+                   (if (getf prefs :show-reasoning)
+                       (reasoning-lines it cols prefs :running t)
+                       (list (reasoning-header it cols nil t)
+                             (let ((last (or (car (last (remove-if (lambda (l) (zerop (length (string-trim " " l))))
+                                                                    (uiop:split-string it :separator '(#\newline)))))
+                                             "")))
+                               (list (cons "┃ " '(:dim t))
+                                     (cons (%truncate-width last (max 4 (- cols ind 2)))
+                                           '(:dim t :italic t))))))
+                   ind))
+            (emit (list nil))))
+        (let ((calls (reverse (getf turn :calls))))
+          (when calls
+            (emit (step-in-lines (mappend (lambda (c) (call-lines c (- cols ind))) calls) ind))
+            (emit (list nil))))
+        (alet (getf turn :text)
+          (when (plusp (length it))
+            (emit (markdown-lines it :width cols :limit +body-lines-budget+))
+            (emit (list nil))))
+        ;; The raw `<function=…>` markup the model wrote, when ctrl-x has asked for
+        ;; it. NOT a fold: a fold hides something the reader knows is there, while
+        ;; this reveals markup the default view is required never to show, so it is
+        ;; off unless asked for by name.
+        (when (getf prefs :raw-calls)
+          (let ((raw (getf turn :raw-calls)))
+            (when (and (stringp raw) (plusp (length raw)))
+              (emit (mapcar (lambda (l) (list (cons "    " '(:dim t))
+                                              (cons l '(:dim t))))
+                            (uiop:split-string raw :separator '(#\newline))))))))
+      out)))
 
 (defun decision-card-lines (head cols)
   "The ask card: transcript visible above, one list on the screen at a time

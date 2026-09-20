@@ -34,26 +34,36 @@ not overflow (width.rs's third mistake)."
 
 (defun wrap-segments (segs cols)
   "Segments to lines of at most COLS columns. Style carries onto continuation
-lines; each returned line is independently paintable."
+lines; each returned line is independently paintable.
+
+A trailing space belongs to the row it ended and is not counted against the
+width — the usual line-breaking contract, and the reference's (`break_cells`: a
+row's slice may be one column over COLS *in trailing whitespace only*). It is then
+TRIMMED off the row: it is invisible until something copies it, and a painter that
+erases to the end of the row paints the background one column further than the
+text goes. Without this rule a paragraph whose words fit exactly wrapped one word
+early, and a row's last word could carry a space past the edge."
   (if (<= cols 0)
       (list segs)
       (let ((lines nil)
             (cur nil)
             (w 0))
         (flet ((break-line ()
-                 (when cur (push (nreverse cur) lines))
+                 (when cur (push (%trim-line-end (nreverse cur)) lines))
                  (setf cur nil w 0)))
           (dolist (seg segs)
             (dolist (word (%split-words (car seg)))
-              (let ((ww (string-width word)))
+              (let* ((visible (string-right-trim " " word))
+                     (vw (string-width visible))
+                     (ww (string-width word)))
                 (cond
-                  ((> ww cols)
+                  ((> vw cols)
                    (break-line)
-                   (let ((chunks (%hard-break word cols)))
+                   (let ((chunks (%hard-break visible cols)))
                      (dolist (c chunks)
                        (push (cons c (cdr seg)) cur))
                      (break-line)))
-                  ((<= (+ w ww) cols)
+                  ((<= (+ w vw) cols)
                    (push (cons word (cdr seg)) cur)
                    (incf w ww))
                   (t
@@ -106,12 +116,13 @@ terminal: the newest content sat at row 1 and the oldest at row 57.)"
          (need (+ (head-scroll head) want))
          ;; the running turn, then ITS FOOTER — the footer belongs to the turn and
          ;; sits under it, and only when the turn has actually ended
-         (all (append (turn-lines (session-turn s) cols (head-prefs head))
-                      (turn-footer-lines (session-turn s) cols)
-                      ;; QUEUED PROMPTS, at the tail, where they will land: a
-                      ;; sentence the conversation has swallowed is visible here
-                      ;; until the daemon appends its row
-                      (queued-lines head cols))))
+         (tail (append (turn-lines (session-turn s) cols (head-prefs head))
+                       (turn-footer-lines (session-turn s) cols)
+                       ;; QUEUED PROMPTS, at the tail, where they will land: a
+                       ;; sentence the conversation has swallowed is visible here
+                       ;; until the daemon appends its row
+                       (queued-lines head cols)))
+         (hist nil))
     ;; prepend committed rows, newest first, until enough lines exist; the
     ;; accumulator stays oldest-first because each older row goes in front
     ;;
@@ -128,18 +139,25 @@ terminal: the newest content sat at row 1 and the oldest at row 57.)"
     ;; blank lines for it puts a hole in the transcript.
     (let ((class-above nil))
       (loop for i from (1- (length (session-items s))) downto 0
-            while (< (length all) need)
+            ;; one more than needed: the gap below costs a row
+            while (< (+ (length hist) (length tail)) (1+ need))
             do (let* ((item (aref (session-items s) i))
                       (il (item-lines item cols (head-prefs head)))
                       (class (item-row-class item)))
                  (unless (every (lambda (l) (zerop (length (string-trim " " (segs-text-of l)))))
                                 il)
-                   (when (and all class-above
+                   (when (and hist class-above
                               (not (and (eq class :activity) (eq class-above :activity))))
-                     (setf all (cons nil all)))
+                     (setf hist (cons nil hist)))
                    (setf class-above class))
-                 (setf all (append il all)))))
-    (let* ((n (length all))
+                 (setf hist (append il hist)))))
+    ;; **AIR ABOVE THE CHROME.** One blank row after the committed rows, always
+    ;; (`body_window`: `if !hist_lines.is_empty() { segs.push(gap) }`), so the
+    ;; transcript never sits on the box's top edge and the live turn never sits
+    ;; on the last settled row. Measured on letibot's screen: row 59 blank, row
+    ;; 60 the box's top edge; ours had prose on 59.
+    (let* ((all (append hist (and hist (list nil)) tail))
+           (n (length all))
            (end (max 0 (- n (head-scroll head))))
            (start (max 0 (- end want))))
       (subseq all start end))))
@@ -190,7 +208,9 @@ scrolls the transcript by a row every keystroke.
          (card-lines nil))
     (screen-clear s)
     ;; top border, inside the gutter like everything else
-    (put-segments s 0 +gutter+ (top-border head (- cols +gutter+)))
+    ;; the header is as wide as the body: measured against letibot's row 1, its
+    ;; tail ends where the box's right edge does, and ours stopped three short
+    (put-segments s 0 +gutter+ (top-border head cols))
     ;; the ask card rides at the front of the chrome, transcript visible above
     (cond ((head-secret-req head)
            (setf card-lines (secret-card-lines head cols)))

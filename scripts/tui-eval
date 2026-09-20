@@ -299,6 +299,54 @@ def strip_ansi(s):
 STRUCT_DEF = re.compile(r"\(defstruct\s+\(?([a-z0-9-]+)(?:\s+\(:constructor\s+([^\s()]+))?", re.I)
 
 
+ASD_COMPONENT = re.compile(r'\(:file\s+"(src/[^"]+)"\)')
+
+
+def asd_files(root):
+    """The src files `leticl.asd` lists, in load order.
+
+    Order matters: the asd is `:serial t`, so it is the order the head was built
+    in, and pushing them in any other order can evaluate a form before the thing
+    it calls exists. Reading the asd rather than globbing means a new file is
+    picked up by having been registered once, in the one place that already has
+    to know about it.
+    """
+    path = os.path.join(root, "leticl.asd")
+    text = open(path).read()
+    # the asd writes components WITHOUT the extension — ASDF appends ".lisp" —
+    # so "src/package" is the file "src/package.lisp". Adding it here is the
+    # whole difference between pushing the tree and pushing 23 nonexistent paths.
+    files = [f + ".lisp" for f in ASD_COMPONENT.findall(text)]
+    return [os.path.join(root, f) for f in files]
+
+
+# **The safety files go in FIRST.** A push is not atomic against a frame unless
+# the head already serialises the two, and that serialisation lives in
+# `render.lisp` (the paint lock) and `hack.lisp` (the eval taking it) — files 20
+# and 22 of 23. Pushing in asd order to a head built before that mechanism
+# existed therefore races: the push lands mid-frame, an in-flight call reaches a
+# function that just changed, and the main thread dies. Measured twice on the
+# operator's head, at a different file each time — cells.lisp once, json.lisp
+# the next, a signature of timing rather than of a bad file.
+#
+# So these two are pushed ahead of the rest, in this order: `render` defines the
+# lock and the guarded paint, `hack` makes an eval hold it. After them the rest
+# of the tree is safe to push in the order it was built.
+SAFETY_FIRST = ("src/render.lisp", "src/hack.lisp")
+
+
+def asd_files_safely_first(root):
+    """`asd_files` with the lock-defining files hoisted to the front."""
+    files = asd_files(root)
+    head, rest = [], []
+    for f in files:
+        rel = "/".join(f.split(os.sep)[-2:])
+        (head if rel in SAFETY_FIRST else rest).append(f)
+    # keep SAFETY_FIRST's own order (render before hack), then the asd order
+    head.sort(key=lambda f: SAFETY_FIRST.index("/".join(f.split(os.sep)[-2:])))
+    return head + rest
+
+
 def struct_constructors(root):
     """Every constructor this tree's `defstruct`s define, as a sorted list.
 
