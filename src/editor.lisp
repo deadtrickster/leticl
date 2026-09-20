@@ -113,23 +113,38 @@ shows the candidates on the status line."
       ;; full-body screens. `esc`/`q` closes any of them; the LIST panes also
       ;; take a cursor (up/down) and an enter, and they share ONE cursor —
       ;; `head-picker-sel` — because only one pane is open at a time, which is
-      ;; the same argument the pane scroll offset will make. A per-pane cursor
-      ;; would be a `head` slot each, and a struct slot is a RESTART: the one
-      ;; thing this head must not need.
+      ;; the same argument the pane scroll offset makes. A per-pane cursor would
+      ;; be a `head` slot each, and a struct slot is a RESTART: the one thing
+      ;; this head must not need.
       ((member (head-mode head) '(:help :status :config :jobs :subagents :peek :todos :picker))
        (flet ((rows () (case (head-mode head)
                          (:subagents (length (head-subagents head)))
                          (:jobs (length (head-jobs head)))
                          (:todos (length (session-todos (head-session head))))
                          (:picker (length (session-sessions (head-session head))))
-                         (t 0))))
+                         (t 0)))
+              (move-cursor (n)
+                (setf (head-picker-sel head)
+                      (max 0 (min (max 0 (1- (rows))) (+ (head-picker-sel head) n)))
+                      (head-dirty head) t)
+                ;; and the offset follows the cursor, so a selection is never
+                ;; scrolled off the screen it is being made on
+                (scroll-pane-into-view (head-picker-sel head))))
          (case type
            ((:esc :q-press) (setf (head-mode head) :normal (head-dirty head) t))
-           ((:up) (setf (head-picker-sel head) (max 0 (1- (head-picker-sel head)))
-                       (head-dirty head) t))
-           ((:down) (setf (head-picker-sel head)
-                          (min (max 0 (1- (rows))) (1+ (head-picker-sel head)))
-                          (head-dirty head) t))
+           ((:up) (move-cursor -1))
+           ((:down) (move-cursor 1))
+           ;; PAGE and WHEEL scroll the PANE. They used to be swallowed here,
+           ;; which left a pane taller than the body with no way to see the rest
+           ;; of it — and the repo's own TODO.md is 98 rows. The polarity is
+           ;; `*pane-scroll*`'s, which is the OPPOSITE of the transcript's: page
+           ;; DOWN moves forward through the pane.
+           ((:page-down) (pane-scroll-by (max 1 (- *pane-room* 1)))
+                         (setf (head-dirty head) t))
+           ((:page-up) (pane-scroll-by (- (max 1 (- *pane-room* 1))))
+                       (setf (head-dirty head) t))
+           ((:wheel-down) (pane-scroll-by 3) (setf (head-dirty head) t))
+           ((:wheel-up) (pane-scroll-by -3) (setf (head-dirty head) t))
            ((:enter)
             ;; The subagent pane's enter is the one the pane already advertises:
             ;; read that subagent's scrollback without moving this session there.

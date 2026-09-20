@@ -134,17 +134,31 @@ scrolls the transcript by a row every keystroke.
       (cond
         ;; full-body screens replace the transcript
         ((member (head-mode head) '(:help :status :config :jobs :subagents :peek :picker :todos))
-         (let ((lines (case (head-mode head)
-                        (:help (help-lines cols))
-                        (:status (status-screen-lines head cols))
-                        (:config (config-lines (head-settings head) cols))
-                        (:jobs (jobs-lines head cols))
-                        (:subagents (subagent-lines head cols))
-                        (:peek (peek-lines head cols))
-                        (:picker (picker-lines (head-session head)
-                                               (head-picker-sel head) cols))
-                        (:todos (todos-lines head cols)))))
-           (%place-lines s lines body-top (max body-top (1- body-bottom)) cols)))
+         (let* ((lines nil)
+                (sel-line nil)
+                (room (max 1 (- (or alarm-row status-row) body-top))))
+           ;; A pane that owns a cursor returns the LINE it is on as a second
+           ;; value, because its cursor counts ROWS and this offset counts LINES —
+           ;; the two differ by every header above the list.
+           (multiple-value-setq (lines sel-line)
+             (case (head-mode head)
+               (:help (help-lines cols))
+               (:status (status-screen-lines head cols))
+               (:config (config-lines (head-settings head) cols))
+               (:jobs (jobs-lines head cols))
+               (:subagents (subagent-lines head cols))
+               (:peek (peek-lines head cols))
+               (:picker (picker-lines (head-session head)
+                                      (head-picker-sel head) cols))
+               (:todos (todos-lines head cols))))
+           ;; tell the KEY handler what it may scroll: it clamps without
+           ;; re-rendering, and the cursor can then scroll itself into view
+           (setf *pane-lines* (length lines)
+                 *pane-room* room)
+           ;; a cursor that walked out of the window drags the window with it
+           (when sel-line (scroll-pane-into-view sel-line))
+           (%place-lines s (pane-view lines) body-top
+                         (1- (+ body-top room)) cols)))
         (t
          ;; transcript viewport, then the card just above the chrome
          (let* ((card-lines (if (head-quit-open head)

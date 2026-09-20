@@ -10,7 +10,9 @@
 
 ;;; ------------------------------------------------------------- screens ;;;
 (defun picker-lines (session sel cols)
-  "The session picker: every row the daemon sent, current one marked."
+  "The session picker: every row the daemon sent, current one marked, and the
+cursor's LINE as a second value (see `subagent-lines`)."
+  (declare (ignore cols))
   (let ((lines (list (list (cons " sessions " '(:bold t)))))
         (i 0))
     (dolist (s (session-sessions session))
@@ -23,7 +25,7 @@
         (push (list (cons (format nil " ~a ~a" (if current "●" " ") title) style))
               lines))
       (incf i))
-    (nreverse lines)))
+    (values (nreverse lines) (1+ sel))))
 
 (defun help-lines (cols)
   (declare (ignore cols))
@@ -96,29 +98,54 @@ that changes it, or is empty for one that needs a restart."
            settings)))
 
 (defun jobs-lines (head cols)
+  "The background jobs, with the cursor on row `head-picker-sel`. Second value is
+the cursor's LINE — see `subagent-lines`."
   (declare (ignore cols))
-  (append
-   (list (list (cons " background jobs " '(:bold t))))
-   (if (head-jobs head)
-       (mapcar (lambda (j)
-                 (list (cons (format nil "  ~a" (getf j :handle)) '(:bold t))
-                       (cons (format nil "  ~a" (getf j :summary))
-                             '(:fg :bright-white))))
-               (head-jobs head))
-       (list (list (cons "  none" '(:fg :bright-black)))))))
+  (let* ((header (list (list (cons " background jobs " '(:bold t)))
+                       (list (list (cons "" '(:fg :bright-black))))))
+         (rows (head-jobs head))
+         (sel (head-picker-sel head)))
+    (values
+     (append header
+             (if rows
+                 (loop for j in rows
+                       for i from 0
+                       collect (list (cons (format nil "  ~a" (getf j :handle))
+                                           (if (= i sel)
+                                               '(:reverse t :bold t)
+                                               '(:bold t)))
+                                     (cons (format nil "  ~a" (getf j :summary))
+                                           '(:fg :bright-white))))
+                 (list (list (cons "  none" '(:fg :bright-black))))))
+     (+ (length header) sel))))
 
 (defun subagent-lines (head cols)
+  "The subagent tree, with the cursor on row `head-picker-sel`.
+
+Returns the lines and, as a second value, the LINE the cursor is on. A pane's
+cursor indexes ROWS while the scroll offset counts LINES, and the two differ by
+every header above the list — passing one where the other was meant scrolls to
+the wrong place, which is how the reference found this in its own test."
   (declare (ignore cols))
-  (append
-   (list (list (cons " subagents " '(:bold t))
-               (cons "  (enter peeks a row's scrollback without moving there)"
-                     '(:fg :bright-black))))
-   (if (head-subagents head)
-       (mapcar (lambda (s)
-                 (list (cons (format nil "  ~a" (getf s :session-id)) '(:bold t))
-                       (cons (format nil "  ~a" (getf s :kind)) '(:fg :bright-black))))
-               (head-subagents head))
-       (list (list (cons "  none" '(:fg :bright-black)))))))
+  (let* ((header (list (list (cons " subagents " '(:bold t))
+                             (cons "  (enter peeks a row's scrollback without moving there)"
+                                   '(:fg :bright-black)))
+                       (list (list (cons "" '(:fg :bright-black))))))
+         (rows (head-subagents head))
+         (sel (head-picker-sel head)))
+    (values
+     (append header
+             (if rows
+                 (loop for s in rows
+                       for i from 0
+                       collect (list (cons (format nil "  ~a" (getf s :session-id))
+                                           (if (= i sel)
+                                               '(:reverse t :bold t)
+                                               '(:bold t)))
+                                     (cons (format nil "  ~a" (getf s :kind))
+                                           '(:fg :bright-black))))
+                 (list (list (cons "  none" '(:fg :bright-black))))))
+     (+ (length header) sel))))
 
 (defun repo-todo-lines (workspace)
   "The repo's TODO.md, summarised by section (app.rs:6099). Read-only: the

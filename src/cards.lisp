@@ -113,7 +113,65 @@ reuse."
         (setf (alexandria:assoc-value *item-facts* item-id :test #'string=)
               (copy-list facts))))))
 
-;;; ------------------------------------------------------- item rendering ;;;
+(defvar *pane-scroll* 0
+  "Rows hidden ABOVE THE TOP of an open pane.
+
+**The polarity is the opposite of `head-scroll` and that is not a detail.**
+`head-scroll` counts rows back from the BOTTOM — it is a distance from the live
+tail, so `up` increases it. A pane has no live tail: it is a fixed list, and its
+offset is a distance from the START, so `down` increases it. Copying the
+transcript's polarity makes PageDown a no-op that looks exactly like the bug it
+replaced, which is how the reference found it — in its own test, after shipping
+the wrong sign once.
+
+One offset for every pane, because only one is open at a time. A per-pane offset
+would be a `head` struct slot each, and a slot is a restart.")
+
+(defvar *pane-lines* 0
+  "How many lines the open pane's content has. The render sets it so the KEY
+handler can clamp without re-rendering, and `*pane-room*` is how many of them fit.")
+
+(defvar *pane-room* 0
+  "How many rows the open pane's content may occupy, from the last render.")
+
+(defun pane-scroll-max ()
+  "The largest offset that still shows something."
+  (max 0 (- *pane-lines* *pane-room*)))
+
+(defun pane-scroll-by (n)
+  "Move the pane by N rows, clamped to its content."
+  (setf *pane-scroll* (max 0 (min (pane-scroll-max) (+ *pane-scroll* n)))))
+
+(defun reset-pane-scroll ()
+  "A newly opened pane starts at its top."
+  (setf *pane-scroll* 0))
+
+(defun pane-view (lines)
+  "LINES, windowed by `*pane-scroll*` to `*pane-room*` rows.
+
+The pane's own window function rather than `%place-lines`, because that one
+clips from the top and a pane must be able to look past it. Returns the slice,
+so the caller places it from the top of the body."
+  ;; `let*`, not `let`: START's init form uses ROOM, and under `let` the init
+  ;; forms are evaluated in the OUTER environment — so `room` would be a free
+  ;; reference to cl:room, unbound. Same defect as `%render-and-paint`'s earlier
+  ;; in this pass, and the same silent shape: it compiles.
+  (let* ((room (max 1 *pane-room*))
+         (start (max 0 (min (max 0 (- (length lines) room)) *pane-scroll*))))
+    (subseq lines start (min (length lines) (+ start room)))))
+
+(defun scroll-pane-into-view (sel)
+  "Move the offset so the cursor on row SEL is visible.
+
+The cursor scrolls ITSELF into view: a pane whose cursor can walk into rows that
+are never drawn is a pane with a selection the operator cannot see, which is worse
+than one that cannot scroll at all."
+  (let ((room (max 1 *pane-room*)))
+    (cond ((< sel *pane-scroll*) (setf *pane-scroll* sel))
+          ((>= sel (+ *pane-scroll* room))
+           (setf *pane-scroll* (max 0 (- (1+ sel) room)))))))
+
+;;; ------------------------------------------------------- pane rendering ;;;
 (defun %fold-cells (text)
   "A /cells message folds back out of the transcript at render time
 (app.rs:6264): the delimited block becomes one marker line. Returns the

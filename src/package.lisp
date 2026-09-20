@@ -61,6 +61,9 @@
    ;; the item-id maps (S3): what a settled row keeps of the live card
    #:item-facts #:note-call-started #:note-call-finished #:note-call-decision
    #:*item-facts* #:*call-facts* #:*call-started-ms*
+   ;; pane scrolling (P41): one offset for every pane, counting from the TOP
+   #:pane-scroll-by #:pane-scroll-max #:pane-view #:reset-pane-scroll
+   #:scroll-pane-into-view #:*pane-scroll* #:*pane-lines* #:*pane-room*
    ;; engines a model may want to call directly while restyling
    #:highlight-fence #:lang-for-fence
    ;; keys
@@ -76,7 +79,8 @@
    #:markdown-lines #:wrap-segments #:top-border #:status-line
    #:decision-card-lines #:picker-lines #:help-lines *slash-commands*
    #:quit-card-lines #:secret-card-lines
-   #:todos-lines #:repo-todo-lines
+   #:todos-lines #:repo-todo-lines #:jobs-lines #:subagent-lines
+   #:peek-lines #:config-lines #:status-screen-lines #:help-lines #:picker-lines
    ;; highlight
    #:hl-available-p #:lang-for #:class-grid #:role-style #:highlight-lines
    ;; diff
@@ -87,7 +91,8 @@
    #:head-prev-screen
    #:head-last-rows #:head-cols #:head-rows #:head-mode #:head-composer
    #:head-quit-open #:head-secret-req #:head-connected #:head-status-note
-   #:head-settings #:head-queued #:head-scroll #:head-resyncs
+   #:head-settings #:head-queued #:head-scroll
+   #:head-jobs #:head-subagents #:head-peeked #:head-picker-sel
    ;; hack
    #:hack-start #:hack-stop #:hack-socket-path #:list-live-heads #:hack-handle))
 

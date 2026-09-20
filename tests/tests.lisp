@@ -1340,8 +1340,18 @@ getting that order wrong scrolls the transcript by a row on every keystroke."
 ;;; ----------------------------------------- cards: evidence that survives (S3) ;;;
 
 (defun segs-of (lines)
+  "SEGMENT LINES joined, for asserting on rendered output.
+
+A LINE is a list of SEGMENTS; a SEGMENT is `(cons TEXT STYLE)`. Getting the
+nesting wrong twice in this file is why this helper exists: `(car line)` is a
+segment, and `(car (car line))` is the text."
   (format nil "~{~a~^~%~}"
-          (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l))) lines)))
+          (mapcar (lambda (line) (format nil "~{~a~}" (mapcar #'car line)))
+                  lines)))
+
+(defun lines-text (lines)
+  "One string per line, for asserting on a pane's rows."
+  (mapcar (lambda (line) (format nil "~{~a~}" (mapcar #'car line))) lines))
 
 (def-test a-settled-row-keeps-its-duration (:suite leticl)
   "A `ToolResult` row carries no timestamps at all, so unless the head noted when
@@ -1450,3 +1460,83 @@ the same call id in two rounds cannot collide."
     (is (not (equal (getf (item-facts "r1#1") :ms)
                     (getf (item-facts "r2#1") :ms)))
         "and they are not the same number, which is the whole point")))
+
+;;; ------------------------------------------------- pane scrolling (P41) ;;;
+
+(def-test pane-scroll-counts-from-the-top-not-the-bottom (:suite leticl)
+  "The polarity is the OPPOSITE of the transcript's, and copying it makes PageDown
+a no-op that looks exactly like the swallowing it replaced.
+
+`head-scroll` is a distance from the live tail, so `up` increases it. A pane has
+no tail: its offset is a distance from the START, so `down` increases it."
+  (let ((*pane-scroll* 0) (*pane-lines* 100) (*pane-room* 10))
+    (pane-scroll-by 5)
+    (is (= 5 *pane-scroll*) "down moves FORWARD through the pane")
+    (pane-scroll-by -2)
+    (is (= 3 *pane-scroll*) "up moves back toward the top")
+    (pane-scroll-by -99)
+    (is (= 0 *pane-scroll*) "and it clamps at the top")
+    (pane-scroll-by 999)
+    (is (= 90 *pane-scroll*) "and at the last page — 100 lines, 10 visible")))
+
+(def-test pane-view-windows-the-content (:suite leticl)
+  (let ((*pane-lines* 20) (*pane-room* 5)
+        (lines (loop for i from 0 below 20
+                     collect (list (cons (format nil "L~a" i) nil)))))  ; a line is a list of segments
+    (setf *pane-scroll* 0)
+    (is (equal '("L0" "L1" "L2" "L3" "L4") (lines-text (pane-view lines)))
+        "at the top it shows the first rows")
+    (setf *pane-scroll* 5)
+    (is (equal '("L5" "L6" "L7" "L8" "L9") (lines-text (pane-view lines)))
+        "moved down, it shows the next ones")
+    ;; a pane shorter than its room shows what there is, never pads
+    (setf *pane-lines* 3 *pane-scroll* 0 *pane-room* 10)
+    (is (equal '("L0" "L1" "L2") (lines-text (pane-view (subseq lines 0 3))))
+        "and it does not invent rows")))
+
+(def-test a-pane-fits-more-than-it-can-show-without-scrolling (:suite leticl)
+  "The bug this fixes: every pane drew `rows.truncate(room)` and swallowed the
+scroll keys, so a 98-row file on a 40-row terminal had more than half of itself
+unreachable. This repo's own TODO.md is that long."
+  (let* ((*stdout* (make-string-output-stream))
+         (*pane-scroll* 0)
+         (h (%on-head :cols 60 :rows 12)))
+    (setf (head-mode h) :help)
+    (leticl::%render h)
+    (is (> *pane-lines* *pane-room*)
+        "the help screen is taller than the room it has, so it NEEDS to scroll")
+    (let ((top (mapcar #'cell-ch (screen-row (head-screen h) 1))))
+      (is (search "keys" (format nil "~{~a~}" (remove nil top)))
+          "the first row of a pane is its top"))
+    ;; scroll and the content moves
+    (pane-scroll-by 5)
+    (leticl::%render h)
+    (let ((now (mapcar #'cell-ch (screen-row (head-screen h) 1))))
+      (is (not (search "keys" (format nil "~{~a~}" (remove nil now))))
+          "after scrolling, row 1 is no longer the header"))))
+
+(def-test the-cursor-drags-the-window-with-it (:suite leticl)
+  "A pane whose cursor can walk into rows that are never drawn is a pane with a
+selection the operator cannot see — worse than one that cannot scroll at all."
+  (let ((*pane-scroll* 0) (*pane-lines* 100) (*pane-room* 10))
+    (scroll-pane-into-view 3)
+    (is (= 0 *pane-scroll*) "a visible cursor does not move the window")
+    (scroll-pane-into-view 25)
+    (is (<= *pane-scroll* 25) "a cursor below the window drags it down")
+    (is (> (+ *pane-scroll* *pane-room*) 25) "and the cursor is then inside it")
+    (scroll-pane-into-view 2)
+    (is (<= *pane-scroll* 2) "a cursor above the window drags it up")))
+
+(def-test a-list-pane-reports-its-cursors-line-not-its-row (:suite leticl)
+  "A pane's cursor indexes ROWS; the scroll offset counts LINES, and they differ
+by every header above the list. Passing one where the other was meant scrolls to
+the wrong place — the reference found this in its own test."
+  (let ((h (%make-head)))
+    (setf (head-subagents h) (list (list :session-id "sub-1" :kind "task")
+                                   (list :session-id "sub-2" :kind "task")))
+    (setf (head-picker-sel h) 1)
+    (multiple-value-bind (lines sel-line) (subagent-lines h 80)
+      (is (< 1 sel-line) "the second ROW is not line 1 — there are headers above it")
+      (is (< sel-line (length lines)) "and it is a line that exists")
+      (is (search "sub-2" (format nil "~{~a~}" (mapcar #'car (nth sel-line lines))))
+          "the line it names is the row the cursor is on"))))
