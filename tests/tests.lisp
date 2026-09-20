@@ -3808,3 +3808,118 @@ them together — abstained and denied were plain yellow, backgrounded was
     (is (equal leticl::+role-failure+ (leticl::%outcome-style (list :outcome word)))
         (format nil "~a is Failure — `display_outcome` maps it onto Failed" word)))
   (is (equal leticl::+role-success+ (leticl::%outcome-style (list :outcome "ok")))))
+
+(def-test a-decision-says-what-it-was-grounded-in (:suite leticl)
+  "Gap 9. `decision_detail` (app.rs:9462-9507) is five parts and we drew one.
+The two that carry the obligation: *\"empty cites is loud\"* — an authorisation
+the oracle could not ground in anything the operator said is a different fact
+from one grounded in four utterances — and `no oracle was consulted for this
+one`, because \"no oracle was asked\" and \"an oracle was asked and said
+nothing\" are different and a blank reads as the second."
+  (let ((d (list :summary "run `rm -rf build`"
+                 :outcome (list :option-id "allow_once")
+                 :by (list :kind "operator" :identity "dead")
+                 :basis "dead chose `allow_once` at the head")))
+    (let ((lines (leticl::%decision-detail d 200)))
+      (is (equal "asked: run `rm -rf build`" (first lines)) "what was asked")
+      (is (equal "operator: dead chose `allow_once` at the head" (second lines))
+          "named by the DECIDER's own kind, so `decided:` never stands in for a model")
+      (is (equal "no oracle was consulted for this one" (third lines))
+          "said out loud rather than left blank"))
+    ;; an oracle that was asked and grounded its answer in nothing
+    (let* ((with-advice (append d (list :advice (list :by "guard" :latency-ms 40
+                                                      :would "admit" :basis "it is a build dir"
+                                                      :cites nil))))
+           (lines (leticl::%decision-detail with-advice 200)))
+      (is (search "oracle (guard, 40ms) would admit: it is a build dir" (format nil "~{~a~%~}" lines))
+          "the oracle's own verdict, separate from the decider's basis")
+      (is (member "oracle cited: nothing — it could not ground this in anything you said"
+                  lines :test #'equal)
+          "and the emptiness is RENDERED, not the absence of a list"))
+    (let* ((cited (append d (list :advice (list :by "guard" :latency-ms 40
+                                                :would "admit" :basis "b"
+                                                :cites (list "you said build/ is disposable")))))
+           (lines (leticl::%decision-detail cited 200)))
+      (is (member "oracle cited: you said build/ is disposable" lines :test #'equal)
+          "one line per citation"))
+    ;; ours, and the reference has no counterpart: the decider's line is dropped
+    ;; when the payload below already carries it — *"how many times is 'nothing
+    ;; ran' needed?"*
+    (let ((lines (leticl::%decision-detail d 200 :skip-basis t)))
+      (is (not (find-if (lambda (l) (search "operator:" l)) lines))
+          "the decider's line goes")
+      (is (member "no oracle was consulted for this one" lines :test #'equal)
+          "and the oracle's do not, because they are nowhere else")))
+  ;; and it reaches the open settled row
+  (let* ((*item-facts* (list (cons "d1" (list :decision
+                                              (list :summary "run it"
+                                                    :outcome (list :option-id "allow_once")
+                                                    :by (list :kind "operator" :identity "dead")
+                                                    :basis "because")))))
+         (body (list :type "tool_result" :call-id "c" :name "bash"
+                     :outcome (list :outcome "ok") :payload "done"))
+         (text (segs-of (item-lines (list :item-id "d1" :kind "tool_result" :item body)
+                                    80 (list :show-tools t)))))
+    (is (search "· allowed, by operator dead" text) "the folded line stays")
+    (is (search "asked: run it" text) "and the detail is under it when the tools are open")
+    (is (search "no oracle was consulted" text) "including the one that says nobody was asked")))
+
+(def-test a-live-card-discloses-its-bytes-its-decision-and-its-budget (:suite leticl)
+  "Gap 12. Three of the live card's four body parts were absent.
+
+The §8.3 bytes disclosure (app.rs:8767-8780) is the one with an obligation
+attached, and it lives in the BODY rather than the header tail because a header
+tail is dropped whole when it does not fit — \"there is more, and here is how to
+get it\" is not a line that may vanish on a narrow terminal.
+
+The decision block (app.rs:8842-8864) was on the settled row and not here, so
+the one moment a person can still act on an approval was the one moment it was
+not shown.
+
+`head_tail` with `Budget::for_verb` (card.rs:482-511) is what stops a folded
+card filling the screen: a live `edit` with a sixty-row diff drew all sixty rows
+here and fourteen there."
+  (let* ((*call-facts* nil)
+         (call (list :call-id "c1" :name "bash" :target "ls"
+                     :state (list :state "finished" :outcome (list :outcome "ok")
+                                  :inline-bytes 512)))
+         (text (segs-of (call-lines call 80 nil))))
+    (is (search "512 B" text) "a finished call says how much went to the model"))
+  ;; spilled: how much went, how much there was, and the handle for the rest
+  (let* ((*call-facts* nil)
+         (call (list :call-id "c1" :name "bash" :target "ls"
+                     :state (list :state "finished" :outcome (list :outcome "ok")
+                                  :inline-bytes 1024 :full-bytes 1048576
+                                  :spill "deadbeef")))
+         (text (segs-of (call-lines call 200 nil))))
+    (is (search "1.0 KB of 1.0 MB went to the model, the rest is kept — read_spill hash=deadbeef"
+                text)
+        "the whole sentence, in units a person reads"))
+  ;; the decision the call was gated by, on the card that can still be acted on
+  (let* ((*call-facts* (list (cons "c1" (list :decision
+                                              (list :summary "run it"
+                                                    :outcome (list :option-id "deny")
+                                                    :by (list :kind "policy")
+                                                    :basis "outside the boundary")))))
+         (call (list :call-id "c1" :name "bash" :target "ls"
+                     :state (list :state "running")))
+         (text (segs-of (call-lines call 80 (list :show-tools t)))))
+    (is (search "· refused, by policy" text) "who decided and how")
+    (is (search "policy: outside the boundary" text) "and, open, what it was grounded in"))
+  ;; the budget: a shell verb keeps two rows of head and three of tail
+  (let* ((*call-facts* nil)
+         (body (loop for i from 1 to 60 collect (format nil "line ~d" i)))
+         (rows (leticl::head-tail-lines
+                (mapcar (lambda (l) (list (cons l nil))) body) 2 3)))
+    (is (= 6 (length rows)) "two, a marker, three")
+    (is (equal (cons "… +55 lines" '(:dim t)) (first (third rows)))
+        "and the marker is a separator row that says how many went, never a silent cut")
+    (is (equal "line 60" (car (first (car (last rows))))) "the tail is the end"))
+  (is (equal '(5 . 3) (leticl::%budget-for-verb "read")) "Read: enough head to see what it is")
+  (is (equal '(5 . 3) (leticl::%budget-for-verb "ls")) "List with it")
+  (is (equal '(2 . 3) (leticl::%budget-for-verb "bash")) "a shell command's tail is what matters")
+  (is (equal '(10 . 3) (leticl::%budget-for-verb "some_unknown_tool")) "anything else")
+  ;; and a short body is not touched
+  (let ((rows (list (list (cons "a" nil)) (list (cons "b" nil)))))
+    (is (equal rows (leticl::head-tail-lines rows 5 3))
+        "nothing is hidden when nothing needs to be")))
