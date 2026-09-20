@@ -1,0 +1,8 @@
+{"session_id":"s-fixture-hello","seq":1,"ts":1789390808990,"event":"transcript_appended","item_id":"hello.0","kind":"user","ledger_head":"00"}
+{"session_id":"s-fixture-hello","seq":2,"ts":1789390808990,"event":"transcript_content","item_id":"hello.0","item":{"type":"user","parts":[{"kind":"text","text":"say hello"}]}}
+{"session_id":"s-fixture-hello","seq":3,"ts":1789390809000,"event":"turn_started","turn_id":"s-fixture-hello#t1","model":"qwen3-coder-480b","ledger_head":"00"}
+{"session_id":"s-fixture-hello","seq":4,"ts":1789390809010,"event":"prompt_progress","turn_id":"s-fixture-hello#t1","total":120,"cache":108,"processed":120,"time_ms":40}
+{"session_id":"s-fixture-hello","seq":5,"ts":1789390809020,"event":"delta","turn_id":"s-fixture-hello#t1","target":"text","text":"Hello."}
+{"session_id":"s-fixture-hello","seq":6,"ts":1789390809030,"event":"transcript_appended","item_id":"hello.1","kind":"assistant","ledger_head":"01"}
+{"session_id":"s-fixture-hello","seq":7,"ts":1789390809030,"event":"transcript_content","item_id":"hello.1","item":{"type":"assistant","text":"Hello."}}
+{"session_id":"s-fixture-hello","seq":8,"ts":1789390809040,"event":"turn_finished","turn_id":"s-fixture-hello#t1","finish_reason":"eos","usage":{"prompt_tokens":120,"cached_tokens":108,"predicted_tokens":3,"cost_micros_usd":21},"timings":{"prompt_ms":8.0,"predicted_ms":32.0,"wall_ms":40}}

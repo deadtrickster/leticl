@@ -1,0 +1,348 @@
+#!/usr/bin/env python3
+"""compare-1-1 — the two heads on the SAME input, at the same size, diffed.
+
+    scripts/compare-1-1                       every fixture in tests/fixtures
+    scripts/compare-1-1 markdown tool-long    just these
+    scripts/compare-1-1 --diff split          both heads at the other fold
+    scripts/compare-1-1 --show-same           print the matching rows too
+
+Exit 0 when every fixture is identical, 1 when any row differs, 2 when a head
+could not be run.
+
+## Why this exists
+
+Until today the only way to compare the two heads was to look at two LIVE ones:
+two processes, two scroll offsets, two fold states, two clocks, two moments.
+That is not a controlled test, and one comparison in the last round was invalid
+for exactly that reason. `--replay FILE --no-tty` removes every one of those
+variables — the input is a file, the size is a number, and the answer is bytes —
+so the difference this prints is a rendering difference and nothing else.
+
+## What is compared, and what is deliberately not
+
+**The rendered cell grid, not the byte stream.** leticl paints through a cell
+buffer and emits one SGR per style CHANGE; letibot composes strings and closes
+every span with an explicit reset. On the same screen that is `\\x1b[0;2m…` on one
+side and `\\x1b[2m…\\x1b[0m` on the other, and a byte diff would report all forty
+rows as different while the terminal shows the same thing. So each row is decoded
+into (character, style) cells — bold, dim, italic, underline, reverse, fg, bg —
+and the cells are what must match. Trailing cells that are a space in the default
+style are dropped from both sides: leticl pads every row to the full width and
+letibot stops at its last glyph, and a run of spaces at the right margin is not
+something a reader can see.
+
+The escape FORM is still reported, under `bytes`, because it is not nothing: it
+is repaint volume, and a head that re-emits a style per character writes more to
+the terminal than one that does not. It is a separate number from the rendering
+claim, and it is never the thing that fails this script.
+
+**Rows are matched positionally AND structurally.** The positional count is the
+honest one and it is what the exit code follows. The structural one runs the same
+rows through `difflib`, which reports a row the two frames do not share as an
+insert or a delete instead of smearing it over every row below — a head that
+draws one extra row at the top otherwise shows up as "every row differs", which
+buries whatever else is wrong.
+"""
+
+import argparse
+import atexit
+import difflib
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+FIXTURES = os.path.join(ROOT, "tests", "fixtures")
+LETIBOT = "/home/dead/Projects/letibot/letibot/target/release/letibot-tui"
+IMAGE = os.path.join(ROOT, "bin", "leticl-head")
+SCRIPT = os.path.join(HERE, "leticl-replay.lisp")
+
+CSI = re.compile(r"\x1b\[([0-9;:]*)([A-Za-z])")
+
+DEFAULT = (False, False, False, False, False, None, None)   # the style of a blank
+
+
+def apply_sgr(style, params):
+    """One `ESC [ … m` applied to a style tuple.
+
+    (bold, dim, italic, underline, reverse, fg, bg). Colour is kept as the code
+    rather than as a name: 34 and 94 are different colours and a comparison that
+    mapped both to "blue" would pass on a difference a reader can see."""
+    bold, dim, italic, under, rev, fg, bg = style
+    nums = [int(p) for p in params.split(";") if p.isdigit()] or [0]
+    i = 0
+    while i < len(nums):
+        n = nums[i]
+        if n == 0:
+            bold = dim = italic = under = rev = False
+            fg = bg = None
+        elif n == 1:
+            bold = True
+        elif n == 2:
+            dim = True
+        elif n == 3:
+            italic = True
+        elif n == 4:
+            under = True
+        elif n == 7:
+            rev = True
+        elif n in (21, 22):
+            bold = dim = False
+        elif n == 23:
+            italic = False
+        elif n == 24:
+            under = False
+        elif n == 27:
+            rev = False
+        elif 30 <= n <= 37 or 90 <= n <= 97:
+            fg = n
+        elif n == 39:
+            fg = None
+        elif 40 <= n <= 47 or 100 <= n <= 107:
+            bg = n
+        elif n == 49:
+            bg = None
+        elif n in (38, 48):
+            # 38;5;N or 38;2;R;G;B — consumed whole, or the tail is read as
+            # separate attributes and a 256-colour row decodes as gibberish
+            if i + 1 < len(nums) and nums[i + 1] == 5:
+                v = ("256", nums[i + 2] if i + 2 < len(nums) else 0)
+                i += 2
+            elif i + 1 < len(nums) and nums[i + 1] == 2:
+                v = ("rgb", tuple(nums[i + 2:i + 5]))
+                i += 4
+            else:
+                v = ("?", 0)
+            if n == 38:
+                fg = v
+            else:
+                bg = v
+        i += 1
+    return (bold, dim, italic, under, rev, fg, bg)
+
+
+def cells(row):
+    """A row of ANSI into [(char, style), …], with the trailing blanks dropped."""
+    out = []
+    style = DEFAULT
+    i = 0
+    while i < len(row):
+        ch = row[i]
+        if ch == "\x1b":
+            m = CSI.match(row, i)
+            if m:
+                if m.group(2) == "m":
+                    style = apply_sgr(style, m.group(1))
+                i = m.end()
+                continue
+            # a lone ESC, or an escape this decoder does not know: kept as a
+            # cell so it cannot vanish from the comparison
+            out.append((ch, style))
+            i += 1
+            continue
+        out.append((ch, style))
+        i += 1
+    while out and out[-1][0] == " " and out[-1][1] == DEFAULT:
+        out.pop()
+    return out
+
+
+TAIL = re.compile(r"(?:\x1b\[0?m|[ \t])+$")
+
+
+def trimmed(row):
+    """A row with the right margin taken off, for the escape-form count.
+
+    leticl pads every row to the full width and closes it with a reset; letibot
+    stops at its last glyph. Neither is visible, and counting them would make the
+    `bytes` number 0/40 on every fixture for one structural reason and hide
+    whatever else is in the escape stream."""
+    prev = None
+    while row != prev:
+        prev = row
+        row = TAIL.sub("", row)
+    return row
+
+
+def text(cs):
+    return "".join(c for c, _ in cs)
+
+
+def show(s, width):
+    """`cat -v`-style: the escapes readable, the row printable."""
+    out = []
+    for ch in s:
+        if ch == "\x1b":
+            out.append("^[")
+        elif ord(ch) < 32:
+            out.append("^" + chr(ord(ch) + 64))
+        else:
+            out.append(ch)
+    s = "".join(out)
+    return s if len(s) <= width else s[:width] + "…"
+
+
+def prefs_dir(a):
+    """One config directory both heads read, holding the SAME choices.
+
+    **The two heads do not share a prefs file** — leticl reads
+    `$XDG_CONFIG_HOME/leticl/head.toml` and letibot reads
+    `…/letibot/head.toml`, deliberately, so neither clobbers the other's. On this
+    box the two files disagreed: `diff = "split"` against `diff = "unified"`. The
+    first run of this script therefore reported the two-panel diff card against
+    the unified one as a rendering difference, which it is not — it is the
+    instrument comparing two heads that were asked for different things.
+
+    So the comparison writes both files itself, identical, and points both heads
+    at them. The fold state is then an INPUT with a value, printed in the header,
+    instead of whatever the operator last pressed."""
+    d = tempfile.mkdtemp(prefix="compare-1-1-")
+    atexit.register(shutil.rmtree, d, True)
+    body = (f'diff = "{a.diff}"\n'
+            f'thinking = "{a.thinking}"\n'
+            f'tools = "{a.tools}"\n'
+            f'raw_calls = {"true" if a.raw_calls else "false"}\n')
+    for head in ("leticl", "letibot"):
+        os.makedirs(os.path.join(d, head), exist_ok=True)
+        with open(os.path.join(d, head, "head.toml"), "w") as f:
+            f.write(body)
+    return d
+
+
+def run(cmd, fixture, env=None):
+    try:
+        p = subprocess.run(cmd, capture_output=True, timeout=300, env=env)
+    except FileNotFoundError:
+        print(f"compare-1-1: cannot run {cmd[0]}", file=sys.stderr)
+        return None
+    except subprocess.TimeoutExpired:
+        print(f"compare-1-1: {cmd[0]} timed out on {fixture}", file=sys.stderr)
+        return None
+    if p.returncode != 0:
+        print(f"compare-1-1: {cmd[0]} exited {p.returncode} on {fixture}", file=sys.stderr)
+        sys.stderr.write(p.stderr.decode("utf-8", "replace")[-2000:])
+        return None
+    rows = p.stdout.decode("utf-8", "replace").split("\n")
+    if rows and rows[-1] == "":
+        rows.pop()
+    return rows
+
+
+def leticl_cmd(a):
+    if a.leticl:
+        return [a.leticl, "--replay"]
+    if os.path.exists(IMAGE):
+        return [IMAGE, "--replay"]
+    return ["sbcl", "--script", SCRIPT, "--replay"]
+
+
+def compare(name, path, a):
+    env = dict(os.environ, XDG_CONFIG_HOME=a.config)
+    ref = run([a.letibot, "--replay", path, "--no-tty"], name, env)
+    ours = run(leticl_cmd(a) + [path, "--no-tty", "--cols", str(a.cols),
+                                "--rows", str(a.rows)], name, env)
+    if ref is None or ours is None:
+        return None
+
+    n = max(len(ref), len(ours))
+    ref += [""] * (n - len(ref))
+    ours += [""] * (n - len(ours))
+    rc = [cells(r) for r in ref]
+    oc = [cells(r) for r in ours]
+
+    same = sum(1 for i in range(n) if rc[i] == oc[i])
+    bytes_same = sum(1 for i in range(n) if trimmed(ref[i]) == trimmed(ours[i]))
+
+    # the structural view: a row one side draws and the other does not is an
+    # insert, not forty substitutions
+    keys_r = ["".join(f"{c}\x00{s}" for c, s in row) for row in rc]
+    keys_o = ["".join(f"{c}\x00{s}" for c, s in row) for row in oc]
+    sm = difflib.SequenceMatcher(None, keys_r, keys_o, autojunk=False)
+    matched = sum(b.size for b in sm.get_matching_blocks())
+
+    print(f"\n=== {name}  ({n} rows at {a.cols}x{a.rows})")
+    print(f"    cells  {same}/{n} identical"
+          f"{'' if same == n else '  ← rendering difference'}")
+    print(f"    struct {matched}/{n} matched after alignment")
+    print(f"    bytes  {bytes_same}/{n} identical escape-for-escape")
+
+    if same != n:
+        for i in range(n):
+            if rc[i] == oc[i]:
+                if a.show_same:
+                    print(f"    = {i + 1:>3} {show(ref[i], a.width)}")
+                continue
+            note = "same text — the styles differ" if text(rc[i]) == text(oc[i]) else ""
+            print(f"    --- row {i + 1}{('  (' + note + ')') if note else ''}")
+            print(f"     lb: {show(ref[i], a.width)}")
+            print(f"     lc: {show(ours[i], a.width)}")
+    return same == n
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("fixtures", nargs="*", help="names, without .jsonl (default: all)")
+    ap.add_argument("--cols", type=int, default=100)
+    ap.add_argument("--rows", type=int, default=40)
+    ap.add_argument("--letibot", default=LETIBOT)
+    ap.add_argument("--leticl", help="the leticl head (default: bin/leticl-head, "
+                                     "else sbcl --script scripts/leticl-replay.lisp)")
+    ap.add_argument("--width", type=int, default=240, help="chars of a row to print")
+    ap.add_argument("--show-same", action="store_true")
+    ap.add_argument("--dir", default=FIXTURES)
+    ap.add_argument("--diff", default="unified", choices=("unified", "split"))
+    ap.add_argument("--thinking", default="folded", choices=("folded", "open"))
+    ap.add_argument("--tools", default="folded", choices=("folded", "open"))
+    ap.add_argument("--raw-calls", action="store_true")
+    a = ap.parse_args(argv[1:])
+    a.config = prefs_dir(a)
+
+    if a.cols != 100 or a.rows != 40:
+        # The reference's `--no-tty` is `app.screen(100, 40)`, hardcoded. Asking
+        # for another size here would compare our frame against its 100x40 one
+        # and report the difference as a rendering fault, which is the worst kind
+        # of wrong answer an instrument can give.
+        print("compare-1-1: the reference's --no-tty is a fixed 100x40 "
+              "(letibot-tui.rs:271); --cols/--rows would compare two sizes.",
+              file=sys.stderr)
+        return 2
+
+    names = a.fixtures or sorted(
+        f[:-6] for f in os.listdir(a.dir) if f.endswith(".jsonl"))
+    if not names:
+        print(f"compare-1-1: no fixtures in {a.dir}", file=sys.stderr)
+        return 2
+
+    print(f"both heads at {a.cols}x{a.rows}, prefs diff={a.diff} "
+          f"thinking={a.thinking} tools={a.tools} raw_calls={a.raw_calls}")
+    results = {}
+    for name in names:
+        path = os.path.join(a.dir, name + ".jsonl")
+        if not os.path.exists(path):
+            print(f"compare-1-1: no such fixture: {path}", file=sys.stderr)
+            return 2
+        results[name] = compare(name, path, a)
+
+    print("\n=== summary")
+    bad = 0
+    for name in names:
+        r = results[name]
+        if r is None:
+            print(f"    {name:<16} could not run")
+            bad += 1
+        elif r:
+            print(f"    {name:<16} identical")
+        else:
+            print(f"    {name:<16} DIFFERS")
+            bad += 1
+    print(f"    {len(names) - bad} of {len(names)} identical")
+    return 0 if bad == 0 else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

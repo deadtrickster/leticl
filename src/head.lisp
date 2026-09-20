@@ -33,6 +33,17 @@
   "The head's own stream on fd 1, bound in run. Declared here, before anything
 paints to it, and defvar for the same reason as *head*.")
 
+(defvar *replaying* nil
+  "T while `--replay` is folding a recorded log instead of reading a socket.
+
+One thing in the loop asks about the socket rather than about the head: an
+unconnected head is a DETACHED head, and the loop re-attaches it every two
+seconds. A replay is unconnected on purpose and for ever, so without this the
+reconnect timer fires under every paced frame and the status line fills with a
+socket nobody asked for. Declared here because `run-loop` is here; everything
+else a replay needs is in `src/replay.lisp`, which loads last so it can name the
+globals a frame reads.")
+
 (defstruct (head (:constructor %make-head))
   (session (make-session))
   (stream nil)
@@ -553,7 +564,9 @@ Oldest request first."
              (handler-case (%poll-resize head)
                (error (e) (ignore-errors (setf (head-status-note head)
                                                (format nil "resize error: ~a" e)))))
-             (unless (head-connected head)
+             ;; `*replaying*`: a replay has no socket to come back to, and
+             ;; "not connected" there is the normal state rather than a loss
+             (unless (or *replaying* (head-connected head))
                (%try-reconnect head))
              ;; 2. draw (guarded in %render-and-paint: a render error paints
              ;; itself and the loop carries on, so the operator can see what

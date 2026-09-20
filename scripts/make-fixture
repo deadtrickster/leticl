@@ -1,0 +1,494 @@
+#!/usr/bin/env python3
+"""make-fixture — a real session out of the operator's store, as a replay log.
+
+    scripts/make-fixture --all                      rebuild every named fixture
+    scripts/make-fixture --recipe markdown          just one, to stdout
+    scripts/make-fixture --list                     the transcripts in the store
+    scripts/make-fixture --show 's-…#t0' 100 140    what those rows are
+    scripts/make-fixture --transcript 's-…#t0' --from 100 --to 140 --out F
+
+`letibot-tui --replay FILE.jsonl` and `leticl --replay FILE.jsonl` both read one
+`letibot_sessionlog::event::Envelope` per line, which makes the input to a
+rendering comparison **data you choose** instead of whatever two live heads
+happened to be showing. This turns rows out of
+`~/.local/share/letibot/sessions.db` into that file.
+
+## The store is the operator's
+
+The db is copied before it is read — it is theirs, and a `-wal` beside it means a
+daemon may be writing. `python3` has `sqlite3`; there is no `sqlite3` binary on
+this box. `--db` points at an already-made copy; without it a copy is made in a
+temp directory and removed at exit.
+
+## The ordering is the whole point
+
+letibot's `docs/tui-testing.md`, and `docs/archive/2026-09-20/` on this side:
+
+> The engine invokes every call in a round *before* appending any of that round's
+> result rows, so a `ToolFinished` always precedes its own row's
+> `TranscriptAppended`. A fixture that interleaves them the other way exercises a
+> path the daemon never produces — and in this tree the head reads that ordering
+> to carry a call's duration onto its settled card, so getting it backwards
+> silently loses the field.
+
+So a ROUND here is: the deltas, then `tool_call_proposed` for every call, then
+`tool_started`/`tool_finished` for every call, and only then the round's
+`transcript_appended` + `transcript_content` rows — reasoning, assistant, then
+each result, in store order. A turn is a run of rounds between two user rows.
+
+## What is derived rather than stored, and why that is still a controlled test
+
+Three fields never reached the store and are reconstructed here: a call's
+`target` (the one argument a person reads), the `args_digest`/`payload_digest`,
+and a turn's `usage`/`timings`. They are derived the same way for BOTH heads —
+the file is the input to both — so a derivation that is wrong makes the fixture
+less like a real session without making the comparison less controlled. Where a
+real number exists in the store it is used: `created_at` is the real millisecond,
+`tok_offset`/`tok_len` are the real ledger positions, `h_k` is the real ledger
+head, and the permission fixture's sentences are real rows out of
+`adjudication`.
+"""
+
+import argparse
+import hashlib
+import json
+import os
+import shutil
+import sqlite3
+import sys
+import tempfile
+
+STORE = os.path.expanduser("~/.local/share/letibot/sessions.db")
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+FIXTURES = os.path.join(ROOT, "tests", "fixtures")
+
+# `read | write | exec | network`, from the tool's schema — `ToolStarted.access`
+# in event.rs, which is the fact that explains why a call did or did not stop for
+# a decision. The daemon reads it off the schema; there is no schema here, so it
+# is a table, and a tool missing from it is `read` because that is the access a
+# tool that only looks has.
+ACCESS = {
+    "bash": "exec",
+    "run_command": "exec",
+    "write_file": "write",
+    "edit_file": "write",
+    "apply_patch": "write",
+    "str_replace": "write",
+    "web_fetch": "network",
+    "web_search": "network",
+}
+
+# The one argument a person reads, in the order a head looks for it. Same list as
+# `*subject-keys*` in src/cards.lisp and `ToolCallProposed.target`'s own note: a
+# path, a pattern, a command line.
+SUBJECT_KEYS = ["command", "path", "file_path", "file", "pattern", "query", "url", "cmd"]
+
+# `ToolCallProposed.target` is capped daemon-side; 120 bytes is the head's own
+# `*target-max-bytes*`, and a fixture that carried more would be testing the
+# head's truncation against a string the daemon would never have sent.
+TARGET_MAX = 120
+
+
+def digest(s):
+    """A short hex digest, the shape `args_digest` and `payload_digest` have.
+
+    The daemon's own is a sha256; a head renders at most a prefix of it and more
+    often nothing at all, so the prefix is what travels."""
+    return hashlib.sha256(s.encode("utf-8", "replace")).hexdigest()[:16]
+
+
+def target_of(arguments_json):
+    """The one argument a person reads, out of a call's arguments."""
+    try:
+        args = json.loads(arguments_json)
+    except Exception:
+        return ""
+    if not isinstance(args, dict):
+        return ""
+    for k in SUBJECT_KEYS:
+        v = args.get(k)
+        if isinstance(v, str) and v:
+            return v[:TARGET_MAX]
+    for v in args.values():
+        if isinstance(v, str) and v:
+            return v[:TARGET_MAX]
+    return ""
+
+
+class Log:
+    """One replay file, being built. Holds the seq counter and the session id."""
+
+    def __init__(self, session_id):
+        self.session_id = session_id
+        self.seq = 0
+        self.lines = []
+
+    def emit(self, ts, event, **fields):
+        self.seq += 1
+        env = {"session_id": self.session_id, "seq": self.seq, "ts": int(ts),
+               "event": event}
+        env.update(fields)
+        self.lines.append(json.dumps(env, ensure_ascii=False))
+
+    def text(self):
+        return "\n".join(self.lines) + "\n"
+
+
+def deltas(log, ts, turn_id, target, text, chunks):
+    """Stream TEXT as CHUNKS deltas.
+
+    A finished row replaces the deltas on the screen, so these are invisible in
+    the settled frame and load-bearing in a truncated one: `head -n K` on this
+    file is how a mid-stream turn is rendered with no timing to race. Kept to a
+    handful of chunks because a fixture nobody can read is a fixture nobody
+    checks."""
+    if not text:
+        return
+    n = max(1, chunks)
+    size = max(1, (len(text) + n - 1) // n)
+    for i in range(0, len(text), size):
+        log.emit(ts, "delta", turn_id=turn_id, target=target, text=text[i:i + size])
+
+
+def rows_of(db, transcript_id, lo, hi):
+    cur = db.cursor()
+    return cur.execute(
+        "select seq, item_id, kind, item_json, tok_offset, tok_len, h_k, created_at "
+        "from transcript_item where transcript_id=? and seq between ? and ? order by seq",
+        (transcript_id, lo, hi)).fetchall()
+
+
+def build(rows, session_id, model, chunks=4, turn_prefix="t"):
+    """Rows out of the store, in the order the daemon publishes them.
+
+    Returns the log. See the module docstring for why the order is not the row
+    order: every call in a round is invoked before any of that round's rows are
+    appended."""
+    log = Log(session_id)
+    turn_n = 0
+    turn_id = None
+    turn_start_offset = 0
+    turn_start_ts = 0
+    predicted = 0
+
+    def close_turn(ts):
+        nonlocal turn_id, predicted
+        if turn_id is None:
+            return
+        wall = max(1, int(ts) - int(turn_start_ts))
+        log.emit(ts, "turn_finished", turn_id=turn_id, finish_reason="eos",
+                 usage={"prompt_tokens": turn_start_offset,
+                        "cached_tokens": int(turn_start_offset * 0.9),
+                        "predicted_tokens": predicted,
+                        # A price, so the header's money meter has something to
+                        # render. Derived, not stored: the store keeps no cost.
+                        "cost_micros_usd": predicted * 3 + turn_start_offset // 10},
+                 timings={"prompt_ms": float(wall) * 0.2,
+                          "predicted_ms": float(wall) * 0.8,
+                          "wall_ms": wall})
+        turn_id = None
+        predicted = 0
+
+    def open_turn(ts, offset):
+        nonlocal turn_id, turn_n, turn_start_offset, turn_start_ts
+        turn_n += 1
+        turn_id = f"{session_id}#{turn_prefix}{turn_n}"
+        turn_start_offset = offset
+        turn_start_ts = ts
+        log.emit(ts, "turn_started", turn_id=turn_id, model=model, ledger_head="")
+        log.emit(ts, "prompt_progress", turn_id=turn_id, total=offset,
+                 cache=int(offset * 0.9), processed=offset, time_ms=40)
+
+    # index the tool_result rows by call id so a round can find its own
+    results = {}
+    for r in rows:
+        if r[2] == "tool_result":
+            try:
+                results[json.loads(r[3]).get("call_id")] = r
+            except Exception:
+                pass
+
+    def unpack(row):
+        seq, item_id, kind, item_json, tok_offset, tok_len, h_k, created = row
+        head_hex = h_k.hex() if isinstance(h_k, (bytes, bytearray)) else str(h_k)
+        return (item_id, kind, json.loads(item_json), tok_offset, tok_len,
+                head_hex, created)
+
+    def append(ts, item_id, kind, item, head_hex):
+        log.emit(ts, "transcript_appended", item_id=item_id, kind=kind,
+                 ledger_head=head_hex)
+        log.emit(ts, "transcript_content", item_id=item_id, item=item)
+
+    # A round takes its own result rows out of the walk rather than editing the
+    # list under the index — the first version did edit it, and a round whose
+    # result row sat two positions later then skipped the row in between.
+    taken = set()
+
+    i = 0
+    while i < len(rows):
+        item_id, kind, item, tok_offset, tok_len, head_hex, created = unpack(rows[i])
+        if item_id in taken:
+            i += 1
+            continue
+
+        if kind in ("user", "system"):
+            close_turn(created)
+            append(created, item_id, kind, item, head_hex)
+            i += 1
+            continue
+
+        if kind == "tool_result":
+            # a stray one: the range started mid-round, so nothing here proposed
+            # it. Appended on its own rather than dropped.
+            append(created, item_id, kind, item, head_hex)
+            i += 1
+            continue
+
+        if turn_id is None:
+            open_turn(created, tok_offset)
+
+        # ---- one round: [reasoning] assistant [tool_result …] -------------
+        pending = []
+        if kind == "reasoning":
+            deltas(log, created, turn_id, "reasoning", item.get("text", ""), chunks)
+            pending.append((created, item_id, kind, item, head_hex))
+            predicted += tok_len
+            i += 1
+            if i >= len(rows) or rows[i][2] != "assistant":
+                for p in pending:
+                    append(*p)
+                continue
+            item_id, kind, item, tok_offset, tok_len, head_hex, created = unpack(rows[i])
+
+        # the assistant row
+        deltas(log, created, turn_id, "text", item.get("text", ""), chunks)
+        calls = item.get("tool_calls") or []
+        pending.append((created, item_id, kind, item, head_hex))
+        predicted += tok_len
+        i += 1
+
+        # every call PROPOSED, then every call RUN, and only then the rows
+        for c in calls:
+            log.emit(created, "tool_call_proposed", turn_id=turn_id,
+                     call_id=c.get("id", ""), name=c.get("name", ""),
+                     args_digest=digest(c.get("arguments", "")),
+                     target=target_of(c.get("arguments", "")))
+        for c in calls:
+            cid = c.get("id", "")
+            name = c.get("name", "")
+            row = results.get(cid)
+            started = created + 5
+            log.emit(started, "tool_started", turn_id=turn_id, call_id=cid,
+                     name=name, access=ACCESS.get(name, "read"))
+            if row is None:
+                continue
+            res = json.loads(row[3])
+            payload = res.get("payload", "")
+            ended = row[7] if row[7] > started else started + 40
+            log.emit(ended, "tool_finished", turn_id=turn_id, call_id=cid,
+                     outcome=res.get("outcome", {"outcome": "ok"}),
+                     payload_digest=digest(payload),
+                     inline_bytes=len(payload.encode("utf-8")),
+                     full_bytes=len(payload.encode("utf-8")),
+                     spill=None, repairs=0, edit=res.get("edit"))
+        # the round's rows, in store order: reasoning, assistant, then results
+        for c in calls:
+            row = results.get(c.get("id", ""))
+            if row is not None:
+                r_id, r_kind, r_item, _, _, r_head, r_created = unpack(row)
+                pending.append((r_created, r_id, r_kind, r_item, r_head))
+                taken.add(r_id)
+        for p in pending:
+            append(*p)
+
+    close_turn(rows[-1][7] if rows else 0)
+    return log
+
+
+# --------------------------------------------------------------- recipes ---
+#
+# Each names a transcript and a seq range in the operator's store, plus the shape
+# it is there to exercise. The BUILT file is the artifact and is committed; the
+# recipe is how it was derived, so a fixture can be rebuilt or widened on the box
+# that has the store. A recipe whose rows are gone fails loudly rather than
+# emitting a shorter file.
+
+RECIPES = {
+    "prose": dict(
+        shape="a plain-prose answer: no markup, no calls, one wrapped paragraph",
+        transcript="s-1789390808604422623#t0", lo=0, hi=2),
+    "markdown": dict(
+        shape="headings, a list, a GFM table, a fenced sh block, inline code and bold",
+        transcript="s-1789639478142928813#t9", lo=72, hi=73),
+    "reasoning": dict(
+        shape="a long reasoning block in front of a markdown answer",
+        transcript="s-1789933554744912553#t0", lo=8, hi=9),
+    "tool-short": dict(
+        shape="one bash call whose payload is six lines",
+        transcript="s-1789639478142928813#t9", lo=69, hi=71),
+    "tool-long": dict(
+        shape="one read call whose payload is 193 lines — the fold, and the count",
+        transcript="s-1789639478142928813#t11", lo=1042, hi=1044),
+    "edit-diff": dict(
+        shape="a file-editing call carrying both sides of a one-line replacement",
+        transcript="s-1789639478142928813#t11", lo=1040, hi=1041),
+    "multi-round": dict(
+        shape="one turn, three rounds of calls — the case no synthetic fixture had",
+        transcript="s-1789933554744912553#t0", lo=0, hi=9),
+    "user-cells": dict(
+        shape="a user message with a /cells screen dump inside it, and the answer",
+        transcript="s-1789462738453908838#t18", lo=899, hi=901),
+}
+
+
+def permission_log(db, session_id="s-fixture-permission"):
+    """The decision fixture, built from a real `adjudication` row.
+
+    A permission never reaches `transcript_item` — it is a pair of events and a
+    row in its own table — so this is the one fixture that is not rows. The
+    sentences are real: `action` is the summary a head puts where the eye lands,
+    `baseline` is layer A's reading in the dim register under it, and the oracle's
+    verdict and basis are the advice the card shows at `/mode supervised`.
+
+    It ends with the ask still OPEN, because an open decision is the screen this
+    fixture exists to compare: the card owns the keyboard, the ladder is drawn,
+    and everything else on the frame has to make room for it."""
+    cur = db.cursor()
+    row = cur.execute(
+        "select request_id, tool, arguments_json, action, baseline, tier, "
+        "       model_verdict, verdict_basis, oracle_ms, oracle_model, turn_id "
+        "  from adjudication "
+        " where asked=1 and tool='bash' and model_verdict is not null "
+        "   and length(action) between 40 and 160 "
+        " order by decided_ms desc limit 1").fetchone()
+    if row is None:
+        raise SystemExit("make-fixture: no adjudication row to build a permission from")
+    (req_id, tool, args_json, action, baseline, tier,
+     verdict, basis, oracle_ms, oracle_model, turn_id) = row
+    ts = 1789900000000
+    log = Log(session_id)
+    turn = f"{session_id}#t1"
+    log.emit(ts, "turn_started", turn_id=turn, model="qwen3-coder-480b", ledger_head="")
+    log.emit(ts + 10, "prompt_progress", turn_id=turn, total=18400, cache=17600,
+             processed=18400, time_ms=120)
+    log.emit(ts + 20, "delta", turn_id=turn, target="text",
+             text="Checking what the store actually holds.")
+    call = "call_0"
+    log.emit(ts + 30, "tool_call_proposed", turn_id=turn, call_id=call, name=tool,
+             args_digest=digest(args_json), target=target_of(args_json))
+    log.emit(ts + 40, "decision_requested", req_id=req_id, kind="permission",
+             call_id=call, summary=action, target=target_of(args_json),
+             detail=baseline,
+             options=[{"option_id": "allow-once", "label": "allow once",
+                       "kind": "allow_once"},
+                      {"option_id": "allow-session", "label": "allow for this session",
+                       "kind": "allow_session"},
+                      {"option_id": "deny", "label": "deny", "kind": "reject_once"}],
+             choices=[], because="",
+             advice={"would": (verdict or "ask"), "by": (oracle_model or "oracle"),
+                     "basis": (basis or ""), "cites": [],
+                     "latency_ms": int(oracle_ms or 0)},
+             deadline=None, on_timeout="deny")
+    return log
+
+
+def write(path, text):
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+    n = text.count("\n")
+    print(f"{path}  {n} envelopes  {len(text)} bytes", file=sys.stderr)
+
+
+def open_store(explicit):
+    """A COPY of the store, always. The original is the operator's and a `-wal`
+    beside it means a daemon may be writing — reading it in place is a read of a
+    file somebody else is changing under you."""
+    if explicit:
+        return sqlite3.connect(explicit), None
+    if not os.path.exists(STORE):
+        raise SystemExit(f"make-fixture: no store at {STORE}")
+    tmp = tempfile.mkdtemp(prefix="make-fixture-")
+    copy = os.path.join(tmp, "sessions.db")
+    shutil.copy2(STORE, copy)
+    for suffix in ("-wal", "-shm"):
+        if os.path.exists(STORE + suffix):
+            shutil.copy2(STORE + suffix, copy + suffix)
+    return sqlite3.connect(copy), tmp
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--db", help="an existing copy of the store to read instead")
+    ap.add_argument("--list", action="store_true", help="transcripts, biggest last")
+    ap.add_argument("--show", nargs=3, metavar=("TRANSCRIPT", "FROM", "TO"))
+    ap.add_argument("--recipe", help="one named fixture, to --out or stdout")
+    ap.add_argument("--all", action="store_true", help="rebuild every named fixture")
+    ap.add_argument("--transcript")
+    ap.add_argument("--from", dest="lo", type=int)
+    ap.add_argument("--to", dest="hi", type=int)
+    ap.add_argument("--model", default="qwen3-coder-480b")
+    ap.add_argument("--deltas", type=int, default=4, help="chunks per streamed row")
+    ap.add_argument("--out")
+    ap.add_argument("--out-dir", default=FIXTURES)
+    a = ap.parse_args(argv[1:])
+
+    db, tmp = open_store(a.db)
+    try:
+        if a.list:
+            for r in db.execute(
+                    "select transcript_id, count(*), max(seq) from transcript_item "
+                    "group by transcript_id order by transcript_id desc limit 40"):
+                print(f"{r[0]:<52} {r[1]:>6} rows  max seq {r[2]}")
+            return 0
+
+        if a.show:
+            tid, lo, hi = a.show[0], int(a.show[1]), int(a.show[2])
+            for r in rows_of(db, tid, lo, hi):
+                item = json.loads(r[3])
+                head = (item.get("text") or item.get("payload") or
+                        json.dumps(item.get("parts", ""))[:200])
+                print(f"{r[0]:>6} {r[2]:<12} {len(r[3]):>7}B  {head[:110]!r}")
+            return 0
+
+        if a.all:
+            os.makedirs(a.out_dir, exist_ok=True)
+            for name in sorted(RECIPES):
+                r = RECIPES[name]
+                rows = rows_of(db, r["transcript"], r["lo"], r["hi"])
+                if not rows:
+                    raise SystemExit(f"make-fixture: recipe {name}: no rows for "
+                                     f"{r['transcript']} {r['lo']}..{r['hi']}")
+                log = build(rows, f"s-fixture-{name}", a.model, chunks=a.deltas)
+                write(os.path.join(a.out_dir, f"{name}.jsonl"), log.text())
+            write(os.path.join(a.out_dir, "permission.jsonl"), permission_log(db).text())
+            return 0
+
+        if a.recipe:
+            if a.recipe == "permission":
+                log = permission_log(db)
+            else:
+                r = RECIPES[a.recipe]
+                rows = rows_of(db, r["transcript"], r["lo"], r["hi"])
+                log = build(rows, f"s-fixture-{a.recipe}", a.model, chunks=a.deltas)
+        elif a.transcript:
+            rows = rows_of(db, a.transcript, a.lo or 0, a.hi or 10 ** 9)
+            log = build(rows, "s-fixture-adhoc", a.model, chunks=a.deltas)
+        else:
+            ap.print_help()
+            return 2
+
+        if a.out:
+            write(a.out, log.text())
+        else:
+            sys.stdout.write(log.text())
+        return 0
+    finally:
+        db.close()
+        if tmp:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
