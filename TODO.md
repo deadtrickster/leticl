@@ -469,7 +469,7 @@ lock `UNBOUND` → push → `BOUND`, `render=ok`, survived.
 (the truth) instead of `qwen-3.8-27b`; `head-settings` holds 38 rows; the paint
 lock is bound; `gate: render=ok`. Tests 176 → 178.
 
-### S2 — engines ✅ **P3, P4, P6 done** (2026-09-20)
+### S2 — engines ✅ **P3, P4, P5, P6, P7 done** (2026-09-20)
 
 `render-diff` is on edit cards, `highlight-lines` is in code fences, and
 `src/progress.lisp` is ported. **P5 (sidediff) and P7 (cluster-aware width) are
