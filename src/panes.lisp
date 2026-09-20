@@ -301,12 +301,24 @@ hidden` where ours said `raw_calls = off`."
          (if (getf (head-prefs head) :raw-calls) "shown" "hidden"))
         (t "?")))
 
+(defun %save-head-prefs-note (head)
+  "Persist HEAD's choices; NIL when it was written, and ` (not saved: …)` when it
+was not — the reference appends exactly that to the notice
+(app.rs:6413-6423, 6541-6545).
+
+`ignore-errors` was swallowing it whole: a read-only `head.toml`, a full disk or
+a `$XDG_CONFIG_HOME` that is not there left the pane saying `diff view → unified`
+and the file saying `split`, and the next start of the head silently undid the
+change. A setting that did not persist is a different fact from one that did."
+  (handler-case (progn (save-head-prefs head) nil)
+    (error (e) (format nil " (not saved: ~a)" e))))
+
 (defun %flip-head-setting (head key)
   "Flip one of the HEAD's own settings in the live plist and persist it.
 
 The plist is the source of truth while the head runs; `head-into-prefs` reads it
 back at save time, so there is one direction of flow and no second copy to keep in
-step."
+step. Returns the save's complaint, or NIL when it landed."
   (cond
     ((string= key "diff")
      (setf (getf (head-prefs head) :diff)
@@ -316,8 +328,8 @@ step."
     ((string= key "raw_calls")
      (setf (getf (head-prefs head) :raw-calls)
            (not (getf (head-prefs head) :raw-calls)))))
-  (ignore-errors (save-head-prefs head))
-  (setf (head-dirty head) t))
+  (setf (head-dirty head) t)
+  (%save-head-prefs-note head))
 
 (defparameter *daemon-config-files*
   '("modes.tsv" "permission.json" "providers.toml" "sensitive.json")
@@ -500,9 +512,10 @@ A row that cannot change says why."
       (let ((edit (getf row :edit)))
         (ecase (first edit)
           (:head
-           (%flip-head-setting head (second edit))
-           (let ((after (nth (position row rows) (config-rows head))))
-             (say head (format nil "~a → ~a" (getf after :key) (getf after :value)))))
+           (let ((failed (%flip-head-setting head (second edit)))
+                 (after (nth (position row rows) (config-rows head))))
+             (say head (format nil "~a → ~a~@[~a~]"
+                               (getf after :key) (getf after :value) failed))))
           (:session
            (let ((key (second edit)) (how (third edit)))
              (cond
@@ -1058,30 +1071,134 @@ the end, so the full output is one path away."
       (push "" out))
     (nreverse out)))
 
-(defun peek-lines (head cols)
-  "A peeked subagent's scrollback — the reference's `sub_out_lines`: the title
-names the subagent, a dropped count when the ring lost events before the read,
-then the output oldest first, and the empty case SAYS what it means — *neither an
-answer nor tool output* — and names the two reasons that can be true of, because
-\"no tool output\" reads as a fault for a subagent that was never going to produce
-any."
+(defvar *peek-total* 0
+  "How many LINES the peek pane has in total, header and footer included — what
+`*pane-lines*` must be set to for this pane, so `pane-scroll-max` clamps against
+the whole read and not against the window drawn from it. Set by `peek-lines`,
+which is the only place the wrapped total is known.")
+
+(defvar *peek-spill* nil
+  "`(KEY . PATH)` for the scrollback already written to disk, so one peek is
+written once however many frames draw it. KEY is the subagent and the number of
+lines, which is what changes when a running subagent produces more.")
+
+(defun peek-spill-path (session-id)
+  "Where a peeked subagent's whole scrollback goes — the reference's
+`spill_sub_out` (app.rs:8025-8060), which writes
+`<runtime>/letibot/subagent-<id>.log` and names it in the pane's footer.
+
+`<runtime>/leticl/` rather than `letibot/` on purpose: two heads writing one
+path would each claim the other's file, and the footer's whole job is to name a
+file the operator can open and trust."
+  (format nil "~a/leticl/subagent-~a.log" (runtime-dir) session-id))
+
+(defun spill-peek (session-id lines)
+  "Write LINES for SESSION-ID and return the path, or NIL when it could not be
+written — the reference returns `None` the same way and the footer then says
+`not written`. A pane that promises a file it did not write is worse than one
+that promises nothing.
+
+Written from the DRAW rather than from the frame that built the view, which is
+where the reference writes it: the arm that folds a `peeked` frame is in
+`src/head.lisp` and belongs to another strand. Idempotent through `*peek-spill*`,
+so the cost is one write per peek and not one per frame."
+  (let ((key (cons session-id (length lines))))
+    (if (equal (car *peek-spill*) key)
+        (cdr *peek-spill*)
+        (let ((path (ignore-errors
+                     (let ((p (peek-spill-path session-id)))
+                       (ensure-directories-exist p)
+                       (with-open-file (out p :direction :output
+                                              :if-exists :supersede
+                                              :if-does-not-exist :create
+                                              :external-format :utf-8)
+                         (dolist (l lines) (write-line l out)))
+                       p))))
+          (setf *peek-spill* (cons key path))
+          path))))
+
+(defun peek-row-count (head)
+  "How many BODY lines the peek pane has — what `pane-row-count` should answer
+for `:peek`, where `src/editor.lisp:749` answers 0.
+
+That zero is the whole of the pane's arrow keys: `move-cursor` clamps the cursor
+to `(1- 0)` and Up and Down move nothing, while the pane's own last line
+advertises that they scroll. The count is the body's, not the rendered pane's,
+because the header and the footer are not rows a cursor may land on."
+  (declare (ignorable head))
+  (length (subagent-out-lines (head-peeked head))))
+
+(defun pane-escape-target (mode)
+  "Where Esc goes from pane MODE — the reference's `sub_out` arm (app.rs:3251-3262)
+sits ahead of the generic Esc on purpose: **Esc in the peek pane means back to
+the tree, not close everything**. Everywhere else it means `:normal`.
+
+The key itself is dispatched in `src/editor.lisp:242`, which sends every pane to
+`:normal`; this is the fact that arm needs and the one line it is missing."
+  (if (eq mode :peek) :subagents :normal))
+
+(defun peek-lines (head cols &optional room)
+  "A peeked subagent's scrollback — the reference's `sub_out_lines`
+(app.rs:6844-6892): the title names the subagent, a dropped count when the ring
+lost events before the read, then the output, and the empty case SAYS what it
+means — *neither an answer nor tool output* — and names the two reasons that can
+be true of, because \"no tool output\" reads as a fault for a subagent that was
+never going to produce any.
+
+**A TERMINAL, NOT A DOCUMENT**, which is what it was not. The reference shows the
+TAIL by default and clamps the scroll *here*, where the visible height is
+actually known — `a key handler cannot clamp what it cannot see`. Ours returned
+every line and let the generic pane window take the TOP of it, so opening a
+subagent that had produced two hundred lines showed its first screenful and the
+answer, which is at the end, was off the bottom.
+
+ROOM is the rows the frame gave the pane. Without it (a test, `%pane-head`) the
+whole thing comes back unwindowed, which is the shape every other pane has.
+
+`*pane-scroll*` counts lines hidden **off the BOTTOM** for this pane — the
+reference's own `v.scroll` — because the tail is the origin here and everything
+else is measured back from it.
+
+The footer names the SPILL FILE, which had no counterpart at all: the pane
+advertised three keys and a full copy on disk, and the copy was never written."
   (let* ((events (head-peeked head))
-         (body (or (subagent-out-lines events)
-                   (list "    this subagent's scrollback has neither an answer nor tool output. It may still be running, or its rows may have fallen off the daemon's ring."))))
-    (append
-     (list (list (cons (format nil "subagent output — ~a"
-                               (if *peeked-session* (short-id *peeked-session*) "?"))
-                       '(:bold t))))
-     (when (plusp *peeked-dropped*)
-       (list (list (cons (format nil "    ~d earlier event~:p fell off the daemon's scrollback before this read"
-                                 *peeked-dropped*)
-                         '(:dim t)))))
-     (list nil)
-     (mappend (lambda (l) (or (wrap-segments (list (cons l nil)) (pane-width cols))
-                              (list nil)))
-              body)
-     (list nil
-           (list (cons "    arrows scroll, Enter re-reads, Esc back" '(:dim t)))))))
+         (body (subagent-out-lines events))
+         (spill (and body *peeked-session* (spill-peek *peeked-session* body)))
+         (shown (or body
+                    (list "    this subagent's scrollback has neither an answer nor tool output. It may still be running, or its rows may have fallen off the daemon's ring.")))
+         (head-rows (append
+                     (list (list (cons (format nil "subagent output — ~a"
+                                               (if *peeked-session* (short-id *peeked-session*) "?"))
+                                       '(:bold t))))
+                     (when (plusp *peeked-dropped*)
+                       (list (list (cons (format nil "    ~d earlier event~:p fell off the daemon's scrollback before this read"
+                                                 *peeked-dropped*)
+                                         '(:dim t)))))
+                     (list nil)))
+         (wrapped (mappend (lambda (l) (or (wrap-segments (list (cons l nil)) (pane-width cols))
+                                           (list nil)))
+                           shown))
+         (footer (list nil
+                       (list (cons (format nil "    arrows scroll, Enter re-reads, Esc back — full: ~a"
+                                           (or spill "not written"))
+                                   '(:dim t))))))
+    (if (null room)
+        (append head-rows wrapped footer)
+        ;; the tail, clamped where the height is known
+        (let* ((visible (max 1 (- room (length head-rows) (length footer))))
+               (total (length wrapped))
+               (max-scroll (max 0 (- total visible)))
+               (scroll (min (max 0 *pane-scroll*) max-scroll))
+               (end (- total scroll))
+               (start (max 0 (- end visible))))
+          (setf *pane-scroll* scroll
+                *peek-total* (+ (length head-rows) total (length footer)))
+          (append head-rows
+                  (subseq wrapped start end)
+                  ;; pad, so the footer sits on the pane's last row rather than
+                  ;; floating under a short read
+                  (make-list (max 0 (- visible (- end start))))
+                  footer)))))
 
 ;;; ------------------------------------------------------------ pickers ;;;
 ;;;
@@ -1323,3 +1440,299 @@ mode with consent; anything else cancels."
     (setf (head-dirty head) t)
     t))
 
+;;; --------------------------------------------- the empty-session banner ;;;
+
+(defun empty-session-lines (cols)
+  "What the transcript says when there is nothing in it — the reference's opening
+banner (`app.rs:6112-6131`), which leticl did not have at all.
+
+The distinction it turns on is the one the walking cat above already makes:
+**attached and quiet** is not **not answered yet**. The cat covers the second,
+and this covers the first, so an empty screen is never left to mean both. The
+reference guards it with `&& !self.attaching` for exactly that reason and
+`%viewport-lines` guards it the same way.
+
+One word differs from the reference on purpose: it names itself `letibot` and
+this head is `leticl`, and a banner whose whole job is to say which head you are
+looking at must not lie about that. Every other sentence is verbatim."
+  (let ((w (max 20 cols)))
+    (append
+     (list (list (cons "leticl" '(:bold t)))
+           nil)
+     (mapcar (lambda (l) (list (cons l '(:dim t))))
+             (wrap-text "attached, and this session has said nothing yet. Type a question and press enter." w))
+     (mapcar (lambda (l) (list (cons l '(:dim t))))
+             (wrap-text "The turn runs in the daemon: closing this window does not stop it, and reattaching picks it up." w))
+     (list nil
+           (list (cons "/help lists the keys." '(:dim t)))))))
+
+;;; ------------------------------------------------- the permission card ;;;
+;;;
+;;; The reference's `decision_lines` (app.rs:7329-7466), ported whole. What was
+;;; here before (`decision-card-lines`, cards.lisp) drew the summary, the target,
+;;; the detail, the options and a hint — and dropped, in order of what it cost:
+;;;
+;;;   · the ORACLE'S VERDICT. The head already receives it (`:advice`,
+;;;     src/session.lisp:324) and folded it onto the open decision, where nothing
+;;;     read it. Under `/mode supervised` the question on the screen is not
+;;;     *should this run* but *do you agree with the model*, and the model's
+;;;     answer was off-screen;
+;;;   · the OPTION IDS, so the ladder and the typed path showed two different
+;;;     spellings of the same choice;
+;;;   · the GLOB HINT, which the reference shows only when `allow_always` is on
+;;;     offer, because a hint for an option this request does not have teaches
+;;;     the operator to stop reading the hints;
+;;;   · and `ask_without_target`, so the command appeared twice — once inside the
+;;;     summary sentence and once on its own line under it.
+
+(defun ask-without-target (summary target)
+  "SUMMARY with its TARGET taken off the end: `` `bash` wants exec access `` from
+`` `bash` wants exec access to `cargo test` `` — the reference's
+`ask_without_target` (app.rs:7865-7874).
+
+NIL when the sentence does not end in the target, which is the honest answer for
+a summary some other builder wrote: then the whole sentence is shown and nothing
+is lost. ` to ` is the joint in every sentence this daemon writes, and trimming
+it is what makes the remainder read as a heading rather than as a clipped
+sentence."
+  (when (and (stringp summary) (stringp target)
+             (plusp (length target)) (plusp (length summary)))
+    (let ((suffix (format nil "`~a`" target)))
+      (when (and (>= (length summary) (length suffix))
+                 (string= suffix summary :start2 (- (length summary) (length suffix))))
+        (let ((stem (string-right-trim " " (subseq summary 0 (- (length summary)
+                                                                (length suffix))))))
+          (if (and (>= (length stem) 3)
+                   (string= " to" stem :start2 (- (length stem) 3)))
+              (subseq stem 0 (- (length stem) 3))
+              stem))))))
+
+(defun %option-kind-p (options word)
+  "Is any of OPTIONS of kind WORD (`allow_always`, `reject_always`)?
+
+By substring on the serialised kind, which is how the daemon spells
+`OptionKind` on the wire. A question's `:choices` are bare strings and have no
+kind, so they answer NIL rather than signalling."
+  (find-if (lambda (o)
+             (and (listp o)
+                  (search word (string-downcase (or (getf o :kind) "")))))
+           options))
+
+(defun advice-lines (advice w)
+  "The oracle's verdict, as the reference draws it (app.rs:7377-7409): `model
+says {would}: {basis}`, then `{by} · {grounds} · {N} ms`.
+
+The grounds sentence is **said out loud when it is a fact and omitted when it is
+not one**. Citations, when there are any; `cites nothing from your words` ONLY
+when the verdict was `admit`, because an oracle that did not authorise anything
+has nothing to cite and saying so about it claims a search that was never the
+question. The reference printed it unconditionally once and a screen carried
+`the operator authorised this: … (citing trail entry 0)` and `cites nothing from
+your words` one line apart."
+  (let* ((cites (getf advice :cites))
+         (grounds (cond (cites (format nil "cites ~{~a~^ · ~}" cites))
+                        ((equal (getf advice :would) "admit")
+                         "cites nothing from your words")
+                        (t nil)))
+         (tail (if grounds
+                   (format nil "  ~a · ~a · ~a ms" (or (getf advice :by) "?")
+                           grounds (or (getf advice :latency-ms) 0))
+                   (format nil "  ~a · ~a ms" (or (getf advice :by) "?")
+                           (or (getf advice :latency-ms) 0)))))
+    (mapcar (lambda (l) (list (cons l '(:dim t))))
+            (append (wrap-text (format nil "  model says ~a: ~a"
+                                       (or (getf advice :would) "?")
+                                       (or (getf advice :basis) ""))
+                               w)
+                    (wrap-text tail w)))))
+
+(defun permission-card-lines (head cols)
+  "The ask card — `decision_lines`, app.rs:7329-7466, line for line:
+
+    ? `bash` wants exec access [exec]
+        cargo test --workspace
+      the guard read this as a build, in this project
+      model says allow: it is the project's own test command
+      oracle-local · cites trail entry 4 · 310 ms
+    ▸ Allow once  (allow_once)
+      Always allow  (allow_always)
+      Deny  (reject_once)
+      ↑↓ to choose · Enter to answer · or type the id ·  `allow_always <glob>` …
+      `deny_and_tell <why>` denies and sends those words to the model
+
+The question is yellow, the thing being asked about is bold and indented four —
+`a command is the one thing here worth the rows` — the evidence is dim under it,
+and the ladder's own row is reversed rather than recoloured, because the prompt
+is already yellow and a highlight in a second hue reads as a second kind of
+thing rather than as *this one*.
+
+**Nothing here preselects an option.** `head-decision-sel` is untouched by the
+advice: the verdict informs the answer and must never supply it, or the corpus
+fills with rows recording a keystroke rather than a judgement."
+  (let ((d (first (session-open-decisions (head-session head)))))
+    (when d
+      (let* ((w (max 20 cols))
+             (kind (or (getf d :kind) ""))
+             (question (string= kind "question"))
+             (options (or (if question (getf d :choices) (getf d :options)) nil))
+             (n (length options))
+             (sel (max 0 (min (head-decision-sel head) (max 0 (1- n)))))
+             (target (or (getf d :target) ""))
+             (summary (or (getf d :summary) ""))
+             (headline (or (ask-without-target summary target) summary))
+             (out nil))
+        (flet ((wrapped (text style)
+                 (dolist (l (wrap-text text w))
+                   (push (list (cons l style)) out))))
+          (wrapped (format nil "? ~a [~a]" headline kind) '(:fg :yellow))
+          (when (plusp (length target))
+            ;; bold rather than yellow: the question is yellow, and the thing
+            ;; being asked about is not a second question
+            (wrapped (format nil "    ~a" target) '(:bold t)))
+          (when (plusp (length (or (getf d :detail) "")))
+            (wrapped (format nil "  ~a" (getf d :detail)) '(:dim t)))
+          ;; the reference's card has no `because`; ours carries it and it is the
+          ;; deterministic half of the same evidence, so it sits with the rest
+          (when (plusp (length (or (getf d :because) "")))
+            (wrapped (format nil "  because: ~a" (getf d :because)) '(:dim t)))
+          ;; **the model's verdict, above the ladder** — read before the choice
+          (let ((a (getf d :advice)))
+            (cond (a (dolist (l (advice-lines a w)) (push l out)))
+                  ((not question)
+                   ;; NOT the reference's: it draws nothing when there is no
+                   ;; advice. An absence is evidence under `/mode supervised` —
+                   ;; "the model was not asked" and "the model said nothing" look
+                   ;; identical on a card that omits both — so this head says
+                   ;; which one it is, once, in the same dim register as the
+                   ;; verdict it replaces.
+                   (wrapped "  no oracle was consulted for this one — the judgement is yours alone"
+                            '(:dim t)))))
+          ;; one option per line: the marker IS the thing Enter takes, and the id
+          ;; stays on the line so the typed path and the ladder agree
+          (loop for o in options
+                for i from 0
+                do (let* ((label (if question o (or (getf o :label) "?")))
+                          (oid (and (not question) (getf o :option-id)))
+                          (picked (= i sel))
+                          (body (if oid
+                                    (format nil "~a ~a  (~a)" (if picked "▸" " ") label oid)
+                                    (format nil "~a ~a" (if picked "▸" " ") label))))
+                     (dolist (l (wrap-text (format nil "  ~a" body) w))
+                       (push (list (cons l (if picked '(:reverse t) '(:fg :yellow))))
+                             out))))
+          (cond
+            (question
+             (wrapped "  ↑↓ to choose · Enter to answer · or type the id · esc leaves it open"
+                      '(:fg :yellow)))
+            ((%option-kind-p options "allow_always")
+             ;; the rule an *always allow* will write is in the option's own
+             ;; label, so the hint points at EDITING it rather than at inventing
+             ;; one: the offer that never said which tool and verb it would
+             ;; permit was a pattern the operator could not see and so could not
+             ;; adjust
+             (wrapped "  ↑↓ to choose · Enter to answer · or type the id ·              `allow_always <glob>` to widen or narrow the rule shown above"
+                      '(:fg :yellow)))
+            (t (wrapped "  ↑↓ to choose · Enter to answer · or type the id"
+                        '(:fg :yellow))))
+          ;; **the option that asks for words says where to type them.** Its label
+          ;; promised "tell the model why" and the card never said how, so the why
+          ;; was typed into the composer and left sitting there unanswered.
+          (when (and (not question) (%option-kind-p options "reject_always"))
+            (wrapped "  `deny_and_tell <why>` denies and sends those words to the model"
+                     '(:fg :yellow))))
+        (nreverse out)))))
+
+;;; ----------------------------------------------------- the secret card ;;;
+
+(defun secret-ask-lines (head cols)
+  "The password card — the reference's `secret_lines` (app.rs:7305-7327):
+
+    sudo wants a password — [sudo] password for dead:
+    for: apt install ripgrep
+    type it below (shown as dots), Enter sends it once to sudo and nowhere else; Esc refuses · 47s left
+
+Two differences from what was on the screen before, both measured:
+
+  · **the countdown.** `SecretAsk.deadline` (app.rs:10060) arrives on the frame
+    and was folded onto `head-secret-req` and never read, so a sudo prompt about
+    to time out looked exactly like one that had just arrived. It is omitted
+    rather than guessed when this head has no clock — a number nobody took is
+    not a number;
+  · **the dots are not here.** They are drawn in the composer's own box
+    (`composer-box-body`), which is where the field is; this card says what is
+    being asked and for what, and never measures the text."
+  (let ((req (head-secret-req head)))
+    (when req
+      (let* ((w (max 20 cols))
+             (deadline (getf req :deadline))
+             (left (and (numberp deadline) (plusp deadline) (plusp *now-ms*)
+                        (max 0 (floor (- deadline *now-ms*) 1000)))))
+        (append
+         (list (list (cons (%truncate-width
+                            (format nil "sudo wants a password — ~a"
+                                    (string-trim " " (or (getf req :prompt) "")))
+                            w)
+                           '(:fg :yellow))))
+         (mapcar (lambda (l) (list (cons l nil)))
+                 (wrap-text (format nil "for: ~a" (or (getf req :command) "")) w))
+         (list (list (cons (%truncate-width
+                            (format nil "type it below (shown as dots), Enter sends it once to sudo and nowhere else; Esc refuses~@[ · ~as left~]"
+                                    left)
+                            w)
+                           '(:dim t)))))))))
+
+;;; ---------------------------------------- where a pane's cursor opens ;;;
+
+(defun picker-initial-sel (head)
+  "The row the session picker opens on: **the session this head is in**.
+
+The reference seeds `picker_sel` from the current session when Ctrl+S opens the
+list (app.rs:3080-3087), so Enter on an untouched list is a no-op — the same
+courtesy `open-pick` pays the mode picker two hundred lines above. `%open-pane`
+(`src/commands.lisp:178-191`) sets the shared cursor to 0 for every pane, so
+Ctrl+S then Enter switched the operator to session #1, which is very rarely the
+one they were in.
+
+0 when the current session is not in the list, which is a daemon that has not
+answered `sessions` yet — and row 0 is then the only row there is to be on."
+  (or (position (session-session-id (head-session head))
+                (picker-sessions (head-session head))
+                :key (lambda (b) (getf b :session-id)) :test #'equal)
+      0))
+
+(defun pane-initial-sel (head mode)
+  "Where pane MODE's cursor belongs the moment it opens.
+
+One function so `%open-pane` has a single line to call rather than a `case` of
+its own, and so the seeding lives beside the pane that defines what a row is.
+Every pane but the session picker opens at the top, which is the honest place
+when one cursor is shared: a position left by the last pane means nothing to the
+next (`src/commands.lisp:181-186`)."
+  (if (eq mode :picker) (picker-initial-sel head) 0))
+
+;;; ------------------------------------------ `o` on a subagent row ;;;
+
+(defun subagent-switch (head)
+  "Switch this head INTO the subagent under the cursor — the reference's
+`Key::Char('o')` on the subagents pane (app.rs:3696-3707). T when a frame went
+out.
+
+The pane's own footer has advertised this since it was written
+(`arrows move, Enter reads the subagent's output, o switches into it`) and no key
+was ever bound to it, so the one row on the screen that names a key named a key
+that did nothing. A subagent still `opening` has no session to switch to yet, and
+the row already says `— not attachable yet`; refusing here with the same words is
+what keeps the two from disagreeing.
+
+The KEY is `src/editor.lisp:283-296`'s — its `:char` arm handles only `#\\q` —
+and this is the act that arm is missing."
+  (let ((row (nth (max 0 (head-picker-sel head)) (subagent-rows head))))
+    (cond ((null row) (say head "no subagent under the cursor") nil)
+          ((string= (or (getf row :state) "") "opening")
+           (say head "not attachable yet — it is still opening") nil)
+          ((null (getf row :session-id))
+           (say head "that subagent has no session id to switch to") nil)
+          (t (%send head (make-switch (getf row :session-id) 0))
+             (setf (head-mode head) :normal
+                   (head-dirty head) t)
+             t))))

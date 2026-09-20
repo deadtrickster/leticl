@@ -256,6 +256,18 @@ terminal: the newest content sat at row 1 and the oldest at row 57.)"
     ;; on the last settled row. Measured on letibot's screen: row 59 blank, row
     ;; 60 the box's top edge; ours had prose on 59.
     (let* ((all (append hist (and hist (list nil)) tail))
+           ;; **NOTHING HAS HAPPENED YET.** An empty screen with a status line
+           ;; under it is indistinguishable from a head that attached to the
+           ;; wrong socket — the reference's own sentence (app.rs:6112-6117) —
+           ;; so it says so, and says what this window is and is not.
+           ;;
+           ;; Guarded on `attaching-p` the way the reference guards it on
+           ;; `!self.attaching`: the walking cat covers *not answered yet*, and
+           ;; a banner asserting the session is empty while nobody has reported
+           ;; would be a claim this head is in no position to make.
+           (all (if (and (null all) (not (attaching-p head)))
+                    (empty-session-lines cols)
+                    all))
            (n (length all)))
       ;; the scroll is clamped to what exists: past the top there is nothing to
       ;; show, and a wheel that kept counting would need as many turns back
@@ -275,6 +287,92 @@ terminal: the newest content sat at row 1 and the oldest at row 57.)"
                             '(:fg :yellow)))))
         out))))
 
+(defparameter +right-margin+ 2
+  "Columns of right margin, so the frame is not flush against the edge.
+
+Measured from letibot's own screen: in a 210-column pane its box spans columns 2
+to 207, which is a 2-column gutter, 206 of content and 2 columns of right margin.
+Ours drew flush to 209.
+
+**It is the gutter mirrored, and no longer a constant of its own.** `%render`
+computes the body as `term_w - 2 * gutter`, which is the reference's arithmetic
+(`app.rs:5035`) and the only version that can give the margin up when the gutter
+does. Two independent constants that happened to sum to the same number agreed at
+every width this head had been looked at and disagreed at 30 columns, where the
+reference hands the body all thirty and this head handed it twenty-six.")
+
+(defparameter +gutter+ 2
+  "Columns of left margin the whole frame sits inside, when the terminal can
+afford them — see `frame-gutter`.
+
+Measured against letibot's own screen: its body, its chrome and its composer box
+are all indented two columns, and the box is 208 wide in a 210 frame. The gutter
+is what makes a frame read as a frame rather than as text that happens to start at
+the left edge — and it is the last visible difference between the two heads'
+layout.")
+
+(defun frame-gutter (term-cols)
+  "The gutter this terminal can afford: `+gutter+` at 40 columns or more, and
+**zero below** — the reference's `gutter` (app.rs:5320-5327).
+
+Its own words: the gutter is \"the first thing given up on a very narrow screen,
+before any content is: four columns out of forty is a tenth of the line, and out
+of twenty it is a fifth.\" Ours were two constants that never moved at any width,
+so on a 30-column terminal the reference wrapped the body at 30 and this head
+wrapped it at 26 — four columns of a narrow screen spent on margin."
+  (if (>= term-cols 40) +gutter+ 0))
+
+(defun %fit-ladder (head cols rows card-rows stall-p notice-p comp-p)
+  "Which chrome survives on a terminal of ROWS rows — the reference's fit loop
+(app.rs:5094-5126), which this head did not have at all.
+
+Returns `(values CARD-ROWS HINT-P NOTICE-P STALL-P COMPLETIONS-P BODY-ROWS
+BOXED)`. The ladder **drops the most expendable row first and stops as soon as
+the whole thing fits with a line of transcript left over**, in this order:
+
+    completions → the hint bar → the notice → a composer row (down to one)
+                → the stall sentence → the box → a decision row
+
+Every position in that order is an argument. The completions row is a typing aid
+and goes first; the hint bar is learnable and goes next; the notice has a TTL and
+will be gone shortly anyway; the composer gives up rows before it gives up its
+walls, because a container with one side is worse than none; the stall sentence
+outlives the box because it is the only thing on the screen saying why nothing is
+happening; and the decision card is last, because it is the thing being asked.
+
+`boxed` was the whole of this head's degradation — `(>= rows 8)`, one step, taken
+whether or not anything else could have been given up first — and nothing at all
+clamped the result, so at `h = 2` the composer's first row came out at a NEGATIVE
+index. The backstop for that is in `%render`: rows outside the screen are dropped
+by `screen-put`, which is the same frame the reference gets from draining the
+front of its chrome vector (app.rs:5206-5208).
+
+Unboxed costs one row **only when there is an alarm to show**: the counters move
+off the border onto a line of their own, and a clean head owes that row to the
+transcript."
+  (let ((body-rows (%composer-rows head cols))
+        (hint t)
+        (boxed t)
+        (dec card-rows))
+    (loop
+      (let ((n (+ dec
+                  (if stall-p 1 0)
+                  (if notice-p 1 0)
+                  (if comp-p 1 0)
+                  (if boxed 2 (if (alarmed-p head) 1 0))
+                  body-rows
+                  (if hint 1 0))))
+        (when (< n rows) (return))
+        (cond (comp-p (setf comp-p nil))
+              (hint (setf hint nil))
+              (notice-p (setf notice-p nil))
+              ((> body-rows 1) (decf body-rows))
+              (stall-p (setf stall-p nil))
+              (boxed (setf boxed nil))
+              ((> dec 1) (decf dec))
+              (t (return)))))
+    (values dec hint notice-p stall-p comp-p body-rows boxed)))
+
 (defun %render (head)
   "State to the cell buffer.
 
@@ -284,143 +382,134 @@ the transcript gets what is left. Getting that order wrong is how a composer
 scrolls the transcript by a row every keystroke.
 "
   (let* ((s (head-screen head))
-         ;; content width: the frame less the gutter AND the right margin
-         (cols (max 20 (- (head-cols head) +gutter+ +right-margin+)))
-         (rows (head-rows head))
-         (composer (composer-line head cols))
-         (composer-rows (length composer))
-         (hint (hint-bar head cols))
-         (alarm (alarm-line head cols))
-         (status (status-line head cols))
-         ;; **From the bottom: hint bar, composer, status, alarm.**
-         ;;
-         ;; Measured against letibot's own 63-row screen: its LAST row is the hint
-         ;; bar and the composer box sits directly above it. Ours had the box at
-         ;; the bottom with the hint above it, which puts the hint — the line that
-         ;; tells you what the keys do — above the thing you are typing into.
-         ;;
-         ;; A status row with nothing to say is NO row: it was drawing all dashes,
-         ;; and a row that costs a line to say nothing is the defect the reference's
-         ;; own comment names ("a number that is zero costs a row of attention for
-         ;; ever in exchange for being noticed once").
-         (hint-row (1- rows))
-         (cursor (- hint-row composer-rows))
-         ;; **The alarm and the turn's status ride the box's bottom edge**, which
-         ;; is what the reference does and why it has no status row at all: a
-         ;; resident row that is usually empty costs a line of transcript for
-         ;; ever. They fall back to their own rows only when there is no box (a
-         ;; screen too short for one), where there is no edge to carry them.
-         (boxed (>= rows 8))
-         ;; **The chrome above the box**, in the reference's own order (app.rs:
-         ;; 5069-5075): the stall sentence, then the head's note. These used to
-         ;; ride `status-line`, which `%render` drew only when there was NO box —
-         ;; i.e. never on a real screen — so every note this head writes went
-         ;; nowhere, `detached — reconnecting…` included.
-         (extra (append (stall-row head cols) (notice-line head cols)))
-         (extra-rows (length extra))
-         (status-text (and status (not boxed)
-                           (string-trim " ─" (apply #'concatenate 'string
-                                                    (mapcar #'car status)))))
-         (status-row (when (and status-text (plusp (length status-text))) (1- cursor)))
-         (alarm-row (when (and alarm (not boxed)) (- (or status-row cursor) 1)))
-         (body-top 1)
-         (body-bottom (max (1+ body-top)
-                           (- (or alarm-row status-row cursor) extra-rows)))
+         (term-cols (head-cols head))
+         ;; the gutter is given up before any content is (`frame-gutter`), and
+         ;; the right margin is the same number mirrored — `term_w - 2 * gutter`,
+         ;; the reference's own arithmetic
+         (gutter (frame-gutter term-cols))
+         (cols (max 20 (- term-cols (* 2 gutter))))
+         (rows (max 1 (head-rows head)))
+         ;; the chrome's candidates, each nil or one line
+         (stall (stall-row head cols))
+         (notice (notice-line head cols))
+         (completions (completions-line head cols))
          (card-lines nil))
     (screen-clear s)
-    ;; top border, inside the gutter like everything else
-    ;; the header is as wide as the body: measured against letibot's row 1, its
-    ;; tail ends where the box's right edge does, and ours stopped three short
-    (put-segments s 0 +gutter+ (top-border head cols))
-    ;; the ask card rides at the front of the chrome, transcript visible above
-    ;; the `allow-all` question sits at the FRONT of the chrome, above any card:
-    ;; while it is up every key belongs to it, and a question that owns the
-    ;; keyboard has to be the thing on the screen
+    ;; The card that owns the keyboard, in the reference's own order
+    ;; (app.rs:5053-5066): a password, then a decision, then the way out, then a
+    ;; picker. The `allow-all` question rides at the FRONT of all of it, because
+    ;; while it is up every key belongs to it and a question that owns the
+    ;; keyboard has to be the thing on the screen.
     (cond ((head-secret-req head)
-           (setf card-lines (secret-card-lines head cols)))
+           (setf card-lines (secret-ask-lines head cols)))
           ((%open-decision head)
-           (setf card-lines (decision-card-lines head cols)))
-          ;; the pickers are CARDS, with the transcript visible above them, as the
-          ;; reference draws them — ours were full-body panes
+           (setf card-lines (permission-card-lines head cols)))
+          ((head-quit-open head)
+           (setf card-lines (quit-card-lines head cols)))
           (*pick-open*
            (setf card-lines (pick-card-lines head cols))))
     (setf card-lines (append (mode-confirm-lines cols) card-lines))
-    (let ((card-rows (length card-lines)))
-      (cond
-        ;; full-body screens replace the transcript
-        ((member (head-mode head) '(:help :status :config :jobs :subagents :peek :picker :todos))
-         (let* ((lines nil)
-                (sel-line nil)
-                (room (max 1 (- body-bottom body-top))))
-           ;; A pane that owns a cursor returns the LINE it is on as a second
-           ;; value, because its cursor counts ROWS and this offset counts LINES —
-           ;; the two differ by every header above the list.
-           (multiple-value-setq (lines sel-line)
-             (case (head-mode head)
-               (:help (help-lines cols))
-               (:status (status-screen-lines head cols))
-               (:config (config-lines head (head-settings head) cols))
-               (:jobs (jobs-lines head cols))
-               (:subagents (subagent-lines head cols))
-               (:peek (peek-lines head cols))
-               (:picker (picker-lines (head-session head)
-                                      (head-picker-sel head) cols))
-               (:todos (todos-lines head cols))))
-           ;; tell the KEY handler what it may scroll: it clamps without
-           ;; re-rendering, and the cursor can then scroll itself into view
-           (setf *pane-lines* (length lines)
-                 *pane-room* room)
-           ;; a cursor that walked out of the window drags the window with it
-           (when sel-line (scroll-pane-into-view sel-line))
-           (%place-lines s (pane-view lines) body-top
-                         (1- (+ body-top room)) cols)))
-        ;; transcript empty and nothing has arrived yet: the wait, which is a
-        ;; thing to SHOW rather than a banner claiming the session is empty — a
-        ;; claim a head that has not been answered is in no position to make.
-        ;; BEFORE the transcript arm: this clause sat after a `(t …)` and the
-        ;; compiler deleted it, so the walking cat never once drew.
-        ((attaching-p head)
-         (let* ((wait (attach-lines head cols))
-                (room (max 1 (- body-bottom body-top)))
-                (skip (max 0 (- (floor room 2) (floor (length wait) 2)))))
-           (%place-lines s wait (+ body-top skip) body-bottom cols)))
-        (t
-         ;; transcript viewport, then the card just above the chrome
-         ;; THE QUIT CARD'S OWN HEIGHT. `card-rows` above is the decision
-         ;; card's, which is NIL when ctrl-c opens this one — so the quit card was
-         ;; placed at `body-bottom + 1`, off the body, while `want` still gave up
-         ;; the rows for it: the operator saw the transcript step up and three
-         ;; blank rows where the card should be (*"Cc doesnt work"*).
-         (let* ((card-lines (if (head-quit-open head)
-                                (quit-card-lines head cols)
-                                card-lines))
-                (card-rows (length card-lines))
-                ;; the card takes exactly its rows: the viewport already ends
-                ;; with the gap row, so no blank is added between them — the
-                ;; reference's chrome is [card…, box] straight under the gap
-                (want (max 1 (- body-bottom body-top card-rows)))
-                (lines (%viewport-lines head cols want)))
-           (%place-lines s lines body-top (+ body-top (length lines) -1) cols)
-           ;; `body-bottom` is the composer's FIRST row — exclusive. Placing the
-           ;; card through it put its last line under the box's top edge.
-           (when card-lines
-             (%place-lines s card-lines (- body-bottom card-rows) (1- body-bottom) cols))))))
-    ;; the chrome, each row where the layout above put it
-    (loop for row in extra
-          for r from (- (or alarm-row status-row cursor) extra-rows)
-          do (put-segments s r +gutter+ row))
-    (when alarm-row (put-segments s alarm-row +gutter+ alarm))
-    (when status-row (put-segments s status-row +gutter+ status))
-    (loop for row in composer
-          for r from cursor
-          do (put-segments s r +gutter+ row))
-    (put-segments s hint-row +gutter+ hint)
-    ;; **and where the terminal's own caret goes.** The painter emits the move and
-    ;; `ESC[?25h` after the frame; without it the head hid the cursor at startup
-    ;; and never showed it again, so the composer had no caret at all.
-    (let ((caret (composer-caret head cols)))
-      (setf *caret* (cons (min (1- rows) (+ cursor (car caret)))
-                          (min (1- (head-cols head)) (+ +gutter+ (cdr caret))))))))
+    (multiple-value-bind (card-rows hint-p notice-p stall-p comp-p body-rows boxed)
+        (%fit-ladder head cols rows (length card-lines)
+                     (and stall t) (and notice t) (and completions t))
+      (let* ((composer (composer-line head cols :boxed boxed :max-rows body-rows))
+             (composer-rows (length composer))
+             ;; the hint bar owns the LAST row when it survived the ladder; when
+             ;; it did not, the composer does
+             (hint-row (if hint-p (1- rows) rows))
+             ;; the alarm falls back to a row of its own only when there is no
+             ;; box to carry the triangle on its bottom edge — and it goes
+             ;; BETWEEN the composer and the hint, which is where the reference
+             ;; pushes it (app.rs:5199-5201), not above the composer
+             (alarm (and (not boxed) (alarmed-p head) (alarm-line head cols)))
+             (alarm-row (and alarm (1- hint-row)))
+             (cursor (- (or alarm-row hint-row) composer-rows))
+             ;; the chrome above the box, in the reference's order: the card, the
+             ;; stall sentence, the head's note, the completions
+             (chrome-top (- cursor
+                            (if comp-p 1 0) (if notice-p 1 0) (if stall-p 1 0)
+                            card-rows))
+             ;; **the header is not drawn on a screen too short for it.** The
+             ;; reference gates it on `h >= 6 && !session_id.is_empty()`
+             ;; (app.rs:5231); ours drew it at row 0 unconditionally, so a
+             ;; five-row frame spent one of its five on a header.
+             ;;
+             ;; Only the HEIGHT half is taken. The `session_id.is_empty()` half
+             ;; would move the body's first row to 0 on a head that has not been
+             ;; told its session yet, and `click-row->sel` (`src/editor.lisp:213`)
+             ;; converts a click with `(- row 1)` — the pane's origin is written
+             ;; down in a second place, in another strand's file, and moving one
+             ;; of the two would put every click in a pane one row out. The
+             ;; clause belongs with that arithmetic, not ahead of it.
+             (header-p (>= rows 6))
+             (body-top (if header-p 1 0))
+             (body-bottom (max body-top chrome-top)))
+        (when header-p
+          (put-segments s 0 gutter (top-border head cols)))
+        (cond
+          ;; full-body screens replace the transcript
+          ((member (head-mode head) '(:help :status :config :jobs :subagents :peek :picker :todos))
+           (let ((room (max 1 (- body-bottom body-top)))
+                 (lines nil)
+                 (sel-line nil))
+             ;; A pane that owns a cursor returns the LINE it is on as a second
+             ;; value, because its cursor counts ROWS and this offset counts
+             ;; LINES — the two differ by every header above the list.
+             (multiple-value-setq (lines sel-line)
+               (case (head-mode head)
+                 (:help (help-lines cols))
+                 (:status (status-screen-lines head cols))
+                 (:config (config-lines head (head-settings head) cols))
+                 (:jobs (jobs-lines head cols))
+                 (:subagents (subagent-lines head cols))
+                 ;; the peek pane windows ITSELF, tail-first, because the tail is
+                 ;; where a subagent's answer is and the clamp needs the height
+                 (:peek (peek-lines head cols room))
+                 (:picker (picker-lines (head-session head)
+                                        (head-picker-sel head) cols))
+                 (:todos (todos-lines head cols))))
+             ;; tell the KEY handler what it may scroll: it clamps without
+             ;; re-rendering, and the cursor can then scroll itself into view
+             (setf *pane-lines* (if (eq (head-mode head) :peek)
+                                    *peek-total*
+                                    (length lines))
+                   *pane-room* room)
+             (when sel-line (scroll-pane-into-view sel-line))
+             (%place-lines s (if (eq (head-mode head) :peek) lines (pane-view lines))
+                           body-top (1- (+ body-top room)) cols gutter)))
+          ;; transcript empty and nothing has arrived yet: the wait, which is a
+          ;; thing to SHOW rather than a banner claiming the session is empty — a
+          ;; claim a head that has not been answered is in no position to make.
+          ((attaching-p head)
+           (let* ((wait (attach-lines head cols))
+                  (room (max 1 (- body-bottom body-top)))
+                  (skip (max 0 (- (floor room 2) (floor (length wait) 2)))))
+             (%place-lines s wait (+ body-top skip) (1- body-bottom) cols gutter)))
+          (t
+           ;; the transcript viewport gets whatever the chrome left
+           (let* ((want (max 1 (- body-bottom body-top)))
+                  (lines (%viewport-lines head cols want)))
+             (%place-lines s lines body-top (+ body-top (length lines) -1) cols gutter))))
+        ;; the chrome, top to bottom, exactly the order the ladder counted it in
+        (let ((r chrome-top))
+          (flet ((row (line) (put-segments s r gutter line) (incf r)))
+            (dolist (line (subseq card-lines 0 (min (max 0 card-rows) (length card-lines))))
+              (row line))
+            (when stall-p (row (first stall)))
+            (when notice-p (row (first notice)))
+            (when comp-p (row (first completions)))
+            (dolist (line composer) (row line))))
+        (when alarm-row (put-segments s alarm-row gutter alarm))
+        (when hint-p (put-segments s hint-row gutter (hint-bar head cols)))
+        ;; **and where the terminal's own caret goes.** The painter emits the move
+        ;; and `ESC[?25h` after the frame; without it the head hid the cursor at
+        ;; startup and never showed it again, so the composer had no caret at all.
+        ;; Clamped at BOTH ends: the ladder can be beaten on a two-row terminal,
+        ;; and a negative caret row is a cursor the terminal puts wherever it
+        ;; likes.
+        (let ((caret (composer-caret head cols :boxed boxed :max-rows body-rows)))
+          (setf *caret* (cons (max 0 (min (1- rows) (+ cursor (car caret))))
+                              (max 0 (min (1- term-cols) (+ gutter (cdr caret)))))))))))
 
 (defparameter +right-margin+ 2
   "Columns of right margin, so the frame is not flush against the edge.
@@ -450,12 +539,16 @@ ours at 221. The floor is the reference's own `w.max(4)`, raised to 20 so a wrap
 never degenerates."
   (max 20 cols))
 
-(defun %place-lines (screen lines top bottom cols)
-  "Segment lines into rows top..bottom, clipping both ends, inside the gutter."
+(defun %place-lines (screen lines top bottom cols &optional (gutter +gutter+))
+  "Segment lines into rows top..bottom, clipping both ends, inside the gutter.
+
+GUTTER is passed rather than read, because it is `frame-gutter`'s answer for THIS
+terminal and is zero below forty columns."
+  (declare (ignorable cols))
   (let ((r top))
     (dolist (line lines)
       (when (> r bottom) (return))
-      (put-segments screen r +gutter+ line)
+      (put-segments screen r gutter line)
       (incf r))))
 
 (defvar *last-render-error* nil

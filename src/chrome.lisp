@@ -97,10 +97,22 @@ A defvar each rather than a head slot, because a struct layout change is a
 restart; there is one head per process, so a global costs nothing and pushes."
   (remove-if (lambda (pair) (zerop (cdr pair)))
              (list (cons "dropped" (or (session-dropped (head-session head)) 0))
+                   ;; **`scrubbed` counts too.** The reference's `alarmed()` is
+                   ;; `dropped + scrubbed + resyncs > 0` (app.rs:7619-7620) and
+                   ;; this list carried the first and the third: a head that had
+                   ;; had secrets stripped out of its rows and nothing else wrong
+                   ;; showed no ⚠ at all, so the one counter whose whole point is
+                   ;; that the operator learns about it was the one kept quiet.
+                   (cons "scrubbed" *scrubbed-total*)
                    (cons "resync" *resyncs*))))
 
 (defun alarmed-p (head)
-  "Is anything wrong enough to spend a row on?"
+  "Is anything wrong enough to spend a row on?
+
+`alarm-counts` now carries `scrubbed`, which is the reference's third term. The
+`(not connected)` clause is ours and stays: the reference exits on a dead socket
+(`driver.rs:102-108`) and this head reconnects, so \"detached\" is a state it can
+be in and the reference cannot."
   (or (alarm-counts head)
       (not (head-connected head))))
 
@@ -183,7 +195,17 @@ that identifies it, and `~/Projects/…` names nothing."
 context size, cache fraction, decode rate, elapsed — plus output tokens.
 
 A number nobody measured is ABSENT, not zero: `0% cached` is the same defect as a
-rate nobody took, and it is the rule the meter and the footer are both held to."
+rate nobody took, and it is the rule the meter and the footer are both held to.
+
+**The LIVE PREFILL WINS while a turn runs.** `header_line` (app.rs:6274-6281)
+reads `turn.progress.total/cache` first and falls back to the kept usage only
+when there is no prefill in flight, because *how big is this prompt* is a
+question about the prompt being sent — not about the last one that finished.
+Ours read `state.usage` or `turn.usage` and had no `progress` path at all, so
+through the whole of a long turn the header showed the PREVIOUS turn's context
+while the bar on the composer's edge was expanding a different one. Measured
+against `src/session.lisp:218-223`, which already folds `PromptProgress` onto the
+turn as `(:total :cache :processed :time-ms)` and had no reader."
   (let* ((turn (session-turn s))
          (state (and turn (getf turn :state)))
          (usage (or (and state (getf state :usage))
@@ -191,17 +213,25 @@ rate nobody took, and it is the rule the meter and the footer are both held to."
                     ;; so the header still says what the conversation costs while
                     ;; nothing is running — which is most of the time
                     (and turn (getf turn :usage))))
+         (pp (getf turn :progress))
+         ;; `(TOTAL CACHED CACHE-MEASURED)`, the reference's own triple: a live
+         ;; prefill always measured its own cache, a kept usage did so only if it
+         ;; carried the number.
+         (live (and pp (numberp (getf pp :total)) (plusp (getf pp :total))
+                    (list (getf pp :total) (or (getf pp :cache) 0) t)))
+         (kept (and usage (numberp (getf usage :prompt-tokens))
+                    (plusp (getf usage :prompt-tokens))
+                    (list (getf usage :prompt-tokens)
+                          (or (getf usage :cached-tokens) 0)
+                          (numberp (getf usage :cached-tokens)))))
+         (ctx (or live kept))
          (timings (and state (getf state :timings)))
          (parts nil))
-    (when (and usage (numberp (getf usage :prompt-tokens))
-               (plusp (getf usage :prompt-tokens)))
-      (push (format nil "~a ctx" (thousands (getf usage :prompt-tokens))) parts))
-    (when (and usage (numberp (getf usage :cached-tokens))
-               (numberp (getf usage :prompt-tokens))
-               (plusp (getf usage :prompt-tokens)))
+    (when ctx
+      (push (format nil "~a ctx" (thousands (first ctx))) parts))
+    (when (and ctx (third ctx))
       (push (format nil "~d% cached"
-                    (round (* 100 (/ (float (getf usage :cached-tokens))
-                                     (getf usage :prompt-tokens)))))
+                    (round (* 100 (/ (float (second ctx)) (first ctx)))))
             parts))
     (when (and timings (numberp (getf timings :predicted-ms))
                (plusp (getf timings :predicted-ms))
@@ -293,8 +323,10 @@ the transcript a line to say nothing."
 ;;; would measure the daemon's opinion of how long it had been quiet, which is
 ;;; exactly the number that is missing when it has stopped talking.
 
-(defparameter *stall-ms* 20000
-  "How long a silence before the head says so. Long enough that a slow model
+(defparameter *stall-ms* 15000
+  "How long a silence before the head says so — the reference's own number
+(`stuck_line`, app.rs:7594: `if quiet > 15_000`). Ours was 20 000, which is five
+seconds of a dead turn nobody is told about; long enough that a slow model
 thinking is not a stall, short enough that a dead socket is not a mystery.")
 
 (defvar *now-ms* 0 "Wall clock, fed by the loop. 0 means nobody told us.")
@@ -347,6 +379,33 @@ in the chrome above the box, where the card is (app.rs:5069-5075)."
       (list (list (cons (%truncate-width (format nil "· ~a" note) cols)
                         '(:fg :magenta)))))))
 
+(defun completions-line (head cols)
+  "The live `/command` matches, one dim row above the composer — the reference's
+`completions_line` (app.rs:4342-4358).
+
+Tab has completed since the beginning (`src/editor.lisp:118`) and **nothing was
+ever drawn**: `grep -rn completion src/*.lisp` found `%complete` and no renderer,
+so the only way to learn what a prefix matched was to press Tab and watch the
+buffer change under you. A bare `/` lists every verb; a prefix nothing matches
+draws NOTHING rather than an empty row, because a row that appears and
+disappears is noise, and Tab still says what went wrong when it is asked.
+
+A list of 0 or 1 lines, like `notice-line` and `stall-row`, because the fit
+ladder counts rows and this is **the first row it gives up** (app.rs:5111): it
+is a typing aid, not a message."
+  (let ((text (composer-buffer (head-composer head))))
+    (when (and (plusp (length text))
+               (char= (char text 0) #\/)
+               (not (find-if (lambda (c) (member c '(#\space #\tab #\newline))) text)))
+      (let* ((needle (subseq text 1))
+             (parts (loop for (name . hint) in *slash-commands*
+                          when (alexandria:starts-with-subseq needle name)
+                            collect (format nil "/~a ~a" name hint))))
+        (when parts
+          (list (list (cons (%truncate-width
+                             (format nil "  ~{~a~^  ·  ~}" parts) cols)
+                            '(:dim t)))))))))
+
 (defun stall-row (head cols)
   (let ((text (stall-text head)))
     (when text
@@ -357,7 +416,15 @@ in the chrome above the box, where the card is (app.rs:5069-5075)."
 (defun status-line (head cols)
   "The status row: the note, the connection, the scroll, the queue, the stall.
 
-The counters moved to the ALARM line and to `/status`, which is the reference's
+**Not on the frame\'s path any more.** `%render` used to draw this only when
+there was no composer box — i.e. never on a real terminal — and now draws the
+note and the stall as their own chrome rows (`notice-line`, `stall-row`) and the
+unboxed fallback as `alarm-line`, which is what the reference pushes there
+(app.rs:5199-5201). Kept because it is a named contract surface (HACKING.md) and
+because `/status` and a restyle both still reach it; redefining it no longer
+changes the frame, and `notice-line` is the function that does.
+
+The counters moved to the ALARM line and to `/status`, which is the reference\'s
 own change and the right one: `seq 907 · rendered 900 · filtered 1 · dropped 0` on
 every frame next to the thing you are typing into is a row of attention spent for
 ever on a number that is zero."
@@ -424,30 +491,51 @@ against letibot's row 63 with the mode picker up: ours had dropped the prefix."
         (list prefix (cons (format nil " · ~a" tail) '(:dim t)))
         (list (cons tail '(:dim t))))))
 
-(defun turn-status (head)
-  "The running turn in a few words, or NIL when no turn is running."
+(defun turn-status (head &optional (cols 40))
+  "The running turn in a few words, or NIL when no turn is running — the
+reference's `turn_status` (app.rs:7501-7566).
+
+**Two orderings and a missing phase, all measured off `app.rs:7560-7566`.**
+
+  · the SPINNER COMES FIRST — `{spin} Responding{since}{count}` — and ours had
+    it last, after a ` · `, which puts the one moving glyph on the edge where a
+    narrow border truncates it away first;
+  · `since` comes before the count, not after;
+  · and there was **no prefill arm at all**. While `turn.progress` says the
+    prompt is still expanding, the reference replaces the whole status with
+    `{spin} {prefill_line(pf, w-6)}` — the bar, the rate and the estimate. Ours
+    had `prefill-line` (`src/progress.lisp:172`) written, tested and called from
+    nowhere, so the one number this harness exists to move never reached the
+    composer's edge. COLS is the border's width, which is why it is a parameter:
+    the line is sized to the edge it is being pinned to."
   (let* ((turn (session-turn (head-session head)))
          (state (and turn (getf turn :state)))
          (running (and state (string= (getf (getf turn :state) :state) "running"))))
     (when running
-      (let ((since (if *turn-started-ms*
-                       (format nil " · ~a" (duration (- (internal-real-time-ms)
-                                                        *turn-started-ms*)))
-                       " · started before this head attached"))
-            (tokens (getf turn :tokens))
-            (spin (string (spinner *now-ms*))))
-        (concatenate
-         'string
-         "Responding"
-         (if (and (numberp tokens) (plusp tokens))
-             (format nil " · ~a tok" (thousands tokens))
-             ;; the character count where the server has not spoken, or a
-             ;; messages-backend turn whose seam carries no token count
-             (let ((chars (length (or (getf turn :text) ""))))
-               (if (plusp chars) (format nil " · ~a chars" (thousands chars)) "")))
-         since
-         " · "
-         spin)))))
+      (let* ((pp (getf turn :progress))
+             (spin (string (spinner *now-ms*))))
+        (if (and pp (numberp (getf pp :total)) (plusp (getf pp :total))
+                 (< (or (getf pp :processed) 0) (getf pp :total)))
+            ;; prefilling: the bar says everything the words would have
+            (format nil "~a ~a" spin (prefill-line pp (max 1 (- cols 6))))
+            (let ((since (if *turn-started-ms*
+                             (format nil " · ~a" (duration (- (internal-real-time-ms)
+                                                              *turn-started-ms*)))
+                             " · started before this head attached"))
+                  (tokens (getf turn :tokens)))
+              (concatenate
+               'string
+               spin
+               " Responding"
+               since
+               (if (and (numberp tokens) (plusp tokens))
+                   (format nil " · ~a tok" (thousands tokens))
+                   ;; the character count where the server has not spoken, or a
+                   ;; messages-backend turn whose seam carries no token count
+                   (let ((chars (length (or (getf turn :text) ""))))
+                     (if (plusp chars)
+                         (format nil " · ~a chars" (thousands chars))
+                         ""))))))))))
 
 ;;; --------------------------------------------------------- the composer ;;;
 ;;;
@@ -478,26 +566,32 @@ one."
     ;; where letibot draws `╭───`. Measured column-by-column against the two
     ;; screens, which is the only way a one-column difference shows up.
     (if (plusp running)
-        (format nil " ~d subagent~p running " running running)
+        (format nil "~d subagent~p running" running running)
         "")))
 
-(defun composer-wiring (head)
+(defun composer-wiring (head &optional (cols 40))
   "The right-hand label of the box's BOTTOM edge: the alarm and the turn's status.
 
 **Not the wiring** — same mistake as the title, same fix: the reference's bottom
 edge is where the alarm triangle and the running turn's own status live, and the
 wiring's model is in the header where it belongs.
 
+COLS is the edge's width, passed through to `turn-status` so the prefill bar is
+sized to the border it is inlaid into (`app.rs:5183`, `turn_status(w)`).
+
 An alarm is `⚠` alone, because the counters behind it are `/status`'s and were
 never worth a resident sentence of bright yellow. With nothing running and nothing
 wrong, the edge is bare."
   (let ((parts (remove nil (list (and (alarmed-p head) "⚠")
-                                 (turn-status head)))))
+                                 (turn-status head cols)))))
     ;; NOTHING is nothing: returning a space put a stray `─ ╯` on the box where
     ;; letibot draws `──╯`. Same defect as `composer-title`'s, one function over —
     ;; and only a column-precise diff shows a one-column difference.
     (if parts
-        (format nil " ~{~a~^ · ~} " parts)
+        ;; no padding of its own: `box-edge` frames the legend (` … ─`), and a
+        ;; legend that pads itself as well puts two spaces where the reference
+        ;; has one on both sides of it
+        (format nil "~{~a~^ · ~}" parts)
         "")))
 
 (defun composer-ranges (head cols)
@@ -516,7 +610,11 @@ Takes HEAD rather than reaching for the global: the paint has `*head*` bound and
 a TEST of the paint does not, and the difference is a render that dies with `NIL
 is not of type LETICL::HEAD` — measured, twice, in this file. Anything here that
 can be given the head is given it."
-  (max 1 (length (composer-ranges head cols))))
+  (if (head-secret-req head)
+      ;; a password is one row of dots however long it is, and the text is never
+      ;; measured — see `composer-box-body`
+      1
+      (max 1 (length (composer-ranges head cols)))))
 
 (defun composer-inner (cols)
   "The columns of editable text inside the box.
@@ -527,44 +625,78 @@ frame drew a 62-column row, which wraps in a terminal and pushes the whole frame
 down a line on every keystroke."
   (max 1 (- cols 6)))
 
+(defun box-edge (cols open close left right &optional (right-style '(:dim t)))
+  "One edge of the composer's box, as segments — the reference's `box_edge`
+(app.rs:5384-5411), which both of ours had only half of.
+
+    ╭──────────────────────────── 2 subagents running ─╮
+    ╰─────────────────────── ⚠ · ⠹ Responding · 4.2s ─╯
+
+Three things ours got wrong and this fixes, each read off the reference's own
+raw row rather than its plain text:
+
+  · the legend is pinned **RIGHT**, not left. `composer-box-top` put the
+    subagent count immediately after the `╭`, where the eye is not looking and
+    where it collides with the header's left half one row above;
+  · it is **framed** — ` {legend} ─` — so the legend sits in a notch in the
+    border rather than being border that happens to be words;
+  · and it is gated: no legend at all below `inner >= 10`, and the right legend
+    is dropped rather than squeezed when its room falls under 4 columns. A
+    legend squeezed to two characters is a legend nobody can read occupying
+    room the border needs.
+
+Invisible today on both edges because both legends are usually empty, which is
+exactly why it went two rounds of `compare-heads` unnoticed: the difference only
+exists while a subagent runs or a turn is answering.
+
+The reference reopens `Role::Faint` after each legend because its palette closes
+a span with a plain reset (`a reset is not a restore`). Cells carry their own
+style here, so the reopen is structural: the border's segments are dim and the
+legend's is its own."
+  (let* ((w (max 4 cols))
+         (inner (- w 2))
+         (left-text (if (and (plusp (length left)) (>= inner 10))
+                        (format nil "─ ~a " (%truncate-width left (max 1 (- inner 4))))
+                        ""))
+         (left-cols (string-width left-text))
+         (room (max 0 (- inner left-cols 2)))
+         ;; the reference computes the legend's room as `inner - left - 2` and
+         ;; then spends three columns on the framing (` `, the legend, ` ─`), so
+         ;; a legend that uses all of its room makes the edge one column wider
+         ;; than the box. An edge one column over WRAPS, and a border that wraps
+         ;; scrolls the whole frame by a row every time it is drawn, so the gate
+         ;; is the reference's and the truncation is one tighter.
+         (shown (if (and (plusp (length right)) (>= inner 10) (>= room 4))
+                    (%truncate-width right (max 0 (- room 1)))
+                    ""))
+         (right-cols (if (plusp (length shown)) (+ 3 (string-width shown)) 0))
+         (fill (max 0 (- inner left-cols right-cols))))
+    (append (list (cons (string open) '(:dim t)))
+            (when (plusp (length left-text)) (list (cons left-text '(:dim t))))
+            (list (cons (make-string fill :initial-element #\─) '(:dim t)))
+            (when (plusp (length shown))
+              (list (cons " " '(:dim t))
+                    (cons shown right-style)
+                    (cons " ─" '(:dim t))))
+            (list (cons (string close) '(:dim t))))))
+
 (defun composer-box-top (head cols)
-  "The box's top edge: `╭─ title ────╮`."
-  (let* ((title (composer-title head))
-         ;; the edges are one column each, so the fill and the title share COLS-2
-         (w (max 1 (- cols 2)))
-         (name (%truncate-width title w))
-         (fill (max 0 (- w (string-width name)))))
-    (list (cons "╭" '(:dim t))
-          (cons name '(:bold t))
-          (cons (make-string fill :initial-element #\─) '(:dim t))
-          (cons "╮" '(:dim t)))))
+  "The box's top edge, with `N subagents running` pinned right.
+
+`Role::Pending` — yellow (`style.rs:174`) — not `Strong`: the count is a thing
+that is happening, which is the register the spinner on the bottom edge is
+already in, and ours painted it bold, which is the header's register."
+  (box-edge cols #\╭ #\╮ "" (composer-title head) '(:fg :yellow)))
 
 (defun composer-box-bottom (head cols)
-  "The box's bottom edge, with the wiring at its right end."
-  (let* ((wiring (composer-wiring head))
-         (w (max 1 (- cols 2)))          ; the two edges are one column each
-         (name (%truncate-width wiring w))
-         (fill (max 0 (- w (string-width name)))))
-    (list (cons "╰" '(:dim t))
-          (cons (make-string fill :initial-element #\─) '(:dim t))
-          (cons name '(:dim t))
-          (cons "╯" '(:dim t)))))
+  "The box's bottom edge, with the alarm and the turn's status pinned right."
+  (box-edge cols #\╰ #\╯ "" (composer-wiring head cols) '(:dim t)))
 
-(defun composer-box-body (head cols)
-  "The body rows of the box: `│ › text… │`, the buffer WRAPPED.
-
-It used to split on newlines and TRUNCATE each one, so a typed line longer than
-the box was cut at the edge with no way to see the rest of it — and the caret,
-which is a position in the text, had nowhere on the screen to be. The prompt is
-on the first row only and continuation rows are indented by its width, as the
-reference's editor does."
-  (let* ((c (head-composer head))
-         (inner (composer-inner cols))
-         (buf (composer-buffer c))
-         (lines (loop for (a . b) in (composer-ranges head cols)
-                      collect (string-right-trim '(#\space) (subseq buf a b)))))
+(defun %composer-body-rows (lines start inner)
+  "LINES as box rows, the prompt on the FIRST row of the buffer only."
+  (let ((lines (or lines (list ""))))
     (loop for line in lines
-          for i from 0
+          for i from start
           for shown = (%truncate-width line inner)
           ;; the wall and the prompt are DIM, and the wall is its own segment with
           ;; a plain space after it — read off the two screens' escapes, which is
@@ -588,13 +720,64 @@ reference's editor does."
                         ;; screens' box rows
                         (cons "│" '(:dim t))))))
 
-(defun composer-line (head cols)
+(defun composer-window (head cols &optional max-rows)
+  "Which wrapped rows of the composer the box draws, as `(values START SHOW N
+CROW)` — the reference's `composer_rows` window (app.rs:5355-5358).
+
+MAX-ROWS is what the fit ladder left the composer. A composer taller than the
+rows it was given **scrolls to the caret, never to the top**: the person is
+typing somewhere, and a window pinned at row 0 puts that somewhere off screen."
+  (if (head-secret-req head)
+      (values 0 1 1 0)
+      (let* ((ranges (composer-ranges head cols))
+             (n (max 1 (length ranges)))
+             (show (max 1 (min (or max-rows n) n)))
+             (crow (nth-value 0 (locate-in-ranges
+                                 (composer-buffer (head-composer head))
+                                 (composer-cursor (head-composer head))
+                                 ranges)))
+             (start (min (max 0 (- crow (1- show))) (- n show))))
+        (values start show n crow))))
+
+(defun composer-box-body (head cols &optional max-rows)
+  "The body rows of the box: `│ › text… │`, the buffer WRAPPED.
+
+It used to split on newlines and TRUNCATE each one, so a typed line longer than
+the box was cut at the edge with no way to see the rest of it — and the caret,
+which is a position in the text, had nowhere on the screen to be. The prompt is
+on the first row only and continuation rows are indented by its width, as the
+reference's editor does."
+  (let* ((c (head-composer head))
+         (inner (composer-inner cols))
+         (buf (composer-buffer c))
+         (all (if (head-secret-req head)
+                  ;; **A DOT PER CHARACTER, and the text never even measured** —
+                  ;; the reference's own comment at `app.rs:5343-5347`. Ours kept
+                  ;; painting the ordinary buffer under the password card, so
+                  ;; whatever had been typed before sudo asked sat on the screen
+                  ;; while a password was being entered over the top of it.
+                  (list (make-string (length (head-secret-buf head))
+                                     :initial-element #\•))
+                  (loop for (a . b) in (composer-ranges head cols)
+                        collect (string-right-trim '(#\space) (subseq buf a b))))))
+    (multiple-value-bind (start show) (composer-window head cols max-rows)
+      (%composer-body-rows (subseq all (min start (length all))
+                                   (min (+ start show) (length all)))
+                           start inner))))
+
+(defun composer-line (head cols &key (boxed (>= (head-rows head) 8)) max-rows)
   "The composer, as the rows it occupies — box plus body, or one bare line.
 
 Returns a LIST of rows, because the box is three or more rows tall; the caller
-places them from the bottom up. A single-row list is the degraded form."
+places them from the bottom up. A single-row list is the degraded form.
+
+BOXED and MAX-ROWS are the **fit ladder's** answers (`%fit-ladder`, render.lisp):
+the ladder gives up the composer's rows one at a time and then the box itself,
+in that order, and this used to decide both for itself from `head-rows`. The
+defaults keep a caller that has not run the ladder working."
   (let ((inner (max 1 (- cols 2))))
-    (if (< (head-rows head) 8)
+    (declare (ignorable inner))
+    (if (not boxed)
         ;; too short for a box: the bare line, with the prompt and the tail of
         ;; the buffer keeping the cursor end visible
         (let* ((buf (composer-buffer (head-composer head)))
@@ -605,10 +788,10 @@ places them from the bottom up. A single-row list is the degraded form."
           (list (list (cons prefix '(:fg :bright-cyan :bold t))
                       (cons visible nil))))
         (append (list (composer-box-top head cols))
-                (composer-box-body head cols)
+                (composer-box-body head cols max-rows)
                 (list (composer-box-bottom head cols))))))
 
-(defun composer-caret (head cols)
+(defun composer-caret (head cols &key (boxed (>= (head-rows head) 8)) max-rows)
   "Where the terminal's own caret goes, as (ROW . COL) inside the composer's own
 rows — the reference's `composer_rows` third value.
 
@@ -619,26 +802,31 @@ thing about leticl - prompt input doesnt have caret or cursor\"*. The box draws 
 `›` and that is a decoration; the caret is the thing that says where the next
 character lands."
   (let ((c (head-composer head)))
-    (if (< (head-rows head) 8)
+    (if (not boxed)
         ;; the bare line: the prompt is two columns and the tail is what is shown
         (let* ((buf (composer-buffer c))
                (cut (max 0 (- (length buf) (- cols 2)))))
           (cons 0 (+ 2 (string-width buf :start (min cut (composer-cursor c))
                                         :end (composer-cursor c)))))
-        (multiple-value-bind (row col)
-            (locate-in-ranges (composer-buffer c) (composer-cursor c)
-                              (composer-ranges head cols))
-          ;; +1 for the box's wall, +1 for the space after it, +2 for `› `; the
-          ;; body's first row is one below the top edge
-          (cons (1+ row) (+ 4 col))))))
+        ;; a password puts the caret after the last DOT, and the buffer it is a
+        ;; caret into is never measured (app.rs:5343-5347)
+        (if (head-secret-req head)
+            (cons 1 (+ 4 (length (head-secret-buf head))))
+            (multiple-value-bind (start) (composer-window head cols max-rows)
+              (multiple-value-bind (row col)
+                  (locate-in-ranges (composer-buffer c) (composer-cursor c)
+                                    (composer-ranges head cols))
+                ;; +1 for the box's wall, +1 for the space after it, +2 for `› `;
+                ;; the body's first row is one below the top edge, and START is
+                ;; how many rows the window has scrolled past
+                (cons (1+ (- row start)) (+ 4 col))))))))
 
-(defun composer-rows-needed (head cols)
+(defun composer-rows-needed (head cols &key (boxed (>= (head-rows head) 8)) max-rows)
   "How many rows `composer-line` will return. The render needs this BEFORE it
-component the frame, because the transcript gets what is left."
-  (declare (ignore cols))
-  (if (< (head-rows head) 8)
+composes the frame, because the transcript gets what is left."
+  (if (not boxed)
       1
-      (+ 2 (%composer-rows head cols))))
+      (+ 2 (nth-value 1 (composer-window head cols max-rows)))))
 
 ;;; --------------------------------------------------------------- notice ;;;
 ;;;
