@@ -357,18 +357,16 @@ the left edge — and it is the last visible difference between the two heads'
 layout.")
 
 (defun pane-width (cols)
-  "The columns a pane's ROW may use, from the terminal's COLS.
+  "The columns a pane's ROW may use, from the body width COLS it is handed.
 
-The reference draws its panes at `term_w - 2 * gutter` (app.rs:4498) and this
-frame has the same two-column gutter on each side (`+gutter+`, `+right-margin+`),
-so a 210-column terminal gives a 206-column row — which is where the picker's
-right-aligned facts end, measured: column 208 of 210, two short of the edge. The
-floor is the reference's own `w.max(4)`, raised to 20 so a wrap never degenerates.
-
-Defined here, beside the two constants it reads, rather than in panes.lisp which
-loads first: a special referenced before its `defparameter` is a full WARNING at
-compile time, where a function called before its `defun` is not."
-  (max 20 (- cols +gutter+ +right-margin+)))
+`%render` calls every pane with COLS already net of the gutter and the right
+margin (`(- (head-cols head) +gutter+ +right-margin+)`), which is the reference's
+`term_w - 2 * gutter` (app.rs:4498). The first version subtracted the two again,
+so the picker's right-aligned facts ended four columns short of the header's and
+the box's edge — measured on a 227-column terminal: letibot's rows end at 225,
+ours at 221. The floor is the reference's own `w.max(4)`, raised to 20 so a wrap
+never degenerates."
+  (max 20 cols))
 
 (defun %place-lines (screen lines top bottom cols)
   "Segment lines into rows top..bottom, clipping both ends, inside the gutter."

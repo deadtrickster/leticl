@@ -2916,13 +2916,16 @@ to the pane's width and the full id under every row; ours were ` ● name`."
   (let* ((h (%pane-head))
          (s (head-session h)))
     (is (= 2 (length (picker-sessions s))) "the child session is not listed")
-    (multiple-value-bind (lines sel-line) (picker-lines s 0 210)
+    ;; 206 is the BODY width a 210-column terminal gives a pane: `%render` hands
+    ;; every pane its cols net of the gutter and the right margin, and the row
+    ;; fills exactly that — measured, letibot's facts end where its box does
+    (multiple-value-bind (lines sel-line) (picker-lines s 0 206)
       (let ((text (lines-text lines)))
         (is (string= "sessions in this daemon" (first text)) "the title")
         (is (string= "" (second text)) "a blank")
         (is (uiop:string-prefix-p "▸  1  hello, what we are doing here" (third text))
             "the cursor's row: mark, number, name")
-        (is (= (pane-width 210) (string-width (third text)))
+        (is (= 206 (string-width (third text)))
             "the facts end at the pane's right edge — 206 columns of 210")
         (is (search "2647 rows · 2 heads · qwen-3.8-27b" (third text))
             "the store's count, the heads and the model")
