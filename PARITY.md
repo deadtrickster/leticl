@@ -15,7 +15,7 @@ the screen rather than the surface:
 | round | letibot | leticl | result |
 |---|---|---|---|
 | 3 | `e9ee3c4` (2026-09-20) | `1be0293` | 60 of 63 rows byte-identical; the rest self-measured numbers |
-| 4 | `2deceb8` (2026-09-20) | this tree | the panes — see §8 |
+| 4 | `2deceb8` (2026-09-20) | `5a52ae2` | every pane row-identical but for each head's own numbers — see §8 |
 
 An earlier pass measured `82ff650e` (2026-09-19); §7 is what the 19 commits
 between the two changed, and the gaps it added are `P41`–`P46` in `TODO.md`.
@@ -719,6 +719,14 @@ The wheel, found in the same session: a burst of SGR wheel events leaked
 buffer; the input thread had been stopped past the 60 ms window), and a decoded
 wheel did nothing anyway (`:wheel-up` arms keyed on `:type`, which is `:mouse`).
 Fixed in `3ec5791`, with the reference's `── scrolled back` banner.
+
+**Result** (leticl `5a52ae2`, re-captured on both heads at 227×61): help 57/57
+body rows identical; jobs 57/57; subagents 57/57; sessions 55/57 (the two carry
+live row counts); todos row-identical in all three states once the stale row cache
+was cleared; status and config differ only in each head's own numbers (`h3` vs
+`h18`, `filtered`, `dropped`) and its own prefs file. The picker's right edge had
+been four columns short: `pane-width` took the gutter off cols that were already
+net of it.
 
 **The lesson this round adds to §1's:** *"S6 panes done"* was recorded against
 code that had never drawn a frame. A pane is done when it has been opened on the
