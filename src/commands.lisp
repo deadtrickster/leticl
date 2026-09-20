@@ -65,13 +65,23 @@ on ClientFrame::Slash)."
        (setf (head-mode head) :normal))
       ((string= verb "rename")
        (%send head (make-rename-session (session-session-id (head-session head)) rest)))
-      ((string= verb "help") (setf (head-mode head) :help (head-dirty head) t))
-      ((string= verb "status") (setf (head-mode head) :status (head-dirty head) t))
-      ((string= verb "think")
+      ;; the reference's short forms, for the fingers that learnt them there
+      ((member verb '("help" "h" "?") :test #'string=)
+       (setf (head-mode head) :help (head-dirty head) t))
+      ((member verb '("status" "stats") :test #'string=)
+       (setf (head-mode head) :status (head-dirty head) t))
+      ((member verb '("think" "r") :test #'string=)
        (%flip-fold head :show-reasoning))
-      ((string= verb "tools")
+      ;; `/t` folds tool output; `/tools` ASKS what this conversation can call —
+      ;; the reference moved it off the fold (*"i think i want it to show me
+      ;; currently seated tools"*), and the listing comes back on the session log
+      ((string= verb "t")
        (%flip-fold head :show-tools))
-      ((string= verb "config")
+      ((member verb '("verbosity" "v") :test #'string=)
+       (setf *verbosity* (next-verbosity *verbosity*))
+       (say head (format nil "verbosity ~(~a~) — ~d events filtered so far"
+                         *verbosity* *filtered-total*)))
+      ((member verb '("config" "settings") :test #'string=)
        ;; Ask, and open the pane. The REPLY does not open it (a head asks for
        ;; settings on attach now, and a reply that opened the pane would pop
        ;; `/config` at every attach), so the command owns both halves.
@@ -176,7 +186,7 @@ on ClientFrame::Slash)."
                            "the model is still working — no command running to move yet"
                            "nothing is running to move to the background")))))
       ((string= verb "interrupt") (%interrupt head "interrupted from the head"))
-      ((string= verb "quit") (setf (head-running head) nil))
+      ((member verb '("quit" "q") :test #'string=) (setf (head-running head) nil))
       ;; unknown verbs travel; the daemon acts and announces on the log
       (t (%send head (list :frame "slash"
                            :client-request-id (next-request-id)

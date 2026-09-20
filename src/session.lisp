@@ -136,6 +136,21 @@ CallView.target) — add it rather than dropping the fact it runs."
 
 ;;; ------------------------------------------------------ event application ;;;
 
+(defvar *verbosity* :normal
+  "How much of the event stream is drawn: `:terse`, `:normal` or `:loud` — the
+reference's `Verbosity`, cycled by `/verbosity`. Terse drops the model's reasoning
+deltas on the floor (they are FILTERED, and the ack says so); loud draws the
+head-attached and head-detached events that normal keeps off the screen. A defvar
+so a push can introduce it and a head slot need not change.")
+
+(defun next-verbosity (v)
+  (ecase v (:terse :normal) (:normal :loud) (:loud :terse)))
+
+(defun verbosity-at-least (level)
+  "Is `*verbosity*` at or above LEVEL, in the order terse < normal < loud?"
+  (>= (position *verbosity* '(:terse :normal :loud))
+      (position level '(:terse :normal :loud))))
+
 (defun apply-event (session env)
   "Fold one envelope into state. Returns :dirty when something visible
 changed, :quiet when not — the head loop paints on :dirty and acks on both."
@@ -172,7 +187,11 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
            ;; event.rs:52) — "tool_call" must become :tool-call to match.
            (case (and (getf env :target) (%key-from-wire (getf env :target)))
              ((:text) (appendf-text turn :text (getf env :text)))
-             ((:reasoning) (appendf-text turn :reasoning (getf env :text)))
+             ;; at terse the working-out is not kept and not drawn: filtered,
+             ;; which the ack counts, rather than rendered
+             ((:reasoning) (if (verbosity-at-least :normal)
+                               (appendf-text turn :reasoning (getf env :text))
+                               (return-from apply-event :quiet)))
              ((:tool-call) (appendf-text turn :raw-calls (getf env :text)))))
          ;; a delta for a turn we never saw TurnStarted for: quiet, not a crash
          (if turn :dirty :quiet)))
@@ -329,12 +348,14 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
          (push (list :head-id (getf env :head-id) :kind (getf env :kind)
                      :identity (getf env :identity))
                (session-heads session)))
-       :dirty)
+       ;; another head coming or going is loud-only: the count is on /status,
+       ;; and nothing on the default screen changes
+       (if (verbosity-at-least :loud) :dirty :quiet))
       ((:head-detached)
        (setf (session-heads session)
              (remove (getf env :head-id) (session-heads session)
                      :key (lambda (h) (getf h :head-id)) :test #'string=))
-       :dirty)
+       (if (verbosity-at-least :loud) :dirty :quiet))
       ((:session-renamed)
        (setf (session-title session) (or (getf env :title) ""))
        :dirty)

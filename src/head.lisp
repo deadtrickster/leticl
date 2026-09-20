@@ -104,6 +104,10 @@ paints to it, and defvar for the same reason as *head*.")
          (list :frame "warning" :code "read-error" :detail (format nil "~a" e)))
         (return)))))
 
+(defvar *filtered-total* 0
+  "Events this head consumed and did not draw, over its life — what `/verbosity`
+reports beside the level, so \"terse\" is a number and not a mood.")
+
 (defun %input-loop (head)
   "Terminal → keys mailbox."
   (let ((in (sb-sys:make-fd-stream 0 :input t :element-type 'character
@@ -344,7 +348,7 @@ is a resume — the gap arrives as events, or a Resync does (§13.2)."
                (handler-case
                    (case (%handle-frame head frame)
                      (:rendered (incf rendered))
-                     (:filtered (incf filtered))
+                     (:filtered (incf filtered) (incf *filtered-total*))
                      (t nil))
                  (error (e)
                    (setf *last-render-error* e
