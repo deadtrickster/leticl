@@ -469,7 +469,11 @@ lock `UNBOUND` → push → `BOUND`, `render=ok`, survived.
 (the truth) instead of `qwen-3.8-27b`; `head-settings` holds 38 rows; the paint
 lock is bound; `gate: render=ok`. Tests 176 → 178.
 
-### S2 — engines (no deps)
+### S2 — engines ✅ **P3, P4, P6 done** (2026-09-20)
+
+`render-diff` is on edit cards, `highlight-lines` is in code fences, and
+`src/progress.lisp` is ported. **P5 (sidediff) and P7 (cluster-aware width) are
+not done.** See the commit for what each carries; tests 207 → 254.
 
 Ported and disconnected — `PARITY.md` §2.4, §2.5, §3.9.
 
@@ -488,7 +492,13 @@ Ported and disconnected — `PARITY.md` §2.4, §2.5, §3.9.
 **Live**: push, then `--screen` on a session with an edit in it and read the diff
 out of the capture.
 
-### S3 — cards (needs S2; conflicts S8, S9 on `render.lisp`)
+### S3 — cards ✅ **P8–P12 done** (2026-09-20)
+
+The item-id maps: a settled row keeps its duration, its diff and the decision
+that gated it, keyed by ITEM id. **P13 (the rest of the card vocabulary), P45
+(`deny_and_tell`'s note) and P46 (a refusal says its reason once) are not done.**
+Tests 374 → 391.
+
 
 The biggest visible gap — `PARITY.md` §3.1. Three of its rows are **one** project:
 a value keyed by **`item_id`** that survives the live card being taken over by the
@@ -524,7 +534,12 @@ transcript row. The call id cannot be the key (it is round-positional — see th
   payload arrives pre-split — a whole-paragraph containment *"passes review and
   never fires"*. Depends on P8–P10 having a place to put the reason.
 
-### S4 — editor (no deps)
+### S4 — editor ✅ **done** (2026-09-20)
+
+Multi-line (`alt+enter`), a kill ring with `ctrl-y`, `ctrl-z` undo batched by
+word, a paste ledger (five lines or more collapses to a marker and still sends
+whole), and `esc esc`. Tests 301 → 325.
+
 
 `PARITY.md` §3.2; the reference's editor is 1,090 lines, this one ~70.
 
@@ -534,7 +549,13 @@ transcript row. The call id cannot be the key (it is round-positional — see th
 - [ ] **P17** **paste ledger** — ≥5 lines collapse to a marker, sent whole.
 - [ ] **P18** `esc esc` interrupts; a bare `esc` returns to following the stream.
 
-### S5 — prefs (no deps; S6 waits on it)
+### S5 — prefs ✅ **done** (2026-09-20)
+
+`~/.config/leticl/head.toml`, read at startup and written when a fold changes;
+unknown lines and comments survive a save. **A PLIST, not a struct**, because
+`defstruct` is skipped by `--file` and a struct could never reach a running head.
+Tests 273 → 301.
+
 
 `PARITY.md` §3.8. Folds and diff shape die with the process today.
 
@@ -544,7 +565,15 @@ transcript row. The call id cannot be the key (it is round-positional — see th
 
 **Live**: `/think`, quit the head, restart, `/think` is still off.
 
-### S6 — panes (needs S5)
+### S6 — panes ✅ **P41, P42, P22, P23 done** (2026-09-20)
+
+Panes scroll (one offset, counting from the TOP — the opposite polarity to the
+transcript's), the todos pane draws its items with org's roll-up and cookie and
+unfolds them, and `/mode` and `/models` open pickers built from the daemon's own
+`SettingRow.choices`. **P21 (config editable in place), P24 (subagent output),
+P25 (job output), P26 (promote) and P27 (mouse click) are not done.**
+Tests 391 → 456.
+
 
 `PARITY.md` §3.5.
 
@@ -625,7 +654,11 @@ binding work.
 - [ ] **P31** `/supervise` — the guard model answers before the operator does.
 - [ ] **P32** `/flowy` — the seat on the fabric.
 
-### S8 — chrome (no deps; conflicts S3/S6 on `render.lisp`)
+### S8 — chrome ✅ **done** (2026-09-20)
+
+The boxed composer, the alarm line, the hint bar, notice TTL, stall detection,
+and the money meter. Tests 325 → 374.
+
 
 `PARITY.md` §3.6. The most visible structural difference: the reference's
 composer is a box with a title, the wiring on its bottom edge, an alarm line and
