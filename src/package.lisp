@@ -59,6 +59,7 @@
    #:session-warnings #:session-denials #:session-subagents #:session-jobs
    #:session-todos #:session-wiring #:session-open-decisions #:session-sessions
    #:item-lines #:turn-lines #:outcome-name #:edit-lines #:call-lines
+   #:turn-footer-lines #:queued-lines
    ;; the item-id maps (S3): what a settled row keeps of the live card
    #:item-facts #:note-call-started #:note-call-finished #:note-call-decision
    #:*item-facts* #:*call-facts* #:*call-started-ms*

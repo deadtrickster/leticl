@@ -383,6 +383,77 @@ line 4 changed when it was line 313\")."
   "Both sides of an edit, as a real diff. See `edit-lines`."
   (edit-lines edit cols))
 
+(defun turn-footer-lines (turn cols)
+  "The line under a finished turn: how it ended, what it cost, how fast.
+
+The reference moved this off the header and into the footer because the footer was
+REPEATING the header's context and cache numbers next to them — one fact on one
+screen twice is one fact rendered as a question. So the footer keeps only what the
+header cannot show: the finish reason, the token split, and the rate the turn
+actually ran at.
+
+Every number here is one that was MEASURED. A turn that decoded nothing has no
+`predicted_ms`, and `0 tok/s` would be a number nobody took — the same rule the
+cache percentage and the money meter are held to."
+  (declare (ignore cols))
+  (when turn
+    (let* ((state (getf turn :state))
+           (name (getf state :state))
+           (finish (getf state :finish-reason))
+           (usage (getf state :usage))
+           (timings (getf state :timings))
+           (parts nil))
+      ;; how it ended, when it did not end the ordinary way
+      (when (and finish (not (string= finish "eos")))
+        (push (format nil "~a" finish) parts))
+      ;; the split, which the header's `ctx` total cannot show
+      (when usage
+        (let ((p (getf usage :prompt-tokens))
+              (c (getf usage :cached-tokens))
+              (pred (getf usage :predicted-tokens)))
+          (when (and p (plusp p))
+            (push (format nil "~a in~@[/~a cached~]" (thousands p)
+                          (and (numberp c) (plusp c) (thousands c)))
+                  parts))
+          (when (and pred (plusp pred))
+            (push (format nil "~a out" (thousands pred)) parts))))
+      ;; the rate, only when a duration was measured with it
+      (when timings
+        (let ((pred-ms (getf timings :predicted-ms))
+              (pred (getf usage :predicted-tokens)))
+          (when (and (numberp pred-ms) (plusp pred-ms) (numberp pred) (plusp pred))
+            (push (format nil "~,1f tok/s" (/ (* (float pred) 1000.0) pred-ms)) parts)))
+        (let ((wall (getf timings :wall-ms)))
+          (when (and (numberp wall) (plusp wall))
+            (push (duration wall) parts))))
+      (when parts
+        (list (list (cons "  " '(:fg :bright-black))
+                    (cons "─ " '(:fg :bright-black))
+                    (cons (format nil "~{~a~^ · ~}" (nreverse parts))
+                          (if (string= name "finished")
+                              '(:fg :bright-black)
+                              '(:fg :yellow)))))))))
+
+(defun queued-lines (head cols)
+  "Prompts sent that the transcript does not hold yet, marked `queued`.
+
+A prompt sent while a turn runs is queued as a FOLLOW-UP USER ITEM, and the item is
+appended only at the next step boundary — which for a turn with no tool calls is
+the turn's end. Between the enter press and that append the words existed NOWHERE
+on the screen: the composer had handed them off, the daemon had accepted them, and
+the operator was looking at a conversation that had swallowed a sentence they had
+just typed.
+
+It comes back at the boundary, so nothing is lost — but NOT LOST and VISIBLE are
+different requirements, and this is the second one."
+  (declare (ignore cols))
+  (mapcar (lambda (text)
+            (list (cons "› " '(:fg :bright-cyan :bold t))
+                  (cons (%first-line text) '(:fg :bright-black))
+                  (cons "  · queued" '(:fg :bright-black))))
+          ;; oldest first, so the order they will land in is the order they read
+          (reverse (head-queued head))))
+
 (defun turn-lines (turn cols prefs)
   "The running turn, live: reasoning, text, calls. A finished turn renders
 from the transcript instead (view.rs on TurnView.appended) — rendering both

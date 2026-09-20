@@ -87,7 +87,14 @@ viewport, above the user prompt it answers — measured on the operator's
 terminal: the newest content sat at row 1 and the oldest at row 57.)"
   (let* ((s (head-session head))
          (need (+ (head-scroll head) want))
-         (all (turn-lines (session-turn s) cols (head-prefs head))))
+         ;; the running turn, then ITS FOOTER — the footer belongs to the turn and
+         ;; sits under it, and only when the turn has actually ended
+         (all (append (turn-lines (session-turn s) cols (head-prefs head))
+                      (turn-footer-lines (session-turn s) cols)
+                      ;; QUEUED PROMPTS, at the tail, where they will land: a
+                      ;; sentence the conversation has swallowed is visible here
+                      ;; until the daemon appends its row
+                      (queued-lines head cols))))
     ;; prepend committed rows, newest first, until enough lines exist; the
     ;; accumulator stays oldest-first because each older row goes in front
     (loop for i from (1- (length (session-items s))) downto 0

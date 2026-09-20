@@ -1947,3 +1947,52 @@ change and a save the two disagree, and the pane must show what is true."
     (let ((text (segs-of (config-lines h nil 80))))
       (is (search "thinking = open" text) "the live fold, not the file's")
       (is (search "tools = folded" text) "and the other"))))
+
+;;; ------------------------------------------- the turn footer and queue (P13) ;;;
+
+(def-test the-turn-footer-says-only-what-was-measured (:suite leticl)
+  "Every number here is one that was TAKEN. A turn that decoded nothing has no
+`predicted_ms`, and `0 tok/s` would be a number nobody measured — the same rule the
+cache percentage and the money meter are held to."
+  (let ((turn (list :turn-id "t" :model "m" :text "" :reasoning "" :calls nil
+                    :state (list :state "finished" :finish-reason "eos"
+                                 :usage (list :prompt-tokens 40000 :cached-tokens 39000
+                                              :predicted-tokens 150)
+                                 :timings (list :predicted-ms 3000 :wall-ms 4200)))))
+    (let ((text (segs-of (turn-footer-lines turn 80))))
+      (is (search "40.0k in" text) "the prompt is shown, shortened")
+      (is (search "39.0k cached" text) "and how much of it was free")
+      (is (search "150 out" text) "and what came out")
+      (is (search "50.0 tok/s" text) "and the rate, MEASURED from the timing")
+      (is (search "4.2s" text) "and the wall time")
+      (is (not (search "eos" text)) "a turn that ended the ordinary way says nothing about it")))
+  ;; an unmeasured turn shows no rate at all
+  (let ((turn (list :turn-id "t" :model "m" :text "" :reasoning "" :calls nil
+                    :state (list :state "finished" :finish-reason "eos"
+                                 :usage (list :prompt-tokens 100 :cached-tokens 0
+                                              :predicted-tokens 0)
+                                 :timings (list :predicted-ms 0 :wall-ms 500)))))
+    (let ((text (segs-of (turn-footer-lines turn 80))))
+      (is (not (search "tok/s" text)) "no timing means NO rate, not a zero one"))))
+
+(def-test the-footer-names-an-unusual-ending (:suite leticl)
+  (let ((turn (list :turn-id "t" :model "m" :text "" :reasoning "" :calls nil
+                    :state (list :state "failed" :finish-reason "context_wall"
+                                 :usage nil :timings nil))))
+    (is (search "context_wall" (segs-of (turn-footer-lines turn 80)))
+        "the finish reason is the one thing the header cannot say")))
+
+(def-test a-queued-prompt-is-visible-before-its-row-lands (:suite leticl)
+  "Between the enter press and the daemon appending the row, the words existed
+NOWHERE on the screen: the composer had handed them off and the conversation had
+swallowed them. Not lost and VISIBLE are different requirements."
+  (let ((h (%make-head)))
+    (setf (head-queued h) (list "second" "first"))   ; newest first, as pushed
+    (let ((text (segs-of (queued-lines h 80))))
+      (is (search "first" text) "the first queued prompt is drawn")
+      (is (search "second" text) "and the second")
+      (is (search "queued" text) "marked as queued")
+      (is (< (search "first" text) (search "second" text))
+          "and oldest first, so the order they will land in is the order they read")))
+  ;; nothing queued is nothing drawn
+  (is (null (queued-lines (%make-head) 80)) "an empty queue draws no rows"))
