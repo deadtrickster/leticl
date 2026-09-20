@@ -40,6 +40,20 @@
   (write-line "       session (harnessd --latest-session). Dev commands stay in run.lisp." stream))
 
 (defun main ()
+  ;; A refusal is a sentence, not a backtrace: `no-daemon` is the head saying
+  ;; there is nothing here to attach to, and the operator saw it as an
+  ;; SBCL debugger dump the first time (*"Unhandled SIMPLE-ERROR … Backtrace"*).
+  ;; The package is loaded further down this file, after this form is READ, so
+  ;; the condition's name is looked up when the handler is established and not
+  ;; written as `leticl:no-daemon` — the same reader trap `--where` fell into
+  ;; with sb-introspect.
+  (handler-bind ((error (lambda (c)
+                          (when (typep c (find-symbol "NO-DAEMON" :leticl))
+                            (format *error-output* "leticl: ~a~%" c)
+                            (uiop:quit 1)))))
+    (%main)))
+
+(defun %main ()
   (let ((args (uiop:command-line-arguments)))
     (when (uiop:getenv "LETICL_DEBUG")
       (format *error-output* "leticl main: args = ~S~%" args))

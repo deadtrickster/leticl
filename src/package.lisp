@@ -43,7 +43,7 @@
    #:encode-frame #:decode-frame #:frame-name #:event-name
    #:next-request-id
    ;; socket
-   #:connect-unix #:discover-daemons #:wait-for-input
+   #:connect-unix #:discover-daemons #:no-daemon #:no-daemon-socket #:wait-for-input
    ;; session
    #:make-session #:ingest-hello #:ingest-snapshot #:apply-event #:ack-frame
    ;; prefs — the head's own choices, on disk

@@ -35,6 +35,17 @@ its whole input is already in the buffer."
   (or (uiop:getenv "XDG_RUNTIME_DIR")
       (format nil "/tmp/leticl-~d" (sb-posix:getuid))))
 
+(define-condition no-daemon (error)
+  ((socket :initarg :socket :reader no-daemon-socket))
+  (:report (lambda (c stream)
+             (if (no-daemon-socket c)
+                 (format stream "no daemon for this folder: nothing listens at ~a.~%leticl is a head only — start the daemon here first (leticode or letibot in this directory), or point LETIBOT_SOCKET at another folder's daemon to attach to it on purpose."
+                         (no-daemon-socket c))
+                 (format stream "no daemon found — start one, or pass --session to a daemon's session"))))
+  (:documentation "Nothing to attach to. Its own condition so the image's toplevel can
+print the sentence and exit rather than a backtrace: a refusal is a message for
+the operator, and a debugger dump is the shape of a crash."))
+
 (defun daemon-dir ()
   "Where daemons publish: $XDG_RUNTIME_DIR/letibot/, falling back to
 /run/user/<uid>/letibot/ — this box's agent contexts run without
