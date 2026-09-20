@@ -424,7 +424,13 @@ Esc was a second thing to remember per pane."
         ((#\r) (%flip-fold head :show-reasoning) t)   ; fold the thinking
         ((#\t) (%flip-fold head :show-tools) t)       ; fold tool output
         ((#\l) (setf (head-full-repaint head) t (head-dirty head) t) t)
-        ((#\o) (%command head "promote") t)           ; promote the command
+        ;; `o` on the subagents pane switches INTO the row under the cursor
+        ;; (app.rs:3696-3707); anywhere else it promotes the running command,
+        ;; which is what this chord has always meant here.
+        ((#\o) (if (eq (head-mode head) :subagents)
+                   (subagent-switch head)
+                   (%command head "promote"))
+               t)
         ((#\s) (pane :picker "sessions"))             ; the session list
         ((#\p) (pane :todos "todos"))                 ; the todos pane
         ((#\g) (pane :subagents "subagents"))         ; the subagent tree
@@ -595,7 +601,14 @@ one thing this head must not need."
   (let ((mode (head-mode head))
         (empty (zerop (length (composer-buffer (head-composer head))))))
     (flet ((rows () (pane-row-count head mode))
-           (shut () (setf (head-mode head) :normal (head-dirty head) t) t))
+           ;; **Esc in the peek pane means back to the TREE**, not close
+           ;; everything — the reference's `sub_out` arm sits ahead of the
+           ;; generic Esc for exactly that (app.rs:3251-3262). Everywhere else
+           ;; it is `:normal`.
+           (shut () (setf (head-mode head) (pane-escape-target (head-mode head))
+                          (head-dirty head) t)
+             (reset-pane-scroll)
+             t))
       (flet ((move-cursor (n)
                (setf (head-picker-sel head)
                      (max 0 (min (max 0 (1- (rows))) (+ (head-picker-sel head) n)))
@@ -1304,6 +1317,10 @@ the folded tree — each the same list the pane draws from."
                      (getf (session-wiring (head-session head)) :workspace))))
     (:picker (length (picker-sessions (head-session head))))
     (:config (length (config-rows head)))
+    ;; the peek pane's rows are its BODY lines, and answering 0 was the whole of
+    ;; its arrow keys: `move-cursor` clamped to `(1- 0)` while the pane's own
+    ;; last line advertised that they scroll
+    (:peek (peek-row-count head))
     (t 0)))
 
 (defun %todos-move (head n)

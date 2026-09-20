@@ -220,7 +220,11 @@ only honest place to start."
   ;; one list on the screen at a time, the rule the pickers keep between themselves
   (setf *pick-open* nil)
   (setf (head-mode head) mode
-        (head-picker-sel head) 0
+        ;; the session picker opens ON THE SESSION YOU ARE IN — `ctrl-s` then
+        ;; enter moved you off your own session, which is the shape of mistake
+        ;; that costs a turn. Every other pane opens at the top, which is the
+        ;; honest place when one cursor is shared.
+        (head-picker-sel head) (pane-initial-sel head mode)
         (head-dirty head) t)
   (reset-pane-scroll))
 

@@ -5470,3 +5470,55 @@ and an empty screen must never be left to mean both."
           "and it is silent while nobody has reported")
       (is (search "asking the daemon for this session" (%screen-text h))
           "because that is the cat's screen, not this one's"))))
+
+;;; --------------- the call sites the panes strand could not reach (2026-09-20) ;;;
+
+(def-test a-pane-opens-on-the-row-that-means-something (:suite leticl)
+  "panes.md G14: `ctrl-s` then enter moved you OFF your own session, because
+`%open-pane` set the shared cursor to 0 and row 0 is somebody else's session.
+Every other pane opens at the top, which is the honest place when one cursor is
+shared between them."
+  (let* ((h (%make-head))
+         (s (head-session h)))
+    (setf (session-session-id s) "s-2"
+          (session-sessions s) (list (list :session-id "s-1" :title "one")
+                                     (list :session-id "s-2" :title "two")
+                                     (list :session-id "s-3" :title "three")))
+    (leticl::%open-pane h :picker)
+    (is (= 1 (head-picker-sel h)) "the picker opens on the session you are in")
+    (leticl::%open-pane h :todos)
+    (is (= 0 (head-picker-sel h)) "and every other pane at its top")))
+
+(def-test the-peek-panes-arrows-have-rows-to-walk (:suite leticl)
+  "panes.md G5: `pane-row-count` answered 0 for `:peek`, so `move-cursor` clamped
+to `(1- 0)` and Up and Down moved nothing — while the pane's own last line
+advertised that they scroll. And Esc left to `:normal` where the reference's
+`sub_out` arm goes back to the TREE (app.rs:3251-3262)."
+  (let ((h (%make-head)))
+    (setf (head-peeked h)
+          (list (list :seq 1 :event "transcript_content" :item-id "a"
+                      :item (list :type "assistant" :text (format nil "one~%two~%three")))))
+    (is (plusp (leticl::pane-row-count h :peek)) "the peek pane has rows")
+    (is (eq :subagents (pane-escape-target :peek)) "esc goes back to the tree")
+    (is (eq :normal (pane-escape-target :todos)) "and elsewhere it closes")
+    (setf (head-mode h) :peek)
+    (leticl::%handle-key h (list :type :esc))
+    (is (eq :subagents (head-mode h)) "which is where esc lands from the peek pane")))
+
+(def-test o-switches-into-the-subagent-under-the-cursor (:suite leticl)
+  "panes.md G13: `o` on the subagents pane switches into that subagent
+(app.rs:3696-3707); anywhere else it promotes the running command, which is what
+the chord has always meant here."
+  (let* ((h (%make-head))
+         (wire (make-string-output-stream)))
+    (setf (leticl::head-stream h) wire (head-connected h) t
+          (head-mode h) :subagents
+          (session-subagents (head-session h))
+          ;; `subagent_id` is the CHILD's own id; the envelope's `session_id` is
+          ;; the parent's, which is why the fold keys on the first
+          (list (list :subagent-id "s-sub-1" :session-id "s-parent" :state "running"
+                      :prompt "scout the transcript" :role "digest")))
+    (leticl::%handle-key h (list :type :ctrl :ch #\o))
+    (let ((line (get-output-stream-string wire)))
+      (is (search "switch" line) "a switch frame went out: ~a" line)
+      (is (search "s-sub-1" line) "naming the subagent's session"))))
