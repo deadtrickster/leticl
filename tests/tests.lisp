@@ -1860,3 +1860,57 @@ and the decision line would have been the second copy")
              (text (segs-of (item-lines item 120 (list :show-tools t)))))
         (is (search basis text)
             "where the payload does NOT say it, dropping it would lose the reason")))))
+
+;;; ------------------------------------------------------- mouse click (P27) ;;;
+
+(def-test a-click-selects-the-row-under-the-pointer (:suite leticl)
+  "The reference's own guarded clicks: a click is only trusted for a row the frame
+proved was on screen, because a click into the blank space below a short list must
+not select a row nobody can see."
+  (let ((*pane-scroll* 0) (*pane-lines* 20) (*pane-room* 10)
+        (h (%make-head)))
+    (setf (session-sessions (head-session h))
+          (list (list :session-id "s1" :title "one")
+                (list :session-id "s2" :title "two")
+                (list :session-id "s3" :title "three"))
+          (head-mode h) :picker
+          (session-session-id (head-session h)) "s1")
+    ;; the picker's header is one line, so screen row 2 (line 1) is row 0
+    (is (= 0 (click-row->sel h :picker 1)) "the first row is the first session")
+    (is (= 1 (click-row->sel h :picker 2)) "and the second is the second")
+    (is (= 2 (click-row->sel h :picker 3)) "and the third")
+    (is (null (click-row->sel h :picker 0)) "the header is not a row")
+    (is (null (click-row->sel h :picker 4)) "nor is the blank space below")))
+
+(def-test a-click-is-not-trusted-below-a-truncated-list (:suite leticl)
+  "The reference: *\"a click into the blank space below a truncated list must not
+select a session nobody can see.\"*"
+  (let ((*pane-scroll* 0) (*pane-lines* 5) (*pane-room* 3)
+        (h (%make-head)))
+    (setf (session-sessions (head-session h))
+          (list (list :session-id "s1" :title "one")
+                (list :session-id "s2" :title "two")
+                (list :session-id "s3" :title "three")
+                (list :session-id "s4" :title "four")
+                (list :session-id "s5" :title "five"))
+          (head-mode h) :picker)
+    (is (integerp (click-row->sel h :picker 1)) "a visible row is selectable")
+    ;; line 3 is past the visible room (3 lines) but before the list's end — a
+    ;; click there must still be refused, because it is not on screen
+    (is (null (click-row->sel h :picker 3))
+        "a row below the drawn window is not") ))
+
+(def-test the-click-conversion-asks-the-pane-for-its-header (:suite leticl)
+  "One place per pane, so a header that grows moves the click arithmetic with it.
+Asking the pane (by forcing its cursor to 0) rather than recounting is what keeps
+the two from drifting."
+  (let ((h (%make-head)))
+    (setf (head-mode h) :picker
+          (session-sessions (head-session h)) (list (list :session-id "s" :title "t")))
+    (is (integerp (click-header-lines h)) "the picker reports its header")
+    (setf (head-mode h) :todos)
+    (is (integerp (click-header-lines h)) "so does the todos pane")
+    ;; and forcing the cursor did not disturb it
+    (setf (head-picker-sel h) 2)
+    (click-header-lines h)
+    (is (= 2 (head-picker-sel h)) "the cursor is restored after asking")))

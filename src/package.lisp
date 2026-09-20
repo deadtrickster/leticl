@@ -67,6 +67,8 @@
    #:scroll-pane-into-view #:*pane-scroll* #:*pane-lines* #:*pane-room*
    ;; the todos pane's unfold state (P42)
    #:*todos-open* #:*repo-todo-cache* #:*repo-todo-stamp*
+   ;; clicks (P27)
+   #:click-row->sel #:click-header-lines
    ;; engines a model may want to call directly while restyling
    #:highlight-fence #:lang-for-fence
    ;; keys

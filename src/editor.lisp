@@ -173,6 +173,28 @@ shows the candidates on the status line."
                 (setf (head-running head) nil))))
          ((:esc) (setf (head-quit-open head) nil (head-dirty head) t))
          (t nil)))
+      ;; A CLICK in a list pane selects the row under the pointer.
+      ;;
+      ;; Before the text keys, because a click is unambiguous about what it
+      ;; means and there is nothing else to weigh it against. Guarded by the rows
+      ;; the frame actually DREW — a click into the space below a short list must
+      ;; not select a row nobody can see, which is why the pane records its room
+      ;; and offset from the last paint rather than from the click.
+      ((and (eq type :mouse)
+            (eq (getf key :kind) :press)
+            (member (head-mode head) '(:picker :jobs :subagents :todos
+                                       :mode-picker :models-picker)))
+       (let* ((row (getf key :y))
+              ;; the pane starts at screen row 1 (row 0 is the top border), and
+              ;; the offset says how many pane LINES are hidden above it
+              (line (+ *pane-scroll* (- row 1))))
+         (when (and (>= line 0) (< line (+ *pane-scroll* *pane-room*)) (< line *pane-lines*))
+           ;; the cursor counts ROWS and the click found a LINE; the panes that
+           ;; own a cursor report where their first row sits, so walk back
+           (let ((sel (click-row->sel head (head-mode head) line)))
+             (when sel
+               (setf (head-picker-sel head) sel
+                     (head-dirty head) t))))))
       ;; full-body screens. `esc`/`q` closes any of them; the LIST panes also
       ;; take a cursor (up/down) and an enter, and they share ONE cursor —
       ;; `head-picker-sel` — because only one pane is open at a time, which is
@@ -622,3 +644,66 @@ rounding."
                                (setf i (+ j (length marker))))
                       (write-string (subseq out i) s))))))
     out))
+
+;;; ------------------------------------------------------------- click ;;;
+;;;
+;;; A click lands on a pane LINE; the cursor counts pane ROWS. The two differ by
+;;; every header line above the list — the reference found this in its own test
+;;; after passing one where the other was meant — so the conversion is done in
+;;; ONE place per pane rather than recomputed at the click site.
+
+(defun click-header-lines (head)
+  "How many lines of MODE's pane come before its first selectable row.
+
+Read from the pane function itself, by asking it where the cursor is with the
+cursor forced to row 0: a pane that owns a cursor returns `header + sel` as its
+second value, so at 0 that value IS the header. Asking rather than recounting
+means the two cannot drift — a header that grows (a click hint, say) moves both
+together."
+  (let* ((mode (head-mode head))
+         (saved (head-picker-sel head)))
+    (unwind-protect
+         (progn
+           (setf (head-picker-sel head) 0)
+           (multiple-value-bind (lines sel-line)
+               (case mode
+                 (:picker (picker-lines (head-session head) 0 80))
+                 (:jobs (jobs-lines head 80))
+                 (:subagents (subagent-lines head 80))
+                 (:todos (todos-lines head 80))
+                 (:mode-picker (mode-picker-lines head 80))
+                 (:models-picker (models-picker-lines head 80))
+                 (t (values nil nil)))
+             (declare (ignore lines))
+             (or sel-line 0)))
+      (setf (head-picker-sel head) saved))))
+
+(defun click-row->sel (head mode line)
+  "The cursor ROW a click on pane LINE means, or NIL when it is not a row.
+
+Guarded three ways, and every one of them is a click that must not select
+something nobody can see:
+
+  · the line must be inside the WINDOW THE FRAME ACTUALLY DREW — not merely
+    inside the list. A click in the blank space below a short list, or below a
+    truncated one, lands on a line that is not on screen;
+  · it must be past the header, which is not a row;
+  · and it must be within the list.
+
+The first guard is here rather than at the call site so it cannot be forgotten
+by a second caller — which is how the reference found this, in its own test."
+  (declare (ignore mode))
+  (let* ((window-start *pane-scroll*)
+         (window-end (+ *pane-scroll* *pane-room*))
+         (sel (- line (click-header-lines head)))
+         (n (case (head-mode head)
+              (:picker (length (session-sessions (head-session head))))
+              (:jobs (length (head-jobs head)))
+              (:subagents (length (head-subagents head)))
+              (:todos (length (session-todos (head-session head))))
+              (:mode-picker (length (setting-choices head "mode")))
+              (:models-picker (length (setting-choices head "model")))
+              (t 0))))
+    (when (and (>= line window-start) (< line window-end)
+               (>= sel 0) (< sel n))
+      sel)))
