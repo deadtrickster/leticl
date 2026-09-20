@@ -2233,3 +2233,64 @@ class; this one asserts the key itself."
         "the head binds :show-tools, which is what the card must read"))
   (is (search ":SHOW-TOOLS" (string-upcase (source-of "cards")))
       "and the card reads that key, not a second spelling of it"))
+
+(defun first-line-indent (item &optional (prefs (list :show-tools t)))
+  "How far the item's first line is indented, and its text."
+  (let ((lines (item-lines item 200 prefs)))
+    (when lines
+      (let ((text (format nil "~{~a~}" (mapcar #'car (first lines)))))
+        (values (- (length text) (length (string-left-trim " " text)))
+                text)))))
+
+(def-test the-working-is-stepped-in-under-the-answer (:suite leticl)
+  "Measured against letibot's screen: its CARDS sit at column 4 and its PROSE at
+column 2, while every row of ours was at 2. `activity-indent` existed and was used
+only to compute a subject's WIDTH, never to move a row — the same dead-code class
+as `:tools-open`.
+
+The step is what makes a turn readable as a turn: the answer sits at the body's own
+column because it is the conversation, and the working — reasoning, tool calls —
+is subordinate to it. It costs no colour, so it survives a terminal-native
+palette."
+  (let* ((tool (list :item-id "i1" :kind "tool_result" :ts 0
+                     :item (list :type "tool_result" :call-id "c" :name "bash"
+                                 :outcome (list :outcome "ok") :payload "x")))
+         (think (list :item-id "i2" :kind "reasoning" :ts 0
+                      :item (list :type "reasoning" :text "hmm")))
+         (user (list :item-id "i3" :kind "user" :ts 1789905489676
+                     :item (list :type "user" :text "hello")))
+         (answer (list :item-id "i4" :kind "assistant" :ts 0
+                       :item (list :type "assistant" :text "an answer"))))
+    (multiple-value-bind (tool-ind) (first-line-indent tool)
+      (multiple-value-bind (think-ind) (first-line-indent
+                                        think (list :show-reasoning t))
+        (multiple-value-bind (user-ind) (first-line-indent user)
+          (multiple-value-bind (answer-ind) (first-line-indent answer)
+            (is (= 2 tool-ind) "a tool card is stepped in")
+            (is (= 2 think-ind) "and so is a reasoning row")
+            (is (zerop user-ind)
+                "the operator's message is NOT — it is the conversation")
+            (is (zerop answer-ind)
+                "nor is the model's ANSWER, which is the other half of it")))))))
+
+(def-test the-step-is-two-columns-and-given-up-when-narrow (:suite leticl)
+  "Two columns, matching the reasoning rail's width and the frame's gutter, so the
+page reads as one repeated step. Given up below 60 columns, where two columns of
+every line is a bigger fraction than the hierarchy is worth."
+  (is (= 2 (activity-indent 100)) "two columns on a wide frame")
+  (is (= 0 (activity-indent 40)) "and none on a narrow one")
+  (let ((item (list :item-id "i" :kind "tool_result" :ts 0
+                    :item (list :type "tool_result" :call-id "c" :name "bash"
+                                :outcome (list :outcome "ok") :payload "x"))))
+    (multiple-value-bind (wide) (first-line-indent item)
+      (is (= 2 wide) "a wide pane steps the card in"))
+    (let ((lines (item-lines item 40 (list :show-tools t))))
+      (let ((text (format nil "~{~a~}" (mapcar #'car (first lines)))))
+        (is (zerop (- (length text) (length (string-left-trim " " text))))
+            "a narrow one leaves it at the column")))))
+
+(def-test an-empty-row-is-not-indented (:suite leticl)
+  "Trailing spaces on a blank line are invisible until something copies them."
+  (let ((stepped (step-in-lines (list nil (list (cons "x" nil))) 2)))
+    (is (null (first stepped)) "the blank row stays blank")
+    (is (equal "  " (car (first (second stepped)))) "and the text row moves")))

@@ -65,6 +65,8 @@
    #:session-todos #:session-wiring #:session-open-decisions #:session-sessions
    #:item-lines #:turn-lines #:outcome-name #:edit-lines #:call-lines
    #:turn-footer-lines #:queued-lines #:render-split #:edit-split-lines
+   ;; the step: the model's WORKING sits in, under what it SAYS
+   #:activity-indent #:step-in-lines #:+activity-indent-cols+
    ;; the item-id maps (S3): what a settled row keeps of the live card
    #:item-facts #:note-call-started #:note-call-finished #:note-call-decision
    #:display-target #:verb-label #:call-target-of #:note-call-target

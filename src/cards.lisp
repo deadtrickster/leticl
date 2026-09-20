@@ -594,15 +594,41 @@ under eight settled ones, in the same order, saying less.")
                                  faint)))))))
          (t nil))))))
 
+(defun step-in-lines (lines n)
+  "LINES set N columns further in — the model's WORKING, under what it SAYS.
+
+`activity-indent` existed and was used only to compute a subject's WIDTH, never to
+move a row: measured against letibot's screen, its cards sit at column 4 and its
+prose at column 2, while every row of ours was at 2. The step is what says a tool
+call is subordinate to the answer rather than beside it, and it costs no colour.
+
+An EMPTY row stays empty: trailing spaces on a blank line are invisible until
+something copies them."
+  (if (zerop n)
+      lines
+      (mapcar (lambda (line)
+                (if (null line)
+                    line
+                    (cons (cons (make-string n :initial-element #\space) nil) line)))
+              lines)))
+
 (defun item-lines (item cols prefs)
-  "One transcript row to segment lines."
+  "One transcript row to segment lines.
+
+The model's WORKING — reasoning and tool calls — is stepped in
+`(activity-indent cols)` columns, under what it SAYS. Measured against letibot's
+screen: its cards sit at column 4 and its prose at 2, while every row of ours was
+at 2. The step is what makes a turn readable as a turn — the answer at the body's
+own column, the working subordinate to it — and it costs no colour, so it survives
+a terminal-native palette."
   (let ((body (item-body item)))
     (cond
       ((null body)
        (list (list (cons (format nil "[~a — content not loaded]" (item-kind item))
                          '(:fg :red)))))
       (t
-       (case (intern (string-upcase (getf body :type)) :keyword)
+       (step-in-lines
+        (case (intern (string-upcase (getf body :type)) :keyword)
          ((:user)
           ;; THE OPERATOR'S OWN MESSAGE, to the reference's shape — read off its
           ;; screen because the three differences are all things a screenshot
@@ -662,19 +688,49 @@ under eight settled ones, in the same order, saying less.")
                                                (format nil " ~a" tgt) ""))
                                          nil))))))
          ((:reasoning)
-          (when (getf prefs :show-reasoning)
-            (mapcar (lambda (segs)
-                      (cons (cons "  " '(:dim t)) segs))
-                    (wrap-segments
-                     (list (cons (getf body :text) '(:italic t :dim t)))
-                     (max 2 (- cols 2))))))
+          ;; **The model's working-out, so it can never be mistaken for its
+          ;; answer.** Three signals, because any one is lost somewhere: the WORD
+          ;; (`Thought`), the RAIL (`┃`, two columns), and the dim-italic
+          ;; attribute — de-emphasis by COLOUR alone is a no-op under a
+          ;; terminal-native palette, so the attribute is what carries it.
+          ;;
+          ;; Folded by default, like a card and like letibot: `▸ Thought · 20
+          ;; lines · ctrl-r`. We printed the whole working-out inline, which is
+          ;; the flat wall of text the operator complained about, and the fold is
+          ;; the same affordance the tool cards already have.
+          (let* ((text (getf body :text))
+                 (body-rows (if (plusp (length text))
+                                (uiop:split-string text :separator '(#\newline))
+                                nil))
+                 ;; a SETTLED row is by definition not running, so the word is
+                 ;; `Thought`; `Thinking…` belongs to the live turn
+                 (word "Thought"))
+            (if (getf prefs :show-reasoning)
+                (cons (list (cons word '(:bold t)))
+                      (mapcar (lambda (l)
+                                (list (cons "┃ " '(:dim t))
+                                      (cons l '(:italic t :dim t))))
+                              body-rows))
+                (list (list (cons "▸ " '(:dim t))
+                            (cons word '(:bold t))
+                            (cons (if body-rows
+                                      (format nil " · ~d lines · ctrl-r"
+                                              (length body-rows))
+                                      "")
+                                  '(:dim t)))))))
          ((:tool_result) (%tool-result-lines item body cols prefs))
          ((:system)
           (wrap-segments
            (list (cons "◦ " '(:fg :yellow))
                  (cons (item-display-text item) '(:fg :yellow)))
            cols))
-         (t nil))))))
+         (t nil))
+        ;; the step: reasoning and tool calls are the model WORKING, under the
+        ;; answer. Speech — the operator's message and the model's prose — sits at
+        ;; the body's own column, which is what says it is the conversation.
+        (case (intern (string-upcase (getf body :type)) :keyword)
+          ((:reasoning :tool_result) (activity-indent cols))
+          (t 0)))))))
 
 (defun call-lines (call cols)
   "One tool call of the running turn, with its state."
