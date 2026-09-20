@@ -24,6 +24,17 @@ defvar is a full compile-time WARNING.")
 number: a double tap is one intent, and five seconds is the width of a hesitation
 rather than a second thought.")
 
+(defvar *ctrlc-at* nil
+  "When the last `ctrl-c` on an empty composer arrived, for the double-tap quit.
+
+Beside `*esc-at*` and here for the same reason: the hint bar reads it. There was
+no counter at all, so the FIRST ctrl-c opened the quit card — and the hint bar
+had nothing to show in between, which is the press that teaches the second one.")
+(defparameter *ctrlc-window-ms* 1000
+  "How long a second `ctrl-c` still means the same gesture — the reference's
+`QUIT_WINDOW_MS`. Shorter than the interrupt's, deliberately: leaving is the more
+expensive answer of the two.")
+
 (defvar *resyncs* 0
   "How many Resync frames this head has taken. A counter the reference keeps on
 its status line and shows on /status; a non-zero value means this head lost its
@@ -384,6 +395,14 @@ against letibot's row 63 with the mode picker up: ours had dropped the prefix."
                              (< (- (get-internal-real-time) *esc-at*)
                                 (* *esc-double-ms* (/ internal-time-units-per-second 1000.0))))
                         (cons "esc again to interrupt" '(:bold t :fg :yellow)))
+                       ;; the other half of the same mechanism: a first ctrl-c on
+                       ;; an empty composer arms and SAYS it armed, because a
+                       ;; double tap nobody is told about is a double tap nobody
+                       ;; finds (editor.rs:827-835)
+                       ((and *ctrlc-at*
+                             (< (- (get-internal-real-time) *ctrlc-at*)
+                                (* *ctrlc-window-ms* (/ internal-time-units-per-second 1000.0))))
+                        (cons "ctrl+c again to exit" '(:bold t :fg :yellow)))
                        (running (cons "esc interrupt · ctrl+c clear" '(:dim t)))
                        ((zerop (length (composer-buffer (head-composer head))))
                         (cons "enter send · ctrl+c exit" '(:dim t)))

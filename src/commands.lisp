@@ -38,7 +38,8 @@
     ("resync" . "throw this head's state away and take a fresh snapshot")
     ("resume" . "SESSION-ID — bring a stored session back to life")
     ("compact" . "summarise this session and fork it")
-    ("reseat" . "rebuild the prompt from the tools seated now")
+    ("reseat" . "rebuild the prompt from the tools seated now, carrying the conversation")
+    ("reseat summarise" . "…and summarise the conversation instead of carrying it")
     ("promote" . "move the RUNNING COMMAND to the background (ctrl-o)")
     ("interrupt" . "stop the running turn")
     ("quit" . "leave the head")))
@@ -57,7 +58,10 @@ on ClientFrame::Slash)."
     (cond
       ((string= verb "cells") (%cells head rest))
       ((string= verb "new") (%send head (make-new-session rest "")))
-      ((string= verb "sessions")
+      ((member verb '("sessions" "s") :test #'string=)
+       ;; `/s` is the reference's own short form (app.rs:4443) and was not here,
+       ;; so it fell to the catch-all and travelled to the daemon as a slash line
+       ;; — a round trip that answers nothing, for the verb the picker is on.
        (%send head (make-list-sessions))
        (%open-pane head :picker))
       ((string= verb "switch")
@@ -67,9 +71,9 @@ on ClientFrame::Slash)."
        (%send head (make-rename-session (session-session-id (head-session head)) rest)))
       ;; the reference's short forms, for the fingers that learnt them there
       ((member verb '("help" "h" "?") :test #'string=)
-       (%open-pane head :help))
+       (%toggle-pane head :help))
       ((member verb '("status" "stats") :test #'string=)
-       (%open-pane head :status))
+       (%toggle-pane head :status))
       ((member verb '("think" "r") :test #'string=)
        (%flip-fold head :show-reasoning))
       ;; `/t` folds tool output; `/tools` ASKS what this conversation can call —
@@ -85,8 +89,7 @@ on ClientFrame::Slash)."
        ;; Ask, and open the pane. The REPLY does not open it (a head asks for
        ;; settings on attach now, and a reply that opened the pane would pop
        ;; `/config` at every attach), so the command owns both halves.
-       (%send head (make-settings))
-       (%open-pane head :config))
+       (%toggle-pane head :config (lambda () (%send head (make-settings)))))
       ((string= verb "mode")
        (if (plusp (length rest))
            ;; a NAME goes straight to `mode-action` — `allow-all` asks first,
@@ -108,8 +111,7 @@ on ClientFrame::Slash)."
        ;; (protocol 21, deliberately not a Slash: those ride the command queue and
        ;; are answered between turns, so `/job` during a long turn arrived after
        ;; it had finished).
-       (%send head (make-list-jobs))
-       (%open-pane head :jobs))
+       (%toggle-pane head :jobs (lambda () (%send head (make-list-jobs)))))
       ((string= verb "subagents") (%open-pane head :subagents))
       ((string= verb "todos")
        ;; Ask for the list AND open the pane. The session's plan is carried by
@@ -143,9 +145,24 @@ on ClientFrame::Slash)."
                          :client-request-id (next-request-id)
                          :expected-seq (session-expected-seq (head-session head)))))
       ((string= verb "reseat")
-       (%send head (list :frame "reseat_session"
-                         :client-request-id (next-request-id)
-                         :expected-seq (session-expected-seq (head-session head)))))
+       ;; `/reseat summarise` asks for the LOSSY kind by name and got the other
+       ;; one, with no word either way: the argument was parsed off and dropped,
+       ;; and the frame carried no `summarise` at all. Both branches say which one
+       ;; ran, because the difference between them is the conversation
+       ;; (app.rs:4590-4608). The lossless one is the default — the operator: *"id
+       ;; say flip it - reset is loseless and reset summarize will be not"*.
+       (let ((summarise (member rest '("summarise" "summarize") :test #'string-equal)))
+         (%send head (list :frame "reseat_session"
+                           :client-request-id (next-request-id)
+                           :expected-seq (session-expected-seq (head-session head))
+                           ;; :false, not NIL: the daemon's field is a plain bool
+                           ;; with `#[serde(default)]`, and this encoder writes
+                           ;; NIL as `null`, which is not a bool and would be
+                           ;; refused by the parser rather than defaulted
+                           :summarise (if summarise t :false)))
+         (say head (if summarise
+                       "re-seating: summarising, so the summary replaces the conversation…"
+                       "re-seating: carrying the conversation across as it is. The next turn re-sends all of it once."))))
       ((string= verb "promote")
        ;; Move the running COMMAND to the background. The fact to guard is a
        ;; command running, and the daemon honours this inside bash's own wait
@@ -167,13 +184,30 @@ on ClientFrame::Slash)."
                                          "running"))
                            "the model is still working — no command running to move yet"
                            "nothing is running to move to the background")))))
-      ((string= verb "interrupt") (%interrupt head "interrupted from the head"))
+      ((member verb '("interrupt" "i") :test #'string=)
+       ;; `/i`, the reference's short form (app.rs:4567) — it fell to the daemon
+       ;; too, which is a round trip for the one verb whose point is to be fast
+       (%interrupt head "interrupted from the head"))
       ((member verb '("quit" "q") :test #'string=) (setf (head-running head) nil))
       ;; unknown verbs travel; the daemon acts and announces on the log
       (t (%send head (list :frame "slash"
                            :client-request-id (next-request-id)
                            :expected-seq (session-expected-seq (head-session head))
                            :line line))))))
+
+(defun %toggle-pane (head mode &optional ask)
+  "Open MODE, or CLOSE it when it is already the screen — and call ASK first when
+it opens.
+
+Every one of these is a toggle in the reference (app.rs:3071-3137, 4503-4566) and
+reads as one. Here they only ever opened: `/help` twice left the help screen up,
+and `ctrl-s ctrl-s` left the picker up, so Esc was a second thing to remember per
+pane. ASK is the frame the pane needs filling — it is not sent on the close,
+because a pane going away has nothing to ask for."
+  (if (eq (head-mode head) mode)
+      (setf (head-mode head) :normal (head-dirty head) t)
+      (progn (when ask (funcall ask))
+             (%open-pane head mode))))
 
 (defun %open-pane (head mode)
   "Open the full-body screen MODE with its cursor at the top and nothing scrolled.
