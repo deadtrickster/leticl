@@ -100,9 +100,12 @@ compares instead of generic ones (the note speed 3 raised here)."
                 (cond
                   ((> vw cols)
                    (break-line)
-                   (let ((chunks (%hard-break (subseq word 0 ve) cols)))
-                     (dolist (c chunks)
-                       (push (cons c (cdr seg)) cur))
+                   ;; ONE CHUNK PER ROW. The chunks were all pushed onto one row
+                   ;; and then broken once, so a 400-column URL still overflowed —
+                   ;; the exact thing the docstring on `%hard-break` says cannot
+                   ;; happen. Found reading the profile's hot loop, not the screen.
+                   (dolist (c (%hard-break (subseq word 0 ve) cols))
+                     (push (cons c (cdr seg)) cur)
                      (break-line)))
                   ((<= (+ w vw) cols)
                    (push (cons word (cdr seg)) cur)
@@ -314,6 +317,16 @@ scrolls the transcript by a row every keystroke.
            (when sel-line (scroll-pane-into-view sel-line))
            (%place-lines s (pane-view lines) body-top
                          (1- (+ body-top room)) cols)))
+        ;; transcript empty and nothing has arrived yet: the wait, which is a
+        ;; thing to SHOW rather than a banner claiming the session is empty — a
+        ;; claim a head that has not been answered is in no position to make.
+        ;; BEFORE the transcript arm: this clause sat after a `(t …)` and the
+        ;; compiler deleted it, so the walking cat never once drew.
+        ((attaching-p head)
+         (let* ((wait (attach-lines head cols))
+                (room (max 1 (- body-bottom body-top)))
+                (skip (max 0 (- (floor room 2) (floor (length wait) 2)))))
+           (%place-lines s wait (+ body-top skip) body-bottom cols)))
         (t
          ;; transcript viewport, then the card just above the chrome
          (let* ((card-lines (if (head-quit-open head)
@@ -323,15 +336,7 @@ scrolls the transcript by a row every keystroke.
                 (lines (%viewport-lines head cols want)))
            (%place-lines s lines body-top (+ body-top (length lines) -1) cols)
            (when card-lines
-             (%place-lines s card-lines (- body-bottom card-rows -1) body-bottom cols))))
-        ;; transcript empty and nothing has arrived yet: the wait, which is a
-        ;; thing to SHOW rather than a banner claiming the session is empty — a
-        ;; claim a head that has not been answered is in no position to make
-        (t
-         (let* ((wait (attach-lines head cols))
-                (room (max 1 (- body-bottom body-top)))
-                (skip (max 0 (- (floor room 2) (floor (length wait) 2)))))
-           (%place-lines s wait (+ body-top skip) body-bottom cols)))))
+             (%place-lines s card-lines (- body-bottom card-rows -1) body-bottom cols))))))
     ;; the chrome, each row where the layout above put it
     (when alarm-row (put-segments s alarm-row +gutter+ alarm))
     (when status-row (put-segments s status-row +gutter+ status))

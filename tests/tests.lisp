@@ -3121,3 +3121,32 @@ typed entries must keep that, or a missing key becomes a red frame."
     (is (char= #\space (cell-ch (screen-cell s 0 3))) "with the cell untouched"))
   (is (null (leticl::%split-words nil)) "NIL splits to no words")
   (is (null (wrap-segments (list (cons nil '(:dim t))) 10)) "and wraps to no rows"))
+
+;;; ------------------------------ two things the profile's hot loop showed ;;;
+
+(def-test an-over-wide-word-breaks-one-chunk-per-row (:suite leticl)
+  "`%hard-break`'s docstring: *a 400-column URL wraps, it does not overflow*. The
+chunks were all pushed onto ONE row and broken once, so it did overflow — found
+while typing the loop, not on the screen, which is why it had lived."
+  (let* ((url (format nil "https://example.com/~a" (make-string 100 :initial-element #\x)))
+         (lines (wrap-segments (list (cons url nil)) 30)))
+    (is (= 4 (length lines)) "120 columns at 30 is four rows")
+    (is (every (lambda (l) (<= (leticl::%segs-width l) 30)) lines) "none wider than the width")
+    (is (string= url (format nil "~{~a~}" (mapcar (lambda (l) (car (first l))) lines)))
+        "and nothing lost")))
+
+(def-test the-attach-wait-is-drawn-while-the-daemon-has-not-answered (:suite leticl)
+  "The walking cat: its clause in `%render` sat behind a `(t …)` and the compiler
+deleted it, so a head attaching to a two-thousand-item session drew an EMPTY
+screen — indistinguishable from a head on the wrong socket — for the whole wait."
+  (let* ((*stdout* (make-string-output-stream))
+         (h (%on-head :cols 60 :rows 20))
+         (leticl::*attach-started-ms* (- (internal-real-time-ms) 1500)))
+    (setf (head-connected h) nil)
+    (leticl::%render h)
+    (is (search "asking the daemon for this session" (%screen-text h))
+        "the wait is on the screen while nothing has arrived")
+    (setf (head-connected h) t)
+    (leticl::%render h)
+    (is (not (search "asking the daemon" (%screen-text h)))
+        "and gone once the hello has landed")))
