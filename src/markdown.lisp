@@ -471,15 +471,34 @@ table's SYNTAX, never a line of it."
     (dolist (s segs w) (incf w (string-width (car s))))))
 
 (defun %truncate-segs (segs cols)
-  "SEGS cut to COLS columns, style boundaries kept."
-  (let ((out nil) (w 0))
-    (dolist (seg segs (nreverse out))
-      (let ((sw (string-width (car seg))))
-        (cond ((<= (+ w sw) cols) (push seg out) (incf w sw))
-              (t (let ((room (- cols w)))
-                   (when (plusp room)
-                     (push (cons (%truncate-width (car seg) room) (cdr seg)) out)))
-                 (return (nreverse out))))))))
+  "SEGS cut to COLS columns, style boundaries kept, with an `…` where the rest
+went — `trim_to` over a painted line (`width::truncate`, width.rs:329-353).
+
+Two things changed here together and neither works alone. The cut walked
+CHARACTERS (`%truncate-width`, progress.lisp), which halves a ZWJ sequence and
+turns a flag into a letter — and this is the function every card header goes
+through. And it cut SILENTLY, so a header that had dropped its tail looked
+exactly like one that had not.
+
+The mark is a segment of its own, in the style of whatever was being cut when
+the budget ran out, so an elision inside a bold run stays inside it. One column
+is reserved for it before anything is kept, which is why the budget below is
+`cols - 1`: the reference reserves the same column for the same reason."
+  (if (<= (%segs-width segs) cols)
+      segs
+      (let ((out nil) (w 0) (room (max 0 (1- cols))) (cut-style nil))
+        (dolist (seg segs)
+          (let ((sw (string-width (car seg))))
+            (cond ((<= (+ w sw) room) (push seg out) (incf w sw))
+                  (t (let ((left (- room w)))
+                       (when (plusp left)
+                         (push (cons (%truncate-cells (car seg) left) (cdr seg)) out)
+                         (incf w left)))
+                     (setf cut-style (cdr seg))
+                     (return)))))
+        (when (plusp cols)
+          (push (cons "…" cut-style) out))
+        (nreverse out))))
 
 (defun %pad-segs (segs width align)
   "SEGS padded to WIDTH with plain spaces, on the side ALIGN says."
@@ -681,7 +700,7 @@ the disclosure, the same rule the log applies to `dropped`."
         (let* ((keep (- limit 2))
                (elided (- (length full) keep)))
           (append
-           (list (list (cons (%truncate-width (format nil "▸ ~a" (block-title block)) w)
+           (list (list (cons (truncate-to-width (format nil "▸ ~a" (block-title block)) w)
                              +md-faint+))
                  (list (cons (format nil "  … ~d lines elided …" elided) +md-faint+)))
            (last full keep))))))
