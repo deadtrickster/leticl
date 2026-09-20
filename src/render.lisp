@@ -115,23 +115,44 @@ the transcript gets what is left. Getting that order wrong is how a composer
 scrolls the transcript by a row every keystroke.
 "
   (let* ((s (head-screen head))
-         (cols (head-cols head))
+         ;; content width: the frame less the gutter AND the right margin
+         (cols (max 20 (- (head-cols head) +gutter+ +right-margin+)))
          (rows (head-rows head))
          (composer (composer-line head cols))
          (composer-rows (length composer))
          (hint (hint-bar head cols))
          (alarm (alarm-line head cols))
-         ;; from the bottom: composer, hint, status, alarm (if any)
-         (cursor (- rows composer-rows))
-         (hint-row (1- cursor))
-         (status-row (- hint-row 1))
-         (alarm-row (when alarm (- status-row 1)))
+         (status (status-line head cols))
+         ;; **From the bottom: hint bar, composer, status, alarm.**
+         ;;
+         ;; Measured against letibot's own 63-row screen: its LAST row is the hint
+         ;; bar and the composer box sits directly above it. Ours had the box at
+         ;; the bottom with the hint above it, which puts the hint — the line that
+         ;; tells you what the keys do — above the thing you are typing into.
+         ;;
+         ;; A status row with nothing to say is NO row: it was drawing all dashes,
+         ;; and a row that costs a line to say nothing is the defect the reference's
+         ;; own comment names ("a number that is zero costs a row of attention for
+         ;; ever in exchange for being noticed once").
+         (hint-row (1- rows))
+         (cursor (- hint-row composer-rows))
+         ;; **The alarm and the turn's status ride the box's bottom edge**, which
+         ;; is what the reference does and why it has no status row at all: a
+         ;; resident row that is usually empty costs a line of transcript for
+         ;; ever. They fall back to their own rows only when there is no box (a
+         ;; screen too short for one), where there is no edge to carry them.
+         (boxed (>= rows 8))
+         (status-text (and status (not boxed)
+                           (string-trim " ─" (apply #'concatenate 'string
+                                                    (mapcar #'car status)))))
+         (status-row (when (and status-text (plusp (length status-text))) (1- cursor)))
+         (alarm-row (when (and alarm (not boxed)) (- (or status-row cursor) 1)))
          (body-top 1)
-         (body-bottom (or alarm-row status-row))
+         (body-bottom (or alarm-row status-row cursor))
          (card-lines nil))
     (screen-clear s)
-    ;; top border
-    (put-segments s 0 0 (top-border head cols))
+    ;; top border, inside the gutter like everything else
+    (put-segments s 0 +gutter+ (top-border head (- cols +gutter+)))
     ;; the ask card rides at the front of the chrome, transcript visible above
     (cond ((head-secret-req head)
            (setf card-lines (secret-card-lines head cols)))
@@ -144,7 +165,7 @@ scrolls the transcript by a row every keystroke.
                                      :mode-picker :models-picker))
          (let* ((lines nil)
                 (sel-line nil)
-                (room (max 1 (- (or alarm-row status-row) body-top))))
+                (room (max 1 (- body-bottom body-top))))
            ;; A pane that owns a cursor returns the LINE it is on as a second
            ;; value, because its cursor counts ROWS and this offset counts LINES —
            ;; the two differ by every header above the list.
@@ -180,19 +201,35 @@ scrolls the transcript by a row every keystroke.
            (when card-lines
              (%place-lines s card-lines (- body-bottom card-rows -1) body-bottom cols))))))
     ;; the chrome, each row where the layout above put it
-    (when alarm-row (put-segments s alarm-row 0 alarm))
-    (put-segments s status-row 0 (status-line head cols))
-    (put-segments s hint-row 0 hint)
+    (when alarm-row (put-segments s alarm-row +gutter+ alarm))
+    (when status-row (put-segments s status-row +gutter+ status))
     (loop for row in composer
           for r from cursor
-          do (put-segments s r 0 row))))
+          do (put-segments s r +gutter+ row))
+    (put-segments s hint-row +gutter+ hint)))
+
+(defparameter +right-margin+ 2
+  "Columns of right margin, so the frame is not flush against the edge.
+
+Measured from letibot's own screen: in a 210-column pane its box spans columns 2
+to 207, which is a 2-column gutter, 206 of content and 2 columns of right margin.
+Ours drew flush to 209.")
+
+(defparameter +gutter+ 2
+  "Columns of left margin the whole frame sits inside.
+
+Measured against letibot's own screen: its body, its chrome and its composer box
+are all indented two columns, and the box is 208 wide in a 210 frame. The gutter
+is what makes a frame read as a frame rather than as text that happens to start at
+the left edge — and it is the last visible difference between the two heads'
+layout.")
 
 (defun %place-lines (screen lines top bottom cols)
-  "Segment lines into rows top..bottom, clipping both ends."
+  "Segment lines into rows top..bottom, clipping both ends, inside the gutter."
   (let ((r top))
     (dolist (line lines)
       (when (> r bottom) (return))
-      (put-segments screen r 0 line)
+      (put-segments screen r +gutter+ line)
       (incf r))))
 
 (defvar *last-render-error* nil
@@ -247,7 +284,7 @@ defect this file's neighbours exist against."
                                    '(:bold t :fg :red)))
                        (list (cons (format nil "  ~a" (type-of condition))
                                    '(:fg :yellow)))
-                       (list (cons (format nil "  ~a" condition) '(:fg :bright-black))))))
+                       (list (cons (format nil "  ~a" condition) '(:dim t))))))
       ;; a minimal frame drawn by hand: the cell buffer cannot be trusted to
       ;; render the failure of rendering itself
       (ignore-errors

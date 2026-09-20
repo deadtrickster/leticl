@@ -98,7 +98,7 @@ in a terminal with no syntax colour."
                      nil)))
     (if styled
         styled
-        (mapcar (lambda (l) (list (cons l '(:fg :bright-black))))
+        (mapcar (lambda (l) (list (cons l '(:dim t))))
                 raw-lines))))
 
 (defun markdown-lines (text &optional (base-style nil))
@@ -133,7 +133,7 @@ in a terminal with no syntax colour."
                       (push (list (cons (if (plusp (length code-lang))
                                             (format nil "── ~a " code-lang)
                                             "── ")
-                                        '(:fg :bright-black)))
+                                        '(:dim t)))
                             lines))))
           (in-code
            (flush-table)
@@ -156,9 +156,9 @@ in a terminal with no syntax colour."
           ;; blockquote
           ((and (plusp (length line)) (char= (char line 0) #\>))
            (flush-table)
-           (push (list (cons "│ " '(:fg :bright-black))
+           (push (list (cons "│ " '(:dim t))
                        (cons (string-trim " " (subseq line 1))
-                             '(:italic t :fg :bright-black)))
+                             '(:italic t :dim t)))
                  lines))
           ;; table rows collect until the table ends
           ((%table-row-p line) (push line table-rows))
@@ -220,11 +220,11 @@ The column count is the header's; a row with more cells keeps them
                        while (< i ncols)
                        do (push (cons (pad-to c (aref widths i)) style) segs)
                           (unless (= i (1- ncols))
-                            (push (cons " │ " '(:fg :bright-black)) segs)))
+                            (push (cons " │ " '(:dim t)) segs)))
                  (list (nreverse segs)))))
         (append
          (emit header '(:bold t))
-         (emit (make-list ncols :initial-element "") '(:fg :bright-black))
+         (emit (make-list ncols :initial-element "") '(:dim t))
          (loop for row in (rest cells)
                append (emit row nil)))))))
 

@@ -260,8 +260,8 @@
 plain")))
     (is (equal (first lines) (list (cons "Title" '(:bold t :underline t)))) "heading")
     (is (member (cons "• " '(:fg :bright-cyan)) (second lines) :test #'equal) "list bullet")
-    (is (member (cons "── lisp " '(:fg :bright-black)) (third lines) :test #'equal) "fence marker")
-    (is (member (cons "│ " '(:fg :bright-black)) (fifth lines) :test #'equal) "blockquote")
+    (is (member (cons "── lisp " '(:dim t)) (third lines) :test #'equal) "fence marker")
+    (is (member (cons "│ " '(:dim t)) (fifth lines) :test #'equal) "blockquote")
     (is (= 6 (length lines)) "one line in, one line out per construct")))
 
 (def-test todos-screen (:suite leticl)
@@ -434,7 +434,7 @@ mode - subtodos shown, when all subtodos checked section becomes also checked\"*
 (def-test role-style-maps-indices (:suite leticl)
   "The role index → style table; 0 and unknown are plain (nil)."
   (is (null (role-style 0)) "plain")
-  (is (equal (role-style 1) '(:fg :bright-black)) "comment")
+  (is (equal (role-style 1) '(:dim t)) "comment")
   (is (equal (role-style 2) '(:fg :green)) "string")
   (is (equal (role-style 3) '(:fg :bright-yellow)) "number")
   (is (equal (role-style 4) '(:fg :cyan)) "type")
@@ -466,7 +466,7 @@ mode - subtodos shown, when all subtodos checked section becomes also checked\"*
                                (equal (cdr s) '(:fg :bright-yellow))))
               (second lines)) "42 is a number")
     (is (some (lambda (s) (and (string= "// c" (car s))
-                               (equal (cdr s) '(:fg :bright-black))))
+                               (equal (cdr s) '(:dim t))))
               (second lines)) "// c is a comment")))
 
 ;;; -------------------------------------------------------------- diff ;;;
@@ -712,7 +712,7 @@ built, still gives one readable segment per line rather than dropping the code."
          (first-seg (first (first lines))))
     (is (= 2 (length lines)) "one line per input line")
     (is (equal "let x = 1;" (car first-seg)) "the text survives verbatim")
-    (is (equal '(:fg :bright-black) (cdr first-seg)) "and is dim, not dropped")))
+    (is (equal '(:dim t) (cdr first-seg)) "and is dim, not dropped")))
 
 (def-test fence-language-names-map-to-the-highlighter (:suite leticl)
   "A fence carries a NAME; the shim takes a PATH. Both spellings work."
@@ -1378,7 +1378,7 @@ getting that order wrong scrolls the transcript by a row on every keystroke."
          (h (%on-head :cols 60 :rows 20)))
     (leticl::%render h)
     (let ((text (%screen-text h)))
-      (is (search "leticl" text) "the top border is drawn")
+      (is (search "▌" text) "the session marker is drawn")
       (is (search "╭" text) "the composer's box is drawn")
       (is (search "›" text) "and its prompt")
       (is (search "╰" text) "and its bottom edge"))
@@ -1423,10 +1423,14 @@ the call began, \"that grep took 4.1s\" leaves the screen the moment the row lan
                                    :name "grep" :outcome (list :outcome "ok")
                                    :payload "a match")))
            (text (segs-of (item-lines item 80 (list :show-tools t)))))
-      (is (search "grep" text) "the tool is named")
+      ;; the card names the call the way letibot does: VERB, target, outcome,
+      ;; duration, line count — `grep` becomes `Searched`, because the word a
+      ;; person reads is the verb and not the tool's own name
+      (is (search "Searched" text) "the VERB is shown, from the tool name")
       (is (search "ok" text) "and its outcome")
       (is (search "4.1s" text)
-          "and the DURATION, which only the head could have kept"))))
+          "and the DURATION, which only the head could have kept")
+      (is (search "1 line" text) "and how many lines came back"))))
 
 (def-test a-row-this-head-did-not-watch-shows-no-duration (:suite leticl)
   "An absent fact shows NOTHING rather than a fabricated `0ms` — the same rule the
@@ -1438,7 +1442,7 @@ recorded elsewhere all land here."
                                    :name "read" :outcome (list :outcome "ok")
                                    :payload "x")))
            (text (segs-of (item-lines item 80 (list :show-tools t)))))
-      (is (search "read" text) "the row still renders")
+      (is (search "Read" text) "the row still renders, with its verb")
       (is (not (search "ms" text)) "but claims no duration")
       (is (not (search "0s" text)) "and not a zero one either"))))
 

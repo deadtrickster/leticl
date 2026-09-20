@@ -13,6 +13,113 @@
 
 (in-package #:leticl)
 
+;;; ------------------------------------------------------- display targets ;;;
+;;;
+;;; Ported from `sessionlog::display_target`. **Why it is derived and not
+;;; tool-supplied**: the tool knows which of its arguments a person reads, and
+;;; `ToolCallProposed` is emitted from the PARSED call before anything has been
+;;; dispatched — so the daemon's own `target` is a derivation of the arguments it
+;;; already has, and a head that renders a settled row (whose proposal it never
+;;; saw: it attached after the turn, or switched into the session) has to do the
+;;; same derivation from the same input. Two spellings of one display is how they
+;;; drift, so this is the one spelling.
+;;;
+;;; The rules, and the reason for each:
+;;;
+;;;  · `path`, `file_path`, `file` name a call's SUBJECT. A tool whose subject has
+;;;    another name keeps the written order — except that if the loop never
+;;;    reached a subject key, the first one is PREPENDED: a write's `content` is
+;;;    huge and buries the `path` behind it, so the file leads and the content
+;;;    head follows;
+;;;  · a string with whitespace is QUOTED, so `grep "two words" src` cannot be
+;;;    misread as three arguments;
+;;;  · nested values are ELIDED, never flattened: `[…]` and `{…}` say there is
+;;;    more without pretending a JSON dump is a label.
+
+(defparameter *target-max-bytes* 120
+  "How much of a display target a person reads before the rest is an ellipsis.")
+
+(defparameter *subject-keys* '(:path :file-path :file)
+  "The keys that name a call's subject, in preference order.
+
+KEYWORDS, because objects decode to keyword-key plists (`json.lisp`) — an
+arguments string is JSON like any other, so `{\"path\": \"a\"}` arrives as
+`(:PATH \"a\")` and a string comparison against \"path\" would never match.")
+
+(defun %json-object-p (x)
+  "A decoded JSON object: the repo's own plist test, which is what closes the
+object/array ambiguity (PLAN §7)."
+  (%plist-p x))
+
+(defun %scalar-label (json)
+  "One scalar value as a label, or :elided for a nested one."
+  (cond
+    ((null json) "null")
+    ((stringp json)
+     ;; quoted when it has whitespace, so `grep \"two words\" src` cannot be
+     ;; misread as three arguments
+     (if (find-if (lambda (c) (member c '(#\space #\tab #\newline))) json)
+         (format nil "~s" json)
+         json))
+    ((numberp json) (format nil "~a" json))
+    ((eq json t) "true")
+    (t :elided)))
+
+(defun %elision-of (json)
+  "How a nested value is shown: `[…]` for an array, `{…}` for an object."
+  (if (%json-object-p json) "{…}" "[…]"))
+
+(defun truncate-target (s)
+  "S cut to `*target-max-bytes*` with an ellipsis, control characters flattened.
+
+The ellipsis COUNTS: `…` is three bytes, and a cap that forgets that is a cap the
+output is allowed to exceed — which is the off-by-a-few that puts a line one
+column past the terminal and scrolls the frame."
+  (let* ((clean (map 'string (lambda (c) (if (or (char< c #\space)
+                                                 (= (char-code c) 127))
+                                            #\space
+                                            c))
+                     s))
+         (limit (max 1 (- *target-max-bytes* 3))))
+    (if (<= (length clean) *target-max-bytes*)
+        clean
+        (concatenate 'string (subseq clean 0 limit) "…"))))
+
+(defun display-target (arguments)
+  "The one argument a person reads, from a tool call's ARGUMENTS string."
+  (let ((json (ignore-errors (json-decode (or arguments "")))))
+    (cond
+      ;; not JSON at all: the model wrote it, so it is still the most
+      ;; informative thing available
+      ((null json) (truncate-target (string-trim " " (or arguments ""))))
+      ((%json-object-p json)
+       (let ((parts nil)
+             (subject-seen nil)
+             (subject-value nil))
+         ;; `on JSON`, not `on (cdr JSON)`: a plist's pairs are the WHOLE list.
+         ;; Taking the cdr binds the first VALUE as a key and leaves the first
+         ;; pair unread, so every target came out `null` — measured against
+         ;; letibot, whose cards said `Ran "cd /tmp/…"` while ours said `Ran "null"`.
+         (loop for (k v) on json by #'cddr
+               do (when (member k *subject-keys*)
+                    (setf subject-seen t
+                          subject-value (or subject-value v)))
+                  (let ((label (%scalar-label v)))
+                    (push (if (eq label :elided) (%elision-of v) label) parts)))
+         (setf parts (nreverse parts))
+         ;; a subject the loop never reached is PREPENDED: a write's content
+         ;; buries its path, and the file is what a person reads
+         (unless subject-seen
+           (when subject-value
+             (let ((label (%scalar-label subject-value)))
+               (push (if (eq label :elided) (%elision-of subject-value) label)
+                     parts))))
+         (truncate-target (string-trim " " (format nil "~{~a~^ ~}" parts)))))
+      ;; an array is not a label
+      ((consp json) (truncate-target "[…]"))
+      (t (let ((label (%scalar-label json)))
+           (truncate-target (if (eq label :elided) "{}" (or label ""))))))))
+
 ;;; ------------------------------------------------------- the item-id maps ;;;
 ;;;
 ;;; ## Why this exists
@@ -96,6 +203,54 @@ appends a round's assistant row before generating the next, so no delta of round
 N+1 can arrive before round N's row."
   (setf *call-facts* nil
         *call-started-ms* nil))
+
+;;; --------------------------------------------------------- call targets ;;;
+;;;
+;;; A `ToolResult` row carries `call_id, name, outcome, payload, edit` — and NOT
+;;; what the call was about. The answer is on the ASSISTANT row that proposed it,
+;;; under the same `call_id`, so the target has to be correlated.
+;;;
+;;; This model's ids are unique per call (`call_00_AU1w4hjdLQNw13o3SNIo9409`,
+;;; measured off the wire), so a plain map works. The reference's note about ids
+;;; being ROUND-POSITIONAL is about the fallback it applies when the wire carries
+;;; no id at all — `format!("call_{}", calls.len())` — which would make a map keyed
+;;; on it collide across rounds. Worth knowing which case you are in, so the map
+;;; is cleared at a round boundary either way.
+
+(defvar *call-targets* nil
+  "Alist CALL-ID → display target, from every assistant row and every live
+proposal this head has seen. Cleared at a round boundary so a positional id
+could not collide.") 
+
+(defun note-call-target (call-id target)
+  (when (and call-id target (plusp (length target)))
+    (setf (alexandria:assoc-value *call-targets* call-id :test #'string=) target)))
+
+(defun call-target-of (call-id)
+  (and call-id (cdr (assoc call-id *call-targets* :test #'string=))))
+
+(defun note-assistant-targets (body)
+  "Record the display target of every call BODY proposed.
+
+BODY is a `TranscriptItem::Assistant` plist. Its `:tool-calls` are the daemon's
+own parsed calls, each with a `:arguments` JSON string — so the SAME derivation
+the daemon does (`display-target`) is applied to the same input, which is what
+keeps the live card and the settled row saying one thing."
+  (dolist (tc (getf body :tool-calls))
+    (when (and (consp tc) (getf tc :id))
+      (note-call-target (getf tc :id)
+                        (display-target (getf tc :arguments))))))
+
+(defun note-snapshot-targets (items)
+  "Walk a SNAPSHOT's items once, recording every assistant row's call targets.
+
+One pass at attach, because a head that attached after a turn has no proposals to
+learn from — the row is the only place the call is described. Without this every
+settled row older than the attach would render with no target at all."
+  (dolist (item (coerce items 'list))
+    (let ((body (getf item :item)))
+      (when (and (consp body) (string= (getf body :type) "assistant"))
+        (note-assistant-targets body)))))
 
 (defun item-facts (item-id)
   "What the live turn knew about the row ITEM-ID, or NIL."
@@ -196,7 +351,7 @@ folded text, or the text unchanged when it holds no screen."
     ("failed" '(:fg :red))
     ("denied" '(:fg :yellow))
     ("timeout" '(:fg :red))
-    ("not_run" '(:fg :bright-black))
+    ("not_run" '(:dim t))
     ("backgrounded" '(:fg :cyan))
     (t nil)))
 
@@ -204,6 +359,57 @@ folded text, or the text unchanged when it holds no screen."
   (if-let (nl (position #\newline text))
     (subseq text 0 nl)
     text))
+
+;;; ------------------------------------------------------------- the verb ;;;
+;;;
+;;; Ported from `card::Verb`: a tool name to the word a person reads, with the
+;;; RUNNING form of each kept distinct (`Ran` against `Running`) because a card
+;;; that says `Ran` while the command is still going is a card that lies about
+;;; the one thing it exists to say.
+;;;
+;;; An unknown name keeps its OWN name, which is right: inventing a verb for a
+;;; tool this head does not know is a guess presented as a fact.
+
+(defparameter *verb-map*
+  '(("read" . (:read "Read" "Reading"))
+    ("read_file" . (:read "Read" "Reading"))
+    ("cat" . (:read "Read" "Reading"))
+    ("view" . (:read "Read" "Reading"))
+    ("edit" . (:edit "Edited" "Editing"))
+    ("patch" . (:edit "Edited" "Editing"))
+    ("apply_patch" . (:edit "Edited" "Editing"))
+    ("str_replace" . (:edit "Edited" "Editing"))
+    ("write" . (:write "Wrote" "Writing"))
+    ("write_file" . (:write "Wrote" "Writing"))
+    ("create" . (:write "Wrote" "Writing"))
+    ("grep" . (:search "Searched" "Searching"))
+    ("search" . (:search "Searched" "Searching"))
+    ("rg" . (:search "Searched" "Searching"))
+    ("find" . (:search "Searched" "Searching"))
+    ("ls" . (:list "Listed" "Listing"))
+    ("list" . (:list "Listed" "Listing"))
+    ("list_dir" . (:list "Listed" "Listing"))
+    ("glob" . (:list "Listed" "Listing"))
+    ("bash" . (:run "Ran" "Running"))
+    ("shell" . (:run "Ran" "Running"))
+    ("run" . (:run "Ran" "Running"))
+    ("exec" . (:run "Ran" "Running"))
+    ("fetch" . (:fetch "Fetched" "Fetching"))
+    ("web_fetch" . (:fetch "Fetched" "Fetching"))
+    ("http" . (:fetch "Fetched" "Fetching"))))
+
+(defun verb-label (tool &key running)
+  "The word for TOOL: `Ran` when it is done, `Running` while it is not."
+  (let ((hit (assoc (string-downcase (or tool "")) *verb-map* :test #'string=)))
+    (if hit
+        (if running (third (cdr hit)) (second (cdr hit)))
+        (or tool "tool"))))
+
+(defun %payload-line-count (payload)
+  "How many lines PAYLOAD is, which is the number the fold marker counts."
+  (if (or (null payload) (zerop (length payload)))
+      0
+      (1+ (count #\newline payload))))
 
 (defun %tool-result-lines (item body cols prefs)
   "One settled tool-result row: the call, its outcome, its duration, its diff, and
@@ -221,14 +427,31 @@ the reference's `Replayed` phase holds."
          (ms (getf facts :ms))
          (edit (getf facts :edit))
          (decision (getf facts :decision))
-         (headline
-          (list (list (cons "  · " '(:fg :bright-black))
-                      (cons (or name "tool") '(:bold t))
-                      (cons " → " '(:fg :bright-black))
-                      (cons (outcome-name outcome) (%outcome-style outcome))
-                      ;; a duration only when one was MEASURED
-                      (cons (if (numberp ms) (format nil " · ~a" (duration ms)) "")
-                            '(:fg :bright-black)))))
+         ;; the target: what the call was ABOUT. From the call's own arguments
+         ;; when this head saw the proposal, else from the map the walk fills
+         ;; (see `%call-targets`); absent when neither, and absent shows nothing.
+         (target (or (call-target-of (getf body :call-id)) ""))
+         (lines (list (list (cons "    ▸ " '(:dim t))
+                            (cons (verb-label name) '(:bold t))
+                            ;; the target AS IT IS: `display-target` already
+                            ;; quotes an argument that contains whitespace, so
+                            ;; quoting again here gave every card `Ran ""cd …`.
+                            ;; One place does the quoting, and it is the one that
+                            ;; knows whether the value had whitespace.
+                            (cons (if (plusp (length target))
+                                      (format nil " ~a" (%truncate-width target 70))
+                                      "")
+                                  '(:fg :bright-white))
+                            (cons " · " '(:dim t))
+                            (cons (outcome-name outcome) (%outcome-style outcome))
+                            ;; a duration only when one was MEASURED, and a line
+                            ;; count only when there is a payload to count
+                            (cons (if (numberp ms) (format nil " · ~a" (duration ms)) "")
+                                  '(:dim t))
+                            (cons (let ((n (%payload-line-count payload)))
+                                    (if (plusp n) (format nil " · ~d line~p" n n) ""))
+                                  '(:dim t)))))
+         (headline lines)
          ;; the oracle's brief and reply, on the row rather than on a card that
          ;; has already left the screen
          ;; **A refusal says its reason once.**
@@ -255,14 +478,14 @@ the reference's `Replayed` phase holds."
           (when decision
             (let ((basis (getf decision :basis))
                   (verdict (getf (getf decision :outcome) :outcome)))
-              (list (list (cons "    ⚖ " '(:fg :bright-black))
-                          (cons (or verdict "answered") '(:fg :bright-black))
+              (list (list (cons "    ⚖ " '(:dim t))
+                          (cons (or verdict "answered") '(:dim t))
                           ;; the basis only when the payload has not already said
                           ;; it — a refusal's payload IS its explanation
                           (cons (if (and basis (not (funcall already-said-p basis)))
                                     (format nil " — ~a" (%first-line basis))
                                     "")
-                                '(:fg :bright-black)))))))
+                                '(:dim t)))))))
          (detail
           (when (getf prefs :show-tools)
             (cond
@@ -274,8 +497,8 @@ the reference's `Replayed` phase holds."
               (t (let ((preview (%first-line (or payload ""))))
                    (when (plusp (length preview))
                      (wrap-segments
-                      (list (cons "    " '(:fg :bright-black))
-                            (cons preview '(:fg :bright-black)))
+                      (list (cons "    " '(:dim t))
+                            (cons preview '(:dim t)))
                       (max 4 (- cols 4))))))))))
     (append headline decision-line detail)))
 
@@ -297,13 +520,13 @@ the reference's `Replayed` phase holds."
          ((:assistant)
           (if (plusp (length (getf body :text)))
               (markdown-lines (getf body :text) nil)
-              (list (list (cons "·" '(:fg :bright-black))))))
+              (list (list (cons "·" '(:dim t))))))
          ((:reasoning)
           (when (getf prefs :show-reasoning)
             (mapcar (lambda (segs)
-                      (cons (cons "  " '(:fg :bright-black)) segs))
+                      (cons (cons "  " '(:dim t)) segs))
                     (wrap-segments
-                     (list (cons (getf body :text) '(:italic t :fg :bright-black)))
+                     (list (cons (getf body :text) '(:italic t :dim t)))
                      (max 2 (- cols 2))))))
          ((:tool_result) (%tool-result-lines item body cols prefs))
          ((:system)
@@ -327,7 +550,7 @@ the reference's `Replayed` phase holds."
                   (t "proposed"))))
     (append
      (wrap-segments
-      (list (cons "  · " '(:fg :bright-black))
+      (list (cons "  · " '(:dim t))
             (cons (getf call :name) '(:bold t))
             (cons (if (plusp (length target))
                       (format nil " ~a" target) "")
@@ -384,7 +607,7 @@ line 4 changed when it was line 313\")."
                    (list (list (cons
                                 (format nil "  … the excerpt was capped; the file is ~a lines now"
                                         (or (getf edit :after-lines) 0))
-                                '(:fg :bright-black)))))))
+                                '(:dim t)))))))
       (append head-line body tail))))
 
 (defun awhen-edit-lines (edit cols)
@@ -435,11 +658,11 @@ cache percentage and the money meter are held to."
           (when (and (numberp wall) (plusp wall))
             (push (duration wall) parts))))
       (when parts
-        (list (list (cons "  " '(:fg :bright-black))
-                    (cons "─ " '(:fg :bright-black))
+        (list (list (cons "  " '(:dim t))
+                    (cons "─ " '(:dim t))
                     (cons (format nil "~{~a~^ · ~}" (nreverse parts))
                           (if (string= name "finished")
-                              '(:fg :bright-black)
+                              '(:dim t)
                               '(:fg :yellow)))))))))
 
 (defun queued-lines (head cols)
@@ -457,8 +680,8 @@ different requirements, and this is the second one."
   (declare (ignore cols))
   (mapcar (lambda (text)
             (list (cons "› " '(:fg :bright-cyan :bold t))
-                  (cons (%first-line text) '(:fg :bright-black))
-                  (cons "  · queued" '(:fg :bright-black))))
+                  (cons (%first-line text) '(:dim t))
+                  (cons "  · queued" '(:dim t))))
           ;; oldest first, so the order they will land in is the order they read
           (reverse (head-queued head))))
 
@@ -472,9 +695,9 @@ would show the answer twice."
        (alet (getf turn :reasoning)
          (when (plusp (length it))
            (mapcar (lambda (segs)
-                     (cons (cons "  " '(:fg :bright-black)) segs))
+                     (cons (cons "  " '(:dim t)) segs))
                    (wrap-segments
-                    (list (cons it '(:italic t :fg :bright-black)))
+                    (list (cons it '(:italic t :dim t)))
                     (max 2 (- cols 2)))))))
      (alet (getf turn :text)
        (when (plusp (length it))
@@ -488,8 +711,8 @@ would show the answer twice."
      (when (getf prefs :raw-calls)
        (let ((raw (getf turn :raw-calls)))
          (when (and (stringp raw) (plusp (length raw)))
-           (mapcar (lambda (l) (list (cons "    " '(:fg :bright-black))
-                                     (cons l '(:fg :bright-black))))
+           (mapcar (lambda (l) (list (cons "    " '(:dim t))
+                                     (cons l '(:dim t))))
                    (uiop:split-string raw :separator '(#\newline)))))))))
 
 (defun decision-card-lines (head cols)
@@ -513,11 +736,11 @@ would show the answer twice."
                 body))
         (when (plusp (length (or (getf d :detail) "")))
           (push (list (cons (format nil " ~a" (getf d :detail))
-                            '(:fg :bright-black)))
+                            '(:dim t)))
                 body))
         (when (plusp (length (or (getf d :because) "")))
           (push (list (cons (format nil " because: ~a" (getf d :because))
-                            '(:italic t :fg :bright-black)))
+                            '(:italic t :dim t)))
                 body))
         (let ((i 0))
           (dolist (o options)
@@ -531,7 +754,7 @@ would show the answer twice."
             (incf i)))
         (push (list (cons (format nil " enter answers · up/down moves · esc ~a"
                                   (if question "leaves it open" "does nothing"))
-                          '(:fg :bright-black)))
+                          '(:dim t)))
               body)
         ;; WHERE THE WORDS GO. The option is labelled "Deny, and tell the model
         ;; why" and nothing said how — which is how the why ended up in the
@@ -544,7 +767,7 @@ would show the answer twice."
                              options))
           (push (list (cons (format nil " type: ~a <the words the model should hear>"
                                     (getf it :option-id))
-                            '(:fg :bright-black)))
+                            '(:dim t)))
                 body))
         (nreverse body)))))
 
@@ -556,10 +779,10 @@ would show the answer twice."
                          (if chosen '(:reverse t :bold t) nil))))))
     (list (list (cons " quit " '(:bold t :fg :yellow))
                 (cons " the turn runs in the daemon: closing this window does not stop it"
-                      '(:fg :bright-black)))
+                      '(:dim t)))
           (row 0 "leave — the head detaches, the daemon keeps going")
           (row 1 "leave and stop the daemon")
-          (list (cons " enter chooses · esc takes it back" '(:fg :bright-black))))))
+          (list (cons " enter chooses · esc takes it back" '(:dim t))))))
 
 (defun secret-card-lines (head cols)
   (declare (ignore cols))
@@ -567,12 +790,12 @@ would show the answer twice."
     (when req
       (list (list (cons " sudo " '(:bold t :fg :yellow))
                   (cons (format nil " ~a" (getf req :prompt)) '(:bold t)))
-            (list (cons " for " '(:fg :bright-black))
+            (list (cons " for " '(:dim t))
                   (cons (getf req :command) '(:fg :bright-white)))
             (list (cons " password: " '(:fg :bright-cyan :bold t))
                   (cons (make-string (length (head-secret-buf head))
                                      :initial-element #\*)
                         nil))
-            (list (cons " enter submits · esc refuses" '(:fg :bright-black)))))))
+            (list (cons " enter submits · esc refuses" '(:dim t)))))))
 
 

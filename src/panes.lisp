@@ -33,7 +33,7 @@ cursor's LINE as a second value (see `subagent-lines`)."
    (list (list (cons " leticl keys " '(:bold t))))
    (mapcar (lambda (pair)
              (list (cons (format nil "  ~13a" (car pair)) '(:bold t))
-                   (cons (format nil "  ~a" (cdr pair)) '(:fg :bright-black))))
+                   (cons (format nil "  ~a" (cdr pair)) '(:dim t))))
            '(("enter" . "send the line; queued if a turn runs")
              ("ctrl+c" . "interrupt the running turn")
              ("ctrl+d" . "quit")
@@ -57,7 +57,7 @@ cursor's LINE as a second value (see `subagent-lines`)."
    (list nil (list (cons " commands " '(:bold t))))
    (mapcar (lambda (pair)
              (list (cons (format nil "  /~a" (car pair)) '(:fg :cyan))
-                   (cons (format nil "  ~a" (cdr pair)) '(:fg :bright-black))))
+                   (cons (format nil "  ~a" (cdr pair)) '(:dim t))))
            *slash-commands*)))
 
 (defun status-screen-lines (head cols)
@@ -145,9 +145,9 @@ changes it, or is empty for one that needs a restart."
     (append
    (list (list (cons " settings " '(:bold t))
                (cons "  ↑↓ moves · enter changes a head row · esc closes"
-                     '(:fg :bright-black)))
+                     '(:dim t)))
          (list (cons "  this head's own choices — editable, and written to head.toml:"
-                     '(:fg :bright-black))))
+                     '(:dim t))))
    ;; the head's rows: a ✎ says it can be changed here, and Enter does it
    (loop for key in *head-setting-rows*
          for i from 0
@@ -156,20 +156,20 @@ changes it, or is empty for one that needs a restart."
                                      key (%head-setting-value head key))
                              (if (= i sel) (list :reverse t :bold t)
                                  (list :fg :bright-cyan)))
-                       (cons "  ✎" '(:fg :bright-black))))
+                       (cons "  ✎" '(:dim t))))
    (list nil
          (list (cons "  the daemon's settings — its own, and read-only here:"
-                     '(:fg :bright-black))))
+                     '(:dim t))))
    (mapcar (lambda (r)
              (list (cons (format nil "  ~a" (getf r :key)) '(:bold t))
                    (cons (format nil "  ~a" (getf r :value)) '(:fg :bright-white))
                    (awhen (getf r :source)
-                     (cons (format nil "  ~a" it) '(:fg :bright-black)))
+                     (cons (format nil "  ~a" it) '(:dim t)))
                    (awhen (and (getf r :editable) (plusp (length it)))
                      (cons (format nil "  ~a" it) '(:fg :cyan)))
                    (awhen (getf r :choices)
                      (cons (format nil "  of ~{~a~^|~}" it)
-                           '(:fg :bright-black)))))
+                           '(:dim t)))))
            settings))))
 
 (defun jobs-lines (head cols)
@@ -177,7 +177,7 @@ changes it, or is empty for one that needs a restart."
 the cursor's LINE — see `subagent-lines`."
   (declare (ignore cols))
   (let* ((header (list (list (cons " background jobs " '(:bold t)))
-                       (list (list (cons "" '(:fg :bright-black))))))
+                       (list (list (cons "" '(:dim t))))))
          (rows (head-jobs head))
          (sel (head-picker-sel head)))
     (values
@@ -191,7 +191,7 @@ the cursor's LINE — see `subagent-lines`."
                                                '(:bold t)))
                                      (cons (format nil "  ~a" (getf j :summary))
                                            '(:fg :bright-white))))
-                 (list (list (cons "  none" '(:fg :bright-black))))))
+                 (list (list (cons "  none" '(:dim t))))))
      (+ (length header) sel))))
 
 (defun subagent-lines (head cols)
@@ -204,8 +204,8 @@ the wrong place, which is how the reference found this in its own test."
   (declare (ignore cols))
   (let* ((header (list (list (cons " subagents " '(:bold t))
                              (cons "  (enter peeks a row's scrollback without moving there)"
-                                   '(:fg :bright-black)))
-                       (list (list (cons "" '(:fg :bright-black))))))
+                                   '(:dim t)))
+                       (list (list (cons "" '(:dim t))))))
          (rows (head-subagents head))
          (sel (head-picker-sel head)))
     (values
@@ -218,8 +218,8 @@ the wrong place, which is how the reference found this in its own test."
                                                '(:reverse t :bold t)
                                                '(:bold t)))
                                      (cons (format nil "  ~a" (getf s :kind))
-                                           '(:fg :bright-black))))
-                 (list (list (cons "  none" '(:fg :bright-black))))))
+                                           '(:dim t))))
+                 (list (list (cons "  none" '(:dim t))))))
      (+ (length header) sel))))
 
 ;;;; The repo's TODO.md, read the way org reads it.
@@ -461,10 +461,10 @@ glyphs."
                  ;; not — so the mark means "there is more" rather than "this is
                  ;; an item"
                  (cons (if (and detail (not open)) "  ···" "")
-                       '(:fg :bright-black))))
+                       '(:dim t))))
      (when (and detail open (getf row :item))
        (mapcar (lambda (l) (list (cons "            " nil)
-                                 (cons l '(:fg :bright-black))))
+                                 (cons l '(:dim t))))
                detail)))))
 
 (defun todos-lines (head cols)
@@ -478,10 +478,10 @@ Second value is the cursor's LINE, for the scroll offset (see `subagent-lines`).
          (sel (head-picker-sel head))
          (header (list (list (cons " todos " '(:bold t))
                              (cons "  ↑↓ moves · enter unfolds · esc closes"
-                                   '(:fg :bright-black)))
+                                   '(:dim t)))
                        (list nil)
                        (list (cons "  this session — the model's plan, live:"
-                                   '(:fg :bright-black)))))
+                                   '(:dim t)))))
          (todo-rows
           (if todos
               (loop for t2 in todos
@@ -497,10 +497,10 @@ Second value is the cursor's LINE, for the scroll offset (see `subagent-lines`).
                                   (cons (format nil " ~a" (getf t2 :content))
                                         (if (= i sel) (list :reverse t) nil))))
               (list (list (cons "    none written yet. The model writes them with todo_write."
-                                '(:fg :bright-black))))))
+                                '(:dim t))))))
          (repo-header (list nil
                             (list (cons "  the repo's TODO.md — the operator's queue, read-only here:"
-                                        '(:fg :bright-black)))))
+                                        '(:dim t)))))
          (rows (repo-todo-rows-cached (getf (session-wiring s) :workspace)))
          ;; APPEND, not mapcar: each row renders to several lines, and mapcar
          ;; leaves a list of lists — which prints into the cell instead of
@@ -509,10 +509,10 @@ Second value is the cursor's LINE, for the scroll offset (see `subagent-lines`).
     (values
      (append header todo-rows repo-header
              (if repo-lines repo-lines
-                 (list (list (cons "    (nothing in it)" '(:fg :bright-black)))))
-             (list (list (cons "" '(:fg :bright-black)))
+                 (list (list (cons "    (nothing in it)" '(:dim t)))))
+             (list (list (cons "" '(:dim t)))
                    (list (cons "  the file is in the workspace; this pane never writes it."
-                               '(:fg :bright-black)))))
+                               '(:dim t)))))
      ;; the cursor is on the session's plan, which starts after the header
      (+ (length header) sel))))
 
@@ -520,7 +520,7 @@ Second value is the cursor's LINE, for the scroll offset (see `subagent-lines`).
   (let ((events (head-peeked head)))
     (append
      (list (list (cons " peeked scrollback " '(:bold t))
-                 (cons "  (esc closes)" '(:fg :bright-black))))
+                 (cons "  (esc closes)" '(:dim t))))
      (if events
          (let ((lines nil))
            (dolist (env events)
@@ -533,7 +533,7 @@ Second value is the cursor's LINE, for the scroll offset (see `subagent-lines`).
                  (t (push (format nil "[~a]" name) lines)))))
            (mapcar (lambda (l) (wrap-segments (list (cons l nil)) cols))
                    (nreverse lines)))
-         (list (list (cons "  nothing" '(:fg :bright-black))))))))
+         (list (list (cons "  nothing" '(:dim t))))))))
 
 
 
@@ -575,7 +575,7 @@ Returns the lines and, as a second value, the cursor's LINE — see
          (current (setting-value head key))
          (sel (head-picker-sel head))
          (header (list (list (cons (format nil " ~a " label) '(:bold t))
-                             (cons "  ↑↓ then enter · esc closes" '(:fg :bright-black)))
+                             (cons "  ↑↓ then enter · esc closes" '(:dim t)))
                        nil)))
     (values
      (append header
@@ -588,7 +588,7 @@ Returns the lines and, as a second value, the cursor's LINE — see
                                                  (here '(:fg :bright-cyan :bold t))
                                                  (t nil)))))
                  (list (list (cons (format nil "  (the daemon reports no choices for ~a — has it been asked?)" key)
-                                   '(:fg :bright-black))))))
+                                   '(:dim t))))))
      (+ (length header) sel))))
 
 (defun mode-picker-lines (head cols)

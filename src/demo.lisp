@@ -11,7 +11,7 @@
     (with-tui-terminal (out)
       (let ((s (make-screen cols rows))
             (title (style-index '(:bold t :fg :cyan)))
-            (dim (style-index '(:fg :bright-black))))
+            (dim (style-index '(:dim t))))
         (screen-put-string s 0 2 "leticl — the letibot head, in Common Lisp" title)
         (screen-put-string s 1 2 "cell buffer + diff painter, protocol 18 ready" dim)
         ;; a box, drawn the way render will draw chrome

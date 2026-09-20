@@ -121,22 +121,96 @@ restart.")
 
 ;;; ---------------------------------------------------------------- border ;;;
 
+(defun %workspace (s)
+  "The session root with `$HOME` written as `~`.
+
+Twelve columns of an eighty-column header spent on `/home/dead` is twelve
+columns not spent on the session's name."
+  (let ((ws (getf (session-wiring s) :workspace))
+        (home (uiop:getenv "HOME")))
+    (cond ((null ws) nil)
+          ((and home (>= (length ws) (length home))
+                (string= (subseq ws 0 (length home)) home))
+           (concatenate 'string "~" (subseq ws (length home))))
+          (t ws))))
+
+(defun %turn-index (s)
+  "`1/71` — which turn of how many the session has reached, or NIL.
+
+From the SETTLED decisions' turn ids and the transcript's, which is the only
+number the head has; the daemon does not send a turn count."
+  (let ((turns (remove-duplicates
+                (remove nil (mapcar (lambda (d) (getf d :turn-id))
+                                    (session-settled-decisions s)))
+                :test #'string=)))
+    (when turns (format nil "1/~d" (length turns)))))
+
+(defun %usage-numbers (s)
+  "The four telemetry numbers the header shows, each present only when measured:
+context size, cache fraction, decode rate, elapsed — plus output tokens.
+
+A number nobody measured is ABSENT, not zero: `0% cached` is the same defect as a
+rate nobody took, and it is the rule the meter and the footer are both held to."
+  (let* ((turn (session-turn s))
+         (state (and turn (getf turn :state)))
+         (usage (or (and state (getf state :usage))
+                    ;; a finished turn's usage is kept past the end of the turn,
+                    ;; so the header still says what the conversation costs while
+                    ;; nothing is running — which is most of the time
+                    (and turn (getf turn :usage))))
+         (timings (and state (getf state :timings)))
+         (parts nil))
+    (when (and usage (numberp (getf usage :prompt-tokens))
+               (plusp (getf usage :prompt-tokens)))
+      (push (format nil "~a ctx" (thousands (getf usage :prompt-tokens))) parts))
+    (when (and usage (numberp (getf usage :cached-tokens))
+               (numberp (getf usage :prompt-tokens))
+               (plusp (getf usage :prompt-tokens)))
+      (push (format nil "~d% cached"
+                    (round (* 100 (/ (float (getf usage :cached-tokens))
+                                     (getf usage :prompt-tokens)))))
+            parts))
+    (when (and timings (numberp (getf timings :predicted-ms))
+               (plusp (getf timings :predicted-ms))
+               (numberp (getf usage :predicted-tokens))
+               (plusp (getf usage :predicted-tokens)))
+      (push (format nil "~d tok/s"
+                    (round (/ (* (float (getf usage :predicted-tokens)) 1000.0)
+                              (getf timings :predicted-ms))))
+            parts))
+    (when (and timings (numberp (getf timings :wall-ms)) (plusp (getf timings :wall-ms)))
+      (push (duration (getf timings :wall-ms)) parts))
+    (when (and usage (numberp (getf usage :predicted-tokens))
+               (plusp (getf usage :predicted-tokens)))
+      (push (format nil "~a out" (thousands (getf usage :predicted-tokens))) parts))
+    (nreverse parts)))
+
 (defun top-border (head cols)
+  "The header: what this session IS on the left, what it is COSTING on the right.
+
+The shape is letibot's, measured against its live screen: `▌ <title>  <workspace>`
+then `N/M · model · $cost · ctx · cached% · rate · elapsed · out`. Ours showed
+the session ID and `seq N · N heads`, which is instrumentation where the reference
+has information — the operator can read the title of their own session and cannot
+read a seq number."
   (let* ((s (head-session head))
          (title (if (plusp (length (session-title s)))
                     (session-title s) (session-session-id s)))
          (model (%model-name s))
-         (left (format nil " leticl · ~a~@[ · ~a~] " title
-                       (and (plusp (length model)) model)))
-         ;; the meter rides beside the token count, because that is where the
-         ;; question "what is this costing me" is already being asked
+         (ws (%workspace s))
+         (turn (%turn-index s))
          (money (spent-text))
-         (right (format nil "~@[~a · ~]seq ~a · ~d heads "
-                        money (session-seq s) (length (session-heads s))))
+         (left (format nil "▌ ~a~@[  ~a~]" title ws))
+         (right (format nil "~{~a~^ · ~} "
+                        (remove nil
+                                (append (list turn)
+                                        (list (and (plusp (length model)) model))
+                                        (list money)
+                                        (%usage-numbers s)))))
          (pad (max 0 (- cols (string-width left) (string-width right)))))
-    (list (cons left '(:bold t :fg :cyan))
-          (cons (make-string pad :initial-element #\─) '(:fg :bright-black))
-          (cons right '(:fg :bright-black)))))
+    (list (cons left '(:bold t))
+          (cons (make-string pad :initial-element #\space) nil)
+          (cons right '(:dim t)))))
 
 ;;; ----------------------------------------------------------- alarm line ;;;
 ;;;
@@ -211,12 +285,12 @@ ever on a number that is zero."
                      (format nil " · ~d queued" (length (head-queued head))) ""))
          (stall (or (stall-text) ""))
          (text (format nil " ~a~a~a~a" note scroll queued stall))
-         (style (if (head-connected head) '(:fg :bright-black) '(:fg :red :bold t))))
+         (style (if (head-connected head) '(:dim t) '(:fg :red :bold t))))
     (list (cons (%truncate-width text (max 1 (or cols 1)))
                 style)
           (cons (make-string (max 0 (- cols (min cols (string-width text))))
                              :initial-element #\─)
-                '(:fg :bright-black)))))
+                '(:dim t)))))
 
 ;;; --------------------------------------------------------------- hint bar ;;;
 
@@ -240,10 +314,56 @@ narrow screen."
       ((eq (head-mode head) :todos) "↑↓ moves · enter or tab unfolds · esc closes")
       ((eq (head-mode head) :peek) "esc closes")
       ((eq (head-mode head) :picker) "↑↓ then enter switches · esc closes")
+      ((eq (head-mode head) :mode-picker) "↑↓ then enter · esc closes")
+      ((eq (head-mode head) :models-picker) "↑↓ then enter · esc closes")
       ((head-secret-req head) "enter submits · esc refuses the password")
       ((%open-decision head) "a row number answers · ↑↓ then enter · or type an option")
-      (t "ctrl-s sessions · ctrl-p todos · ctrl-r thinking · tab completes · /help"))
-    '(:fg :bright-black))))
+      ;; the ordinary line, in letibot's own order and wording — measured off
+      ;; its screen: `enter send · ctrl+c exit` FIRST, because those are the two
+      ;; keys a person needs before any chord, then the chords, then completion
+      ;; and help last.
+      (t "enter send · ctrl+c exit · ctrl-s sessions · ctrl-p todos · ctrl-g subagents · ctrl-r thinking · ctrl-t tool output · ctrl-q jobs · tab completes /commands · /help"))
+    '(:dim t))))
+
+;;; ---------------------------------------------------------- turn status ;;;
+;;;
+;;; Ported from `App::turn_status`. It rides the composer box's BOTTOM edge,
+;;; beside the alarm triangle — which is why the reference has no separate status
+;;; row: the box's edge is the status line when the box is there, and a plain row
+;;; only when the screen is too short for a box.
+;;;
+;;; Two refusals, both measured in the reference's own comment:
+;;;
+;;;  · a turn out of a SNAPSHOT has no timestamps, so `now - 0` is an epoch
+;;;    difference and the line read `Responding · 496940h16m`. Unmeasured means
+;;;    *started before this head attached*, never a number nobody took;
+;;;  · a zero count is a zero field wearing a measurement's clothes: nothing yet
+;;;    is NO field, not `· 0 tok`.
+
+(defun turn-status (head)
+  "The running turn in a few words, or NIL when no turn is running."
+  (let* ((turn (session-turn (head-session head)))
+         (state (and turn (getf turn :state)))
+         (running (and state (string= (getf (getf turn :state) :state) "running"))))
+    (when running
+      (let ((since (if *turn-started-ms*
+                       (format nil " · ~a" (duration (- (internal-real-time-ms)
+                                                        *turn-started-ms*)))
+                       " · started before this head attached"))
+            (tokens (getf turn :tokens))
+            (spin (string (spinner *now-ms*))))
+        (concatenate
+         'string
+         "Responding"
+         (if (and (numberp tokens) (plusp tokens))
+             (format nil " · ~a tok" (thousands tokens))
+             ;; the character count where the server has not spoken, or a
+             ;; messages-backend turn whose seam carries no token count
+             (let ((chars (length (or (getf turn :text) ""))))
+               (if (plusp chars) (format nil " · ~a chars" (thousands chars)) "")))
+         since
+         " · "
+         spin)))))
 
 ;;; --------------------------------------------------------- the composer ;;;
 ;;;
@@ -256,22 +376,45 @@ narrow screen."
 ;;; them, so the composer never eats the last row of the transcript.
 
 (defun composer-title (head)
-  "The title on the box's top edge: what this session is, or nothing."
-  (let ((s (head-session head)))
-    (if (plusp (length (session-title s)))
-        (format nil " ~a " (session-title s))
-        " input ")))
+  "The right-hand label of the box's TOP edge: how many subagents are running.
+
+**Not the session title** — I put one there first, guessing from a code comment
+instead of reading the code, and the operator's screen showed a bare `╭───╮` where
+mine said `╭ hello, what we are doing here ───╮`. The reference's top edge carries
+`N subagents running` when any are, and nothing otherwise.
+
+Counted from the SUBAGENT events whose latest state for that session is `running`,
+which is the same fold the subagents pane draws."
+  (let* ((seen (make-hash-table :test #'equal))
+         (running 0))
+    ;; newest first, so the FIRST state seen for a session is its latest
+    (dolist (env (session-subagents (head-session head)))
+      (let ((sid (getf env :session-id)))
+        (when (and sid (not (gethash sid seen)))
+          (setf (gethash sid seen) t)
+          (when (string= (or (getf env :state) "") "running") (incf running)))))
+    ;; NOTHING is nothing: returning a single space put a stray `╭ ───` on the box
+    ;; where letibot draws `╭───`. Measured column-by-column against the two
+    ;; screens, which is the only way a one-column difference shows up.
+    (if (plusp running)
+        (format nil " ~d subagent~p running " running running)
+        "")))
 
 (defun composer-wiring (head)
-  "The right end of the box's bottom edge: what this session is talking to."
-  (let* ((w (session-wiring (head-session head)))
-         (model (%model-name (head-session head)))
-         (dialect (getf w :dialect))
-         (endpoint (getf w :endpoint))
-         (parts (remove nil (list model dialect endpoint))))
+  "The right-hand label of the box's BOTTOM edge: the alarm and the turn's status.
+
+**Not the wiring** — same mistake as the title, same fix: the reference's bottom
+edge is where the alarm triangle and the running turn's own status live, and the
+wiring's model is in the header where it belongs.
+
+An alarm is `⚠` alone, because the counters behind it are `/status`'s and were
+never worth a resident sentence of bright yellow. With nothing running and nothing
+wrong, the edge is bare."
+  (let ((parts (remove nil (list (and (alarmed-p head) "⚠")
+                                 (turn-status head)))))
     (if parts
         (format nil " ~{~a~^ · ~} " parts)
-        " leticl ")))
+        " ")))
 
 (defun %composer-rows (head cols)
   "How many rows the composer buffer renders to, wrapped at the box's inner width.
@@ -299,10 +442,10 @@ down a line on every keystroke."
          (w (max 1 (- cols 2)))
          (name (%truncate-width title w))
          (fill (max 0 (- w (string-width name)))))
-    (list (cons "╭" '(:fg :bright-black))
+    (list (cons "╭" '(:dim t))
           (cons name '(:bold t))
-          (cons (make-string fill :initial-element #\─) '(:fg :bright-black))
-          (cons "╮" '(:fg :bright-black)))))
+          (cons (make-string fill :initial-element #\─) '(:dim t))
+          (cons "╮" '(:dim t)))))
 
 (defun composer-box-bottom (head cols)
   "The box's bottom edge, with the wiring at its right end."
@@ -310,10 +453,10 @@ down a line on every keystroke."
          (w (max 1 (- cols 2)))          ; the two edges are one column each
          (name (%truncate-width wiring w))
          (fill (max 0 (- w (string-width name)))))
-    (list (cons "╰" '(:fg :bright-black))
-          (cons (make-string fill :initial-element #\─) '(:fg :bright-black))
-          (cons name '(:fg :bright-black))
-          (cons "╯" '(:fg :bright-black)))))
+    (list (cons "╰" '(:dim t))
+          (cons (make-string fill :initial-element #\─) '(:dim t))
+          (cons name '(:dim t))
+          (cons "╯" '(:dim t)))))
 
 (defun composer-box-body (head cols)
   "The body rows of the box: `│ › text… │` per wrapped row."
@@ -325,12 +468,12 @@ down a line on every keystroke."
                     (uiop:split-string buf :separator '(#\newline)))))
     (loop for line in lines
           for shown = (%truncate-width line inner)
-          collect (list (cons "│ " '(:fg :bright-black))
+          collect (list (cons "│ " '(:dim t))
                         (cons "› " '(:fg :bright-cyan :bold t))
                         (cons shown nil)
                         (cons (make-string (max 0 (- inner (string-width shown)))
                                            :initial-element #\space) nil)
-                        (cons " │" '(:fg :bright-black))))))
+                        (cons " │" '(:dim t))))))
 
 (defun composer-line (head cols)
   "The composer, as the rows it occupies — box plus body, or one bare line.

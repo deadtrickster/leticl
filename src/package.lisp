@@ -65,6 +65,8 @@
    #:turn-footer-lines #:queued-lines #:render-split #:edit-split-lines
    ;; the item-id maps (S3): what a settled row keeps of the live card
    #:item-facts #:note-call-started #:note-call-finished #:note-call-decision
+   #:display-target #:verb-label #:call-target-of #:note-call-target
+   #:note-assistant-targets #:note-snapshot-targets #:*call-targets*
    #:*item-facts* #:*call-facts* #:*call-started-ms*
    ;; pane scrolling (P41): one offset for every pane, counting from the TOP
    #:pane-scroll-by #:pane-scroll-max #:pane-view #:reset-pane-scroll

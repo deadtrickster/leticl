@@ -196,7 +196,7 @@ terminal row, so the caller places them like any other."
                             (r (%half-text (split-pair-right p) rpanelw numw
                                            new-start *split-new*)))
                         (push (list (cons l '(:fg :bright-white))
-                                    (cons +split-sep+ '(:fg :bright-black))
+                                    (cons +split-sep+ '(:dim t))
                                     (cons r '(:fg :bright-white)))
                               out))))))
             (when (plusp dropped)

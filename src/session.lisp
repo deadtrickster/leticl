@@ -14,6 +14,11 @@
 
 (in-package #:leticl)
 
+(defvar *turn-started-ms* nil
+  "When the running turn began, on our clock, or NIL for a turn this head did not
+watch start — one that came out of a snapshot. NIL is why the composer's edge can
+say *started before this head attached* instead of a duration nobody measured.")
+
 (defstruct (session (:constructor %make-session))
   (session-id "" :type string)
   (head-id "" :type string)
@@ -62,6 +67,10 @@ refuses it: 'not an array with a fill pointer'.)"
         (session-warnings session) (getf snapshot :warnings)
         (session-heads session) (getf snapshot :heads)
         (session-items session) (%items-vector (getf snapshot :items)))
+  ;; ONE PASS over the items, for the display targets a head that attached AFTER
+  ;; a turn has no live proposals to learn from: the assistant row is the only
+  ;; place that call is described, and a `ToolResult` row carries no target.
+  (note-snapshot-targets (getf snapshot :items))
   session)
 
 (defun ingest-hello (session hello)
@@ -70,6 +79,16 @@ refuses it: 'not an array with a fill pointer'.)"
         (session-dropped session) (getf hello :dropped)
         (session-sessions session) (getf hello :sessions)
         (session-wiring session) (getf hello :wiring))
+  ;; THE TITLE FROM THE SESSION LIST. Our `session-title` was only ever set by a
+  ;; `session_renamed` EVENT, so a head that attached to a named session showed
+  ;; its raw id in the header while letibot showed the name. Measured against
+  ;; letibot's own screen: `▌ hello, what we are doing here` against
+  ;; `▌ s-1789639478142928813`. The name is in the Hello's session list, which is
+  ;; also what the picker reads.
+  (let ((brief (find (session-session-id session) (getf hello :sessions)
+                     :key (lambda (b) (getf b :session-id)) :test #'string=)))
+    (when brief
+      (setf (session-title session) (or (getf brief :title) ""))))
   (unless (getf hello :snapshot)
     ;; a resume served from scrollback: the gap follows as Event frames, and
     ;; our mark is where we asked to resume from
@@ -125,13 +144,26 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
           (session-expected-seq session) seq)
     (case name
       ((:turn-started)
+       ;; WHEN it started, on our own clock, so the composer's edge can say how
+       ;; long this has been going. A turn that came out of a SNAPSHOT has no
+       ;; start time — `*turn-started-ms*` stays NIL and the edge says "started
+       ;; before this head attached" rather than a duration nobody measured.
+       (setf *turn-started-ms* (and (not (getf env :snapshot)) (internal-real-time-ms)))
        (setf (session-turn session)
              (list :turn-id (getf env :turn-id) :model (getf env :model)
                    :ledger-head (getf env :ledger-head)
                    :text "" :reasoning "" :raw-calls ""
-                   :calls nil :appended nil :progress nil
+                   :calls nil :appended nil :progress nil :tokens 0
                    :state (list :state "running")))
        :dirty)
+      ((:tokens-generated)
+       ;; **The live token counter.** This event was on the wire and handled by
+       ;; NOTHING in this head — the same shape as the four frames P2 found, and
+       ;; it is why the box's edge could not show `· 188 tok` the way letibot's
+       ;; does.
+       (let ((turn (session-turn session)))
+         (when turn (setf (getf turn :tokens) (getf env :tokens)))
+         (if turn :dirty :quiet)))
       ((:delta)
        (let ((turn (session-turn session)))
          (when turn
@@ -151,6 +183,8 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
                        :processed (getf env :processed) :time-ms (getf env :time-ms))))
          (if turn :dirty :quiet)))
       ((:tool-call-proposed)
+       ;; the live proposal carries the daemon's OWN derivation of the target
+       (note-call-target (getf env :call-id) (getf env :target))
        (let ((turn (session-turn session)))
          (when turn
            (push (list :call-id (getf env :call-id) :name (getf env :name)
@@ -186,6 +220,11 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
                        :edit (getf env :edit))))
          (if call :dirty :quiet)))
       ((:turn-finished)
+       ;; FEED THE METER. It was defined, exported and called from nowhere, so the
+       ;; header showed no cost at all while the reference sat there saying
+       ;; `$0.0768` — dead code that looked like a feature, which is the same
+       ;; shape as the four frames P2 found.
+       (note-turn-cost (getf env :usage))
        (let ((turn (session-turn session)))
          (when turn
            (setf (getf turn :state)
@@ -225,6 +264,7 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
          ;; an Assistant row ends a round, so the call ids in the staging table
          ;; must not survive into the next one
          (when (and body (string= (getf body :type) "assistant"))
+           (note-assistant-targets body)
            (%round-boundary)))
        :dirty)
       ((:decision-requested)

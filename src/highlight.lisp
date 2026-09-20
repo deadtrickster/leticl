@@ -113,7 +113,7 @@ NIL when the shim is absent, the language is unknown, or the parse failed."
 index → colour decision lives here, in the head, not in the parser."
   (case role
     (0 nil)
-    (1 '(:fg :bright-black))   ; comment
+    (1 '(:dim t))   ; comment
     (2 '(:fg :green))          ; string
     (3 '(:fg :bright-yellow))  ; number / constant
     (4 '(:fg :cyan))           ; type
