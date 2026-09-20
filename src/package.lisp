@@ -69,6 +69,8 @@
    #:*todos-open* #:*repo-todo-cache* #:*repo-todo-stamp*
    ;; clicks (P27)
    #:click-row->sel #:click-header-lines
+   ;; the config pane (P21), editable in place
+   #:*head-setting-rows*
    ;; engines a model may want to call directly while restyling
    #:highlight-fence #:lang-for-fence
    ;; keys

@@ -183,7 +183,7 @@ shows the candidates on the status line."
       ((and (eq type :mouse)
             (eq (getf key :kind) :press)
             (member (head-mode head) '(:picker :jobs :subagents :todos
-                                       :mode-picker :models-picker)))
+                                       :mode-picker :models-picker :config)))
        (let* ((row (getf key :y))
               ;; the pane starts at screen row 1 (row 0 is the top border), and
               ;; the offset says how many pane LINES are hidden above it
@@ -210,6 +210,9 @@ shows the candidates on the status line."
                          (:picker (length (session-sessions (head-session head))))
                          (:mode-picker (length (setting-choices head "mode")))
                          (:models-picker (length (setting-choices head "model")))
+                         ;; the config pane's cursor walks the HEAD's own rows,
+                         ;; which are the ones it can change
+                         (:config (length *head-setting-rows*))
                          (t 0)))
               (move-cursor (n)
                 (setf (head-picker-sel head)
@@ -246,6 +249,12 @@ shows the candidates on the status line."
             ;; read that subagent's scrollback without moving this session there.
             ;; It is `peek`, the command that existed as a frame nobody sent.
             (case (head-mode head)
+              (:config
+               ;; ENTER CHANGES IT. The pane lists the head's own choices and it
+               ;; can change them in place — which is what was asked for: a pane
+               ;; with runtime-editable configurations, not a list to read.
+               (let ((key (nth (head-picker-sel head) *head-setting-rows*)))
+                 (awhen key (%flip-head-setting head it))))
               (:subagents
                (let ((row (nth (head-picker-sel head) (head-subagents head))))
                  (awhen (and row (getf row :session-id))
@@ -673,6 +682,7 @@ together."
                  (:todos (todos-lines head 80))
                  (:mode-picker (mode-picker-lines head 80))
                  (:models-picker (models-picker-lines head 80))
+                 (:config (values (config-lines head (head-settings head) 80) 4))
                  (t (values nil nil)))
              (declare (ignore lines))
              (or sel-line 0)))

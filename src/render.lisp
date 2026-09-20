@@ -145,7 +145,7 @@ scrolls the transcript by a row every keystroke.
              (case (head-mode head)
                (:help (help-lines cols))
                (:status (status-screen-lines head cols))
-               (:config (config-lines (head-settings head) cols))
+               (:config (config-lines head (head-settings head) cols))
                (:jobs (jobs-lines head cols))
                (:subagents (subagent-lines head cols))
                (:peek (peek-lines head cols))

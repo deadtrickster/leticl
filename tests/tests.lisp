@@ -1914,3 +1914,36 @@ the two from drifting."
     (setf (head-picker-sel h) 2)
     (click-header-lines h)
     (is (= 2 (head-picker-sel h)) "the cursor is restored after asking")))
+
+;;; ---------------------------------------------- the config pane (P21) ;;;
+
+(def-test the-config-pane-is-editable-in-place (:suite leticl)
+  "The ask was a pane with runtime-editable settings, not a list to read. The
+HEAD's own rows can be changed here; the daemon's cannot, and the pane says so."
+  (let ((*prefs* (make-prefs))
+        (h (%make-head)))
+    (setf (head-prefs h) (list :show-reasoning nil :show-tools nil :raw-calls nil
+                               :diff "split"))
+    (let ((lines (config-lines h nil 80)))
+      (let ((text (segs-of lines)))
+        (is (search "settings" text) "the pane names itself")
+        (is (search "editable" text) "and says which half is editable")
+        (is (search "read-only here" text) "and which is not")
+        (is (search "✎" text) "the head's rows are marked changeable")
+        (is (search "diff = split" text) "and their values are shown from the LIVE plist"))
+      ;; enter flips the selected row
+      (setf (head-picker-sel h) 0)       ; `diff` is the first head row
+      (leticl::%flip-head-setting h "diff")
+      (is (string= "unified" (getf (head-prefs h) :diff)) "enter flipped the diff shape")
+      (is (search "diff = unified" (segs-of (config-lines h nil 80)))
+          "and the pane says so on the next frame"))))
+
+(def-test the-config-pane-shows-the-live-value-not-the-file (:suite leticl)
+  "The file is where a choice is WRITTEN; the plist is what is in effect. Between a
+change and a save the two disagree, and the pane must show what is true."
+  (let ((h (%make-head)))
+    (setf (head-prefs h) (list :show-reasoning t :show-tools nil :raw-calls nil
+                               :diff "unified"))
+    (let ((text (segs-of (config-lines h nil 80))))
+      (is (search "thinking = open" text) "the live fold, not the file's")
+      (is (search "tools = folded" text) "and the other"))))

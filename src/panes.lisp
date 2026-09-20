@@ -88,16 +88,77 @@ cursor's LINE as a second value (see `subagent-lines`)."
        (list (row "warnings" (length (session-warnings s))))
        (list (row "denials" (length (session-denials s))))))))
 
-(defun config-lines (settings cols)
-  "One row per setting. `SettingRow` is `key`/`value`/`source`/`editable`
-(protocol.rs:214) — NOT `name`, which this read for a while and therefore
-printed `NIL` for every row's label. `source` says where the value came from
-(a flag, a project store, `permission.json`); `editable` names the slash verb
-that changes it, or is empty for one that needs a restart."
+(defparameter *head-setting-rows*
+  '("diff" "thinking" "tools" "raw_calls")
+  "The settings the HEAD owns, in the config pane's own order.
+
+The daemon's rows are its own and read-only here — this head cannot change what a
+daemon flag is. But the four above are the head's own choices, they live in
+`head.toml` (S5), and a pane that lists them and cannot change them is a pane that
+teaches the operator the wrong thing about what is editable.")
+
+(defun %head-setting-value (head key)
+  "One of the HEAD's own settings, READ FROM THE LIVE PLIST rather than from the
+file — the file is where it is written, the plist is what is actually in effect,
+and the two disagree for the moment between a change and a save."
+  (cond ((string= key "diff") (or (getf (head-prefs head) :diff) "split"))
+        ((string= key "thinking")
+         (if (getf (head-prefs head) :show-reasoning) "open" "folded"))
+        ((string= key "tools")
+         (if (getf (head-prefs head) :show-tools) "open" "folded"))
+        ((string= key "raw_calls")
+         (if (getf (head-prefs head) :raw-calls) "on" "off"))
+        (t "?")))
+
+(defun %flip-head-setting (head key)
+  "Flip one of the HEAD's own settings in the live plist and persist it.
+
+The plist is the source of truth while the head runs; `head-into-prefs` reads it
+back at save time, so there is one direction of flow and no second copy to keep in
+step."
+  (cond
+    ((string= key "diff")
+     (setf (getf (head-prefs head) :diff)
+           (if (string= (%head-setting-value head "diff") "split") "unified" "split")))
+    ((string= key "thinking") (%flip-fold head :show-reasoning))
+    ((string= key "tools") (%flip-fold head :show-tools))
+    ((string= key "raw_calls")
+     (setf (getf (head-prefs head) :raw-calls)
+           (not (getf (head-prefs head) :raw-calls)))))
+  (ignore-errors (save-head-prefs head))
+  (setf (head-dirty head) t))
+
+(defun config-lines (head settings cols)
+  "The settings screen: the HEAD's own rows first, EDITABLE IN PLACE, then the
+daemon's, which are its own and read-only here.
+
+The operator asked for this directly — a config option, and a pane with
+runtime-editable settings — and the reference's pane has the same split: the
+head's choices are a file the pane writes, the daemon's are flags it cannot.
+
+`SettingRow` is `key`/`value`/`source`/`editable` (protocol.rs:214) — NOT `name`,
+which this read for a while and therefore printed `NIL` for every row's label.
+`source` says where a value came from; `editable` names the slash verb that
+changes it, or is empty for one that needs a restart."
   (declare (ignore cols))
-  (append
+  (let ((sel (head-picker-sel head)))
+    (append
    (list (list (cons " settings " '(:bold t))
-               (cons "  (the daemon owns this list; it ships with the setting)"
+               (cons "  ↑↓ moves · enter changes a head row · esc closes"
+                     '(:fg :bright-black)))
+         (list (cons "  this head's own choices — editable, and written to head.toml:"
+                     '(:fg :bright-black))))
+   ;; the head's rows: a ✎ says it can be changed here, and Enter does it
+   (loop for key in *head-setting-rows*
+         for i from 0
+         collect (list (cons (format nil "  ~a ~a = ~a"
+                                     (if (= i sel) "❯" " ")
+                                     key (%head-setting-value head key))
+                             (if (= i sel) (list :reverse t :bold t)
+                                 (list :fg :bright-cyan)))
+                       (cons "  ✎" '(:fg :bright-black))))
+   (list nil
+         (list (cons "  the daemon's settings — its own, and read-only here:"
                      '(:fg :bright-black))))
    (mapcar (lambda (r)
              (list (cons (format nil "  ~a" (getf r :key)) '(:bold t))
@@ -109,7 +170,7 @@ that changes it, or is empty for one that needs a restart."
                    (awhen (getf r :choices)
                      (cons (format nil "  of ~{~a~^|~}" it)
                            '(:fg :bright-black)))))
-           settings)))
+           settings))))
 
 (defun jobs-lines (head cols)
   "The background jobs, with the cursor on row `head-picker-sel`. Second value is
