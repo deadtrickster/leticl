@@ -8,6 +8,11 @@
   ;; curated, not :use — fiveam also exports `run', which must stay leticl:run
   (:import-from #:it.bese.fiveam
                 #:def-suite #:in-suite #:def-test #:is
+                ;; `skip` was USED by highlight-rust-roles and never imported, so
+                ;; the one test that guards the no-shim contract died with
+                ;; "The function LETICL/TESTS::SKIP is undefined" the moment the
+                ;; .so was absent — which is the only time it runs.
+                #:skip
                 #:signals #:finishes #:for-all
                 #:gen-integer #:gen-string #:gen-list #:gen-one-element
                 #:run!)

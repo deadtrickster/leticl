@@ -487,21 +487,121 @@ mode - subtodos shown, when all subtodos checked section becomes also checked\"*
     (is (null (cdr seg)) "plain style")))
 
 (def-test highlight-rust-roles (:suite leticl)
-  "With the shim, a Rust snippet gets keyword/number/comment roles."
-  (unless (hl-available-p)
-    (skip "the rano shim is not built"))
-  (let* ((src (format nil "fn main() {~%    let x = 42; // c~%}"))
-         (lines (highlight-lines src (lang-for "a.rs"))))
-    (is (= 3 (length lines)) "three lines")
-    (is (some (lambda (s) (and (string= "fn" (car s))
-                               (equal (cdr s) '(:fg :magenta))))
-              (first lines)) "fn is a keyword")
-    (is (some (lambda (s) (and (string= "42" (car s))
-                               (equal (cdr s) '(:fg :bright-yellow))))
-              (second lines)) "42 is a number")
-    (is (some (lambda (s) (and (string= "// c" (car s))
-                               (equal (cdr s) '(:dim t))))
-              (second lines)) "// c is a comment")))
+  "With the shim, a Rust snippet gets keyword/number/comment roles.
+
+The `skip` is the whole body's alternative, not a statement before it: fiveam's
+`skip` RECORDS a skipped result and returns, it does not abort the test, so the
+assertions below used to run anyway on a box with no `.so` and fail three times
+over. (`skip` was also never imported into this package, so the same line died
+with `The function LETICL/TESTS::SKIP is undefined`.) This file's contract is
+that every highlight test passes with no shim present; it did not."
+  (if (not (hl-available-p))
+      (skip "the rano shim is not built")
+      (let* ((src (format nil "fn main() {~%    let x = 42; // c~%}"))
+             (lines (highlight-lines src (lang-for "a.rs"))))
+        (is (= 3 (length lines)) "three lines")
+        (is (some (lambda (s) (and (string= "fn" (car s))
+                                   (equal (cdr s) '(:fg :magenta))))
+                  (first lines)) "fn is a keyword")
+        (is (some (lambda (s) (and (string= "42" (car s))
+                                   (equal (cdr s) '(:fg :bright-yellow))))
+                  (second lines)) "42 is a number")
+        (is (some (lambda (s) (and (string= "// c" (car s))
+                                   (equal (cdr s) '(:dim t))))
+                  (second lines)) "// c is a comment"))))
+
+(defun repo-file (relative)
+  "The text of a file in the repo, for a test that asserts on SOURCE.
+
+`source-of` below does the same for `src/*.lisp` and is defined further down the
+file; this one takes any path, because the alien boundary's guard has to agree
+with what RANO.md says about it and that is not a Lisp file."
+  (let ((p (merge-pathnames relative
+                            (uiop:pathname-directory-pathname
+                             (or *load-truename* #p"./")))))
+    (uiop:read-file-string
+     (if (probe-file p)
+         p
+         (merge-pathnames relative #p"/home/dead/Projects/leticl/")))))
+
+(defun occurrences (needle haystack)
+  "How many times NEEDLE appears in HAYSTACK, non-overlapping."
+  (loop with n = 0 with at = 0
+        for i = (search needle haystack :start2 at)
+        while i do (incf n) (setf at (+ i (length needle)))
+        finally (return n)))
+
+(def-test the-alien-call-pins-the-vectors-it-hands-over (:suite leticl)
+  "MEASURED: `sb-sys:vector-sap` on two Lisp vectors, unpinned, across the FFI.
+
+`%class-grid-uncached` hands the shim the raw addresses of a byte vector to read
+and a grid vector to WRITE, and SBCL's collector moves objects. Without
+`sb-sys:with-pinned-objects` a collection during the call may relocate either,
+and what that buys is not a crash: it is the shim writing role indices into
+whatever Lisp object was moved into that memory — silent heap corruption
+discovered somewhere else entirely, which is the class of bug this head has
+already died of once. `RANO.md` documented an allocation strategy
+(`sb-alien:make-alien`) the code did not use, so the note said the boundary was
+safe when it was not.
+
+A source assertion, in the shape of `live-state-tables-are-defvar` above: the
+failure is a race, so there is no input that reproduces it on demand, and the
+only honest test is that the guard is lexically around the call."
+  (let* ((src (repo-file "src/highlight.lisp"))
+         (pin (search "(sb-sys:with-pinned-objects" src))
+         (sap (search "(sb-sys:vector-sap" src)))
+    (is (not (null pin)) "the shim call pins its vectors")
+    (is (and pin sap (< pin sap))
+        "and the pinning form OPENS before the first SAP is taken — a SAP computed
+outside it is already the wrong answer by the time the form is entered")
+    (is (= 2 (occurrences "(sb-sys:vector-sap" src))
+        "both vectors cross the boundary, and both are inside the one form")
+    (is (search "with-pinned-objects" (repo-file "RANO.md"))
+        "and RANO.md says so too, so the note and the code agree")))
+
+(def-test the-highlight-grid-is-memoised-on-its-bytes (:suite leticl)
+  "MEASURED: one `hl_grid` call per visible fence per frame, at 10 Hz.
+
+The head rebuilds the whole viewport every frame, so every visible fence and
+every visible diff panel paid a full tree-sitter parse for bytes that had not
+changed. `class-grid` is the one cache in this renderer with no invalidation
+problem: the grid is a pure function of `(lang-id, source)` and both are in the
+key, so a stale entry cannot exist — a changed fence is a different key.
+
+The assertion is the shim call COUNTER, not the answer: the answer is the same
+with or without the memo, which is precisely why a test on the answer would not
+have caught this."
+  (hl-memo-clear)
+  (if (hl-available-p)
+      (let ((src (format nil "fn main() {~%    let x = 42;~%}"))
+            (id (lang-for "a.rs")))
+        (let ((before *hl-grid-calls*))
+          (let ((a (class-grid src id)))
+            (is (= (1+ before) *hl-grid-calls*) "a cold grid reaches the shim once")
+            (let ((b (class-grid src id)))
+              (is (= (1+ before) *hl-grid-calls*)
+                  "and the same bytes again do not reach it at all")
+              (is (eq a b) "the second caller gets the first caller's grid"))))
+        ;; end to end, through the path the fences actually take
+        (let ((before *hl-grid-calls*))
+          (highlight-fence (list "let x = 1;") "rust")
+          (highlight-fence (list "let x = 1;") "rust")
+          (is (= (1+ before) *hl-grid-calls*)
+              "a fence drawn twice is parsed once — this is what the frame loop was
+paying for")))
+      (is (null (class-grid "fn main() {}" 1))
+          "no shim, no grid, and no call to count — the degrade path is the contract"))
+  ;; the bound, which holds with or without a shim because it is arithmetic
+  (is (> +hl-memo-max-chars+ 0) "a source past this size is not memoised at all")
+  (is (> +hl-memo-entries+ 0) "and the table is dropped whole past this many")
+  (when (hl-available-p)
+    (hl-memo-clear)
+    (loop for i from 0 below (* 3 +hl-memo-entries+)
+          do (class-grid (format nil "let x~a = ~a;" i i) (lang-for "a.rs")))
+    (is (<= (hash-table-count leticl::*hl-memo*) +hl-memo-entries+)
+        "a fence is arbitrary size and a transcript is arbitrarily long: an
+unbounded memo is a leak with a nicer name"))
+  (hl-memo-clear))
 
 ;;; -------------------------------------------------------------- diff ;;;
 
@@ -567,6 +667,44 @@ delete the insertions and you get `old` back."
     (is (string= "sum" (subseq "    let sum = a + b;"
                                (first (first ns)) (second (first ns))))
         "the span is 'sum'")))
+
+(def-test diff-intra-line-emphasis-reaches-the-screen (:suite leticl)
+  "MEASURED: the word highlight was dead code — correct, tested, and unreachable.
+
+`%pair-rows` bound `add-start` AND `add-end` to `i` AFTER consuming the addition
+run, where `pair_rows` (`diff.rs:555`) binds `add_start` BEFORE the loop at
+`:556-558`. So `(= add-end add-start)` was true on every hunk, the pairing branch
+was never taken, `%pair-rows` returned a vector of all NIL, and nothing
+`word-spans`, `%merge-spans`, `%emphasize` or `+diff-emphasis+` computed could
+ever reach a segment. `diff-renamed-variable-highlights-only-the-name` above
+passes either way, which is exactly why this survived: it tests `word-spans` in
+isolation, one level below the wiring. This test is one level up, on the emitted
+segments, and it is the whole proof."
+  (let ((rows (render-diff (list "    let total = a + b;")
+                           (list "    let sum = a + b;")
+                           :width 60 :intra-line t)))
+    (is (find (cons "total" '(:bg 52 :bold t :underline t))
+              (first rows) :test #'equal)
+        "the removed line emphasises the word that changed, and only it")
+    (is (find (cons "sum" '(:bg 22 :bold t :underline t))
+              (second rows) :test #'equal)
+        "and so does the added line")
+    (is (find (cons "a " '(:bg 52)) (first rows) :test #'equal)
+        "the unchanged run beside it keeps the plain role background"))
+  (is (null (find-if (lambda (seg) (getf (cdr seg) :underline))
+                     (apply #'append
+                            (render-diff (list "    let total = a + b;")
+                                         (list "    let sum = a + b;")
+                                         :width 60 :intra-line nil))))
+      "and `:intra-line nil` still emits none — which is what BOTH reference call
+sites ask for (`app.rs:8817,9934` pass `intra_line: false`), so the flag is the
+decision and the wiring is not")
+  ;; the pairing itself, one level below the segments
+  (let ((paired (leticl::%pair-rows (list '(:removed 0) '(:added 0))
+                                    (vector "    let total = a + b;")
+                                    (vector "    let sum = a + b;"))))
+    (is (not (null (aref paired 0))) "the removal is paired with the addition")
+    (is (not (null (aref paired 1))) "and the addition with the removal")))
 
 (def-test diff-unrelated-lines-are-not-word-highlighted (:suite leticl)
   "Otherwise the whole line is emphasis, which is the same as none."
@@ -818,6 +956,8 @@ handle. If you add one, add it here."
                   ("term" "*raw-fd*")
                   ("highlight" "*hl-so*")
                   ("highlight" "*hl-attempted*")
+                  ("highlight" "*hl-memo*")        ; a push must not drop the parses
+                  ("highlight" "*hl-grid-calls*")  ; nor reset what a profile is reading
                   ("protocol" "*request-counter*")))
     (let ((how (declared-with (source-of (first pair)) (second pair))))
       (is (eq :defvar how)
@@ -2254,18 +2394,17 @@ file, which a tint does not."
       (is (= 60 (string-width
                  (format nil "~{~a~}" (mapcar #'car row))))
           "each row is exactly the width the caller asked for"))
-    (is (search "10 a" text) "the left gutter numbers from the FILE, not the excerpt")
-    (is (search "11-b" text) "the removed line is signed MINUS on the left")
-    (is (search "11+B" text) "and the added line PLUS on the right")
+    (is (search "10   a" text) "the left gutter numbers from the FILE, not the excerpt")
+    (is (search "11 - b" text) "the removed line is signed MINUS on the left")
+    (is (search "11 + B" text) "and the added line PLUS on the right")
     (is (search "│" text) "the panels are separated")
     ;; and the two SIDES differ where the change is: a bug that filled one table
     ;; from both sides drew the after-text in both panels, which looks like a
     ;; correctly aligned row and is exactly what it must not be
-    (let* ((row (second (mapcar (lambda (l) (mapcar #'car l))
-                                (render-split old new :width 60
-                                              :old-start 10 :new-start 10))))
-           (left (first row))
-           (right (third row)))
+    (let* ((row (second (render-split old new :width 60 :old-start 10 :new-start 10)))
+           (sep (position leticl::+split-sep+ row :key #'car :test #'string=))
+           (left (format nil "~{~a~}" (mapcar #'car (subseq row 0 sep))))
+           (right (format nil "~{~a~}" (mapcar #'car (subseq row (1+ sep))))))
       (is (search "-" left) "the left half carries the removal")
       (is (search "+" right) "the right half carries the addition")
       (is (not (string= left right)) "and the two are not the same text"))))
@@ -2290,7 +2429,7 @@ its width, or the separator would move and the panels would stop lining up."
   (let* ((lines (render-split (list "a" "c") (list "a" "b" "c")
                               :width 60 :old-start 1 :new-start 1))
          (text (%split-text lines)))
-    (is (search "+b" text) "the inserted line is signed")
+    (is (search "+ b" text) "the inserted line is signed")
     ;; one separator PER ROW, and the blank half keeps its width — that is what
     ;; keeps the two panels lined up rather than ragged
     (dolist (row lines)
@@ -2301,17 +2440,206 @@ its width, or the separator would move and the panels would stop lining up."
   ;; a pure deletion
   (let ((text (%split-text (render-split (list "a" "b" "c") (list "a" "c")
                                          :width 60 :old-start 1 :new-start 1))))
-    (is (search "-b" text) "the deleted line is signed")))
+    (is (search "- b" text) "the deleted line is signed")))
 
 (def-test a-narrow-pane-degrades-rather-than-refusing (:suite leticl)
-  "A narrow pane gets a narrow split rather than no diff — an edit drawn cramped is
-still an edit the operator can read, and an edit NOT drawn is one they approved
-blind — but below the point where a panel can hold a gutter and code at once it
-says so instead of overprinting."
-  (let ((text (%split-text (render-split (list "a" "b") (list "a" "B")
-                                         :width 20 :old-start 1 :new-start 1))))
-    (is (search "too narrow" text) "it says the pane is too narrow")
-    (is (search "unified" text) "and names the alternative")))
+  "MEASURED: at any width the split view DRAWS the diff.
+
+`+split-min-body+` is a FLOOR (`sidediff.rs:168,471-477`, `Geometry::of`), and
+this file read it as a GATE: below it `render-split` answered one yellow row —
+`{n}-column pane is too narrow for two panels; /diff unified` — and no diff at
+all. That contradicted this file's own header, which promises \"a narrow pane
+gets a narrow split rather than no diff, because an edit drawn cramped is still
+an edit they can read, and an edit not drawn is one they approved blind\", and it
+is how an operator ends up approving an edit they never saw.
+
+The measurement is the refusal's own width: 20 columns, where the panel body
+`(20-3)/2 - (numw+3)` is 3 and the floor lifts it to 8."
+  (let* ((lines (render-split (list "a" "b") (list "a" "B")
+                              :width 20 :old-start 1 :new-start 1))
+         (text (%split-text lines)))
+    (is (not (search "too narrow" text)) "it does not refuse")
+    (is (not (search "/diff unified" text)) "and does not send the reader away")
+    (is (= 2 (length lines)) "one context row and the changed pair")
+    (is (search "- b" text) "the removal is drawn")
+    (is (search "+ B" text) "and so is the addition"))
+  ;; the floor itself, at the point the old gate fired
+  (is (= 8 (leticl::%panel-body-width 8 1 t))
+      "a body of 3 columns is LIFTED to the floor, not refused")
+  (is (= 22 (leticl::%panel-body-width 24 0 nil))
+      "and a panel with room keeps it — sign and space only, line numbers off"))
+
+(def-test the-split-cell-spends-a-space-either-side-of-the-sign (:suite leticl)
+  "MEASURED: `number space sign space code`, the reference's `numw + 3`.
+
+`Geometry::of` (`sidediff.rs:167`) gives a cell `numw + 3` columns of gutter
+before its code — the number, a space, the sign, a space — and `side_lines`
+(`:363`) emits `{gutter}{sign} {body}`. This file spent `numw + 1`: no space
+either side of the sign, so the code started two columns earlier than the
+reference's on BOTH panels and `+B` read as one token rather than a sign and a
+line. Asserted as the exact segments, text and style together, because that is
+the only assertion that catches a fix which moves the text and forgets the tint."
+  (let ((rows (render-split (list "a" "b" "c") (list "a" "B" "c")
+                            :width 60 :old-start 10 :new-start 10)))
+    (is (equal (second rows)
+               (list (cons "11 " '(:fg :red :bg 52))
+                     (cons "-"   '(:fg :red :bg 52))
+                     (cons " "   '(:bg 52))
+                     (cons "b"   '(:bg 52))
+                     (cons "                      " '(:bg 52))
+                     (cons " │ " '(:dim t))
+                     (cons "11 " '(:fg :green :bg 22))
+                     (cons "+"   '(:fg :green :bg 22))
+                     (cons " "   '(:bg 22))
+                     (cons "B"   '(:bg 22))
+                     (cons "                       " '(:bg 22))))
+        "the changed pair, column for column")
+    (is (equal (first rows)
+               (list (cons "10 " '(:dim t))
+                     (cons " " nil)
+                     (cons " " nil)
+                     (cons "a" nil)
+                     (cons "                      " nil)
+                     (cons " │ " '(:dim t))
+                     (cons "10 " '(:dim t))
+                     (cons " " nil)
+                     (cons " " nil)
+                     (cons "a" nil)
+                     (cons "                       " nil)))
+        "a context row spends the same columns, dim and untinted")))
+
+(def-test a-changed-split-row-is-tinted-to-the-panel-edge (:suite leticl)
+  "MEASURED: a changed half carries its role's background to the panel's edge.
+
+`side_lines` (`sidediff.rs:310-372`) paints the whole cell inside the line's own
+role — gutter, sign, code and the padding — with the sign keeping the green or
+red FOREGROUND and the number taking the row's foreground on a changed row. Both
+halves here were one flat `(:fg :bright-white)` segment: no `48;5;22`/`48;5;52`,
+no coloured sign, no coloured number. The padding is the half of this that is
+easy to miss — a tint that stops where the text stops is a ragged block, not a
+row — so the assertion is on the PAD segment's style."
+  (let* ((rows (render-split (list "b") (list "B") :width 40))
+         (row (first rows)))
+    (is (equal row
+               (list (cons "1 " '(:fg :red :bg 52))
+                     (cons "-"  '(:fg :red :bg 52))
+                     (cons " "  '(:bg 52))
+                     (cons "b"  '(:bg 52))
+                     (cons "             " '(:bg 52))      ; 13, to the panel edge
+                     (cons " │ " '(:dim t))
+                     (cons "1 " '(:fg :green :bg 22))
+                     (cons "+"  '(:fg :green :bg 22))
+                     (cons " "  '(:bg 22))
+                     (cons "B"  '(:bg 22))
+                     (cons "              " '(:bg 22))))   ; 14, the odd column
+        "both pads run to their panel's edge, each inside its own tint")
+    (is (equal '(:fg :red :bg 52) (cdr (second row)))
+        "the sign keeps its own foreground inside the tint")
+    (is (equal '(:fg :red :bg 52) (cdr (first row)))
+        "and the line number takes the row's foreground, not dim")
+    (is (null (find-if (lambda (s) (equal (cdr s) '(:fg :bright-white))) row))
+        "nothing is flat bright-white any more")))
+
+(def-test a-long-split-line-wraps-instead-of-being-truncated (:suite leticl)
+  "MEASURED: a half longer than its panel wraps; the other side goes blank.
+
+`side_lines`/`render_pair` (`sidediff.rs:270-287,308-326`) wrap each side inside
+its own column and emit `max(left_rows, right_rows)` rows, blanking whichever
+side ran out. This file called `fit-to-width` and a pair was always exactly one
+row, so the changed TAIL of any line longer than half the pane was silently
+dropped — which `diff.rs:336-341` names as \"the one thing a diff must not do\"."
+  (let ((rows (render-split (list "x") (list "aaaa bbbb cccc dddd eeee")
+                            :width 40)))
+    (is (= 2 (length rows)) "the pair is two terminal rows, not one")
+    (is (search "dddd eeee" (%split-text (list (second rows))))
+        "the tail is on the screen rather than cut off")
+    (is (equal (first (second rows))
+               (cons "                  " nil))
+        "the left panel is blank on the continuation, not a repeat of its line")
+    (dolist (row rows)
+      (is (= 40 (string-width (format nil "~{~a~}" (mapcar #'car row))))
+          "and every row is still exactly the width asked for"))))
+
+(def-test the-split-view-draws-its-hunk-headers-and-its-two-banners (:suite leticl)
+  "MEASURED: `no change`, the degraded banner and `@@ -o,co +n,cn @@`.
+
+`render_split` (`sidediff.rs:93-119,173-194`) emits all three; this file emitted
+none of them. Two hunks ran together with nothing between them, so the second
+read as a continuation of the first; two identical files returned NIL rather than
+saying so; and a diff that gave up on the minimal edit script said nothing at all
+in the split view while the unified view next to it announced it."
+  (is (equal (render-split (list "a") (list "a") :width 40)
+             (list (list (cons "no change" '(:dim t)))))
+      "identical sides say so, in the unified renderer's own words")
+  (let* ((old (loop for i from 1 to 30 collect (format nil "l~a" i)))
+         (new (loop for i from 1 to 30
+                    collect (if (member i '(3 25)) (format nil "L~a" i)
+                                (format nil "l~a" i))))
+         (rows (render-split old new :width 44 :context 1)))
+    (is (equal (first rows) (list (cons "@@ -2,3 +2,3 @@" '(:dim t))))
+        "the first hunk is headed, because there is more than one")
+    (is (equal (fifth rows) (list (cons "@@ -24,3 +24,3 @@" '(:dim t))))
+        "and so is the second, numbered from the FILE"))
+  (let* ((old (loop for i from 0 below 3000 collect (format nil "aaa ~a" i)))
+         (new (loop for i from 0 below 3000 collect (format nil "bbb ~a" (* i 7))))
+         (rows (render-split old new :width 80 :max-rows 4)))
+    (is (search "gave up" (%split-text (list (first rows))))
+        "a degraded diff announces itself in the split view too")
+    (is (search "more diff lines not shown" (%split-text (last rows)))
+        "and the overflow is disclosed in the reference's words — LINES, because
+the budget is now counted in terminal rows and a wrapped pair charges more than
+one of them")))
+
+(def-test a-trailing-newline-does-not-add-a-phantom-split-row (:suite leticl)
+  "MEASURED: `str::lines()` drops one final empty line; `uiop:split-string` keeps it.
+
+`sidediff.rs:451-452` splits the excerpt with `str::lines()`, which yields no
+final empty line for a text ending in a newline. `%lines-of` used
+`uiop:split-string` straight, so every side ending in `\\n` — which is every side
+of every real file edit — gained a blank row at the foot of the diff, signed and
+numbered, claiming a line that is not in the file."
+  (is (equal '("a" "b") (leticl::%lines-of (format nil "a~%b~%")))
+      "one trailing newline is a terminator, not a line")
+  (is (equal '("a" "") (leticl::%lines-of (format nil "a~%~%")))
+      "but a blank line that is really there survives")
+  (is (equal '("a") (leticl::%lines-of "a")) "and a text with no newline is one line")
+  (is (null (leticl::%lines-of "")) "an empty side is no lines at all")
+  (let ((edit (list :path "f.txt" :created nil :before-start 1 :after-start 1
+                    :before (format nil "a~%") :after (format nil "b~%"))))
+    (is (= 1 (length (edit-split-lines edit 60)))
+        "one changed line is ONE row, not a row and a phantom")))
+
+(def-test the-split-panels-are-syntax-coloured (:suite leticl)
+  "MEASURED: `edit-split-lines` dropped `(getf edit :path)` on the floor.
+
+`render_edit` (`sidediff.rs:443-460`) passes `lang_for(path)` into the render and
+`class_grid` colours BOTH panels (`:106-107,389-433`). Here the shim,
+`class-rows` and `role-style` all existed and only the path in was missing, so
+the split panels were flat while the markdown fences beside them were coloured.
+
+Without the shim this asserts the contract instead: a path nobody has a grammar
+for renders plain, which is what a terminal with no palette reads anyway."
+  (if (hl-available-p)
+      (let* ((edit (list :path "f.rs" :created nil :before-start 1 :after-start 1
+                         :before "let x = 1;" :after "let y = 42;"))
+             (row (first (edit-split-lines edit 64))))
+        (is (find (cons "let" '(:fg :magenta :bg 52)) row :test #'equal)
+            "the keyword is a keyword on the removed side, over its tint")
+        (is (find (cons "42" '(:fg :bright-yellow :bg 22)) row :test #'equal)
+            "and the number a number on the added side, over its own")
+        (is (null (class-rows (list "let x = 1;") 0))
+            "language 0 is no colour, not a guess"))
+      (let ((row (first (edit-split-lines
+                         (list :path "f.rs" :before-start 1 :after-start 1
+                               :before "let x = 1;" :after "let y = 42;")
+                         64))))
+        (is (null (class-rows (list "let x = 1;") (lang-for "f.rs")))
+            "no shim, no grid")
+        (is (search "let x = 1;" (format nil "~{~a~}" (mapcar #'car row)))
+            "the code is still drawn — the contract of this file")
+        (is (null (intersection '(:magenta :bright-yellow :cyan)
+                                (mapcar (lambda (seg) (getf (cdr seg) :fg)) row)))
+            "and carries no syntax colour: no shim is a dimmer screen, not a crash"))))
 
 (def-test the-card-chooses-the-view-from-the-pref (:suite leticl)
   "The choice is the operator's toggle and nothing else — not the width, which is

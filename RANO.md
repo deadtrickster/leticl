@@ -80,9 +80,21 @@ The shim is structured to **not inherit** the reference implementation's weaknes
   shim owns its own static state, so the query compiles once per language for the life of the
   process and the `Parser` is reused. The Rust original recompiles the query on every render
   because it allocates a fresh `Highlighter` per call.
-- **Caller-provided output buffer.** The Lisp side allocates the grid
-  (`sb-alien:make-alien (array unsigned8 n)`), passes pointer + capacity, the shim fills it and
-  returns the count. No Rust-allocated string to free, no leak path.
+- **Caller-provided output buffer, pinned for the call.** The Lisp side allocates the grid as an
+  ordinary `(unsigned-byte 8)` vector, passes `sb-sys:vector-sap` + capacity, the shim fills it and
+  returns the count. No Rust-allocated string to free, no leak path, and no copy back — the shim
+  writes straight into the vector the caller will read.
+
+  **Both vectors are inside `sb-sys:with-pinned-objects` for the duration of the call.** This note
+  used to describe `sb-alien:make-alien (array unsigned8 n)`, which the code has never used; what
+  the code did was hand raw SAPs to the shim with no guard at all. SBCL's collector moves objects,
+  and `vector-sap` hands out the address a vector has *right now*, so a collection during the alien
+  call may relocate either vector while the shim is reading and writing through those addresses.
+  The failure is not a crash: it is the shim writing role indices into whatever object was moved
+  into that memory, which is silent heap corruption discovered somewhere else entirely. Pinning is
+  what makes a *Lisp* vector legal as the caller-provided buffer at all; `make-alien` would be the
+  other answer, and it costs a copy back for nothing. The SAPs are taken **inside** the pinning
+  form — one computed outside it is already stale by the time the form is entered.
 - **`catch_unwind` at every entry point.** A Rust panic unwinding across an `extern "C"`
   boundary aborts the process; tree-sitter parsing arbitrary model output is exactly the input
   that can hit an edge case. The shim catches and returns an error code instead.

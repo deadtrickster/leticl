@@ -113,6 +113,8 @@
    #:peek-lines #:config-lines #:status-screen-lines #:help-lines #:picker-lines
    ;; highlight
    #:hl-available-p #:lang-for #:class-grid #:role-style #:highlight-lines
+   #:class-rows #:classed-segments
+   #:hl-memo-clear #:*hl-grid-calls* #:+hl-memo-max-chars+ #:+hl-memo-entries+
    ;; diff
    #:diff-lines #:diff-lines-with #:hunks #:render-diff #:expand-tabs
    #:word-spans #:apply-diff-to-new #:apply-diff-to-old #:diff-ops #:diff-degraded
