@@ -77,10 +77,10 @@ See §5 for what a mismatch does.
 | `Mode{client_request_id,expected_seq,name,consented}` | `protocol.rs:438` | inline plist | `panes.lisp:517`, `panes.lisp:1218` | **DIFFERS — broken.** `%send-mode` with `consented = nil` puts `"consented":null` on the wire. `probe:` `{"frame":"mode",…,"consented":null}`. `consented: bool` with `#[serde(default)]` accepts a *missing* key, not a present `null`; the frame fails to deserialise and `server.rs:898` breaks the connection loop with `Err`. See gap **W1** |
 | `Slash{client_request_id,expected_seq,line}` | `protocol.rs:460` | `%send-slash`, and the unknown-verb fallthrough | `commands.lisp:197`, `commands.lisp:173` | SAME |
 | `Askpass{prompt,command}` | `protocol.rs:473` | — | — | MISSING, correctly: it is `letibot-askpass`'s frame, not a TUI's. The reference TUI does not send it either (`client.rs:351` is the helper's) |
-| `Secret{req_id,secret}` | `protocol.rs:478` | inline plist; `secret` is the buffer or `nil` | `editor.lisp:159`, `editor.lisp:164` | SAME — `probe:` `{"frame":"secret","req_id":"r","secret":null}`; `Option<String>` reads `null` |
-| `Screen{req_id,cols,rows_n,rows}` | `protocol.rs:492` | `make-screen-answer` | `protocol.lisp:196`, `head.lisp:186` | DIFFERS — the answer is sent during the *drain*, from `head-last-rows`, i.e. the previous frame. The reference queues the id and answers after `screen()` with the rows it just drew (`driver.rs:97-99`, `app.rs:2723-2732`). See gap **W6** |
-| `Answer{client_request_id,req_id,option_id,pattern,note}` | `protocol.rs:505` | `make-answer`, `pattern`/`note` omitted when nil | `protocol.lisp:118`, `editor.lisp:71`,`106` | SAME |
-| `AnswerQuestion{client_request_id,req_id,answer}` | `protocol.rs:558` | `make-answer-question` | `protocol.lisp:136`, `editor.lisp:68` | DIFFERS — only `{"option":N}` is ever built (`probe:` `"answer":{"option":0}`). `QuestionAnswer` also has `note` and `free` (`question.rs:55-65`), and `free` is the half the operator's requirement names (`question.rs:10-12`). See gap **W7** |
+| `Secret{req_id,secret}` | `protocol.rs:478` | inline plist; `secret` is the buffer, or **the key is absent** when the password is refused | `editor.lisp:159`, `editor.lisp:164` | SAME — `secret` is `Option<String>`, which reads a missing key and a null alike, so the refusal now goes out with no `secret` key at all (§4.5's elision). `probe:` used to show `"secret":null` |
+| `Screen{req_id,cols,rows_n,rows}` | `protocol.rs:492`, sent as the terminal size at `driver.rs:287` | `make-screen-answer`, which requires COLS and ROWS-N and no longer derives either | `protocol.lisp:362-386`, `head.lisp:681-704` | **DIFFERS only in WHEN (gap W6, now closed for the drain path)**; the *numbers* are SAME as of §4.4 — this used to send `(length (first rows))`, the character length of row zero **with its ANSI bytes counted**, so a 100-column frame reported 100 + every SGR byte in its top row and the daemon believed it. `head-last-cols`/`head-last-rows-n` are set beside `head-last-rows` by one paint, so all three describe one frame |
+| `Answer{client_request_id,req_id,option_id,pattern,note}` | `protocol.rs:505` | `make-answer`, `pattern`/`note` omitted when nil | `protocol.lisp:195`, `editor.lisp:71`,`106` | SAME |
+| `AnswerQuestion{client_request_id,req_id,answer}` | `protocol.rs:644-648` | `make-answer-question`, which now REFUSES an empty answer; `note` and `free` are both buildable | `protocol.lisp:225-263`, `editor.lisp:68` | W7's `note`/`free` half is SAME; **§4.5 is closed** — `answer` is a bare required `QuestionAnswer` and not an `Option`, so `"answer": null` fails the whole `ClientFrame` deserialiser and ends the daemon's read loop. It was unreachable only because the sole caller passes `(list :option idx)` |
 | `ListSessions` | `protocol.rs:569` | `make-list-sessions` | `protocol.lisp:145`, `commands.lisp:61` | SAME |
 | `ListTodos` | `protocol.rs:577` | `make-list-todos` | `protocol.lisp:148`, `commands.lisp:119` | SAME |
 | `ListJobs` | `protocol.rs:585` | `make-list-jobs` | `protocol.lisp:151`, `commands.lisp:111` | SAME |
@@ -152,7 +152,7 @@ where it changes what the ack reports.
 | `HeadAttached{head_id,kind,identity}` | `event.rs:669` | adds to `session-heads`, loud-only | `session.lisp:365-373` | SAME — leticl keeps the whole presence row, the reference keeps only a count (`app.rs:2700`) |
 | `HeadDetached{…}` | `event.rs:674` | removes, loud-only | `session.lisp:374-378` | SAME |
 | `Warning{code,detail}` | `event.rs:680` | pushes to `session-warnings` | `session.lisp:350-354` | **DIFFERS — the fold writes into a slot nothing reads.** `session-warnings` is set by `ingest-snapshot` (`session.lisp:67`) and pushed here, and grep over `render.lisp`/`cards.lisp`/`chrome.lisp`/`panes.lisp` finds no reader. The reference puts every warning into the transcript where it happened (`app.rs:2766-2803`), and splits `slash`/`slash_refused` listings into a pane and `job_output_refused` into the jobs pane. See gap **W13** |
-| `ScreenRequested{req_id}` | `event.rs:685` | answered in `%handle-frame` | `head.lisp:185-188` | DIFFERS — answers with the previous frame; see **W6** |
+| `ScreenRequested{req_id}` | `event.rs:685` | QUEUED in `%handle-frame`, answered by `%answer-screen-requests` after the paint | `head.lisp:307-322`, `head.lisp:681-704` | SAME — **W6 is closed**: the id is queued and the answer carries the rows just drawn, with the size that paint used (`driver.rs:93-99`, `app.rs:2723-2732`) |
 | `SecretRequested{req_id,prompt,command,deadline}` | `event.rs:690` | raises the secret card | `head.lisp:189-192` | SAME |
 | `SecretSettled{req_id,given,by}` | `event.rs:699` | — | falls to `(t :quiet)` `session.lisp:400` | **MISSING.** `probe:` disposition `:QUIET`, nothing else. The reference dismisses its own card when somebody else answered first and posts who (`app.rs:2750-2765`). Without it leticl's masked password field stays up over a `sudo` that has already been answered — and the daemon's own `secret_late` warning (`server.rs:403-410`), which would explain it, is a `Warning`, which leticl also does not render (**W13**). See gap **W14** |
 | `Explain{turn_id,plan}` | `event.rs:705` | `(t :quiet)` | `session.lisp:400` | SAME — the reference is `Disposition::Filtered` and nothing else (`app.rs:2825`) |
@@ -310,21 +310,80 @@ of different lengths the wrong one is retired first. See gap **W16**.
 ### 4g. The decision answer path
 
 Permission: `make-answer` with `option_id`, plus `pattern` for `AllowAlways` and
-`note` for `deny_and_tell`, each omitted otherwise (`protocol.lisp:118-134`,
+`note` for `deny_and_tell`, each omitted otherwise (`protocol.lisp:195-212`,
 `editor.lisp:44-59`, `106`) — **SAME** as `driver.rs:127-134` /
-`protocol.rs:505-549`. Question: `make-answer-question` with `{option: N}` only
-— see **W7**. `can_decide: true` is advertised and honoured, so the
+`protocol.rs:505-549`. Question: `make-answer-question`, which builds
+`{option: N}`, `{note: …}`, `{free: …}` or a combination, and **refuses an empty
+answer** — see §4.5 below. `can_decide: true` is advertised and honoured, so the
 `REJECT_READ_ONLY` path is not reachable; neither side advertises
 `FEATURE_QUESTION_ANSWERS` (`protocol.rs:259`), and the reference's
 `Caps::default()` (`protocol.rs:277-285`) is `queue 1024, can_decide true,
 features []`, which is byte-for-byte what leticl sends. **SAME.**
 
+### 4.5. A key whose value is NIL is omitted, and that is the only spelling the daemon always accepts
+
+**Three field shapes on the Rust side, and they do not agree about a present
+`null`:**
+
+| shape | missing key | present `null` |
+|---|---|---|
+| `Option<T>` | `None` | `None` |
+| `T` with `#[serde(default)]` | the default | **ERROR** |
+| a bare `T` | **ERROR** | **ERROR** |
+
+So absence is never worse than null and is strictly better for the middle case —
+and the middle case is the one that has cost this head two sockets:
+
+- `Mode.consented` (`protocol.rs:452`) — every mode but `allow-all` broke the
+  daemon's read loop and dropped the connection until the call site wrote `:false`;
+- `ReseatSession.summarise` (`protocol.rs:519`) — the same, fixed the same way;
+- **`AnswerQuestion.answer`** (`protocol.rs:644-648`) — latent, and the reason
+  this is written down: `QuestionAnswer` is a bare required struct, so
+  `"answer": null` fails the WHOLE `ClientFrame` deserialiser. Unreachable only
+  because the sole caller passes `(list :option idx)`.
+
+**A hazard fixed three times by hand is a pattern, not an accident.** Both halves
+of the general answer are now in the tree:
+
+1. **`%encode-object` elides a NIL-valued key** (`json.lisp`), which closes the
+   `Option<T>` and `#[serde(default)]` shapes for every future site, in the one
+   place that writes bytes. The two hand-fixed sites keep their explicit `:false`
+   — that is a VALUE and reads better on the wire than absence — and are asserted
+   to still say `false` rather than nothing.
+2. **`make-answer-question` refuses an empty answer**, which no encoder rule can
+   reach: for a bare required field, missing and null are both fatal, so the frame
+   must not be built. Verified by encoding what the refusal prevents — the elision
+   leaves no `answer` KEY at all, and serde rejects that just as hard.
+
+**The root cause is that NIL is overloaded in Lisp** — it is both `false` and
+`nothing` — and an encoder cannot tell which one it is looking at, so the
+ambiguity is resolved where the knowledge is: `:false` is how a caller says *this
+nil is a false*, and every other nil means there is nothing to say.
+
+**An array element is not a key** and keeps its null: `[null]` is a value in a
+position, and a list element has no absence to fall back to.
+
+The disclosure rule in `protocol.lisp`'s header — *fields whose presence is the
+disclosure are always written, present and zero/null rather than omitted* — is the
+DAEMON's rule about the frames it SENDS (`dropped`, `created`, `snapshot`), and
+this encoder writes only the client's. Nothing this head sends is a disclosure of
+that kind, which is why an earlier test of the opposite rule was asserting a
+property of the other side of the wire.
+
+**Asserted as an invariant** rather than site by site:
+`no-client-frame-this-head-can-build-carries-a-null` walks every constructor in
+`protocol.lisp`, encodes it at the arguments its call sites use, and asserts there
+is no `null` and that the frame still decodes.
+
 ### 4h. Secrets
 
-`SecretRequested` → masked field → `Secret{req_id, secret|null}`: SAME
-(`head.lisp:189-192`, `editor.lisp:147-167` vs `app.rs:2734-2748`,
-`driver.rs:195`). `SecretSettled` is unhandled — **W14**. `ServerFrame::Secret`
-is ignored on both sides. `Askpass` belongs to the helper, not here.
+`SecretRequested` → masked field → a `Secret` frame with the password, or with **no
+`secret` key** when it is refused (§4.5's elision; `secret` is `Option<String>`, so
+absence reads as a refusal exactly as `null` did): SAME
+(`head.lisp:323-344`, `editor.lisp:383-415` vs `app.rs:2734-2748`,
+`driver.rs:195`). `SecretSettled` is handled — the card comes down when somebody
+else answers it. `ServerFrame::Secret` is ignored on both sides. `Askpass` belongs
+to the helper, not here.
 
 ### 4i. `Peeked`, `Settings`, `Slash`, jobs and subagents
 
@@ -383,7 +442,7 @@ frame, a new pane, or a fold that changes shape).
 | **W3** | `NewSession.workspace` always `""` | the new session's read-only tools get seated at the daemon's cwd, *"and every path in it resolved, so the only symptom was answers about the wrong tree"* | `protocol.rs:599-607`, `driver.rs:147-150` | `protocol.lisp:160-164` | **S** |
 | **W4** | `Sessions.created` and `.current` dropped | `/new` and `--new TITLE` create a session and leave you in the old one — a command whose effect is invisible | `app.rs:1736-1744` | `head.lisp:230-234` | **S** |
 | **W5** | `Bye` is not terminal | a refusal the daemon meant as final becomes a 2 s reconnect loop; a version skew is then unreadable and unescapable | `app.rs:1886-1889`, `client.rs:548` | `head.lisp:262-266`, `head.lisp:283-316` | **S** |
-| **W6** | `Screen` answers with the previous frame | the one frame in the system whose whole point is *what the operator is looking at right now* answers with what they were looking at one tick ago; at 30 ms a tick this is usually harmless and at a resize or a pane change it is a lie | `driver.rs:93-99`, `app.rs:2723-2732` | `head.lisp:185-188` | **M** |
+| ~~**W6**~~ | `Screen` answered with the previous frame | **CLOSED**, and §4.4 with it. The id is queued in the frame fold and answered after the paint, from `head-last-rows` **plus** `head-last-cols`/`head-last-rows-n` — one paint, one frame, and the size is a required argument of `make-screen-answer` because deriving it from a row's length reported bytes instead of columns | `driver.rs:93-99`, `app.rs:2723-2732` | `head.lisp:681-704` | **done** |
 | **W7** | `AnswerQuestion` can only carry `option` | `note` and `free` are two thirds of the vocabulary and `free` is the half the requirement names: *"opencode style free user reply input"*. Without it a typed answer to a question is unreachable | `question.rs:55-65`, `question.rs:10-20` | `editor.lisp:68-69` | **M** |
 | **W8** | `Resync.dropped` / `.scrubbed` discarded | `/status`'s `dropped` and `scrubbed` under-report after any resync, which is exactly when they are worth reading | `app.rs:1843-1845` | `head.lisp:204-212` | **S** |
 | **W9** | `ToolStarted` leaves a proposed call `proposed` | the running card never appears: `○ bash ls · proposed` for the whole call instead of `◐ bash ls · 3.2s`. Measured: `probe:` `CALL-STATE-AFTER-STARTED = "proposed"` | `app.rs:2356-2400`, `view.rs:523-536` | `session.lisp:139-146`, `236-243` | **S** |
@@ -426,8 +485,8 @@ assertion is "what state the fold left".
 | **W3** | the `new_session` frame's `workspace` is non-empty and equals the head's cwd | fake daemon |
 | **W4** | after a `sessions` frame with `created: "s-2"` following a `/new`, a `{"frame":"switch","session_id":"s-2"}` is on the wire; after a plain `/sessions` list, nothing is | fake daemon |
 | **W5** | after a `bye` frame, `(head-running h)` is nil and no further `attach` is written even after `(setf (head-last-reconnect h) 0)` and another loop pass | fake daemon |
-| **W6** | with `head-last-rows` set to `("old")`, a `screen_requested` envelope followed by a paint writes a `screen` frame whose `rows` are the **painted** rows, not `("old")` | fake daemon (the existing `*stdout*` string-stream paint harness at `tests.lisp:1411` composes with it) |
-| **W7** | a typed reply with no option selected writes `"answer":{"free":"…"}`; an option plus text writes `{"option":N,"note":"…"}`; neither writes an empty object | fake daemon |
+| ~~**W6**~~ | done: `the-screen-answer-is-the-frame-that-was-just-drawn` (rows are the painted ones) and `the-screen-answer-reports-columns-and-not-characters` (the size is the frame's column count, while the row's own character length is larger because the escapes are in it) | fake daemon (the `*stdout*` string-stream paint harness) |
+| **W7** | done: `a-question-answer-can-carry-a-typed-reply`; and `an-empty-answer-is-not-a-frame` asserts the third clause — an empty answer is REFUSED at the constructor, because `QuestionAnswer` is a required struct and `"answer": null` (or a missing `answer`) fails the daemon's whole `ClientFrame` deserialiser | pure |
 | **W8** | `*scrubbed-total*` and `session-dropped` both increase after a `resync` frame carrying `dropped: 3` and a `ScrubReport` summing 4 | fake daemon (the `resync` arm is in `%handle-frame`) |
 | **W9** | `proposed` → `tool_started` ⇒ `(getf (getf (call-view turn "c1") :state) :state)` is `"running"`, and the second call to `ToolStarted` for an unseen id still creates a row | pure fold |
 | **W10** | a `decision_requested` carrying `advice` and `call_id`, answered, leaves a settled record whose `:advice` and `:call-id` are both non-nil | pure fold |
@@ -444,7 +503,8 @@ assertion is "what state the fold left".
 | **W21** | fold a session full of subagents, jobs, denials and notices, then `ingest-snapshot` with a **different** `session_id` ⇒ all four are empty, and `*turn-started-ms*` is nil; with the **same** id, the queue survives (the reference keeps it, `app.rs:1938-1942`) | pure fold |
 | **W22** | a `hello` whose `sessions` include a row with `parent_session_id` leaves that row out of `session-sessions`; two `hello`s carrying `dropped: 2` leave `session-dropped` at 4; `session-head-id` is non-empty and a `command_issued` from that head id is not said | fake daemon + fold |
 | **W23** | none — delete `ack-frame` and its export. The guard is the existing ack test: the seq acked is the last seq **read**, asserted by feeding an event the head filters and checking the ack still names it | fake daemon (exists in spirit; worth pinning) |
-| **W24** | a `hello` whose `protocol_version` is not `+protocol-version+` stops the head with a note naming both numbers; and a grep test that `protocol.lisp`'s header comment and `leticl.asd`'s `:long-description` name the same number as `+protocol-version+` — the same shape as `live-state-tables-are-defvar` (`tests.lisp`, per `HACKING.md`), which greps the sources so a rule in a document cannot rot | fake daemon + a source grep |
+| **W24** | a `hello` whose `protocol_version` is not `+protocol-version+` says which WAY the skew runs and keeps the head attached; and a grep test that `protocol.lisp`'s header comment and `leticl.asd`'s `:long-description` name the same number as `+protocol-version+` — the same shape as `live-state-tables-are-defvar` (`tests.lisp`, per `HACKING.md`), which greps the sources so a rule in a document cannot rot. Done as `a-protocol-skew-says-its-direction-and-the-head-stays` (R5) | fake daemon + a source grep |
+| **W-null** | **the invariant, not the instance**: every `make-*` in `protocol.lisp` encodes a frame with no `null` anywhere AND still decodes; plus the two hand-fixed sites still say `consented:false` rather than nothing | pure (`no-client-frame-this-head-can-build-carries-a-null`) |
 
 **Order.** Two of these break the head outright and are each a few lines:
 **W25** (no reconnect or resume works at all) and **W1** (`/mode NAME` closes

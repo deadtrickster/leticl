@@ -689,9 +689,18 @@ PREVIOUS frame — one tick stale at rest, and simply the wrong screen across a
 resize or a pane change, which is the one thing this frame exists to report.
 Oldest request first."
   (when (head-screen-reqs head)
-    (let ((rows (or (head-last-rows head) (list ""))))
+    ;; **THE ROWS AND THE SIZE COME FROM THE SAME PAINT.** The size is a required
+    ;; argument of `make-screen-answer` and not derived from a row's length, because
+    ;; that derivation reported the character count of row zero with its escape bytes
+    ;; in it. `head-last-cols`/`head-last-rows-n` are set beside `head-last-rows` by
+    ;; `%render-and-paint`, so all three describe one frame; before any paint there is
+    ;; no frame to describe, and the head's own size is the honest answer.
+    (let* ((painted (head-last-rows head))
+           (cols (if painted (head-last-cols head) (head-cols head)))
+           (rows-n (if painted (head-last-rows-n head) (head-rows head)))
+           (rows (or painted (list (make-string (max 1 cols) :initial-element #\space)))))
       (dolist (req (nreverse (head-screen-reqs head)))
-        (%send head (make-screen-answer req rows)))
+        (%send head (make-screen-answer req cols rows-n rows)))
       (setf (head-screen-reqs head) nil))))
 
 (defun run-loop (head)

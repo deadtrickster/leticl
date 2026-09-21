@@ -225,8 +225,35 @@ than `{}`: there is no variant for \"not now\", because deferring is not sending
 (defun make-answer-question (req-id answer)
   "ANSWER is the QuestionAnswer payload: a choice, a note, a typed reply, or a
 choice and a note together — build it with `question-answer`, which is the only
-place that knows the three field names. There is no variant for \"not now\" —
-deferring is not sending (protocol.rs on ClientFrame::AnswerQuestion)."
+place that knows the three field names.
+
+**AN EMPTY ANSWER IS NOT A FRAME, and the constructor refuses to build one.**
+`QuestionAnswer` is a plain struct and NOT an `Option` on the wire
+(protocol.rs:644-648, question.rs:55-65), so `\"answer\": null` fails the WHOLE
+`ClientFrame` deserialiser — not one frame, the daemon's read loop, and the socket
+goes with it. Measured by encoding it: `make-answer-question` with a nil answer
+wrote `{\"frame\":\"answer_question\",…,\"answer\":null}`.
+
+This is the same hazard this head has already fixed twice by hand: `Mode.consented`
+(`%send-mode`, panes.lisp) and `ReseatSession.summarise` (commands.lisp) both had to
+become `:false` rather than NIL, because `#[serde(default)]` accepts a MISSING key
+and not a present `null`. **A hazard fixed three times by hand is a pattern, not an
+accident**, so this instance is refused where the frame is BUILT rather than left to
+the caller to remember — and see `%encode-object` (json.lisp) for the half that IS
+general: a NIL-valued key is elided now, which closes the `#[serde(default)]` and
+`Option<T>` cases for good. It cannot close this one, because both a missing key and
+a null are fatal to a required field, and that is why the refusal has to be here.
+
+There is nothing to fall back to, either: the daemon has `AnswerDefect::Empty` for
+exactly this payload (question.rs:73-75), so `{}` is a legal *empty* answer and null
+is not a legal anything. The head never wants either — `question-answer` returns NIL
+for \"nothing to say\", and *deferring is not sending*."
+  (when (null answer)
+    (error "make-answer-question: no answer to send. QuestionAnswer is a REQUIRED ~
+            struct on the wire, so an empty one is a frame the daemon cannot read — ~
+            and it fails the whole ClientFrame deserialiser, which ends its read loop ~
+            and the connection with it. Deferring is not sending: do not send the ~
+            frame."))
   (list :frame "answer_question"
         :client-request-id (next-request-id)
         :req-id req-id
@@ -332,9 +359,28 @@ abort (protocol.rs on ClientFrame::Detach)."
 ;;; The one frame only a head can answer: its own screen, as it drew it
 ;;; (protocol.rs on ClientFrame::Screen). ROWS is one string per row, escapes
 ;;; included, at the head's real size.
-(defun make-screen-answer (req-id rows)
+(defun make-screen-answer (req-id cols rows-n rows)
+  "This head's screen as it drew it: COLS columns by ROWS rows, one row per string.
+
+**COLS IS A COLUMN COUNT, NOT A STRING LENGTH.** This sent
+`(length (first rows))` — the character length of row zero, **ANSI escape bytes
+included** — so a 100-column frame reported 100 plus every SGR byte in its top row,
+and the daemon believed it. That is the worst available kind of wrong: not an error,
+a number that parses.
+
+The reference sends its terminal size (`driver.rs:287` — `self.client.screen(&req_id,
+size.0, size.1, …)`), and its own doc on this frame asks for *\"last rendered, ANSI
+and all, at its real terminal size\"* (protocol.rs on `ClientFrame::Screen`). The two
+numbers are REQUIRED arguments rather than derived here, because the derivation is
+exactly what was wrong: a row's length is a length of characters or bytes, and the
+head's own width is a count of CELLS by the one rule this tree has (`string-width`,
+width.lisp, whose tables are the reference's code point for code point).
+
+`%answer-screen-requests` passes `head-last-cols`/`head-last-rows-n` — the size the
+paint that produced ROWS actually used."
+  (declare (type fixnum cols rows-n))
   (list :frame "screen"
         :req-id req-id
-        :cols (length (first rows))
-        :rows-n (length rows)
+        :cols cols
+        :rows-n rows-n
         :rows rows))

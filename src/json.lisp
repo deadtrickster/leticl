@@ -56,13 +56,64 @@ by convention (PLAN.md §7)."
     (t (error "cannot encode ~s as json" v))))
 
 (defun %encode-object (plist s)
+  "Write PLIST as a JSON object, **OMITTING every key whose value is NIL**.
+
+**Absent is the only spelling that is always accepted, so it is the one this
+encoder writes.** Serde on the daemon side has three field shapes and they do not
+agree about a present `null`:
+
+  · `Option<T>` accepts a missing key AND a present null — both deserialise to
+    `None`, so dropping it costs nothing;
+  · `T` with `#[serde(default)]` accepts a MISSING key and **rejects** a present
+    null — serde's default fills in for absence, not for null;
+  · a bare required `T` accepts neither.
+
+So eliding is never worse than nulling and strictly better for the middle case —
+which is the case that has bitten this head twice: `Mode.consented` (protocol.rs:452,
+fixed in `%send-mode`) and `ReseatSession.summarise` (protocol.rs:519, fixed in
+commands.lisp) both had to be written `:false` by hand, because a present `null` on a
+`bool` broke the daemon's read loop and took the socket with it. A hazard fixed three
+times by hand is a pattern, not an accident.
+
+**The root cause is that NIL is overloaded in Lisp** — it is both `false` and
+`nothing` — and an encoder cannot tell which one it is looking at. So the ambiguity is
+resolved where the knowledge is: a key is written when its value is a VALUE, and
+`:false` is how a caller says *this nil is a false*. Both hand-fixed sites keep their
+explicit `:false`, because for a field like that the presence of `false` reads better
+than its absence; what changes is that a THIRD site cannot reach the daemon by
+accident. Measured over every constructor in protocol.lisp: no client frame this head
+can build carries a null anywhere.
+
+**The one shape this cannot help is the third**: a bare required field is fatal both
+missing and null, so an empty payload has to be refused where the frame is BUILT —
+see `make-answer-question`.
+
+**An ARRAY element is not a key** and keeps its null: `[null]` is a value in a
+position, and there is no "absent" for a list element to fall back to.
+
+The disclosure rule in protocol.lisp's header (*fields whose presence is the
+disclosure are always written, present and zero/null rather than omitted*) is the
+DAEMON's rule about the frames it SENDS — `dropped`, `created`, `snapshot` — and this
+encoder writes only the client's. Nothing this head sends is a disclosure of that
+kind, which is why an earlier test of the opposite rule (`json-encode-nil-is-null-
+never-elided`) was asserting a property of the other side of the wire."
   (write-char #\{ s)
-  (loop for (k v) on plist by #'cddr
-        for firstp = t then nil
-        unless firstp do (write-char #\, s)
-        do (yason:encode (%key-to-wire k) s)
-           (write-char #\: s)
-           (%encode v s))
+  ;; **The separator flips only when something is actually WRITTEN.** A `for firstp = t
+  ;; then nil` in the loop advances on every pair, elided ones included, so the first
+  ;; surviving key after an elided one was prefixed with a comma and the frame was
+  ;; `{,"b":1}` — invalid JSON, and it would have taken the socket down the way the null
+  ;; did. Measured by encoding every constructor: the first version of this elision
+  ;; broke `make-prompt` and `make-new-session` at once.
+  (let ((firstp t))
+    (loop for (k v) on plist by #'cddr
+          ;; the elision, in one place: the key goes out only when there is a value
+          unless (null v)
+            do (progn
+                 (unless firstp (write-char #\, s))
+                 (setf firstp nil)
+                 (yason:encode (%key-to-wire k) s)
+                 (write-char #\: s)
+                 (%encode v s))))
   (write-char #\} s))
 
 (defun %encode-array (list s)

@@ -124,9 +124,38 @@ caret has to be placed AFTER the painting and only then shown."
              (json-encode-to-string (list :frame "ack" :seq 3 :rendered 1 :filtered 2)))
       "field order follows the plist, keys snake_case"))
 
-(def-test json-encode-nil-is-null-never-elided (:suite leticl)
-  (is (equal "{\"a\":null}" (json-encode-to-string (list :a nil)))
-      "absent and empty must not be the same bytes"))
+(def-test json-encode-a-nil-key-is-elided-not-nulled (:suite leticl)
+  "**A key whose value is NIL is omitted, and that is the only spelling the daemon
+always accepts.** This test used to assert the opposite — *\"absent and empty must not
+be the same bytes\"* — and the rule it was quoting is the DAEMON's: protocol.lisp's
+header says a field whose PRESENCE is the disclosure is written zero/null rather than
+omitted, and that is about the frames the daemon SENDS (`dropped`, `created`,
+`snapshot`). This encoder writes the client's frames, and on the client side serde has
+three field shapes that do not agree about a present null:
+
+  · `Option<T>` — a missing key and a present null both deserialise to `None`;
+  · `T` with `#[serde(default)]` — a MISSING key takes the default, a present null is
+    an ERROR;
+  · a bare `T` — both are errors.
+
+So eliding is never worse and strictly better for the middle case, which is the one
+that has cost this head two sockets: `Mode.consented` and `ReseatSession.summarise`
+both had to be written `:false` by hand. See `%encode-object`.
+
+**An ARRAY element is not a key** and keeps its null: `[null]` is a value in a
+position, and a list element has no absence to fall back to."
+  (is (equal "{}" (json-encode-to-string (list :a nil)))
+      "a nil-valued key is absent, not null")
+  (is (equal "{\"a\":false}" (json-encode-to-string (list :a :false)))
+      "and `:false` is how a caller says this nil is a false")
+  (is (equal "{\"a\":0}" (json-encode-to-string (list :a 0)))
+      "a measured zero is a value like any other")
+  (is (equal "{\"a\":\"\"}" (json-encode-to-string (list :a "")))
+      "and so is an empty string")
+  (is (equal "{\"b\":1}" (json-encode-to-string (list :a nil :b 1)))
+      "the keys that remain are still comma-separated")
+  (is (equal "{\"a\":[null,1]}" (json-encode-to-string (list :a (list nil 1))))
+      "but an array element keeps its null: a list element has no absence"))
 
 (def-test json-encode-keyword-value-is-snake-string (:suite leticl)
   (is (equal "{\"status\":\"in_progress\"}"
@@ -214,7 +243,8 @@ caret has to be placed AFTER the painting and only then shown."
   (is
    (equal
     "{\"frame\":\"screen\",\"req_id\":\"q1\",\"cols\":3,\"rows_n\":1,\"rows\":[\"abc\"]}"
-    (encode-frame (make-screen-answer "q1" (list "abc"))))))
+    (encode-frame (make-screen-answer "q1" 3 1 (list "abc"))))
+   "the size is an argument, and the rows are the rows"))
 
 ;;; ------------------------------------------------------------- keys ;;;
 
@@ -5065,7 +5095,99 @@ to a question was unreachable."
   (is (null (question-answer)) "and nothing is not an answer: deferring is not sending")
   (let ((line (encode-frame (make-answer-question "r1" (question-answer :free "yes")))))
     (is (search "\"answer\":{\"free\":\"yes\"}" line)
-        (format nil "and it goes out as the payload: ~a" line))))
+        (format nil "and it goes out as the payload: ~a" line))
+    (is (not (search "null" line)) "with no null anywhere on the frame")))
+
+(def-test an-empty-answer-is-not-a-frame (:suite leticl)
+  "**§4.5, the latent one.** `question-answer` returns NIL for *nothing to say*, the
+encoder wrote NIL as `null`, and `AnswerQuestion.answer` is a plain `QuestionAnswer`
+struct and not an `Option` (protocol.rs:644-648, question.rs:55-65) — so
+`\"answer\": null` fails the WHOLE `ClientFrame` deserialiser, not one frame: the
+daemon's read loop, and the socket goes with it.
+
+Not reachable today, because the only caller passes `(list :option idx)`. But this is
+the THIRD instance of one hazard, and the previous two were fixed by hand at their call
+sites: `Mode.consented` (`%send-mode`) and `ReseatSession.summarise` (commands.lisp)
+both had to become `:false` rather than NIL, because `#[serde(default)]` accepts a
+MISSING key and not a present `null`.
+
+So both halves of the general answer are here:
+
+  · **`%encode-object` elides a NIL-valued key** (json.lisp) — that is the general fix,
+    and it closes the `#[serde(default)]` and `Option<T>` cases for every future site:
+    an absent key takes serde's default, a present null is an error.
+  · **`make-answer-question` refuses an empty answer** — and this is the part no encoder
+    rule can reach: for a BARE required field both absent and null are fatal, so the
+    frame must not be built at all. Deferring is not sending."
+  (is (null (question-answer)) "nothing to say is NIL, which is the whole problem")
+  (signals error (make-answer-question "r1" (question-answer)))
+  (signals error (make-answer-question "r1" nil))
+  ;; **and the encoder cannot rescue it, which is the point of the refusal living
+  ;; here.** Eliding the nil removes the KEY, and a bare required field is fatal both
+  ;; absent and null — so a caller that built this frame by hand would still hand the
+  ;; daemon a frame it cannot read. The elision closes the OTHER two shapes; a required
+  ;; field has to be refused where the frame is made.
+  (let ((line (encode-frame (list :frame "answer_question" :req-id "r1" :answer nil))))
+    (is (not (search "null" line)) "the elision leaves no null to break the deserialiser")
+    (is (not (search "\"answer\":" line))
+        "and no `answer` KEY either (the frame's own name has the word in it) —
+         a missing required field is rejected just as hard as a null one")))
+
+(def-test no-client-frame-this-head-can-build-carries-a-null (:suite leticl)
+  "**The invariant, over every constructor rather than over the one that was fixed.**
+
+A `null` value on a client frame is a hazard in three shapes and helpful in none:
+`Option<T>` accepts it but so does absence, `#[serde(default)]` rejects it, and a bare
+`T` rejects it — so a null can only ever lose. This walks `protocol.lisp`'s own
+constructors, at the arguments their call sites use, and asserts that none of them
+encodes one.
+
+The two hand-fixed sites are checked too, because their explicit `:false` is the
+SPELLING and not the rule: it is a value, and it must survive as one."
+  (flet ((calls ()
+           `(("make-attach" . ,(make-attach))
+             ("make-ack" . ,(make-ack 7 3 4))
+             ("make-resync" . ,(make-resync))
+             ("make-prompt" . ,(make-prompt 3 "hi"))
+             ("make-interrupt" . ,(make-interrupt 3 "why"))
+             ("make-withdraw-prompts" . ,(leticl::make-withdraw-prompts 3))
+             ("make-stop" . ,(leticl::make-stop 3 "leticl"))
+             ("make-answer" . ,(make-answer "d1" "allow_once"))
+             ("make-answer+pattern+note" . ,(make-answer "d1" "allow_always" "/tmp/*" "why"))
+             ("make-answer-question" . ,(make-answer-question "r1" (question-answer :option 0)))
+             ("make-answer-question+free" . ,(make-answer-question "r1" (question-answer :free "yes")))
+             ("make-list-sessions" . ,(make-list-sessions))
+             ("make-list-todos" . ,(leticl::make-list-todos))
+             ("make-list-jobs" . ,(leticl::make-list-jobs))
+             ("make-read-job-output" . ,(leticl::make-read-job-output "j1" 0))
+             ("make-new-session" . ,(make-new-session "t" "/tmp"))
+             ("make-resume-session" . ,(make-resume-session "s1"))
+             ("make-rename-session" . ,(make-rename-session "s1" "t"))
+             ("make-switch" . ,(make-switch "s1" 0))
+             ("make-peek" . ,(make-peek "s1"))
+             ("make-settings" . ,(make-settings))
+             ("make-detach" . ,(make-detach))
+             ;; the size is an argument now, so this one is spelled out
+             ("make-screen-answer" . ,(make-screen-answer "q1" 80 24 (list "abc"))))))
+    (dolist (c (calls))
+      (destructuring-bind (name . frame) c
+        (let ((line (encode-frame frame)))
+          (is (not (search "null" line))
+              (format nil "~a encodes a null: ~a" name line))
+          ;; and it is still JSON that decodes, which the first version of the elision
+          ;; broke with a leading comma
+          (is (consp (json-decode line))
+              (format nil "~a does not decode: ~a" name line))
+          (is (equal (getf frame :frame) (getf (json-decode line) :frame))
+              (format nil "~a round-trips its frame name" name))))))
+  ;; the two hand-fixed sites, whose `:false` must stay a VALUE
+  (let ((h (%make-head)) (wire (make-string-output-stream)))
+    (setf (leticl::head-stream h) wire (head-connected h) t)
+    (leticl::%send-mode h "always-ask" nil)
+    (let ((line (string-trim '(#\newline) (get-output-stream-string wire))))
+      (is (search "\"consented\":false" line)
+          (format nil "the mode frame still says false, not nothing: ~a" line))
+      (is (not (search "null" line)) "and no null"))))
 
 (def-test the-screen-answer-is-the-frame-that-was-just-drawn (:suite leticl)
   "The one frame whose whole point is *what the operator is looking at right
@@ -5089,8 +5211,42 @@ put on the terminal (driver.rs:93-99, app.rs:2723-2732)."
       (is (not (equal (list "the frame before") (getf f :rows)))
           "and it is NOT the frame before")
       (is (= 24 (getf f :rows-n)) "it is this head's real size")
+      (is (= 80 (getf f :cols)) "in both directions")
       (is (equal (head-last-rows h) (getf f :rows)) "and the rows it just painted"))
     (is (null (head-screen-reqs h)) "the queue is spent")))
+
+(def-test the-screen-answer-reports-columns-and-not-characters (:suite leticl)
+  "**§4.4: the width was the CHARACTER LENGTH OF ROW ZERO, ANSI BYTES INCLUDED.**
+
+It parsed, and it reported a number that is not the width, and the daemon believed
+it — the worst available kind of wrong. The reference sends its terminal size
+(`driver.rs:287`), and its own doc on this frame asks for *\"last rendered, ANSI and
+all, at its real terminal size\"*.
+
+Measured on a painted frame: an 80-column row is 80 cells and 80 + every SGR byte in
+it characters, so the two differ by hundreds on a row with two escapes in it."
+  (let* ((leticl::*stdout* (make-string-output-stream))
+         (h (%on-head :cols 80 :rows 24))
+         (sent (%fake-daemon h)))
+    (leticl::%render-and-paint h)
+    (leticl::%handle-frame h (list :frame "event" :seq 1 :event "screen_requested"
+                                   :req-id "q1"))
+    (leticl::%answer-screen-requests h)
+    (let* ((f (first (funcall sent)))
+           (rows (getf f :rows)))
+      (is (= 80 (getf f :cols)) "the width is the frame's column count")
+      (is (= 24 (getf f :rows-n)) "and the height its row count")
+      (is (= (length rows) (getf f :rows-n)) "with one string per row")
+      ;; every row is exactly the frame's width in CELLS, which is why a character
+      ;; count cannot be one: at least one row carries escapes and they cost bytes
+      (is (every (lambda (r) (= 80 (string-width r))) rows)
+          "and every row measures the frame's width by the one rule this tree has")
+      (let ((chars (loop for r in rows maximize (length r))))
+        (is (> chars 80)
+            "while its CHARACTER length is larger — the escape bytes are in it, which
+             is the number the daemon used to be told")
+        (is (not (= chars (getf f :cols)))
+            "so the two are not the same number and the frame carries the right one")))))
 
 (def-test a-resync-adds-its-dropped-and-its-scrubbed (:suite leticl)
   "Both counts travel on the `Resync` frame and both were discarded on that path,
