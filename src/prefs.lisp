@@ -117,9 +117,26 @@ file or a bad line as a reason to refuse to start."
     (prefs-into-head head p)
     notes))
 
+(defvar *write-prefs* t
+  "Does a preference change go to the FILE? T for a head the operator is using, NIL
+for a test.
+
+**The suite has been editing the operator's `head.toml`.** Measured: with
+`XDG_CONFIG_HOME` pointed at an empty directory, `sbcl --script run.lisp test`
+CREATES `…/leticl/head.toml` and writes whatever the last chord test left in the
+head — and on this box the real file's mtime moves on every suite run. A test that
+changes the answer to the question it is asking is the same defect as a global that
+survives between tests, and it is worse here: the value is on disk and outlives the
+process, so a head started afterwards reads a fold the operator never chose.
+
+A `defvar` so a test can bind it, and one switch rather than a path check per call
+site, for the reason the preference setter gives: *the fifth site is the one that
+would forget*.")
+
 (defun save-head-prefs (head &optional path)
-  "Write HEAD's live choices. Returns the path, or NIL if there is nowhere."
-  (save-prefs (head-into-prefs head) path))
+  "Write HEAD's live choices, unless this image is a test. Returns the path, or NIL."
+  (when *write-prefs*
+    (save-prefs (head-into-prefs head) path)))
 
 ;;; ------------------------------------------------------- the fold setter ;;;
 ;;;

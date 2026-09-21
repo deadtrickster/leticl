@@ -56,6 +56,7 @@
    #:make-prefs #:default-prefs-path #:load-prefs #:save-prefs
    #:prefs-diff #:prefs-thinking #:prefs-tools #:prefs-raw-calls #:prefs-path
    #:load-prefs-into #:save-head-prefs #:head-into-prefs #:prefs-into-head
+   #:*write-prefs*
    ;; chrome (S8) — the alarm, the stall, the money meter, the boxed composer
    #:composer-line #:hint-bar #:alarm-line #:alarm-counts #:alarmed-p
    #:spent-text #:note-turn-cost #:reset-spent
