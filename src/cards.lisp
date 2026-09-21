@@ -1365,6 +1365,20 @@ a terminal-native palette."
              ;; distinguishing two calls to the same tool. The indent is the
              ;; activity step (ours hard-coded two, which is wrong below sixty
              ;; columns), and the row is trimmed to the width like every other.
+             ;; **the settled row's half of `ctrl-x`** (app.rs:11055-11061). A live
+             ;; turn shows the raw markup the model WROTE, from the `ToolCall`
+             ;; deltas; once the row is committed the markup is gone — the parser
+             ;; read it — so what is left to show is the name and the arguments it
+             ;; read, which is the fact the markup encoded. Without this arm the pref
+             ;; did nothing at all on a transcript, which is every row but the one
+             ;; being written.
+             (when (getf prefs :raw-calls)
+               (loop for tc in (getf body :tool-calls)
+                     when (and (call-answered-p (getf tc :id))
+                               (plusp (length (or (getf tc :arguments) ""))))
+                       append (raw-call-lines
+                               (format nil "~a ~a" (getf tc :name)
+                                       (getf tc :arguments)))))
              (loop for tc in (getf body :tool-calls)
                    unless (call-answered-p (getf tc :id))
                      collect (let* ((tgt (display-target (getf tc :arguments)))
@@ -1849,10 +1863,34 @@ first and was drawn that way."
         (when (getf prefs :raw-calls)
           (let ((raw (getf turn :raw-calls)))
             (when (and (stringp raw) (plusp (length raw)))
-              (emit (mapcar (lambda (l) (list (cons "    " '(:dim t))
-                                              (cons l '(:dim t))))
-                            (uiop:split-string raw :separator '(#\newline))))))))
+              (emit (raw-call-lines raw))))))
       out)))
+
+(defun raw-call-lines (raw)
+  "The raw, unparsed text of a tool call, behind `ctrl-x` — the reference's
+`raw_call_lines` (`app.rs:10135-10152`).
+
+    ┌─ raw tool call · ctrl-x
+    │ {"path": "src/cards.lisp", "old_string": "…"}
+    └─
+
+**A labelled block and not an inline row**, and the reason is the whole point of the
+control: this is NOT the assistant speaking. Faint frame, and the text itself in the
+code role — it is EVIDENCE, and evidence that looks like prose is how the defect
+started. The seam names the chord, because a block nobody can turn off again is a
+trap.
+
+**One function for both callers**, which is why it is here and not beside either of
+them: the LIVE turn draws the `<function=…>` markup as the model writes it
+(`turn.lines`, from the deltas), and a SETTLED row has no markup left — the parser
+ate it — so it draws `{name} {arguments}` instead. Two renderers would have drifted
+into two different-looking blocks for one control."
+  (let ((out (list (list (cons "┌─ raw tool call · ctrl-x" '(:dim t))))))
+    (dolist (l (uiop:split-string (or raw "") :separator '(#\newline)))
+      (dolist (w (wrap-text l (max 1 (1- *target-max-cols*))))
+        (push (list (cons "│ " '(:dim t)) (cons w nil)) out)))
+    (push (list (cons "└─" '(:dim t))) out)
+    (nreverse out)))
 
 (defun decision-card-lines (head cols)
   "The ask card: transcript visible above, one list on the screen at a time

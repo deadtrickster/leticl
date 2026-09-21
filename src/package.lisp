@@ -67,6 +67,7 @@
    #:tick-notice #:say
    #:turn-status #:composer-title #:composer-wiring
    #:attach-lines #:cat-frame #:attaching-p #:*attach-started-ms* #:+cat-frames+
+   #:+attach-wait-ms+ #:attach-overdue-p #:attach-gave-up-said
    ;; the carry line — one row for a fork in flight, in the cat and the bar
    #:carry-line #:*carry-last-done* #:*carry-moved-at*
    #:+body-patience-ms+ #:+carry-min-rows+ #:%carry-counts #:note-carry
@@ -99,7 +100,7 @@
    ;; the item-id maps (S3): what a settled row keeps of the live card
    #:item-facts #:note-call-started #:note-call-finished #:note-call-decision
    #:display-target #:verb-label #:call-target-of #:note-call-target #:*target-max-cols*
-   #:%control-char-p
+   #:%control-char-p #:raw-call-lines
    #:note-assistant-targets #:note-snapshot-targets #:*call-targets*
    #:call-answered-p #:note-answered-call #:*answered-calls* #:%live-elapsed-ms
    #:*item-facts* #:*call-facts* #:*call-started-ms*
@@ -141,6 +142,7 @@
    #:subagent-switch
    #:jobs-lines #:subagent-lines #:subagent-rows #:pick-card-lines #:open-pick #:close-pick
    #:take-pick #:pick-by-text #:pick-key-event #:mode-action #:mode-confirm-key
+   #:%resolve-session #:%switch-to
    #:mode-confirm-lines #:pick-choices #:pick-current
    #:picker-sessions #:config-rows #:config-change #:pane-width #:wrap-text
    #:tilde-path #:short-id #:bytes-human #:split-row

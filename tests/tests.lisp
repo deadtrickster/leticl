@@ -6472,11 +6472,18 @@ decodes — the head's own socket path, with a string stream standing in for it.
                               :test #'string=)))))
 
 (defun %sessions (head &rest titles)
-  "Put TITLES on HEAD as the daemon's session list, `s-1` … `s-N`."
+  "Put TITLES on HEAD as the daemon's session list, `s-1` … `s-N`.
+
+`:live t` by default, because that is what a daemon's own `Sessions` reply means by a
+session it is holding — and the flag decides whether picking the row is a `switch` or
+a `resume`. A test that wants the other kind passes `(list :title "x" :live nil)`
+itself; see `picking-a-session-on-disk-resumes-it`."
   (setf (session-sessions (head-session head))
         (loop for title in titles
               for i from 1
-              collect (list :session-id (format nil "s-~d" i) :title title)))
+              collect (list* :session-id (format nil "s-~d" i)
+                             :live t
+                             (if (consp title) title (list :title title)))))
   head)
 
 (def-test esc-esc-is-two-keys-and-not-one-alt (:suite leticl)
@@ -6532,6 +6539,237 @@ pane's text fall through and gates only Enter on an empty line (app.rs:3508-3548
     (leticl::%handle-key h (list :type :char :ch #\q))
     (is (eq :todos (head-mode h)) "q with a line typed does not close the pane")
     (is (string= "whyq" (composer-buffer (head-composer h))) "it types a q")))
+
+(def-test picking-a-session-on-disk-resumes-it (:suite leticl)
+  "§6. **A row labelled `on disk` is not in this daemon, so `switch` is the wrong
+frame** — the daemon has never opened it. The reference brings it in first
+(`switch_to`, `app.rs:5105-5118`): send `ResumeSession`, remember that this head
+wants the session the answer names, and send the switch when the daemon answers. The
+flag is the same one `/new` uses, because \"go to the session the daemon just told me
+about\" is one behaviour.
+
+MEASURED before the fix: the picker listed the stored session, the row said `on disk`,
+Enter sent `{\"frame\":\"switch\",\"session_id\":\"s-2\"}` — and nothing happened,
+because the daemon had nothing under that id.
+
+And **`already here` is said**: picking the row you are on is not nothing, and without
+the sentence the screen looks the same either way."
+  (let* ((h (%on-head :cols 80 :rows 24))
+         (wire (%wire h)))
+    (setf (session-session-id (head-session h)) "s-1")
+    (%sessions h "here and live" "stored, not open")
+    ;; make the second row the stored one
+    (setf (getf (second (session-sessions (head-session h))) :live) nil
+          (getf (second (session-sessions (head-session h))) :stored-items) 1799)
+    (leticl::%switch-to h "s-2")
+    (let ((f (first (%sent wire))))
+      (is (equal "resume_session" (getf f :frame)) "a stored row is RESUMED, not switched to")
+      (is (equal "s-2" (getf f :session-id)) "the id the row carried"))
+    (is (leticl::head-want-new h) "and the head is waiting to follow the answer")
+    (is (search "resuming s-2 from the store" (head-status-note h)) "saying so")
+    ;; a LIVE row switches, one frame, and does not set the flag
+    (let* ((h2 (%on-head :cols 80 :rows 24))
+           (wire2 (%wire h2)))
+      (setf (session-session-id (head-session h2)) "s-1")
+      (%sessions h2 "one" "two")
+      (leticl::%switch-to h2 "s-2")
+      (let ((f (first (%sent wire2))))
+        (is (equal "switch" (getf f :frame)) "a live row switches")
+        (is (equal "s-2" (getf f :session-id)) "to the session on that row"))
+      (is (not (leticl::head-want-new h2)) "and nothing is being awaited"))
+    ;; and the row you are on says so instead of sending anything
+    (let* ((h3 (%on-head :cols 80 :rows 24))
+           (wire3 (%wire h3)))
+      (setf (session-session-id (head-session h3)) "s-1")
+      (%sessions h3 "one" "two")
+      (leticl::%switch-to h3 "s-1")
+      (is (null (%sent wire3)) "no frame for the session you are already in")
+      (is (search "already here" (head-status-note h3)) "and it says so"))))
+
+(def-test ctrl-x-shows-the-raw-call-on-a-settled-row-too (:suite leticl)
+  "§6. The reference draws the raw tool call behind `ctrl-x` in TWO places
+(`app.rs:7061-7062` live, `:11055-11061` settled), and this head drew only the live
+turn's — so the pref did nothing on a transcript, which is every row but the one being
+written.
+
+The two are different text for the same fact: a live turn shows the `<function=…>`
+markup the model WROTE, from the `ToolCall` deltas; a settled row has no markup left —
+the parser ate it — so it shows the name and the arguments it read. Both go through
+one renderer, because two would drift into two different-looking blocks for one
+control."
+  (let ((h (%make-head)))
+    ;; the block itself, which is labelled, fenced and faint: it is EVIDENCE, and
+    ;; evidence that looks like prose is how the defect started
+    (let ((block (leticl::raw-call-lines "{\"path\": \"a.rs\"}")))
+      (is (search "raw tool call · ctrl-x" (segs-of block)) "the block is labelled")
+      (is (search "│ " (segs-of block)) "and the text is railed")
+      (is (search "└─" (segs-of block)) "and closed"))
+    ;; on a SETTLED assistant row: one call with a result, one without
+    (let* ((body (list :type "assistant" :text ""
+                       :tool-calls (list (list :id "c1" :name "read"
+                                               :arguments "{\"path\":\"a.rs\"}")
+                                         (list :id "c2" :name "bash"
+                                               :arguments "{\"command\":\"ls\"}")))))
+      (setf leticl::*answered-calls* (list "c1")
+            leticl::*item-facts* nil)
+      (flet ((lines (prefs)
+               (segs-of (item-lines (list :item-id "i1" :kind "assistant"
+                                          :item body)
+                                    80 prefs))))
+        (is (not (search "raw tool call" (lines (list :show-tools nil :raw-calls nil))))
+            "off by default: the markup the default view must never show")
+        (let ((on (lines (list :show-tools nil :raw-calls t))))
+          (is (search "raw tool call · ctrl-x" on) "and shown when ctrl-x asks")
+          (is (search "read {\"path\":\"a.rs\"}" on)
+              "with the name and the arguments the parser read")
+          (is (search "→ Ran ls · no result" on)
+              "and the UNANSWERED call still draws its `no result` row — the two "
+              "cases are different rows and both are wanted"))))))
+
+(def-test an-attach-that-is-never-answered-ends-with-the-two-commands-that-reach-it (:suite leticl)
+  "§6. The reference's `ATTACH_WAIT` is 30 seconds and its failure names
+`letibot --status` and `letibot --stop` (`bin/letibot-tui.rs:167, 611-652`); this head
+waited FOR EVER, with a two-second line saying `ctrl-c twice, or wait` and nothing
+about the daemon being hung.
+
+**The deadline is the point rather than the number**, and so is the distinction it
+draws: a daemon that accepted the connection and sent no `Hello` is a HUNG daemon, not
+an absent one — absent means start one, hung means find out why — and the two commands
+that answer it are not on any screen the head can draw, because the head is the thing
+that is stuck."
+  (let ((leticl::*fixed-clock-ms* 1000000)
+        (leticl::*attach-started-ms* 1000000))
+    (is (not (leticl::attach-overdue-p)) "a fresh attach is not overdue")
+    (is (leticl::attaching-p (%make-head)) "and the head is waiting")
+    (setf leticl::*fixed-clock-ms* (+ 1000000 (1- +attach-wait-ms+)))
+    (is (not (leticl::attach-overdue-p)) "one millisecond early is still waiting")
+    (setf leticl::*fixed-clock-ms* (+ 1000000 +attach-wait-ms+))
+    (is (leticl::attach-overdue-p) "and the millisecond it is due, it is overdue")
+    (let ((said (leticl::attach-gave-up-said)))
+      (is (search "did not answer within 30s" said) "the sentence names how long")
+      (is (search "hung daemon rather than an absent one" said)
+          "and which kind of daemon this is")
+      (is (search "letibot --status" said) "and the first command that reaches it")
+      (is (search "letibot --stop" said) "and the second"))
+    ;; a Hello clears the clock, so a head that was answered is never overdue
+    (setf (leticl::head-running (%make-head)) t)
+    (setf leticl::*attach-started-ms* nil)
+    (is (not (leticl::attach-overdue-p)) "an answered attach is not overdue")))
+
+(def-test switch-resolves-a-row-number-or-a-title-the-same-way-the-picker-does (:suite leticl)
+  "§6. The reference resolves `/switch WHAT` through the same `pick()` its picker's
+Enter uses (`app.rs:4806-4855`, called from `:5186`), so one line cannot mean two
+things depending on which door it came through.
+
+This sent the text to the daemon as an id, so `/switch 3` and `/switch parity` were a
+round trip that answered nothing — while the picker TWO KEYS AWAY accepted exactly
+those. An ambiguous match is refused with the count rather than resolved to the first:
+switching to the wrong session is not a keystroke you can take back, because the prompt
+you type next lands there."
+  (let* ((h (%on-head :cols 80 :rows 24))
+         (wire (%wire h)))
+    (setf (session-session-id (head-session h)) "s-1")
+    (%sessions h "the parity pass" "the parity notes" "zzz")
+    ;; a ROW NUMBER
+    (leticl::%command h "switch 2")
+    (let ((f (first (%sent wire))))
+      (is (equal "switch" (getf f :frame)) "a row number switches")
+      (is (equal "s-2" (getf f :session-id)) "to the row it names"))
+    ;; a TITLE SUBSTRING — ambiguous here, so refused with the count
+    (leticl::%command h "switch parity")
+    (is (search "2 sessions match" (head-status-note h))
+        "an ambiguous substring is refused, with the count: ~s" (head-status-note h))
+    ;; an ID PREFIX
+    (leticl::%command h "switch s-3")
+    (let ((f (first (%sent wire))))
+      (is (equal "s-3" (getf f :session-id)) "an id prefix switches"))
+    ;; a word nothing matches
+    (leticl::%command h "switch nothing-here")
+    (is (search "no session matches" (head-status-note h)) "and a miss says so")
+    ;; with no list at all the text goes to the daemon as an id, which is the one
+    ;; case the old behaviour could serve
+    (let* ((h2 (%on-head :cols 80 :rows 24))
+           (wire2 (%wire h2)))
+      (leticl::%command h2 "switch s-9")
+      (is (equal "s-9" (getf (first (%sent wire2)) :session-id))
+          "a head with no list still passes an id through"))))
+
+(def-test rename-is-guarded-against-an-empty-session-id (:suite leticl)
+  "§6. `(session-session-id …)` is `\"\"` before the first `Hello`, and this sent
+`rename_session` for the empty id — a frame about a session that does not exist,
+answered by nothing. The reference says so and stops (`app.rs:5195-5198`).
+
+**And an empty NAME still goes**, which is the other half and a different half: that is
+how a name is CLEARED, and the sentence it prints says so."
+  (let* ((h (%on-head :cols 80 :rows 24))
+         (wire (%wire h)))
+    ;; no session id yet
+    (setf (session-session-id (head-session h)) "")
+    (leticl::%command h "rename a name")
+    (is (null (%sent wire)) "nothing is sent for a session that does not exist")
+    (is (search "not attached to a session yet" (head-status-note h))
+        "and it says which of the two problems it is: ~s" (head-status-note h))
+    ;; attached, and a name given
+    (setf (session-session-id (head-session h)) "s-1")
+    (leticl::%command h "rename the parity pass")
+    (let ((f (first (%sent wire))))
+      (is (equal "rename_session" (getf f :frame)) "a real id renames")
+      (is (equal "s-1" (getf f :session-id)) "the session this head is in")
+      (is (equal "the parity pass" (getf f :title)) "to what was typed"))
+    ;; attached, and NOTHING after the verb — the clear, with its warning
+    (leticl::%command h "rename")
+    (is (search "clears the name" (head-status-note h))
+        "an empty name says what it is about to do: ~s" (head-status-note h))
+    (is (equal "" (getf (first (%sent wire)) :title))
+        "and sends it, because that is how a name is cleared")))
+
+(def-test the-emacs-motions-the-reference-decodes-are-bound (:suite leticl)
+  "§6. The reference binds `ctrl-b`, `ctrl-f` and `ctrl-_` in its DECODER
+(`term.rs:562-576, 590-594`: `0x02` → Left, `0x06` → Right, `0x1f` → Undo) and this
+head had no arm for any of the three — so the chords did nothing on a head carrying
+the rest of the emacs set (`ctrl-a`, `ctrl-e`, `ctrl-k`, `ctrl-u`, `ctrl-w`, `ctrl-y`,
+`ctrl-z`).
+
+**`ctrl-_` is `0x1f`, which `read-key` maps to `(code-char 127)`** — the character
+SBCL names `#\Rubout`. It cannot collide with a backspace: a literal `0x7f` is matched
+EARLIER in `read-key`, as `:type :backspace`, so only `0x1f` ever arrives as a `:ctrl`
+holding Rubout. Both spellings of undo therefore work and neither eats the other."
+  (let ((h (%on-head :cols 80 :rows 24 :buffer "hello world")))
+    (flet ((chord (ch)
+             (leticl::%handle-key h (list :type :ctrl :ch ch))))
+      ;; ctrl-b / ctrl-f move the cursor, and neither touches the text
+      (setf (leticl::composer-cursor (head-composer h)) 5)
+      (chord #\b)
+      (is (= 4 (leticl::composer-cursor (head-composer h))) "ctrl-b goes left")
+      (chord #\f)
+      (is (= 5 (leticl::composer-cursor (head-composer h))) "ctrl-f goes right")
+      (is (string= "hello world" (leticl::composer-buffer (head-composer h)))
+          "and neither one edits the line")
+      ;; at the ends they stop rather than wrap or refuse
+      (setf (leticl::composer-cursor (head-composer h)) 0)
+      (chord #\b)
+      (is (zerop (leticl::composer-cursor (head-composer h))) "ctrl-b at the start stays")
+      (setf (leticl::composer-cursor (head-composer h)) 11)
+      (chord #\f)
+      (is (= 11 (leticl::composer-cursor (head-composer h))) "ctrl-f at the end stays"))
+    ;; ctrl-_ undoes, the same thing ctrl-z does — **and it is pressed through the
+    ;; DECODER**, because the conversion from byte to key is half of what this binds:
+    ;; `0x1f` arrives as a `:ctrl` holding Rubout and never as `0x1f`
+    (leticl::%undo-push (head-composer h))
+    (leticl::composer-insert (head-composer h) "!")
+    (is (string= "hello world!" (leticl::composer-buffer (head-composer h)))
+        "a keystroke landed")
+    (leticl::%handle-key h (leticl::read-key
+                            (make-string-input-stream (string (code-char 31)))))
+    (is (string= "hello world" (leticl::composer-buffer (head-composer h)))
+        "ctrl-_ takes it back")
+    ;; and the decode itself: 0x1f is a ctrl key holding Rubout, 0x7f is a backspace
+    (let ((s (make-string-input-stream (string (code-char 31)))))
+      (is (equal (list :type :ctrl :ch (code-char 127)) (leticl::read-key s))
+          "0x1f decodes to ctrl-Rubout"))
+    (let ((s (make-string-input-stream (string (code-char 127)))))
+      (is (equal (list :type :backspace) (leticl::read-key s))
+          "and 0x7f is still a backspace, which is why they cannot collide"))))
 
 (def-test a-slash-command-still-works-under-the-session-picker (:suite leticl)
   "G2. The picker's hint promises `/new [title]` in the same breath as the number.

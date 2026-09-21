@@ -762,6 +762,61 @@ After, every case at or under the budget:
     61 emoji                    in 122 cols -> out 119 cols
     60 CJK (exactly 120 cols)   in 120 cols -> out 120 cols, untouched
 
+### §6 — the last of the B-side list
+
+Eight items, and each was a chord, a verb or a row that existed on the other head and
+did not exist here. All are now `SAME`, and two found something while being written.
+
+**`ctrl-x` on a SETTLED row.** The reference draws the raw call in two places
+(`app.rs:7061-7062` live, `:11055-11061` settled); this head drew only the live turn's,
+so the pref did nothing on a transcript — every row but the one being written. The two
+are different TEXT for the same fact (a live turn shows the `<function=…>` markup the
+model wrote; a settled row's markup is gone, so it shows the name and the arguments the
+parser read) and they now share one renderer, `raw-call-lines`, which is the labelled
+faint block `┌─ raw tool call · ctrl-x` / `│ …` / `└─`.
+
+**The attach deadline.** `ATTACH_WAIT` is 30 s and its failure names `letibot --status`
+and `letibot --stop` (`bin/letibot-tui.rs:167, 611-652`). This head waited FOREVER,
+with a two-second line that said `ctrl-c twice, or wait` and nothing about the daemon
+being hung. The distinction the sentence draws is the point of it: **a daemon that
+accepted the connection and sent no `Hello` is a HUNG daemon, not an absent one** —
+absent means start one, hung means find out why — and the two commands that reach it
+are not on any screen the head can draw, because the head is the thing that is stuck.
+Ctrl-C still works during the wait, which the hint bar has promised since before there
+was a frame.
+
+**A row labelled `on disk` is resumed, not switched to.** `switch_to`
+(`app.rs:5098-5150`) sends `ResumeSession` when the row is stored and not live, and the
+head sends the switch itself when the daemon answers. This sent `switch`
+unconditionally — measured before the fix: the picker listed the stored session, the
+row said `on disk`, Enter sent `{"frame":"switch","session_id":"s-2"}`, and nothing
+happened, because the daemon had nothing under that id. And picking the session you are
+already in now says `already here` rather than looking identical to a silent failure.
+
+**`/switch` resolves what the picker resolves.** The reference calls one `pick()`
+(`app.rs:4806-4855`) from both its `/switch` arm and its picker's Enter, so a row
+number, an id prefix or a title substring mean the same thing through either door. This
+sent the text as an id, so `/switch 3` and `/switch parity` were a round trip that
+answered nothing — while the picker two keys away accepted exactly those. One
+`%resolve-session` now serves both, and an ambiguous match is still refused with the
+count.
+
+**`/rename` has both guards**, and they are different guards: an empty session id (the
+state before the first `Hello`) says `not attached to a session yet` and sends nothing,
+where it used to send `rename_session` for the empty id; an empty NAME says what it is
+about to do and still sends, because that is how a name is cleared.
+
+**`ctrl-b`, `ctrl-f` and `ctrl-_`.** The reference binds these in its DECODER
+(`term.rs:562-576, 590-594`) and this head had no arm for any of the three, on a tree
+carrying the rest of the emacs set. `ctrl-_` is `0x1f`, which `read-key` maps to
+`(code-char 127)` — Rubout — and it cannot collide with a backspace because a literal
+`0x7f` is matched EARLIER, as `:type :backspace`.
+
+**Not done, and it needs both heads:** `/models` and `/resync` in the completion table.
+This head's table HAS both (it is the table the help screen, Tab completion and the
+dispatcher all read); the doc records it as A's gap too, and C14 makes the table a
+shared artefact — byte-identical in every head — which is a two-head job.
+
 ### R13 — a running tool call shows a live elapsed time
 
 **DONE** (the commit after `9d08b8d`). The operator, on a `cargo build` that prints

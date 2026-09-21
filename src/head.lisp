@@ -988,6 +988,15 @@ Oldest request first."
              ;; "not connected" there is the normal state rather than a loss
              (unless (or *replaying* (head-connected head))
                (%try-reconnect head))
+             ;; **A DAEMON THAT TOOK THE CONNECTION AND SAID NOTHING IS NOT AN
+             ;; ABSENT ONE.** Past the deadline the head stops waiting and says
+             ;; which of the two it is looking at, naming the two commands that
+             ;; reach a daemon from outside (`attach-gave-up-said`). Set AFTER the
+             ;; reconnect attempt: a socket that died mid-wait is the reconnect
+             ;; path's business, and this is about one that is alive and mute.
+             (when (attach-overdue-p)
+               (setf (head-farewell head) (attach-gave-up-said)
+                     (head-running head) nil))
              ;; 2. draw (guarded in %render-and-paint: a render error paints
              ;; itself and the loop carries on, so the operator can see what
              ;; broke and re-push instead of losing the head)

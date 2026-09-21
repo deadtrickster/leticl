@@ -409,28 +409,83 @@ unique, or a word in a title.
 An ambiguous prefix is REFUSED WITH THE COUNT rather than resolved to the first
 match. Switching to the wrong session is not a keystroke you can take back — the
 prompt you type next lands there."
-  (let* ((rows (picker-sessions (head-session head)))
-         (typed (string-trim " " typed))
-         (n (ignore-errors (parse-integer typed))))
+  (let* ((typed (string-trim " " typed)))
     (cond
       ((zerop (length typed)) (setf (head-mode head) :normal (head-dirty head) t))
+      (t (multiple-value-bind (id why) (%resolve-session head typed)
+           (cond (id (%switch-to head id))
+                 (why (say head why))
+                 (t (setf (head-mode head) :normal (head-dirty head) t))))))))
+
+(defun %resolve-session (head typed)
+  "TYPED as a session: `(values ID WHY)`, ID NIL when it names none.
+
+**The picker's own resolution, which `/switch` shares** — the reference's `pick`
+(`app.rs:4806-4855`) is called from both its `/switch` arm (`:5186`) and its
+picker's Enter, so the two cannot answer one line differently. Three spellings, in
+this order: the ROW NUMBER on the left of the list, enough of an ID to be unique, or
+a word in a TITLE.
+
+An ambiguous match is REFUSED WITH THE COUNT rather than resolved to the first:
+switching to the wrong session is not a keystroke you can take back, because the
+prompt you type next lands there.
+
+With no list at all — a head that has not asked, or a daemon that has not answered —
+the text goes to the daemon as an id, which is what `/switch` did for everything and
+is still right for the one case it can serve."
+  (let* ((rows (picker-sessions (head-session head)))
+         (typed (string-trim " " (or typed "")))
+         (n (ignore-errors (parse-integer typed))))
+    (cond
+      ((zerop (length typed)) (values nil nil))
+      ((null rows) (values typed nil))
       ((and n (<= 1 n (length rows)))
-       (%send head (make-switch (getf (nth (1- n) rows) :session-id) 0))
-       (setf (head-mode head) :normal (head-dirty head) t))
-      (t
-       (let ((hits (remove-if-not
-                    (lambda (b)
-                      (or (uiop:string-prefix-p typed (or (getf b :session-id) ""))
-                          (let ((title (or (getf b :title) "")))
-                            (and (plusp (length title))
-                                 (search (string-downcase typed) (string-downcase title))))))
-                    rows)))
-         (case (length hits)
-           (1 (%send head (make-switch (getf (first hits) :session-id) 0))
-              (setf (head-mode head) :normal (head-dirty head) t))
-           (0 (say head (format nil "no session matches ~s — esc closes the list" typed)))
-           (t (say head (format nil "~d sessions match ~s; type the number on the left instead"
-                                (length hits) typed)))))))))
+       (values (getf (nth (1- n) rows) :session-id) nil))
+      (t (let ((hits (remove-if-not
+                      (lambda (b)
+                        (or (uiop:string-prefix-p typed (or (getf b :session-id) ""))
+                            (let ((title (or (getf b :title) "")))
+                              (and (plusp (length title))
+                                   (search (string-downcase typed)
+                                           (string-downcase title))))))
+                      rows)))
+           (case (length hits)
+             (1 (values (getf (first hits) :session-id) nil))
+             (0 (values nil (format nil "no session matches ~s — `/s` lists them" typed)))
+             (t (values nil (format nil "~d sessions match ~s; type the number on the left instead"
+                                    (length hits) typed)))))))))
+
+(defun %switch-to (head id)
+  "Go to session ID — the one place that knows what \"go\" means, the reference's
+`switch_to` (`app.rs:5098-5150`).
+
+**Two frames when the row is on disk and not in this daemon.** A stored session has to
+be BROUGHT IN before it can be switched to, and that is `ResumeSession` — the same
+first step `/resume` takes — with the head sending the switch itself when the daemon
+answers. This sent `switch` unconditionally, so picking an `on disk` row from the
+picker asked the daemon for a session it had never opened: the picker listed it, the
+label said it was there, and choosing it did nothing.
+
+**And `already here` is said rather than silently ignored.** Picking the session you
+are in is not an error and is not nothing: without the sentence the screen looks
+identical either way, and the operator presses Enter again."
+  (cond
+    ((string= id (session-session-id (head-session head)))
+     (setf (head-mode head) :normal)
+     (say head "already here"))
+    ((let ((b (find id (picker-sessions (head-session head))
+                    :key (lambda (s) (getf s :session-id)) :test #'string=)))
+       (and b (not (getf b :live))))
+     ;; the resume's answer is a `Sessions` reply carrying `created`, and
+     ;; `want-new` is what tells the head to FOLLOW it — one flag for one
+     ;; behaviour, as the reference reuses its own
+     (setf (head-want-new head) t
+           (head-mode head) :normal)
+     (say head (format nil "resuming ~a from the store…" id))
+     (%send head (make-resume-session id)))
+    (t (%send head (make-switch id 0))
+       (setf (head-mode head) :normal)))
+  (setf (head-dirty head) t))
 
 (defvar *completion* nil
   "The tab cycle: `(NAMES INDEX)` — every command the last fresh prefix matched,
@@ -707,9 +762,7 @@ character (app.rs:3696-3706)."
           ((equal (getf row :state) "opening")
            (say head "that subagent is still opening — nothing to attach to yet"))
           (t (awhen (getf row :session-id)
-               (setf (head-mode head) :normal)
-               (%send head (make-switch it 0))
-               (setf (head-dirty head) t))))))
+               (%switch-to head it))))))
 
 (defun %job-out-page (head forward)
   "The job-output overlay's paging — the reference's `job_out_page`
@@ -823,8 +876,7 @@ two sides in circles."
      (let ((hit (nth (head-picker-sel head)
                      (picker-sessions (head-session head)))))
        (when hit
-         (%send head (make-switch (getf hit :session-id) 0))
-         (setf (head-mode head) :normal)))))
+         (%switch-to head (getf hit :session-id))))))
   (setf (head-dirty head) t))
 
 (defun shut-overlays ()
@@ -1285,7 +1337,21 @@ what the hint bar says while one runs (`esc interrupt · ctrl+c clear`)."
          ((#\y) (when (composer-yank c) (setf (head-dirty head) t)))
          ((#\z) (when (composer-undo c) (setf (head-dirty head) t)))
          ((#\a) (composer-move c :home) (setf (head-dirty head) t))
-         ((#\e) (composer-move c :end) (setf (head-dirty head) t)))
+         ((#\e) (composer-move c :end) (setf (head-dirty head) t))
+         ;; **the two emacs motions, and the second undo spelling.** The reference
+         ;; binds them in its DECODER (`term.rs:562-576, 590-594`: `0x02` → Left,
+         ;; `0x06` → Right, `0x1f` → Undo) and this head had no arm for any of the
+         ;; three — so the chords did nothing at all, on a head whose tree already
+         ;; carries the rest of the emacs set (`ctrl-a`, `ctrl-e`, `ctrl-k`,
+         ;; `ctrl-u`, `ctrl-w`, `ctrl-y`, `ctrl-z`).
+         ;;
+         ;; `ctrl-_` is `0x1f`, which `read-key` maps to `(code-char 127)` — the
+         ;; character SBCL calls `#\Rubout`. It cannot collide with a backspace:
+         ;; a literal `0x7f` is matched EARLIER, as `:type :backspace`, so only
+         ;; `0x1f` ever arrives as a `:ctrl` holding Rubout.
+         ((#\b) (composer-move c :left) (setf (head-dirty head) t))
+         ((#\f) (composer-move c :right) (setf (head-dirty head) t))
+         ((#\Rubout) (when (composer-undo c) (setf (head-dirty head) t))))
        ;; a ctrl chord that means nothing here must not become text. The chords
        ;; that belong to the HEAD rather than to the composer — ctrl-r t x l o s
        ;; p g q — are `%global-chord`'s, which ran above this and before any view.

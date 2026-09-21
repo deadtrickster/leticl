@@ -1194,6 +1194,38 @@ clock the cat walks to.")
   "How long a wait goes before the screen says the daemon has not answered — the
 reference's `ATTACH_IMPATIENT`.")
 
+(defparameter +attach-wait-ms+ 30000
+  "How long this head waits for a `Hello` before it gives up and says why.
+
+**The reference's `ATTACH_WAIT` (`bin/letibot-tui.rs:167`), and the deadline is the
+point rather than the number.** A daemon that accepted the connection and sent no
+Hello is not an absent daemon — it is a HUNG one, and the difference matters to
+whoever has to deal with it: absent means start one, hung means find out why. So the
+head stops waiting, exits, and its farewell names `letibot --status` (what is on the
+socket) and `letibot --stop` (how to end it from outside), which are the two commands
+a person needs and neither of which the screen can offer.
+
+Ours waited for ever, with a two-second line that said `ctrl-c twice, or wait` and
+nothing about the daemon being hung. Measured on a scratch daemon that accepts and
+never answers: the head sat on the cat indefinitely.
+
+**Ctrl-C still works during the wait** — the input thread drains keys and the loop
+runs `%handle-key` the whole time, which is what the hint bar under the frame has
+promised since before there was a frame.")
+
+(defun attach-overdue-p ()
+  "Has the attach been unanswered past `+attach-wait-ms+`?"
+  (and *attach-started-ms*
+       (>= (- (internal-real-time-ms) *attach-started-ms*) +attach-wait-ms+)))
+
+(defun attach-gave-up-said ()
+  "The farewell for a daemon that took the connection and said nothing."
+  (format nil "the daemon did not answer within ~ds. It accepted the connection and ~
+               sent no `Hello`, which is a hung daemon rather than an absent one — ~
+               `letibot --status` says what is on the socket, and `letibot --stop` ~
+               stops it."
+          (floor +attach-wait-ms+ 1000)))
+
 (defun attaching-p (head)
   "Has this head asked for a session and not been answered?
 

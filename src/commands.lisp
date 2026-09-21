@@ -67,10 +67,29 @@ on ClientFrame::Slash)."
        (%send head (make-list-sessions))
        (%open-pane head :picker))
       ((string= verb "switch")
-       (%send head (make-switch rest 0))
-       (setf (head-mode head) :normal))
+       ;; **the same resolution the picker's Enter uses** — a row number, an id
+       ;; prefix or a title substring (`%resolve-session`, the reference's `pick`).
+       ;; This sent the text to the daemon as an id, so `/switch 3` and
+       ;; `/switch parity` were both a round trip that answered nothing, while the
+       ;; picker two keys away accepted exactly those.
+       (multiple-value-bind (id why) (%resolve-session head rest)
+         (cond (id (%switch-to head id))
+               (why (say head why))
+               (t (say head "usage: /switch NUMBER, ID or part of a title")))))
       ((string= verb "rename")
-       (%send head (make-rename-session (session-session-id (head-session head)) rest)))
+       ;; **not attached is its own sentence.** `(session-session-id …)` is `""` before
+       ;; the first `Hello`, and this sent `rename_session` for the empty id — a frame
+       ;; about a session that does not exist, answered by nothing. The reference says
+       ;; so and stops (`app.rs:5195-5198`), and does the same for an empty NAME, which
+       ;; it still sends because that is how a name is CLEARED (its own message says
+       ;; so). Both halves, and they are different halves.
+       (let ((id (session-session-id (head-session head))))
+         (if (zerop (length id))
+             (say head "not attached to a session yet")
+             (progn
+               (when (zerop (length rest))
+                 (say head "/rename NAME — or /rename with nothing clears the name"))
+               (%send head (make-rename-session id rest))))))
       ;; the reference's short forms, for the fingers that learnt them there
       ((member verb '("help" "h" "?") :test #'string=)
        (%toggle-pane head :help))
