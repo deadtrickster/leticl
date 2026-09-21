@@ -1,4 +1,4 @@
-;;;; protocol.lisp — the head frame vocabulary, protocol version 21.
+;;;; protocol.lisp — the head frame vocabulary, protocol version 22.
 ;;;; Source of truth: crates/sessionlog/src/protocol.rs. Frames are plists in
 ;;;; the image (PLAN.md §7, D4); the constructors below are the only place
 ;;;; that knows what a frame looks like on the wire.
@@ -11,7 +11,14 @@
 
 (in-package #:leticl)
 
-(defparameter +protocol-version+ 21)
+(defparameter +protocol-version+ 22)
+;; 22 is `ReadJobOutput` + the `JobOutput` event — the pane reads a job's window
+;; instead of posting `/job ID` into the conversation. The reference landed both
+;; at 21 and left the CONSTANT at 21, so ATTACH agreed and the skew surfaced
+;; mid-session: the daemon could not parse the frame, its read loop broke, and
+;; the socket went with nothing said (letibot `872f8dd`). It bumped to 22 and
+;; made a frame it cannot read send a `Bye` naming both versions first. Our
+;; `job-output` work is that feature, so this head speaks 22 too.
 ;; 21 added ListJobs (a read-only frame answered at once, not through the command
 ;; queue: `/job` during a long turn used to arrive after the turn ended, which is
 ;; useless for a pane that opens).

@@ -174,7 +174,7 @@ caret has to be placed AFTER the painting and only then shown."
 (def-test attach-golden (:suite leticl)
   (is
    (equal
-    "{\"frame\":\"attach\",\"protocol_version\":21,\"session_id\":\"\",\"since_seq\":0,\"kind\":\"tui\",\"identity\":\"\",\"caps\":{\"queue\":1024,\"can_decide\":true}}"
+    "{\"frame\":\"attach\",\"protocol_version\":22,\"session_id\":\"\",\"since_seq\":0,\"kind\":\"tui\",\"identity\":\"\",\"caps\":{\"queue\":1024,\"can_decide\":true}}"
     (encode-frame (make-attach)))
    "defaults, serde-default fields omitted, caps present"))
 
@@ -3923,7 +3923,7 @@ wiped, `head_id`/`wiring`/`sessions`/title/`resumed_from` never read, the
 settings never asked for, and `*attach-started-ms*` never cleared — the attach
 cat walking forever over a head folding a backlog into a session whose id it had
 just forgotten."
-  (let* ((line "{\"frame\":\"hello\",\"protocol_version\":21,\"session_id\":\"s-1\",\"head_id\":\"h1\",\"dropped\":2,\"snapshot\":null,\"resumed_from\":42,\"scrubbed\":{\"deltas\":3,\"tool_progress\":1},\"wiring\":{\"model\":\"deepseek/deepseek-flash\",\"role\":\"main\"},\"sessions\":[{\"session_id\":\"s-1\",\"title\":\"the resumed one\"}]}")
+  (let* ((line "{\"frame\":\"hello\",\"protocol_version\":22,\"session_id\":\"s-1\",\"head_id\":\"h1\",\"dropped\":2,\"snapshot\":null,\"resumed_from\":42,\"scrubbed\":{\"deltas\":3,\"tool_progress\":1},\"wiring\":{\"model\":\"deepseek/deepseek-flash\",\"role\":\"main\"},\"sessions\":[{\"session_id\":\"s-1\",\"title\":\"the resumed one\"}]}")
          (hello (json-decode line))
          (s (make-session))
          (*scrubbed-total* 0)
@@ -6652,3 +6652,48 @@ no summer time) instead of 2026 (CEST). Measured against letibot on the same row
       (declare (ignore ignore-s ignore-m ignore-h date month))
       (is (= 2026 year) "and the instant is in 2026, not 1956")))
   (is (string= "" (leticl::%clock-time nil)) "no timestamp is no time, not midnight"))
+
+(def-test leaving-and-stopping-the-daemon-sends-the-stop-before-the-detach (:suite leticl)
+  "The operator: *\"leticl is unable to properly stop the daemon so when I exited
+and asked to kill the daemon too - it didnt\"*. The order is the whole of it:
+`Stop` has to reach the daemon while this head is still attached, because a
+detach closes the socket the request travels on (driver.rs:202-211). Measured
+end to end against a scratch daemon afterwards: card, `2`, socket gone."
+  (let* ((h (%make-head))
+         (wire (%wire h)))
+    (setf (head-quit-open h) t (leticl::head-quit-sel h) 1)
+    (leticl::%handle-key h (list :type :enter))
+    (let ((sent (%sent wire)))
+      (is (equal "stop" (getf (first sent) :frame)) "the stop goes out")
+      (is (equal "leticl" (getf (first sent) :who)) "under this head's own name")
+      (is (not (leticl::head-running h)) "and the head leaves"))
+    ;; and choosing the first row leaves the daemon alone
+    (let* ((h2 (%make-head))
+           (wire2 (%wire h2)))
+      (setf (head-quit-open h2) t (leticl::head-quit-sel h2) 0)
+      (leticl::%handle-key h2 (list :type :enter))
+      (is (null (remove "detach" (%sent wire2)
+                        :key (lambda (f) (getf f :frame)) :test #'string=))
+          "leaving this head sends no stop")
+      (is (not (leticl::head-running h2)) "but still leaves"))))
+
+(def-test a-live-socket-is-a-daemon-even-with-no-record-beside-it (:suite leticl)
+  "**My own fix this morning, measured and wrong.** Refusing a folder with no
+daemon was right; testing it by looking for the `.json` record `~/bin/letibot`
+writes was not. A `harnessd` started any other way — by hand, by a test, by a
+harness with its own launcher — has a live socket and no record, and the head
+refused it with *\"nothing listens at X\"* while something was listening at X.
+Found by starting a scratch daemon to test the stop path and being unable to
+attach to it. The socket is the daemon; the record is only what a launcher left
+beside it."
+  (let ((sock "/tmp/claude-1000/-home-dead-Projects-leticl/3603a50c-c42f-4b18-87ce-b917064534c9/scratchpad/probe.sock"))
+    (ignore-errors (delete-file sock))
+    (is (not (leticl::%socket-exists-p sock)) "nothing there is nothing")
+    (is (not (leticl::%socket-exists-p "/home/dead/Projects/leticl/PARITY.md"))
+        "and a regular file of the same name is not a daemon either")
+    (let ((s (make-instance 'sb-bsd-sockets:local-socket :type :stream)))
+      (unwind-protect
+           (progn (sb-bsd-sockets:socket-bind s sock)
+                  (is (leticl::%socket-exists-p sock) "a real socket is one"))
+        (ignore-errors (sb-bsd-sockets:socket-close s))
+        (ignore-errors (delete-file sock))))))

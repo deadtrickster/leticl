@@ -85,6 +85,10 @@ globals a frame reads.")
   (want-new nil :type boolean)
   (last-reconnect 0 :type fixnum)
   (socket-path nil)
+  ;; why the daemon ended it, printed after the terminal is restored. NOT a
+  ;; defvar: it is the one piece of state `run` must read after the loop has
+  ;; gone, and it belongs to the head that was told.
+  (farewell nil)
   (quit-open nil :type boolean)
   (quit-sel 0 :type fixnum))
 
@@ -470,6 +474,8 @@ first."
      ;; under a head that never attaches and never exits.
      (setf (head-connected head) nil
            (head-running head) nil
+           (head-farewell head) (format nil "the daemon said goodbye: ~a"
+                                        (getf frame :reason))
            (head-status-note head) (format nil "bye: ~a" (getf frame :reason))
            (head-dirty head) t)
      :control)
@@ -688,6 +694,15 @@ through `scripts/leticl-head`, the same two frames `/new` sends from the compose
            (run-loop head)
         (ignore-errors (%send head (make-detach)))
         (hack-stop head)))
-    (ignore-errors (close stream))))
+    (ignore-errors (close stream))
+    ;; **THE FAREWELL, after the terminal is back.** A `Bye` says why the daemon
+    ;; ended the conversation — a version skew names both numbers — and saying it
+    ;; into the transcript puts it on the ALTERNATE SCREEN, which is thrown away
+    ;; one line later: the operator is returned to their shell with a head that
+    ;; exited and no reason anywhere. The reference prints it after `Terminal`
+    ;; is dropped for exactly this (`App::farewell`, app.rs:1555).
+    (awhen (head-farewell head)
+      (format *error-output* "~&leticl: ~a~%" it)
+      (force-output *error-output*))))
 
 

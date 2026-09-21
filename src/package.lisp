@@ -128,7 +128,7 @@
    #:%make-head #:run #:*head* #:head-session #:head-prefs #:head-dirty #:head-screen
    #:head-prev-screen
    #:head-last-rows #:head-cols #:head-rows #:head-mode #:head-composer
-   #:head-quit-open #:head-secret-req #:head-connected #:head-status-note
+   #:head-farewell #:head-quit-open #:head-secret-req #:head-connected #:head-status-note
    #:head-settings #:head-queued #:head-scroll #:head-screen-reqs #:head-want-new
    #:head-jobs #:head-subagents #:head-peeked #:head-picker-sel
    ;; hack

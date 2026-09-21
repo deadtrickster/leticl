@@ -66,6 +66,15 @@ not resolve to CL in the frozen image and dies as LETICL::STRING-PREFIXP.)"
        (or (= (length ws) (length cwd))
            (char= (char cwd (length ws)) #\/))))
 
+(defun %socket-exists-p (path)
+  "Is there a unix socket at PATH? `probe-file` answers for any file; the head
+wants the FILE KIND, because a leftover regular file with the same name is not a
+daemon and connecting to it fails with a different error entirely."
+  (handler-case
+      (= sb-posix:s-ifsock
+         (logand (sb-posix:stat-mode (sb-posix:stat path)) sb-posix:s-ifmt))
+    (error () nil)))
+
 (defun discover-daemons ()
   "Every daemon this user runs, as decoded plists of their .json files, the
 one named by $LETIBOT_SOCKET first when set — that is the daemon of the folder
@@ -88,8 +97,18 @@ half-written json from a daemon that is starting up must not take a head down."
       ;; conversation. The launcher names the folder's socket precisely so the
       ;; head can refuse when it is not there.
       (mine
+       ;; **THE SOCKET IS THE DAEMON; the record is only what a launcher wrote
+       ;; beside it.** This matched `$LETIBOT_SOCKET` against the `.json` files
+       ;; `~/bin/letibot` leaves in the run dir, so a daemon started any other
+       ;; way — by hand, by a test, by a harness with its own launcher — was
+       ;; refused with *"nothing listens at X"* while something was listening at
+       ;; X. Measured: a scratch `harnessd` on its own socket, live, and the head
+       ;; would not attach. The record is still preferred when it exists, because
+       ;; it carries the workspace and the seat; its absence is not a refusal.
        (let ((hit (find mine plists :key (lambda (p) (getf p :socket)) :test #'string=)))
-         (and hit (cons hit (remove hit plists)))))
+         (cond (hit (cons hit (remove hit plists)))
+               ((%socket-exists-p mine) (list (list :socket mine)))
+               (t nil))))
       (t
        (let* ((cwd (namestring (uiop:getcwd)))
               ;; the MOST SPECIFIC workspace wins: /home/dead matches a head in
