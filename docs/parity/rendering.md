@@ -120,7 +120,8 @@ Subject: `src/cards.lisp`.
 |---|---|---|---|---|
 | `RowClass::{Speech,Activity,Other}` — the one question the layout asks of a row's neighbours | `app.rs:9333-9341` | `:speech`/`:activity`/`:other` | `src/render.lisp:194-205` | SAME |
 | Assistant class: `Speech` if it spoke, `Activity` if it only acted, else `Other` | `app.rs:9659-9665` | `:speech` if text non-blank else `:activity` — never `:other` | `src/render.lisp:202-203` | DIFFERS-minor: an assistant row with no text and no unanswered call is `Activity` here and `Other` there. Both are dropped by the blank-row test before the class is used, so no visible effect today. |
-| A body that has not arrived draws **nothing** | `app.rs:9525-9542` | draws `[{kind} — content not loaded]` in red | `src/cards.lisp:813-815` | **DIFFERS**: this is the exact `/reseat` failure the reference removed — "thousands of them at once", *"insane amount of grainess with s- and whatever tool lines"*. |
+| A body that has not arrived draws **nothing** | `app.rs:9525-9542` | draws nothing | `src/cards.lisp:1195-1210` | **SAME** — the placeholder was removed rather than restyled, because a fork publishes an announcement for every carried row before a single body follows: *"insane amount of grainess with s- and whatever tool lines"* |
+| **A carry in flight is ONE line**: the bar, `done of total rows`, the cat, and a sentence | `app.rs:1309-1333`, `:6453-6663` | `carry-line` — the same three rows, the same cat and the same bar, fed with rows instead of tokens | `src/chrome.lisp:1002-1180`, `src/render.lisp:499-512` | **SAME** in shape; see §1.9 for the counter's derivation, which is where the reference's own regression was |
 | Row is rendered with an `ItemCtx` carrying targets, answered set, `drawn_live`, elapsed, edit, decision, `diff_split`, `payload_view` | `app.rs:9348-9380` | the same facts, from `*call-targets*` / `*answered-calls*` / `*item-facts*` defvars + the `prefs` plist | `src/cards.lisp:170-300`, `:522-535` | SAME in effect; `drawn_live` has no counterpart (see 1.4) |
 
 ### 1.2 `User`
@@ -230,6 +231,127 @@ Subject: `src/cards.lisp`.
 | `Failed` ⇒ `── FAILED — {error} ({kept})`, **wrapped at `cfg.width`**, each line `warn_line` (red) | `app.rs:8232-8245` | one line, `(:fg :red :bold t)`, **not wrapped** (`cols` is declared ignored) | `src/cards.lisp:1036`, `:1061-1065` | **DIFFERS**: the reference's own rule is "wrapped rather than truncated, because the reason is the whole content of the event". A long error is cut at the frame edge here. |
 | `queued_lines`: `{▌} {Pending "queued · "}{Faint text}`, continuation rows indented `width("queued")+3`, wrapped at `w - 2 - 6 - 3` | `app.rs:9017-9046` | `› ` bright-cyan bold + first line dim + `  · queued` dim; no wrap, no bar, tag at the end | `src/cards.lisp:1082-1087` | **DIFFERS**: different glyph, different colour, tag on the wrong side, multi-line prompts show only their first line. |
 | `queued_lines` folds `/cells` too, so the pending row matches the user row it becomes | `app.rs:9023-9024` | no fold | `src/cards.lisp:1084` | MISSING |
+
+### 1.10 The carry line
+
+`/reseat` and `/compact` publish an announcement for **every carried row before a
+single body follows**. Drawn one per row that is a screen of placeholders, and the
+operator's instruction was to reuse what already exists: *"we have this cat animation
+for progress and we have prefill progress bar for local models. reuse that instead of
+spanning me with grayness"*.
+
+| reference behaviour | ref citation | leticl | leticl citation | verdict |
+|---|---|---|---|---|
+| ONE block: a blank, the bar with `done of total rows` and the cat, and the sentence | `app.rs:1326-1390`, pushed at `:6643-6662` | `carry-line`, the same three rows | `src/chrome.lisp:1072-1200`, `src/render.lisp:499-512` | **SAME** |
+| **The trigger is a bulk announcement**, not *any row lacking a body*: a snapshot whose rows arrived without bodies | `app.rs:6453-6462` (and see below — this is where the reference is wrong) | `note-carry`, called from `ingest-snapshot`, recording the ids the announcement left outstanding; a live `transcript_appended` is not a carry | `src/session.lisp:509-590`, `:141` | **DIFFERS, deliberately** — see below |
+| **The sentence names no cause**: `N rows announced, waiting for the daemon to send them` | `app.rs:1387-1389` says *carrying the conversation onto the new prompt* under a `bodies_pending` proxy | cause-free, because a reseat, a `/compact`, a resume and an attach all look identical from the head | `src/chrome.lisp:1218-1260` | **DIFFERS, deliberately** — the named version waits for a daemon that reports the operation |
+| **A counted operation the daemon REPORTS** is drawn from the daemon's own `what`, `unit`, `done` and `total`, through the same renderer | `app.rs:1399-1440` (`import_line`) | `filling-progress-line`, one renderer for both, with `filling`'s words drawn verbatim and the head's inference yielding to it | `src/session.lisp:509-575`, `src/chrome.lisp:1195-1215` | **SAME shape**, and the generalisation is ratified: the event is `Filling { what, unit, done, total }`, not `ImportProgress`, because a carry is not an import and the head infers only when nobody has told it |
+| **Every field that can change width sits left of everything that cannot**: the numerator right-aligned in its own denominator's width, the cat in a fixed SLOT, the bar's width fixed by the frame | `app.rs:1346-1367` | the same, `~v@a` and `+cat-slot+` | `src/chrome.lisp:1056-1070`, `:1078-1105` | **SAME** — the operator: *"move cat to the right most position or thngs jump around"* |
+| Landed rows paint as `cache`, not as `processed` — `█`, never `▓` — because a carry spends nothing | `app.rs:1328-1345` | the same, carried in the GLYPH rather than the colour, so it survives `Palette::None` | `src/chrome.lisp:1096-1105` | **SAME** — and leticl's version is the stronger one on a monochrome terminal |
+| The count is derived **from the rows**, one `item-body` check each, per frame — an incremental tally went stale when a fork replaced the item vector | `app.rs:6453-6462`, and the docstring at `:1249-1258` | `%carry-counts`: one walk, two numbers, and the numerator is **how many rows have ARRIVED** rather than `peak - pending` | `src/chrome.lisp:1030-1054` | **SAME in intent, and this is the part the operator ruled on** — see below |
+| Drawn only while the count is MOVING; past `FORK_STALLED` (3 s) the bar is replaced by one sentence naming how many rows never filled in | `app.rs:6464-6482`, `:6644-6658` | the same, `+carry-stalled-ms+`, as TWO rows — the blank and the sentence | `src/chrome.lisp:1117-1132` | **SAME**, with one deliberate difference: the reference's stalled block keeps the `carrying the conversation onto the new prompt` line under it, and that line is itself a claim that a carry is in flight |
+| It disappears by itself when the last body lands | `app.rs:6476-6478` | same | `src/chrome.lisp:1093-1096` | **SAME** |
+| The line is truncated by the painter where it does not fit | — | degrades by DELETION from the bar back (the bar, then the cat, then a disclosed cut of the count) and truncates the sentence with an `…` | `src/chrome.lisp:1078-1099` | **EXTRA** — `prefill-line`'s own rule, and it closes the same §6 gap for this row rather than inheriting it |
+
+**Two things the head must NOT claim, both measured on the operator's own screen.**
+
+**1. The trigger may not be a proxy.** `bodies_pending > 0` — *some row in the
+transcript has no body* — is not the same fact as *a carry is in flight*, and the
+difference is every ordinary message: `transcript_appended` carries no text and
+`transcript_content` follows, which is R2's own measurement (*"a queued prompt first
+reaches model, thinking starts, and after some time the prompt goes out of queue and
+appears"*). The reference computes that count live over the whole transcript
+(`app.rs:6732`), so its line comes up for the R2 window of every message and announces
+a reseat that is not happening — *"it literally appears over and over — carrying the
+conversation onto the new prompt"*. leticl's trigger is the **announcement shape**: a
+snapshot whose rows arrived without bodies, recorded by id at `note-carry`. Measured:
+
+    an ordinary turn: announce, body, next message …     no line, ever
+    a fork's snapshot:     2702 rows, no bodies          the line, at 0 of 2702
+
+and `an-ordinary-turn-is-not-a-carry` is the guard, with the fork as its control.
+
+**2. The sentence may not name a cause.** A reseat, a `/compact`, a resume and a plain
+attach all leave rows without bodies, and the head cannot tell them apart: all four
+arrive as a snapshot. So the live sentence says what the head knows — `N rows
+announced, waiting for the daemon to send them` — and the named version waits for a
+daemon that reports the operation it is running. `SessionEvent::ImportProgress
+{done,total}` at protocol 23 is exactly that shape for the opencode import, and a
+carry wants the same event: then the total is the daemon's own, the sentence can name
+the operation truthfully, and the counter is not derived from anything.
+
+**The threshold, measured rather than chosen.** It gates the **BAR** only. A batch under
+`+carry-min-rows+` draws no bar and is still diagnosed if it never lands — that sentence
+is the only place a row the daemon announced and never sent is ever reported, so
+suppressing it would throw away the diagnostic to protect the decoration.
+
+    rows per turn, the daemon's store, 242 turns    median 12 · p90 317 · max 3635
+    the carries this session has actually seen       2702 and 4473 rows
+    =>  +carry-min-rows+ 64
+
+**The patience, likewise.** `+body-patience-ms+`, and the reference's 3000 ms is the
+number that produced its own false alarm (*"9,570 row(s) announced and never filled in"*,
+three seconds into a healthy import — false, alarming, and it burns the one diagnostic
+that tells the operator something true):
+
+    ordinary announce → body, live head, 59 pairs   max 31 ms · p90 1 ms · median 0
+    =>  +body-patience-ms+ 5000 (160× the slowest measured, under the 15 s turn-stall)
+
+**And the case that CAN honestly take minutes is excluded by the TRIGGER, not waited
+for.** A prompt queued behind a running turn is a live `transcript_appended` whose
+content arrives when the prompt is sent — R2, *"a queued prompt first reaches model,
+thinking starts, and after some time the prompt goes out of queue and appears"* — and
+that can be minutes. It never enters this count, because the count is a **bulk
+announcement's** rows. Waiting five minutes to report a hole would make the diagnostic
+useless; knowing which rows are waiting on a queue is what makes a five-second patience
+honest.
+
+### The pattern this is the third instance of
+
+**An indicator derived from a proxy, whose sentence claims a cause the proxy cannot
+know — and the fix is always the same: let the layer that owns the fact state it.**
+
+Three instances in two days, in two heads, and every one was found by an operator
+looking at a screen rather than by a test:
+
+1. **the monitor** — a liveness light derived from a heartbeat rather than from the
+   thing it reported on;
+2. **R2** — a queued prompt's row, whose appearance was inferred from the model's state
+   rather than stated by the layer that queues it;
+3. **this line** — a *carry* indicator derived from *rows lacking a body*, which is also
+   true of every ordinary message; and a progress bar derived from a count of what is
+   *missing* rather than a count of what is *done*.
+
+Every fix had the same shape, and it is worth writing down as a rule because the next
+instance will look different:
+
+  · **ask the layer that owns the fact to state it** (`SessionEvent::Filling`, and R2's
+    own event). A head can see symptoms; only the owner can see the operation.
+  · **if nobody can state it, say only what you observed** and name no cause — this
+    head's own line says *N rows announced, waiting for the daemon to send them*, and the
+    named version waits for the daemon that knows.
+  · **count the fact, never a rendering of it** — *how many have arrived, out of how many
+    there are*, not `peak - pending`.
+  · **measure the thresholds.** A constant calibrated against the wrong case (3000 ms,
+    against a carry) produces a sentence that is false about an ordinary one.
+
+The counter, which is the part worth reading.** The reference shipped this line
+twice: the first version was an incremental tally (`+1` per announcement, `-1` per
+body), which is correct for the live case and wrong for the case the line EXISTS for —
+a fork delivers a snapshot, the item vector is replaced wholesale, and the tally then
+describes rows that are no longer there. The operator saw the result: *"so, counter
+wasnt moving - 0 always"*. The reference's fix was to count instead of remember.
+
+This head counts **the fact and nothing else**: how many rows there are, and how many
+of them have arrived, off one walk, every frame. Where the reference derives its
+numerator as `peak - pending` — the peak of how many rows currently lack a body, minus
+how many lack one now — leticl counts the arrived rows directly. The operator's ruling
+is why: *"the counter must be derived from the FACT — how many you have done, out of
+how many there are — and never from a rendering of it, such as how many rows currently
+lack bodies."* Measured A/B on the reference's own shape: with the numerator derived
+from `peak - pending`, `the-carry-line-counts-the-rows-in-front-of-it` fails three
+assertions on a replaced vector (`97 of 4 rows`); with the count taken off the rows it
+passes.
 
 ---
 
@@ -750,12 +872,12 @@ Ordered by what a person would notice first.
    "asked for, nothing came back", and nothing on it says so. **S**
 5. **`SegmentMark` renders nothing** — `src/cards.lisp:901` vs `app.rs:10042`.
    A `/compact` boundary is invisible. **S**
-6. **A row whose body has not arrived draws a red placeholder** —
-   `src/cards.lisp:813-815` vs `app.rs:9525-9542`. On a `/reseat` this is the
-   *"insane amount of grainess"* the reference removed by drawing nothing. **S**
-7. **The payload window** — `app.rs:9968-10036` has no counterpart. A 400-line
-   tool result is unreadable past its first forty lines: `ctrl-t` changes the
-   budget and there is no offset to page. **M**
+6. ~~**A row whose body has not arrived draws a red placeholder**~~ — **CLOSED**:
+   it draws nothing (`src/cards.lisp:1195-1210`), and the carry it belongs to gets
+   the one-line progress block instead (§1.9).
+7. ~~**The payload window**~~ — **CLOSED for the offset half**: `ctrl-t` opens a
+   window on the newest pageable row and ↑/↓ page it (rendering.md's payload
+   section, TODO T1). What is still open there is a row the daemon never sent.
 8. **`fold_cells` keeps the marker instead of replacing the block** —
    `src/cards.lisp:361-376` vs `app.rs:8980-9001`. Different text and a different
    shape, on every `/cells` message in the transcript. **S**

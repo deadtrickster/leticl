@@ -141,6 +141,12 @@ see this file's header."
          (*skew-said-pending* nil)
          (*skew-last-said* nil)
          (*filed-notes* 0)
+         ;; the carry line's clock, which is about the SEQUENCE of frames: a replay
+         ;; must answer the same bytes twice, so the last-seen count and the time it
+         ;; moved start at nothing
+         (*carry-last-done* nil)
+         (*carry-moved-at* nil)
+         (*filling* nil)
          (*pane-scroll* 0)
          (*pick-open* nil)
          (*mode-confirm* nil)

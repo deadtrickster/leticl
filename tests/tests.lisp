@@ -4394,6 +4394,387 @@ screen — indistinguishable from a head on the wrong socket — for the whole w
     (is (not (search "asking the daemon" (%screen-text h)))
         "and gone once the hello has landed")))
 
+;;; ------------------------------ the carry line (§2.5) --------------------- ;;;
+;;;
+;;; `/reseat` and `/compact` announce every carried row before a single body follows.
+;;; Drawn one per row that is a screen of placeholders — *"insane amount of grainess"* —
+;;; so it is ONE line, in the cat and the bar the head already has: *"we have this cat
+;;; animation for progress and we have prefill progress bar for local models. reuse
+;;; that instead of spanning me with grayness"*.
+;;;
+;;; **And the counter is the FACT.** How many rows have arrived, out of how many there
+;;; are — counted off the rows, never a tally kept alongside them and never a rendering
+;;; of the count such as how many rows still lack a body.
+
+(defun %carry-snapshot (rows &optional (filled 0))
+  "A snapshot as a FORK delivers it: ROWS announced, the first FILLED with bodies.
+
+Fed through `ingest-snapshot`, which is the real path — a fork's rows arrive as a
+snapshot and the bodies follow as `transcript_content`. Anything less would be a test
+about a state no frame puts the head in."
+  (list :session-id "s-carry" :seq 0 :dropped 0 :items-dropped 0 :turn nil
+        :open-decisions nil :settled-decisions nil :warnings nil :heads nil
+        :items (loop for i from 1 to rows
+                     collect (list :item-id (format nil "c~d" i) :kind "user" :ts 0
+                                   :item (when (<= i filled)
+                                           (list :type "user"
+                                                 :parts (list (list :kind "text"
+                                                                    :text (format nil "row ~d" i)))))))))
+
+(defun %carry-head (rows &optional (filled 0))
+  "A head mid-carry: a bulk announcement of ROWS rows, FILLED of their bodies arrived.
+
+**Built the way the wire builds it, and that matters to what the two numbers mean.**
+A fork's snapshot announces every row with NO bodies — that is the announcement — and
+the bodies then follow as `transcript_content`. So `total` is the size of the carry and
+`done` is how much of it has landed, which is the operator's own rule (*how many you
+have done, out of how many there are*). A fixture that baked 1400 bodies into the
+snapshot would be measuring a state no frame produces: `note-carry` records the rows
+the announcement left OUTSTANDING, so a snapshot with bodies already in it announces
+only the rest."
+  (let ((h (%make-head)))
+    (ingest-snapshot (head-session h) (%carry-snapshot rows 0))
+    (when (plusp filled) (%carry-land h 1 filled))
+    h))
+
+(defun %carry-land (h from to)
+  "Land the bodies for rows FROM..TO, the way `fill-item` lands them."
+  (loop for i from from to to
+        do (leticl::fill-item (head-session h) (format nil "c~d" i)
+                              (list :type "user"
+                                    :parts (list (list :kind "text"
+                                                       :text (format nil "row ~d" i)))))))
+
+(def-test an-ordinary-turn-is-not-a-carry (:suite leticl)
+  "**The indicator must not be derived from a proxy.** The condition that puts this line
+up has to be the fact — a BULK ANNOUNCEMENT whose bodies are still coming — and not
+*any row lacking a body*, which is a different and much commoner thing.
+
+Every ordinary turn announces a row before its body arrives: `transcript_appended`
+carries no text and `transcript_content` follows. That gap is R2's own measurement —
+*\"a queued prompt first reaches model, thinking starts, and after some time the prompt
+goes out of queue and appears\"* — and it happens on every message of a healthy session.
+A line that fires on it announces a carry that is not happening, over and over, which is
+what the operator saw (letibot computes `bodies_pending` live over the whole transcript
+at `app.rs:6732`; leticl's trigger is the announcement shape, and this is the test that
+holds it there).
+
+The fork case is the control: the same rows, in the same order, arriving as a snapshot
+instead of as live events."
+  (let ((*carry-outstanding* nil) (*carry-last-done* nil) (*carry-moved-at* nil)
+        (*now-ms* 0) (*pane-scroll* 0) (*hist-cache* nil) (*hist-generation* 0))
+    ;; --- AN ORDINARY TURN: a live announcement, its body in the same drain pass
+    (let* ((h (%make-head))
+           (s (head-session h)))
+      (apply-event s (list :seq 1 :event "turn_started" :turn-id "t1" :model "m"))
+      (apply-event s (list :seq 2 :event "transcript_appended"
+                           :item-id "s#t1.0" :kind "assistant"))
+      (is (null (carry-line h 100))
+          "a live announcement with no body yet is NOT a carry")
+      (is (null *carry-outstanding*) "and nothing is outstanding")
+      (apply-event s (list :seq 3 :event "transcript_content" :item-id "s#t1.0"
+                           :item (list :type "assistant" :text "hi")))
+      (is (null (carry-line h 100)) "and it is still not one when the body lands")
+      ;; a whole turn of them, one after another: still nothing
+      (dotimes (i 3)
+        (let ((id (format nil "s#t1.~d" (1+ i))))
+          (apply-event s (list :seq (+ 4 i i) :event "transcript_appended"
+                               :item-id id :kind "assistant"))
+          (is (null (carry-line h 100))
+              "message after message does not add up to a carry, however many there are")
+          (apply-event s (list :seq (+ 5 i i) :event "transcript_content" :item-id id
+                               :item (list :type "assistant" :text "x"))))))
+    ;; --- THE CONTROL: the same rows as ONE bulk announcement, above the threshold
+    (let ((h (%carry-head 4000 0)))
+      (is (carry-line h 100)
+          "a snapshot that announces four thousand bodiless rows IS a carry")
+      (is (search "4000 rows announced, waiting for the daemon to send them"
+                  (segs-of (carry-line h 100)))
+          "for which the head says what it knows and not why")
+      ;; the bodies land, and it retires with no state behind it
+      (%carry-land h 1 4000)
+      (is (null (carry-line h 100)) "and it goes when the last of them lands"))))
+
+(def-test the-carry-sentence-names-no-cause (:suite leticl)
+  "**A head must not name a cause it has not observed.**
+
+A reseat, a `/compact`, a resume and a plain attach all leave rows without bodies, and
+the head sees the same thing in all four. So the live sentence says the fact — how many
+rows, and that the daemon has not sent them — and the NAMED version (`carrying the
+conversation onto the new prompt`) waits for a daemon that reports the operation it is
+running, which is what `SessionEvent::ImportProgress` landed for at protocol 23.
+
+This is the same rule as the counter's, one layer up: a sentence is a claim, and a claim
+has to be paid for by evidence the head actually has. `letibot`'s own word for the
+failure is the anti-pattern this whole document keeps finding."
+  (let ((*carry-outstanding* nil) (*carry-last-done* nil) (*carry-moved-at* nil)
+        (*now-ms* 0) (*pane-scroll* 0))
+    (let ((text (segs-of (carry-line (%carry-head 4000 10) 100))))
+      (is (search "3990 rows announced, waiting for the daemon to send them" text)
+          "it says how many rows and who owes them")
+      (is (not (search "reseat" text)) "and not that a reseat is happening")
+      (is (not (search "carrying" text)) "nor that anything is being carried")
+      (is (not (search "conversation" text)) "nor which conversation it would be"))
+    ;; and the stalled sentence names a consequence rather than a cause too
+    (setf *carry-moved-at* 1000 *now-ms* 1000)
+    (%carry-land (%carry-head 4000 10) 1 1)
+    (setf *carry-moved-at* 1000 *now-ms* (+ 1000 leticl::+body-patience-ms+))
+    (let ((text (segs-of (carry-line (%carry-head 4000 10) 100))))
+      (is (search "announced and never filled in" text)
+          "stalled, it says what did not happen")
+      (is (not (search "reseat" text)) "and still not why"))))
+
+(def-test a-carry-is-one-line-and-not-a-screen-of-placeholders (:suite leticl)
+  "The four states the operator asked for, in one place: what it says at the start,
+in the middle, when it stalls, and when it is done.
+
+    start      ▐░░░░░░░▌     0 of 2.7k rows  (=^.^=)
+               carrying the conversation onto the new prompt
+    middle     ▐██████████░░░▌  1.4k of 2.7k rows  (=^o^=)~
+               carrying the conversation onto the new prompt
+    stalled    3 rows announced and never filled in — the daemon said they exist
+               and did not send them
+    done       nothing at all — the line removes itself
+
+**The bar is two-valued**: landed cells are `█` and the rest `░`, and `▓` — the
+prefill's `processed`, the band that means *being computed now and costing you* —
+never appears, because a carry spends nothing. The reference paints that band with its
+`cache` role for exactly this reason (*\"that one is yellow\"*, on the first version),
+and here it is carried in the GLYPH, so it survives a terminal with no colour at all."
+  (let ((*carry-last-done* nil) (*carry-moved-at* nil) (*now-ms* 1000) (*pane-scroll* 0))
+    (let ((*now-ms* 0))                        ; no clock: never stalled
+      ;; --- START
+      (let* ((lines (carry-line (%carry-head 2702 0) 100))
+             (text (segs-of lines)))
+        (is (= 3 (length lines)) "a blank, the bar row, the sentence")
+        (is (search "0 of 2702 rows" text) "it starts at nothing of everything")
+        (is (= (length (leticl::%carry-counts-text 0 2702))
+               (length (leticl::%carry-counts-text 1400 2702)))
+            "and the count is right-aligned in its own denominator's width")
+        (is (search "2702 rows announced, waiting for the daemon to send them" text)
+            "and says what it knows — how many rows, and that they are awaited")
+        (is (find #\░ text) "the bar is all remaining")
+        (is (not (find #\█ text)) "no cell is filled")
+        (is (not (find #\▓ text)) "and none is claimed as being worked on")
+        (is (find #\= text) "with the cat in its slot"))
+      ;; --- MIDDLE
+      (let* ((lines (carry-line (%carry-head 2702 1400) 100))
+             (text (segs-of lines)))
+        (is (search "1400 of 2702 rows" text) "halfway, the count is halfway")
+        (is (find #\█ text) "half the bar is settled")
+        (is (find #\░ text) "and half is not")
+        (is (not (find #\▓ text)) "still nothing being worked on"))
+      ;; --- DONE: the line removes itself, with no state left behind
+      (is (null (carry-line (%carry-head 2702 2702) 100))
+          "the last body lands and the line is gone")
+      (is (null *carry-last-done*) "and it forgets the carry it was measuring"))
+    ;; --- STALLED: the count has not moved for longer than the window
+    (setf *carry-last-done* nil *carry-moved-at* nil *now-ms* 1000)
+    (let ((h (%carry-head 2702 1)))
+      ;; **the premise first**: while the count MOVES, the bar is drawn — so the
+      ;; stall assertion below cannot pass by the line drawing nothing ever
+      (is (search "announced, waiting for the daemon" (segs-of (carry-line h 100)))
+          "the premise: a fresh carry draws the bar")
+      (%carry-land h 1 1)
+      (setf *now-ms* 1100)                     ; it moved
+      (is (search "1 of 2702 rows" (segs-of (carry-line h 100)))
+          "the premise: a body arriving moves the count")
+      (setf *now-ms* (+ 1100 leticl::+body-patience-ms+))
+      (let* ((lines (carry-line h 100))
+             (text (segs-of lines)))
+        (is (= 2 (length lines)) "stalled, it is TWO rows: the blank and the sentence")
+        (is (not (search "announced, waiting for the daemon" text))
+            "and it no longer claims rows are still coming")
+        (is (not (find #\░ text)) "the bar is gone too")
+        (is (search "2701 rows announced and never filled in" text)
+            "it says how many rows the daemon said exist and did not send")
+        (is (search "did not send them" text) "and whose fault that is")))))
+
+(def-test the-carry-line-counts-the-rows-in-front-of-it (:suite leticl)
+  "**The reference's own regression, and the operator's ruling: the counter is the fact,
+not a rendering of it.**
+
+It was an incremental tally — `+1` per announcement, `-1` per body. That is correct for
+the live case and wrong for the case the line exists for: a fork delivers a SNAPSHOT,
+the item vector is replaced wholesale, and the tally then describes rows that are no
+longer there. Every later arrival missed its lookup and the bar sat at zero for the
+whole carry — *\"so, counter wasnt moving - 0 always\"*.
+
+So the assertion is that the count follows the ROWS THAT ARE THERE NOW, after the
+vector has been replaced under it — and the premise is asserted first, because a test
+that replaces nothing proves nothing."
+  (let ((*carry-last-done* nil) (*carry-moved-at* nil) (*now-ms* 0) (*pane-scroll* 0)
+        (h (%carry-head 100 0)))
+    ;; premise: a first carry is under way, and it is being measured
+    (is (search "0 of 100 rows" (segs-of (filling-progress-line nil "rows" 0 100 100)))
+        "an hundred rows, none landed — the renderer, called directly, so this premise
+         does not depend on the threshold")
+    ;; **the fork lands**: the vector is REPLACED by a different one, and this is what a
+    ;; tally cannot survive
+    (let ((before (session-items (head-session h))))
+      ;; **the fork lands**: a snapshot with every one of its four rows bodiless, then
+      ;; one body follows — the wire's order, and the order a tally cannot survive
+      (ingest-snapshot (head-session h) (%carry-snapshot 4000 0))
+      (%carry-land h 1 1)
+      (is (not (eq before (session-items (head-session h))))
+          "the premise: the snapshot really does replace the item vector")
+      (is (= 4000 (length (session-items (head-session h)))))
+      ;; a tally would still be counting the old hundred. The fact is these four
+      ;; thousand.
+      (is (search "1 of 4000 rows" (segs-of (carry-line h 100)))
+          "the count is the rows that are here now, and how many of them arrived"))
+    ;; and the two numbers are ONE measurement, off the same walk
+    (multiple-value-bind (total done) (leticl::%carry-counts (head-session h))
+      (is (= 4000 total) "the denominator is the rows there are")
+      (is (= 1 done) "and the numerator the rows that have arrived"))))
+
+(def-test the-carry-line-holds-still-while-it-runs (:suite leticl)
+  "**Every field that can change width sits to the LEFT of everything that cannot.**
+
+The operator: *\"move cat to the right most position or thngs jump around\"*. Two things
+vary as a carry runs — the numerator, which grows from `0` to `2.7k`, and the cat,
+whose frames are eight and nine columns — so the numerator is right-aligned in the
+width of its own denominator and the cat occupies a fixed slot. The bar's width is
+fixed by the columns rather than by the fraction, which leaves the bar's edge as the
+one thing on the row that is meant to move.
+
+Both premises are asserted before the conclusion, because a constant width proves
+nothing if nothing varied."
+  (let ((*carry-last-done* nil) (*carry-moved-at* nil) (*pane-scroll* 0)
+        (widths nil) (cats nil))
+    ;; premise one: the numerator really does change width across the run
+    (is (not (= (length (thousands 0)) (length (thousands 2702))))
+        "the premise: the numerator grows from one column to four")
+    ;; premise two: the sampled ticks really do walk the animation
+    (dolist (tick (list 0 200 400 600 800 1000))
+      (pushnew (cat-frame tick) cats :test #'string=))
+    (is (> (length cats) 1) "the premise: the ticks hit more than one cat frame")
+    (dolist (done (list 0 7 99 100 999 1000 1400 2701))
+      (dolist (tick (list 0 200 400 600 800 1000))
+        (let ((*now-ms* tick))
+          (let ((row (second (carry-line (%carry-head 2702 done) 100))))
+            (push (leticl::%carry-row-width row) widths)))))
+    (is (= 1 (length (remove-duplicates widths)))
+        (format nil "one width throughout; got ~s" (remove-duplicates widths)))))
+
+(def-test the-carry-line-degrades-by-deletion-like-the-prefill-line (:suite leticl)
+  "A carry on a narrow terminal still has to say how far along it is.
+
+`prefill-line`'s own rule, and the same order: the bar is the most expensive field and
+the least load-bearing, the count is the fact, the cat is decoration. A row that
+overflowed would have its tail silently dropped by the painter — the `§6` gap — and
+`1400 of` is not a progress line."
+  (let ((*carry-last-done* nil) (*carry-moved-at* nil) (*now-ms* 0) (*pane-scroll* 0))
+    (flet ((row (cols) (segs-of (list (second (carry-line (%carry-head 2702 1400) cols))))))
+      ;; wide: bar, count and cat
+      (let ((wide (row 100)))
+        (is (find #\▐ wide) "an hundred columns holds the bar")
+        (is (search "1400 of 2702 rows" wide) "the count")
+        (is (find #\= wide) "and the cat"))
+      ;; the bar goes first, and the count and the cat stay
+      (let ((narrow (row 30)))
+        (is (not (find #\▐ narrow)) "thirty columns gives the bar up")
+        (is (search "1400 of 2702 rows" narrow) "and keeps the count, which is the fact")
+        (is (find #\= narrow) "and the cat"))
+      ;; then the cat, and the count alone is still true
+      (let ((narrower (row 20)))
+        (is (not (find #\= narrower)) "twenty gives up the cat too")
+        (is (search "1400 of 2702 rows" narrower) "leaving the count"))
+      ;; and past that the count itself is cut with disclosure rather than silently
+      (let ((tiny (row 12)))
+        (is (<= (string-width tiny) 12) "twelve columns is twelve columns")
+        (is (find #\… tiny) "and what was cut says so")))))
+
+(def-test a-small-batch-draws-no-bar-but-is-still-diagnosed (:suite leticl)
+  "**The threshold gates the BAR, not the sentence** — and the difference is the only
+place a row the daemon announced and never sent is ever reported.
+
+A batch under `+carry-min-rows+` gets no bar: a bar with a cat on it for three rows is
+noise dressed as information. But if those rows never land, the operator is told, which
+is how they learned about a real daemon-side hole in the first place (letibot `7b9ca62`:
+a row exists only on `transcript_appended` and a body only on `transcript_content`, so a
+turn that ends between the two leaves the hole in the daemon's log and no head can close
+it).
+
+The bug this test was written for: the threshold arm used to CLEAR the movement clock on
+every frame, so a small batch could never reach the patience arm at all. Measured on the
+live head — a two-row batch that never landed drew nothing, which is the one thing the
+sentence exists to prevent."
+  (let ((*carry-outstanding* nil) (*carry-last-done* nil) (*carry-moved-at* nil)
+        (*now-ms* 1000) (*pane-scroll* 0))
+    (let ((h (%make-head)))
+      (note-carry (list (list :item-id "tiny1" :item nil)
+                        (list :item-id "tiny2" :item nil)))
+      (setf (session-items (head-session h))
+            (coerce (list (list :item-id "tiny1" :kind "user" :item nil)
+                          (list :item-id "tiny2" :kind "user" :item nil))
+                    'vector))
+      ;; moving: no bar, and no sentence either — nothing is wrong yet
+      (is (null (carry-line h 100))
+          "two rows under the threshold draw no bar")
+      ;; past the patience: the sentence, and STILL no bar
+      (setf *now-ms* (+ 1000 leticl::+body-patience-ms+ 1))
+      (let* ((lines (carry-line h 100))
+             (text (segs-of lines)))
+        (is (= 2 (length lines)) "the blank and the sentence")
+        (is (search "2 rows announced and never filled in" text)
+            "a batch too small for a bar is still worth the truth")
+        (is (not (find #\▐ text)) "and it draws no bar")))
+    ;; the control: one row over the threshold DOES get a bar
+    (let ((*carry-last-done* nil) (*carry-moved-at* nil) (*now-ms* 1000)
+          (h (%make-head)))
+      (note-carry (loop for i from 1 to 100 collect (list :item-id (format nil "b~d" i) :item nil)))
+      (setf (session-items (head-session h))
+            (coerce (loop for i from 1 to 100
+                          collect (list :item-id (format nil "b~d" i) :kind "user" :item nil))
+                    'vector))
+      (is (find #\▐ (segs-of (carry-line h 100)))
+          "a hundred rows is a carry and gets the bar"))))
+
+(def-test a-carry-does-not-grow-the-screen (:suite leticl)
+  "The reason the line exists: two thousand seven hundred announced rows used to be two
+thousand seven hundred placeholder rows — *\"insane amount of grainess\"* — and the
+screen must not grow with the carry at all."
+  (let ((*carry-last-done* nil) (*carry-moved-at* nil) (*now-ms* 1000) (*pane-scroll* 0)
+        (*hist-cache* nil) (*hist-generation* 0))
+    ;; **the big one FIRST**: the carry is one announcement, and building the small head
+    ;; second would replace it — the same single-defvar shape the head has in production,
+    ;; where there is one of it. (Two heads in one IMAGE share it; the suite runs
+    ;; hundreds, so a fixture measures one carry at a time.)
+    (let* ((big (%carry-head 2702 0))
+           (big-lines (leticl::%viewport-lines big 100 20))
+           (small (%carry-head 3 0))
+           (small-lines (leticl::%viewport-lines small 100 20)))
+      ;; **the claim is "not proportional"**: three rows is the whole cost, and under the
+      ;; design this replaces it would have been 2702 rows each with its own placeholder.
+      ;; The small frame is not a shorter version of the big one — with no line to draw and
+      ;; no rows to show, it is the empty-session banner, which is a different screen and
+      ;; not a smaller one.
+      (is (= 3 (length big-lines))
+          "2702 announced rows draw three lines: the blank, the bar and the sentence")
+      (is (not (search "said nothing yet" (segs-of big-lines)))
+          "and the screen is not the empty-session banner")
+      (is (search "announced, waiting for the daemon" (segs-of big-lines))
+          "and the one line is on the screen, at the tail")
+      (is (not (search "announced, waiting for the daemon" (segs-of small-lines)))
+          "while three rows — under the threshold — draw no line at all"))))
+
+(def-test the-carry-line-goes-when-the-last-body-lands (:suite leticl)
+  "It removes itself: the last body to arrive takes the count to zero, and the block
+leaves the frame with no state behind it — so the next carry measures itself and not
+the one before."
+  (let* ((*carry-last-done* nil) (*carry-moved-at* nil) (*now-ms* 0) (*pane-scroll* 0)
+         (*hist-cache* nil) (*hist-generation* 0)
+         (h (%carry-head 4000 0)))
+    (is (search "announced, waiting for the daemon"
+                (segs-of (leticl::%viewport-lines h 100 20)))
+        "the carry is on the screen")
+    (%carry-land h 1 4000)
+    (is (not (search "announced" (segs-of (leticl::%viewport-lines h 100 20))))
+        "and it is gone once every row has arrived")
+    (is (null leticl::*carry-last-done*) "with nothing remembered about it")
+    (is (null leticl::*carry-outstanding*) "and the carry itself is forgotten")))
+
 ;;; ------------------------- what landed in letibot 2deceb8..03cb812 (2026-09-20) ;;;
 
 (def-test a-provider-switch-reaches-an-already-attached-head (:suite leticl)

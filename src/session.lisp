@@ -137,6 +137,8 @@ thing that knows whether this is the same conversation (app.rs:1897-1934)."
   ;; place that call is described, and a `ToolResult` row carries no target.
   (note-snapshot-targets (getf snapshot :items))
   (note-snapshot-answered (getf snapshot :items))
+  ;; and the carry, which is what a snapshot with bodiless rows IS: see `note-carry`
+  (note-carry (getf snapshot :items))
   session)
 
 (defvar *scrubbed-total* 0
@@ -504,6 +506,130 @@ not mine to fold* stays separable from *I have never heard of this tag* — whic
 the difference between a quiet head and a silent one, and the whole point of
 `*unreadable-total*`.")
 
+;;; ------------------------------------------------------ a counted operation ;;;
+;;;
+;;; **The daemon's own counter, when there is one.** `SessionEvent::Filling
+;;; { what, unit, done, total }`: `what` is the operation in the daemon's own words,
+;;; `unit` the noun its count is in, and `done`/`total` the count. It exists because
+;;; **the layer that owns the fact should state it** — a head can see that rows are
+;;; missing bodies, and cannot see whether that is a reseat, a `/compact`, a resume or
+;;; a plain attach. A carry is the same kind of fact and is the reason the event is
+;;; general rather than an import's: one event, one renderer, and the head infers only
+;;; when nobody has told it.
+;;;
+;;; **Ephemeral**, like `JobOutput`: a tick from four minutes ago is a lie about now.
+;;; The durable residue of an import is the rows themselves and its finish note. So
+;;; this is a defvar and not a session slot, it is not snapshot-carried, and it is
+;;; cleared the moment the count is complete — a bar left at `total of total` would sit
+;;; on the screen for ever, and a bar that cannot end is worse than no bar.
+
+(defvar *filling* nil
+  "The counted operation in flight, or NIL: a plist
+`(:what W :unit U :done D :total T :at-ms M)`.
+
+A defvar, not a session slot, for the reason all live state is: a struct layout change
+is a restart. Bound by `with-replay-globals`, because a replay must answer the same
+bytes twice.")
+
+(defun filling-active-p ()
+  "Is a counted operation in flight that the head should draw?
+
+Two ways it ends, and both are facts rather than timers: the count COMPLETES
+(`done >= total`), or the connection does. The second matters because the daemon
+publishes ticks while it works, so a socket that goes mid-import would otherwise leave
+a bar claiming progress for ever — and *a bar that cannot end is worse than no bar*."
+  (and *filling*
+       (let ((done (or (getf *filling* :done) 0))
+             (total (or (getf *filling* :total) 0)))
+         (and (plusp total) (< done total)))))
+
+(defun note-filling (env)
+  "Fold one `filling` tick. Returns `:dirty` when the line should be redrawn."
+  (let ((done (or (getf env :done) 0))
+        (total (or (getf env :total) 0)))
+    ;; **The completion is the clear.** `done == total` is the daemon saying it is
+    ;; finished, and the line goes — the import's own finish note is what says the
+    ;; operation ended.
+    (setf *filling* (when (and (integerp total) (plusp total) (< done total))
+                      (list :what (getf env :what)
+                            :unit (getf env :unit)
+                            :done done :total total
+                            :at-ms (and (plusp *now-ms*) *now-ms*))))
+    :dirty))
+
+(defun reset-filling ()
+  "Forget a counted operation. For a session change, and for a dead socket."
+  (setf *filling* nil))
+
+;;; ------------------------------------------------------------- the carry ;;;
+;;;
+;;; **A bulk announcement, and the rows it left outstanding.** `/reseat` and
+;;; `/compact` publish an announcement for every carried row before a single body
+;;; follows, so a head that draws one placeholder per row draws a screen of them —
+;;; *"insane amount of grainess"*. One progress line instead (`carry-line`,
+;;; chrome.lisp), and this is the state it needs.
+;;;
+;;; **The carry's rows are the ones THE ANNOUNCEMENT LEFT OUTSTANDING, recorded by
+;;; id.** That is the fact, and it is not the same as "every row in the session that
+;;; lacks a body" — measured on the operator's own live session, 2 of its 4451 rows
+;;; have no body and never will (they are in the middle of its history, from a turn
+;;; long finished), so a count over the whole transcript would put a progress line on
+;;; their screen for a carry that is not happening. The reference's `peak - pending`
+;;; has the same shape of error: its `pending` is measured over the session, so an
+;;; ancient bodiless row is counted as work still to do.
+;;;
+;;; Recorded at the SNAPSHOT because that is where a bulk announcement arrives (the
+;;; reference's `adopt` and its own test: *"the snapshot really does arrive carrying
+;;; bodiless rows"*). A live `transcript_appended` announces one row whose body
+;;; follows in the same drain pass, which is not a carry and never draws a line.
+
+(defvar *carry-outstanding* nil
+  "A hash table of the item ids a bulk announcement left without bodies, or NIL when
+no carry is in flight. A defvar, not a session slot: a struct layout change is a
+restart, and this has to be reachable from a push.")
+
+(defun note-carry (raw-items)
+  "Note which rows RAW-ITEMS announced without bodies, or clear the carry.
+
+A snapshot with every body present clears it — a new snapshot replaces the world, and
+a carry that was in flight when it landed is not one any more. Returns how many rows
+the announcement left outstanding."
+  (let ((out (make-hash-table :test #'equal))
+        (n 0))
+    (dolist (raw (coerce (or raw-items nil) 'list))
+      (when (and (consp raw) (null (getf raw :item)) (getf raw :item-id))
+        (setf (gethash (getf raw :item-id) out) t)
+        (incf n)))
+    (setf *carry-outstanding* (and (plusp n) out))
+    n))
+
+(defun reset-carry ()
+  "Forget the carry. T when there was one."
+  (let ((had (and *carry-outstanding* t)))
+    (setf *carry-outstanding* nil)
+    had))
+
+(defun %carry-counts (session)
+  "How many rows the carry announced, and how many of them have ARRIVED.
+
+`(values 0 0)` when nothing is in flight. Both numbers are counted off the rows, every
+frame — the ids were recorded when the announcement was made, and whether the row has
+a body is read from the row itself. Nothing is remembered about the progress, which is
+the rule this repo learned the hard way: an incremental tally kept alongside a
+collection goes stale the moment something replaces the collection, and a fork is
+exactly when something does. The reference shipped that and the operator saw a bar
+that never moved — *\"so, counter wasnt moving - 0 always\"*."
+  (if (null *carry-outstanding*)
+      (values 0 0)
+      (let ((total (hash-table-count *carry-outstanding*))
+            (done 0))
+        (declare (type fixnum total done))
+        (loop for item across (session-items session)
+              do (when (and (gethash (item-id item) *carry-outstanding*)
+                            (item-body item))
+                   (incf done)))
+        (values total done))))
+
 (defun apply-event (session env)
   "Fold one envelope into state. Returns :dirty when something visible
 changed, :quiet when not — the head loop paints on :dirty and acks on both."
@@ -816,6 +942,21 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
       ((:job-settled)
        (push env (session-jobs session))
        :dirty)
+      ((:filling)
+       ;; **The daemon's own count.** `what` and `unit` are its words and are drawn
+       ;; verbatim — a head that renames the operation is naming a cause it inferred.
+       ;; `import-progress` is the SAME event under its first name, for a daemon built
+       ;; in the hour before this landed: the rename to `filling` is a ruling that the
+       ;; event is general (a carry is not an import), and this arm exists only until
+       ;; the daemon sends the new name. Delete it then, not before.
+       (note-filling (if (getf env :what)
+                         env
+                         ;; the old name carried no words, so the head supplies the
+                         ;; two the new shape asks for; that is a translation table,
+                         ;; not an inference
+                         (list :what "reading an opencode conversation into this session"
+                               :unit "parts"
+                               :done (getf env :done) :total (getf env :total)))))
       ((:job-output)
        ;; **The answer to the jobs pane's Enter, folded into the overlay that
        ;; asked and nowhere else.** The whole window is kept — job, from, to,

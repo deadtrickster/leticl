@@ -506,7 +506,14 @@ costs nothing either."
                        ;; QUEUED PROMPTS, at the tail, where they will land: a
                        ;; sentence the conversation has swallowed is visible here
                        ;; until the daemon appends its row
-                       (queued-lines head cols)))
+                       (queued-lines head cols)
+                       ;; AND THE CARRY, for the same reason: `/reseat` and
+                       ;; `/compact` announce every row before a single body
+                       ;; follows, so the tail is where the row count is going.
+                       ;; Drawn one-per-row that is a screen of placeholders; this
+                       ;; is one line, and it removes itself when the last body
+                       ;; lands (chrome.lisp, `carry-line`).
+                       (carry-line head cols)))
          ;; **AIR WHERE THE KIND CHANGES**, which is the reference's `RowClass` rule
          ;; and the spacing this head was missing: a blank line goes before a row
          ;; unless BOTH it and the row above are `Activity`. Two tool cards in a row

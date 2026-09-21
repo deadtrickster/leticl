@@ -54,6 +54,8 @@ predicate.
 | **R3, unreadable frames** | a frame this head could not read was consumed and counted NOWHERE — the reader turned a bad line into a status note that expired, and an unknown frame or event tag fell through in silence, which makes *"this daemon is sending me something I do not understand"* look exactly like a quiet daemon. Now said in the conversation, counted on `/status` and the border, and survived | `f70920d` |
 | **R5, a protocol skew** | the `Hello` version check EXITED the head and said so on a note that expires. It now names the DIRECTION (a newer daemon is a reading problem R3 answers; an older one is a writing problem this head cannot survive from its side), files the sentence in the conversation, and stays attached; `/status` has a `protocol` row that reads `not told yet` before the handshake | `3025082` |
 | **R8, the context size** | the header's `ctx` came from the TURN only, so it vanished after a restart, a reattach or a resume — `TurnFinished` is ephemeral. It now falls back to the session's own row (`context_tokens`/`context_cached`), which the daemon writes at every round finish; the cache fraction is refused unless the row measured it, and a backfilled row never lights the money meter | `R8` |
+| **§2.5, the carry and filling line** | one renderer for a counted operation, whoever counted it. The daemon states it when it can (`filling {what, unit, done, total}`); the head infers only from a BULK announcement, says no cause, counts arrived-of-total rather than `peak - pending`, and both thresholds are measured (`64` rows above an ordinary turn's tail, `5 s` against a 31 ms measured body) | `R-filling` |
+| **§2.5, the carry line** | a fork announced every carried row before a body followed, and drew one placeholder per row — *"insane amount of grainess"*. One line now, in the cat and the bar the head already had: `1400 of 2702 rows`, landed cells `█` and never `▓`, the count derived from the rows themselves rather than from a tally or from how many still lack a body, and the line stops claiming to be progress after three seconds of no movement | `R-carry` |
 | **T1, the payload window** | a long tool result had an UNREACHABLE TAIL: the fold raised the budget and gave no row an offset, so `… +N lines · ctrl-t` named a chord that revealed nothing past forty lines. `ctrl-t` now opens a window on the newest pageable row, ↑/↓ page it, `esc` closes it, and the three seams say which key does what and where the reader is | `f655e7a` |
 | **W1, double-width text** | `%split-words` split on spaces alone, so a CJK paragraph was one chunk; it was then cut by CHARACTER INDEX against a COLUMN budget, so each piece was `2×cols` columns and the painter dropped the overflow in silence — **156 of 300 clusters reached the screen**. Now wraps at the column budget over clusters, and a newline in a wrapped text is a hard break instead of a character the painter discards | `W1` |
 
@@ -73,7 +75,18 @@ predicate.
   1:1 rig, and it is `rendering.md` §6 gap 23.
 - [~] **screens + frame** — `panes.lisp`, `chrome.lisp`, `render.lisp`. The
   picker opening off your own session; the peek pane's dead cursor; the
-  permission card drawing one line of the oracle's five; no fit ladder.
+  permission card drawing one line of the oracle's five; no fit ladder. **The
+  carry line landed** (`filling-progress-line`, §2.5) — one renderer, the daemon's
+  count when it states one and the head's own inference otherwise — and **R6 depends
+  on it**: the opencode import must have the UI up and a COUNTED progress line live
+  *before* anything is read, because read-then-draw turns a background job into a
+  startup dependency. **The leticl half is done; the daemon half is NOT.** See
+  `docs/parity/rendering.md` §1.10 — the event is ruled to be
+  `SessionEvent::Filling {what, unit, done, total}`, replacing `ImportProgress`
+  inside protocol 23 rather than a second version decision, and letibot's tree has
+  another agent in it: I did not edit it. leticl folds BOTH names, with the old one
+  translated through a named compatibility arm that is to be deleted when the
+  rename lands.
 - [~] **diff + highlight** — `diff.lisp`, `sidediff.lisp`, `highlight.lisp`.
   Dead intra-line emphasis; SAPs passed unpinned across the FFI; every visible
   fence re-parsed through the shim on every frame.

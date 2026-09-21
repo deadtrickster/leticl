@@ -65,6 +65,13 @@
    #:tick-notice #:say
    #:turn-status #:composer-title #:composer-wiring
    #:attach-lines #:cat-frame #:attaching-p #:*attach-started-ms* #:+cat-frames+
+   ;; the carry line — one row for a fork in flight, in the cat and the bar
+   #:carry-line #:*carry-last-done* #:*carry-moved-at*
+   #:+body-patience-ms+ #:+carry-min-rows+ #:%carry-counts #:note-carry
+   #:reset-carry #:*carry-outstanding*
+   ;; a counted operation the daemon reports, and the one renderer both use
+   #:*filling* #:note-filling #:reset-filling #:filling-active-p
+   #:filling-progress-line
    ;; the history line cache, and the generation that invalidates it
    #:*hist-cache* #:*hist-generation*
    ;; ONE place sets a preference, and it is the place that invalidates
