@@ -858,6 +858,96 @@ shortens the vocabulary — which is what the recorded incident was and what my 
 test did by hand. And the general defence is deliberately blind to the poison: it does
 not need to know what went wrong, only that a paint did not finish.
 
+### FetchRow — the rows above this head's window
+
+**The disclosure is DONE and the capability is built; the daemon half is not, and the
+measurement says so.** This is the last item of §10 and the only wire capability in the
+tree that nothing used.
+
+#### The defect that is real, and it is R17's rule one layer out
+
+`ViewBounds` bounds a snapshot by count and by bytes — 2,000 rows or 8 MB of row text,
+whichever comes first (`view.rs:308-347`) — so a head on a long session holds the
+**newest** slice of the conversation, and `items_dropped` says how many rows came before
+it. That number was **stored and read by nothing**: no seam, no counter, no `/status`
+row. Scroll to the top of such a session and the transcript ends as cleanly as a session
+whose first row that is. **Two different facts, one appearance** — which is the shape
+R17 spent a commit on for body-less rows.
+
+Now, on the glass, in three states (measured on a scratch head with `items_dropped`
+set, which is the state a long session puts the head in and which no small session can
+produce):
+
+    … 5 rows above · scroll to this line to load the next
+    … 5 rows above · asking the daemon for row 4…
+    … 5 rows above · the daemon does not hold them any more
+
+The third is the one that matters: it stops promising a fetch that cannot happen.
+
+#### WHEN a head fetches: on demand, triggered by reaching the top
+
+The requirement asks this explicitly, and the numbers decide it. **Eagerly filling the
+gap would fetch exactly what `ViewBounds` just refused to put in the snapshot** —
+thousands of rows, over a socket that already costs the daemon a clone per attaching
+head — for an operator looking at the newest end of the conversation. The rows are
+wanted at exactly one moment: the reader has reached the oldest line they have.
+
+So the trigger is that moment, and it is the KEY loop that sends rather than the
+renderer (`editor.lisp`'s scroll arms): `*scroll-max*` is what the render last clamped
+the scroll to — the only thing in the tree that knows the transcript's line count — so
+`(>= scroll max)` before the increment means *the reader was already at the top and has
+asked to go further*. A render with a socket side effect is a render that behaves
+differently on a second paint.
+
+Three refusals, each a fact rather than a guard: nothing above, a request already in
+flight (a transcript has one top — this is what stops a wheel that keeps turning from
+sending a request per tick), and the daemon having already said those rows are gone.
+Measured on a fully-held session: **ten scrolls past the top sent nothing, recorded
+nothing, drew no seam.**
+
+#### What a fetched row LOOKS like
+
+A row of its own kind, `:fetched`, because the frame is all the head has: `RowFetched`
+carries a body and an ordinal and **no kind, name or timestamp** — so drawing it as a
+tool card or as prose would be inventing facts about a row this head has never seen.
+What it CAN say is where the row sits in the session and what its body is:
+
+    ▸ row 4999 of the session
+      812 lines
+      … the body …
+      … +772 lines · +391204 bytes
+
+The byte count comes from the frame's `total`, which is the WHOLE body's length, so the
+seam counts what the window did not carry rather than guessing from the lines that
+arrived.
+
+#### The measurement that settles the capability: it cannot answer, today
+
+**`FetchRow` can never return a row the head does not already have.** The snapshot is
+`view.items.clone()` (`view.rs:821`) and `row_body_at` reads the same `self.items`
+(`view.rs:745-747`) — **one view, one bound** — so: an ordinal the snapshot trimmed
+answers `null`; an ordinal the snapshot carried is a row the head already holds; and a
+row held without a body answers `null` too. The frame's own test says the same from the
+other side: *"the store read that would answer it is R19.2(b) in `letibot`'s TODO"*.
+
+So the three answers the head folds are honest and one of them is currently
+unreachable. The head's half is built anyway, because **it cannot know which of those
+worlds it is in without asking** — the seam cannot be true without it — and because the
+day the store read lands, the head already asks. The wire was pinned against a real
+daemon rather than against the plist this head expects:
+
+    asking:            {"frame": "fetch_row", "session_id": "s-…", "row": 99999, …}
+    <-                 {"frame":"row_fetched","session_id":"s-…","row":99999,"at":0,"body":null,"total":0}
+    (unknown session)  <- {"frame":"rejected","reason":"no such session \"s-not-here\""}
+
+and the loop end to end on a scratch head: the seam offered, the scroll asked, the
+daemon answered `null`, the head marked the rows gone and the seam said so, **with
+nothing prepended and the count unmoved** — `body: null` is not an empty row.
+
+**Not established live:** the `Some` path. Making a real daemon hold a row needs either
+a turn (metered here) or the operator's own store, and neither is mine to spend — the
+unit test covers the prepend, and the live run covers the wire and the refusal.
+
 ### §3.1 — content this head did not author cannot drive the terminal
 
 **PROVEN, not patched.** The section's claim is *control characters in anything the head

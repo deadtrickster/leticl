@@ -489,6 +489,19 @@ costs nothing either."
                  (incf k))))
     (nreverse out)))
 
+(defvar *scroll-max* 0
+  "How far back the last frame let the reader scroll, in LINES — `n - want`, the value
+the clamp itself uses.
+
+**Stashed because the reader's own key cannot recompute it.** Whether a scroll has
+reached the top of the transcript is `(>= (head-scroll head) *scroll-max*)`, and the
+only thing that knows `n` (the transcript's total line count) is the renderer. A key
+handler that re-derived it would be a second answer to the same question, which is how
+two of them drift.
+
+A `defvar`, so a push can introduce it, and it is read by `editor.lisp`'s scroll arms
+to decide when the reader has asked for the rows above the window (`fetch-row-above`).")
+
 (defun %viewport-lines (head cols want)
   "The conversation's last WANT lines (scrolled up by head-scroll), as
  segment lines oldest-first. The running turn is the newest thing there is, so
@@ -536,7 +549,15 @@ costs nothing either."
     ;; transcript never sits on the box's top edge and the live turn never sits
     ;; on the last settled row. Measured on letibot's screen: row 59 blank, row
     ;; 60 the box's top edge; ours had prose on 59.
-    (let* ((lh (length hist))
+    ;; **AND THE SEAM ABOVE THE OLDEST ROW THIS HEAD HOLDS.** A window that does not say
+    ;; it is a window is read as the whole conversation — the reader scrolling to the top
+    ;; of a long session cannot tell *"this is where it begins"* from *"this is where my
+    ;; head stops"*, and `items_dropped` was stored and read by nothing. It goes in
+    ;; FRONT of `hist` rather than inside it, because it is not derived from any item and
+    ;; must not be cached as one.
+    (let* ((seam (rows-above-line s cols))
+           (hist (if seam (append seam hist) hist))
+           (lh (length hist))
            (lt (length tail))
            (gap (if hist 1 0))
            (all-len (+ lh gap lt))
@@ -563,7 +584,8 @@ costs nothing either."
            (n (if empty (length empty-lines) all-len)))
       ;; the scroll is clamped to what exists: past the top there is nothing to
       ;; show, and a wheel that kept counting would need as many turns back
-      (setf (head-scroll head) (max 0 (min (head-scroll head) (- n want))))
+      (setf *scroll-max* (max 0 (- n want))
+            (head-scroll head) (max 0 (min (head-scroll head) *scroll-max*)))
       (let* ((end (max 0 (- n (head-scroll head))))
              (start (max 0 (- end want)))
              ;; **The window, not the whole transcript.** `(append hist …)` and then

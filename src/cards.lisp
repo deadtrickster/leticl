@@ -1434,6 +1434,39 @@ a terminal-native palette."
          ((:segment_mark)
           (list (list (cons (format nil "─── ~a ───" (or (getf body :label) ""))
                             +md-faint+))))
+         ;; **A ROW FETCHED BACK FROM THE SESSION** (`FetchRow`) — a row older than
+         ;; this head's window, pulled in one at a time as the reader scrolls to the
+         ;; top. It is its own type because the head knows only what the frame says:
+         ;; a body and an ordinal. `RowFetched` carries no kind, no name and no
+         ;; timestamp, so drawing it as a tool card or as prose would be inventing
+         ;; facts about a row the head has never seen — what it CAN say is where the
+         ;; row sits in the session and what the body is.
+         ;;
+         ;; Folded like every other long thing here: the head of it, and a seam saying
+         ;; how much more there is. `:total` is the WHOLE body's length from the
+         ;; daemon, so the seam counts what the window did not carry rather than
+         ;; guessing from the lines that arrived.
+         ((:fetched)
+          (let* ((row (getf body :row))
+                 (text (or (getf body :text) ""))
+                 (total (or (getf body :total) 0))
+                 (rows (wrap-segments (list (cons text nil)) cols))
+                 (cap +body-lines-budget+)
+                 (hidden (max 0 (- (length rows) cap)))
+                 (shown (if (plusp hidden) (subseq rows 0 cap) rows)))
+            (append
+             (list (list (cons (format nil "  ▸ row ~d of the session" row) '(:dim t)))
+                   (list (cons (format nil "    ~a line~:p" (length rows)) '(:dim t))))
+             (mapcar (lambda (l) (mapcar (lambda (seg) (cons (car seg) nil)) l)) shown)
+             ;; the seam names the BYTES the window left behind when the daemon said
+             ;; the body is longer than one fetch, and the rows when it did not — two
+             ;; different truncations and only one of them may be claimed
+             (when (plusp hidden)
+               (list (list (cons (format nil "    … +~d line~:p~@[ · +~d bytes~]"
+                                         hidden
+                                         (let ((sent (length text)))
+                                           (and (> total sent) (- total sent))))
+                                 '(:dim t))))))))
          ;; **A ROW THIS HEAD WROTE ABOUT ITSELF.** No daemon item has this type — the
          ;; wire's are `user`, `assistant`, `reasoning`, `tool_result`, `system` and
          ;; `segment_mark` — so this is the head filing a sentence of its own into the

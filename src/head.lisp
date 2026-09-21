@@ -586,6 +586,17 @@ first."
            *model-from-settings-at* (session-seq (head-session head))
            (head-dirty head) t)
      :control)
+    ((string= (frame-name frame) "row_fetched")
+     ;; **THE ANSWER ARRIVES ON THE SAME STREAM AS THE SESSION'S OWN TRAFFIC**, which is
+     ;; why it is folded here and not awaited: a head that blocked on this would stop
+     ;; drawing the conversation it is reading. `note-row-fetched` decides what the
+     ;; three answers mean — a body that goes at the TOP of the transcript, a `null`
+     ;; that says the rows above are gone, and a row nobody is waiting for.
+     (note-row-fetched (head-session head)
+                       (getf frame :row)
+                       (getf frame :body)
+                       (or (getf frame :total) 0))
+     :control)
     ((string= (frame-name frame) "peeked")
      (setf (head-peeked head) (getf frame :events)
            *peeked-session* (getf frame :session-id)
@@ -658,6 +669,39 @@ first."
       (screen-resize (head-prev-screen head) cols rows)
       (setf (head-full-repaint head) t
             (head-dirty head) t))))
+
+;;; ------------------------------------------- asking for a row above the window ;;;
+;;;
+;;; The REQUEST half of `FetchRow`, here rather than in `session.lisp` for the reason
+;;; the split exists: the session owns the STATE (what it holds, and the seam that says
+;;; so) and the head owns the SOCKET. A session function that sends would be a session
+;;; function that needs a head, and this file is the one that has both.
+
+(defun fetch-row-above (head)
+  "Ask the daemon for the row above this head's oldest. T when a request went out.
+
+**On demand, and never eagerly** — which is the question the requirement asks. Eagerly
+filling the gap would fetch exactly what `ViewBounds` just refused to put in the
+snapshot: thousands of rows, over a socket that already costs the daemon a clone per
+attaching head, for an operator who is looking at the NEWEST end of the conversation.
+The trigger is the reader reaching the top of what they have, which is the only moment
+those rows are wanted.
+
+Three refusals, and each is a fact rather than a guard: nothing above (`rows-above`), a
+request already in flight (a transcript has one top), and the daemon having already
+said these rows are gone (`*rows-above-gone*`) — the last is what keeps a head from
+asking once per scroll for ever.
+
+Nothing is said on the status line: the seam itself changes from `scroll to this line
+to load the next` to `asking the daemon for row N`, which is where the reader is
+already looking and is the same place the answer will land."
+  (let* ((session (head-session head))
+         (row (rows-above session)))
+    (when (and row (null *row-fetch*) (not *rows-above-gone*))
+      (setf *row-fetch* (list :row row :at 0))
+      (%send head (make-fetch-row (session-session-id session) row))
+      (setf (head-dirty head) t)
+      t)))
 
 ;;; ------------------------------------------------------------- the loop ;;;
 

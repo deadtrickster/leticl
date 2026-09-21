@@ -361,6 +361,30 @@ what a session brief shows back."
 second Hello."
   (list :frame "switch" :session-id session-id :since-seq since-seq))
 
+(defun make-fetch-row (session-id row &key (at 0) (len +row-fetch-len+))
+  "A window of ONE row's body, by its ORDINAL in the session.
+
+**The ordinal and not an index**, which the protocol is emphatic about
+(`protocol.rs:783-797`): `0` is the session's first row ever, and it is the only
+number a head can express — a head knows the rows it holds and how many came before
+them (`items_dropped`), so *the row above my oldest* is `items_dropped - 1`, while an
+index into the daemon's window would name a different row after every trim.
+
+Answered with `RowFetched` on the same stream as the session's own traffic, and it
+does not move the connection — the same contract `Peek` keeps (`server.rs`: *\"a read,
+not a move\"*). `at` is clamped to the body rather than refused (a head paging forward
+does not know where the end is), and `len` is capped by the daemon at
+`MAX_FETCH_ROW` — 64 KiB, an order of magnitude above any window a head draws.
+
+**`body: null` is not an empty row.** It is the daemon saying it does not hold that
+ordinal — trimmed by `ViewBounds`, or past the end — and *\"nobody has it\"* and *\"it
+is empty\"* must not look alike (`view.rs:732-740`, `server.rs:683-690`)."
+  (list :frame "fetch_row"
+        :session-id session-id
+        :row row
+        :at at
+        :len len))
+
 (defun make-peek (session-id)
   (list :frame "peek" :session-id session-id))
 

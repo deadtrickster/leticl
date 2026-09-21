@@ -59,6 +59,7 @@ predicate.
 | **T1, the payload window** | a long tool result had an UNREACHABLE TAIL: the fold raised the budget and gave no row an offset, so `… +N lines · ctrl-t` named a chord that revealed nothing past forty lines. `ctrl-t` now opens a window on the newest pageable row, ↑/↓ page it, `esc` closes it, and the three seams say which key does what and where the reader is | `f655e7a` |
 | **W1, double-width text** | `%split-words` split on spaces alone, so a CJK paragraph was one chunk; it was then cut by CHARACTER INDEX against a COLUMN budget, so each piece was `2×cols` columns and the painter dropped the overflow in silence — **156 of 300 clusters reached the screen**. Now wraps at the column budget over clusters, and a newline in a wrapped text is a hard break instead of a character the painter discards | `W1` |
 | **§3.2's third candidate** | **FOUND.** `%sgr` is bounds-checked — an out-of-range style costs one cell's colour, not the frame — and **any paint that failed forces the next one to be FULL**, because `head-prev-screen` is the head's only record of the terminal and a diff against a wrong record is a permanent hole. Measured: with the paint injected to die after `ESC[2J`, the head believed it had drawn 30 rows the terminal had none of, and no ordinary paint could repair it; `screen-resize` allocates a fresh cell vector, which is why a byobu window switch was the only cure. **The sync pair is RULED OUT** — tmux-256color advertises no `Sync` and the pair is balanced in every frame of a `pipe-pane` capture — and so are copy mode and a mode reset | `§3.2` |
+| **T1(1), `FetchRow`** | `items_dropped` was stored and read by NOTHING, so a head on a long session drew a window as if it were the whole conversation. Now a seam above the oldest row (`… N rows above · scroll to this line to load the next`), a fetch asked for on demand when the reader reaches the top, the row prepended, and `… the daemon does not hold them any more` when it answers `null`. **Measured: the frame cannot currently answer anything** — the snapshot is `view.items.clone()` and `row_body_at` reads the same list, so the other half is letibot's R19.2(b), a store read for a trimmed ordinal | `T1(1)` |
 | **§3.1, terminal safety** | **PROVEN, not patched.** Every source the section names (prose, reasoning, the user's message, the system row, a fence body, a diff excerpt off disk) carrying every real byte (SGR, `?1002`/`?1006`/`?1049`/`?2004`/`?2026`, an OSC, C1, DEL) — no ESC-prefixed sequence reaches stdout, on a frame carrying 103 of the head's own. The guarantee is ONE invariant: the frame is a cell grid, `screen-put-string` skips zero-column clusters, and a control character measures zero, so it has no cell to be written into. The sources are unsanitised and safe; `%without-control` is belt-and-braces. **letibot's painter writes ANSI-bearing strings verbatim, so its exposure is real — the property to build toward is that a control character must not be STORABLE in a cell** | `§3.1` |
 | **a `seq` gap** | MISSING IN BOTH: a jump forward in the event stream is filed as a row and counted (`jumped from 40 to 52 — 11 events never arrived`), while a step of one and a step backwards are the redelivery §13.2b promises and are not reported. `dropped` only says what the daemon admits to at a `Hello`/`Resync` | `§10` |
 | **§6, the last of the B-side list** | `ctrl-x` on a settled row (the pref did nothing on a transcript — one `raw-call-lines` for both halves now); the attach deadline (30 s, naming `letibot --status`/`--stop`, because a daemon that took the connection and said nothing is HUNG, not absent — this head waited for ever); a row labelled `on disk` is RESUMED, not switched to; `/switch` resolves a row number or a title like the picker does; `/rename`'s two guards; `ctrl-b`/`ctrl-f`/`ctrl-_` | `§6` |
@@ -111,10 +112,14 @@ predicate.
   `esc` closes it, and three seams say which key does what and where the reader is
   (`↑ N more lines above · ↑ scrolls up`, `… +N lines · ↓ pages down · esc closes`,
   `… end of output · esc closes`). **What is NOT there, and why the row stays open:**
-  (1) a row the daemon did not send is still unreachable — `ViewBounds` trims the
-  snapshot at 2000 rows / 8 MB and `FetchRow`/`RowFetched` is answered by every
-  daemon and sent by neither head (letibot files it as R19.2); (2) one window at a
-  time, on the newest row, because the transcript has no pointer to aim one with;
+  (1) **CLOSED here**: a row above the head's window is now disclosed and fetched —
+  the seam `… N rows above`, the ask on demand when the reader reaches the top, the
+  row prepended, and `… the daemon does not hold them any more` when it answers
+  `null`. But the daemon cannot answer one (`view.items` is both what the snapshot
+  clones and what `row_body_at` reads — one view, one bound), so the other half is
+  letibot's R19.2: a store read for a trimmed ordinal. `ViewBounds` still trims at
+  2000 rows / 8 MB; (2) one window at a time, on the newest row, because the
+  transcript has no pointer to aim one with;
   (3) Enter on a jobs row still posts `/job ID` into the conversation rather than
   reading it in the overlay — that is `ReadJobOutput`/`JobOutput` on the wire
   (protocol 22, `make-read-job-output` exists) with no HEAD sending it. **R10 made

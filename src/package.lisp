@@ -45,7 +45,7 @@
    #:make-attach #:make-ack #:make-prompt #:make-interrupt #:make-answer
    #:match-option
    #:make-answer-question #:question-answer #:make-list-sessions #:make-list-todos #:make-list-jobs
-   #:make-new-session #:make-resume-session #:make-rename-session
+   #:make-new-session #:make-resume-session #:make-rename-session #:make-fetch-row
    #:make-switch #:make-peek #:make-settings #:make-detach #:make-resync
    #:make-read-job-output
    #:make-screen-answer
@@ -88,6 +88,7 @@
    #:*stall-ms* #:*spent-micros* #:*last-event-ms*
    #:session-seq #:session-expected-seq #:session-session-id #:session-items
    #:session-dropped #:session-title #:session-turn #:session-heads #:session-head-id
+   #:session-items-dropped
    #:session-warnings #:session-denials #:session-subagents #:session-jobs
    #:session-retired #:warning-identity #:session-retired-p #:note-warning
    #:warning-order #:warning-note-text #:retire-warning #:retire-all-warnings
@@ -149,6 +150,8 @@
    #:tilde-path #:short-id #:bytes-human #:split-row
    #:*rendered-total* #:*scrubbed-total* #:*filtered-total* #:*unreadable-total*
    #:*seq-gaps* #:note-seq-gap #:*hack-accept-errors*
+   #:rows-above #:note-row-fetched #:rows-above-line #:prepend-item
+   #:fetch-row-above #:*row-fetch* #:*rows-above-gone* #:+row-fetch-len+ #:*scroll-max*
    #:*daemon-protocol*
    ;; the payload window (T1): what makes the rest of a long result reachable
    #:*payload-view* #:*payload-page* #:payload-view-page #:payload-view-close

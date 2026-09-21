@@ -1314,12 +1314,27 @@ what the hint bar says while one runs (`esc interrupt · ctrl+c clear`)."
                                         "running"))
                       (%interrupt head "interrupted with esc esc")))
              (setf *esc-at* now))))
-      ((:page-up) (incf (head-scroll head) (max 1 (- (head-rows head) 3)))
+      ;; **SCROLLING PAST THE TOP ASKS FOR THE ROW ABOVE THE WINDOW.** This is the
+      ;; "on demand" half of `FetchRow`: the moment the reader has reached the oldest
+      ;; line this head holds is the moment those rows are wanted, and every other
+      ;; moment they are not. `*scroll-max*` is what the renderer last clamped the
+      ;; scroll to — the only thing in the tree that knows the transcript's line count —
+      ;; so the test is `(>= scroll max)` BEFORE the increment, i.e. *the reader was
+      ;; already at the top and has asked to go further*.
+      ;;
+      ;; `fetch-row-above` refuses what it cannot do (nothing above, one already in
+      ;; flight, or the daemon having said they are gone) and says so through the
+      ;; seam, so an extra call here costs nothing.
+      ((:page-up) (when (>= (head-scroll head) *scroll-max*)
+                    (fetch-row-above head))
+                  (incf (head-scroll head) (max 1 (- (head-rows head) 3)))
                   (setf (head-dirty head) t))
       ((:page-down) (setf (head-scroll head) (max 0 (- (head-scroll head)
                                                        (max 1 (- (head-rows head) 3)))))
                     (setf (head-dirty head) t))
-      ((:wheel-up) (incf (head-scroll head) 3) (setf (head-dirty head) t))
+      ((:wheel-up) (when (>= (head-scroll head) *scroll-max*)
+                     (fetch-row-above head))
+                   (incf (head-scroll head) 3) (setf (head-dirty head) t))
       ((:wheel-down) (setf (head-scroll head) (max 0 (- (head-scroll head) 3)))
                      (setf (head-dirty head) t))
       ((:ctrl)

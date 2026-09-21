@@ -6883,6 +6883,218 @@ cannot be the hole either: anything with an escape in it takes the cluster walk.
       (is (not (find #\Esc row))
           "and the escape is in none of them"))))
 
+;;; ------------------ FetchRow: the rows above this head's window ------------------ ;;;
+;;;
+;;; `items_dropped` is stored and read by NOTHING: a head on a long session holds the
+;;; NEWEST slice of the conversation and its transcript simply begins there, which is
+;;; what a session whose first row that is also looks like. The two facts must not look
+;;; alike — R17's rule, for a row nobody has rather than for a body nobody has yet.
+;;;
+;;; The wire spelling below is pinned against a REAL daemon, not against the plist this
+;;; head happens to expect (`tools/rowfetch2.py` in the notes):
+;;;
+;;;     asking: {"frame": "fetch_row", "session_id": "s-…", "row": 99999, …}
+;;;     <- {"frame":"row_fetched","session_id":"s-…","row":99999,"at":0,"body":null,"total":0}
+;;;     (unknown session) <- {"frame":"rejected","reason":"no such session "s-not-here""}
+
+(defun %session-with-a-window (&key (dropped 5) (rows 3))
+  "A head holding ROWS rows with DROPPED before them — a window, not a conversation."
+  (let* ((h (%on-head :cols 80 :rows 24))
+         (s (head-session h)))
+    (setf (session-items s)
+          (coerce (loop for i from 0 below rows
+                        collect (list :item-id (format nil "w~d" i) :kind "user" :ts 0
+                                      :item (list :type "user"
+                                                  :parts (list (list :kind "text"
+                                                                     :text (format nil "row ~d" i))))))
+                  'vector)
+          (session-items-dropped s) dropped
+          (session-session-id s) "s-window")
+    h))
+
+(def-test a-row-is-asked-for-by-its-ordinal-and-not-by-an-index (:suite leticl)
+  "The frame's shape, against what the daemon accepted.
+
+`row` is the row's **position in the session, oldest first** — `0` is the first row
+ever — and not an index into the daemon's window (`protocol.rs:783-797`). The
+arithmetic that makes it expressible is `items_dropped - 1`: a head knows how many rows
+came before the ones it holds, so *the row above my oldest* has a name even though the
+row itself is nowhere in the head."
+  (is (equal "fetch_row" (getf (make-fetch-row "s-1" 7) :frame))
+      "the tag is the wire's, snake_case, as the daemon's serde expects")
+  (let ((f (make-fetch-row "s-1" 7 :at 100 :len 4096)))
+    (is (equal "s-1" (getf f :session-id)) "the session, named as the head names it")
+    (is (= 7 (getf f :row)) "the ordinal")
+    (is (= 100 (getf f :at)) "where in the body to start")
+    (is (= 4096 (getf f :len)) "and how much to send"))
+  (is (= +row-fetch-len+ (getf (make-fetch-row "s" 0) :len))
+      "the default window is the daemon's own cap")
+  ;; the ordinal arithmetic, on a head that holds a window
+  (let ((h (%session-with-a-window :dropped 5)))
+    (is (= 4 (rows-above (head-session h)))
+        "the row above the oldest held one is `items_dropped - 1`"))
+  (let ((h (%session-with-a-window :dropped 0)))
+    (is (null (rows-above (head-session h)))
+        "and a head holding the WHOLE conversation has nothing above it")))
+
+(def-test reaching-the-top-asks-for-the-row-above (:suite leticl)
+  "**On demand, and the trigger is the reader reaching the oldest line they have.** The
+other option — eager filling — would fetch exactly what `ViewBounds` refused to put in
+the snapshot: thousands of rows, over a socket that already costs the daemon a clone
+per attaching head, for an operator who is looking at the newest end of the
+conversation.
+
+Three refusals, and each is a fact rather than a guard: nothing above, a request
+already in flight, and the daemon having already said those rows are gone."
+  (let* ((leticl::*row-fetch* nil) (leticl::*rows-above-gone* nil)
+         (h (%session-with-a-window :dropped 5))
+         (wire (%wire h)))
+    (is (fetch-row-above h) "the ask goes out")
+    (let ((f (first (%sent wire))))
+      (is (equal "fetch_row" (getf f :frame)) "as a fetch_row")
+      (is (equal "s-window" (getf f :session-id)) "for this session")
+      (is (= 4 (getf f :row)) "and for the ordinal above the window"))
+    (is (not (null leticl::*row-fetch*)) "the request is recorded")
+    ;; ONE IN FLIGHT: a transcript has one top, and this is what stops a wheel that
+    ;; keeps turning from sending a request per tick. `%sent` DRAINS the stream, so the
+    ;; second call is the check that nothing new was written — which is the fact, rather
+    ;; than a count of what the first call already took away.
+    (is (null (fetch-row-above h)) "a second ask is refused")
+    (is (null (%sent wire)) "and nothing further goes on the wire")
+    ;; the daemon says they are gone: the seam stops offering, and so does the head
+    (setf leticl::*row-fetch* nil leticl::*rows-above-gone* t)
+    (is (null (fetch-row-above h))
+        "and a head that has been told the rows are gone does not ask again")
+    ;; nothing above at all
+    (let* ((leticl::*rows-above-gone* nil)
+           (h2 (%session-with-a-window :dropped 0))
+           (wire2 (%wire h2)))
+      (is (null (fetch-row-above h2)) "a full transcript asks for nothing")
+      (is (null (%sent wire2)) "and sends nothing"))))
+
+(def-test scrolling-past-the-top-fires-the-ask (:suite leticl)
+  "The trigger, through the key loop — the reader's own gesture rather than a test
+calling the function.
+
+`*scroll-max*` is what the renderer last clamped the scroll to, so `(>= scroll max)`
+BEFORE the increment means *the reader was already at the top and has asked to go
+further*. It is a key handler and not the renderer that sends, because a render with a
+side effect on the socket is a render that behaves differently on a second paint."
+  (let* ((leticl::*row-fetch* nil) (leticl::*rows-above-gone* nil)
+         (leticl::*scroll-max* 40)
+         (h (%session-with-a-window :dropped 5))
+         (wire (%wire h)))
+    ;; not at the top yet: a scroll is a scroll
+    (setf (head-scroll h) 10)
+    (leticl::%handle-key h (list :type :wheel-up))
+    (is (null (%sent wire)) "scrolling in the middle of the transcript asks for nothing")
+    (is (= 13 (head-scroll h)) "and it just scrolls")
+    ;; AT the top: the reader has asked for more than the head has
+    (setf (head-scroll h) 40)
+    (leticl::%handle-key h (list :type :wheel-up))
+    (let ((f (first (%sent wire))))
+      (is (equal "fetch_row" (getf f :frame)) "at the top, the wheel asks for the row above")
+      (is (= 4 (getf f :row)) "the ordinal above the window"))
+    ;; and PageUp does the same, because it is the same gesture
+    (setf leticl::*row-fetch* nil (head-scroll h) 40)
+    (leticl::%handle-key h (list :type :page-up))
+    (is (equal "fetch_row" (getf (first (%sent wire)) :frame)) "PageUp too")))
+
+(def-test a-fetched-row-goes-at-the-top-and-the-count-follows (:suite leticl)
+  "**A prepend, and the count with it.** The transcript is oldest-first and grows at the
+END, so a row discovered on the older side goes in FRONT of every row held.
+
+`items_dropped` is decremented in the same breath, and that is not bookkeeping: the
+count and the items must keep summing to the session's length, or `rows-above` starts
+naming the wrong row — the next scroll would ask for a row it has already got."
+  (let* ((leticl::*row-fetch* (list :row 4 :at 0))
+         (leticl::*rows-above-gone* nil)
+         (h (%session-with-a-window :dropped 5 :rows 3))
+         (s (head-session h)))
+    (is (eq :dirty (note-row-fetched s 4 "the body of row four" 994))
+        "the fold is a visible change")
+    (is (null leticl::*row-fetch*) "and it clears the request")
+    (is (= 4 (length (session-items s))) "the transcript gained the row")
+    (let ((item (aref (session-items s) 0)))
+      (is (equal "leticl-row-4" (getf item :item-id)) "at the FRONT, where its ordinal puts it")
+      (is (equal "4" (format nil "~a" (getf (getf item :item) :row))) "carrying its ordinal")
+      (is (equal "the body of row four" (getf (getf item :item) :text)) "and its body"))
+    (is (equal "w0" (getf (aref (session-items s) 1) :item-id))
+        "in front of the row that was oldest")
+    (is (= 4 (session-items-dropped s))
+        "and the count of rows before the window came down with it")
+    (is (= 3 (rows-above s)) "so the NEXT row named is the one above this one")))
+
+(def-test a-row-the-daemon-does-not-hold-is-not-an-empty-row (:suite leticl)
+  "`body: null` is the daemon saying it does not hold that ordinal — trimmed from ITS
+view, which is bounded by the same `ViewBounds` — and *"nobody has it"* and *"it is
+empty"* must not look alike (`view.rs:732-740`, `server.rs:683-690`).
+
+Measured against a real daemon: an ordinal past the end answers
+`{\"frame\":\"row_fetched\",…,\"body\":null,\"total\":0}` — the row is not there, and
+NOT a row of nothing. The head marks the rows above unreachable rather than asking
+again for each of them, which is one request per scroll to be told the same thing."
+  (let* ((leticl::*row-fetch* (list :row 4 :at 0))
+         (leticl::*rows-above-gone* nil)
+         (h (%session-with-a-window :dropped 5 :rows 3))
+         (s (head-session h)))
+    (is (eq :dirty (note-row-fetched s 4 nil 0)) "the answer is a visible change")
+    (is (null leticl::*row-fetch*) "the request is over")
+    (is (not (null leticl::*rows-above-gone*)) "and the rows above are known to be gone")
+    (is (= 3 (length (session-items s))) "NOTHING is prepended: a missing row is not a row")
+    (is (= 5 (session-items-dropped s)) "and the count does not move either")
+    (is (null (fetch-row-above h)) "so the head does not ask again")
+    ;; and a row that arrives while nothing is pending is ignored, not appended
+    (let* ((leticl::*row-fetch* nil)
+           (h2 (%session-with-a-window :dropped 5 :rows 3))
+           (s2 (head-session h2)))
+      (is (eq :quiet (note-row-fetched s2 4 "unsolicited" 11))
+          "an answer to a question this head is not asking is not a row")
+      (is (= 3 (length (session-items s2)))))))
+
+(def-test the-seam-above-the-window-says-what-is-above-it (:suite leticl)
+  "**A window that does not say it is a window is read as the whole conversation.**
+Scroll to the top of a long session and the transcript ends as cleanly as a session
+whose first row that is — and the operator has no way to tell the two apart.
+
+Three states, because there are three facts: rows above that this head will load,
+a request in flight, and rows the daemon does not hold either. The last is the one that
+matters most — it stops promising a fetch that cannot happen."
+  ;; nothing above: no seam at all, because a head holding everything has nothing to say
+  (let ((h (%session-with-a-window :dropped 0)))
+    (is (null (rows-above-line (head-session h) 80))
+        "a head holding the whole conversation draws no seam"))
+  (let* ((leticl::*row-fetch* nil) (leticl::*rows-above-gone* nil)
+         (h (%session-with-a-window :dropped 5))
+         (text (segs-of (rows-above-line (head-session h) 80))))
+    (is (search "5 rows above" text) "the count, from the snapshot's own number: ~s" text)
+    (is (search "scroll to this line" text) "and the gesture that loads one")
+    (is (equal '(:dim t) (cdr (first (first (rows-above-line (head-session h) 80)))))
+        "dim, like every other seam in this tree: an instrument, not the conversation")
+    ;; asking
+    (setf leticl::*row-fetch* (list :row 4 :at 0))
+    (is (search "asking the daemon for row 4" (segs-of (rows-above-line (head-session h) 80)))
+        "a request in flight names the row it is waiting for")
+    ;; gone
+    (setf leticl::*row-fetch* nil leticl::*rows-above-gone* t)
+    (let ((text (segs-of (rows-above-line (head-session h) 80))))
+      (is (search "does not hold them any more" text) "and gone rows say so: ~s" text)
+      (is (not (search "scroll to this line" text))
+          "and stop offering a fetch that cannot happen"))))
+
+(def-test the-seam-is-drawn-at-the-top-of-the-viewport (:suite leticl)
+  "And it reaches the glass: the first line of the transcript, above the oldest row."
+  (let* ((leticl::*row-fetch* nil) (leticl::*rows-above-gone* nil)
+         (h (%session-with-a-window :dropped 5 :rows 3)))
+    ;; scrolled all the way up, so the top of the transcript is on screen
+    (setf (head-scroll h) 1000)
+    (let* ((lines (leticl::%viewport-lines h 80 20))
+           (text (segs-of lines)))
+      (is (search "5 rows above" text) "the seam is on the screen: ~s" (subseq text 0 (min 200 (length text))))
+      ;; and it is ABOVE the oldest row, not below it
+      (is (< (search "5 rows above" text) (search "row 0" text))
+          "above the first row the head holds"))))
+
 ;;; ------------------- the eval socket: a client's failure is not the head's ------- ;;;
 ;;;
 ;;; The live-modification surface (HACKING.md). MEASURED on a scratch head: a client
