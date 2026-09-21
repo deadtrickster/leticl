@@ -97,6 +97,7 @@ path.
 | **notice / `say` line** | its own chrome row, magenta `· {n}`, TTL 60 frames, first-but-one thing the fit ladder drops | `app.rs:5069-5073`, `app.rs:5112-5121`, `app.rs:4709-4712` | folded into `status-line`, which `%render` builds **only when `(not boxed)`**, and `boxed` is `(>= rows 8)` | `src/chrome.lisp:315-336`; `src/render.lisp:314-318` | **MISSING in practice** — see 1.5 |
 | **stall line** | its own yellow chrome row; gated on a **running turn**, quiet > 15 s; names the model and `esc esc interrupts it` | `app.rs:7582-7608` | a fragment appended inside `status-line`; 20 s; **not** gated on a running turn | `src/chrome.lisp:285-312`, `327` | **MISSING in practice** — same suppression |
 | **alarm indicator** | `⚠` inlaid in the composer's bottom border beside the turn status; the counters themselves on `/status`; an unboxed screen gets `⚠ dropped N · scrubbed N · resync N · /status` on its own row | `app.rs:5180-5192`, `app.rs:7650-7672` | `⚠` on the bottom edge via `composer-wiring` | `src/chrome.lisp:434-451`, `492-501` | **SAME** for the boxed case; the unboxed fallback row is suppressed the same way the notice is |
+| **a daemon `Warning`** | pushed to `view.warnings` and drawn as a note anchored where it arrived; a snapshot replants them all at position 0 | `view.rs:659-667`, `app.rs:2188` | pushed to `session-warnings` and **read by nothing at all** | `src/session.lisp:63,132,911` | **MISSING — see R10 below** |
 | **turn status on the border** | `Responding · N tok · 4.2s · ⠹` pinned right on `╰…╯` | `app.rs:5180-5192`, `app.rs:7501+` | same | `src/chrome.lisp:377-410`, `444-445` | **SAME** |
 | **attach indicator (top border)** | `N subagents running` pinned right on `╭…╮` when any are | `app.rs:5157-5177` | same, folded from `subagent-rows` | `src/chrome.lisp:412-432` | **SAME** |
 | **completions line** | dim row above the composer listing `/name hint` matches; the first thing the fit ladder drops | `app.rs:4342-4358`, `app.rs:5075-5078` | Tab completes (`src/editor.lisp:118`) but **nothing is drawn** — `grep -rn completion src/*.lisp` finds only `%complete` | — | **MISSING** |
@@ -439,6 +440,61 @@ Ranked by how soon it bites in the first hour of daily use.
 
 Everything else on the gap list is real and none of it would stop a switch.
 
+### R10 — a note is a DISCLOSURE, not a permanent record
+
+The operator, looking at letibot's 27 red lines: *"how do I remove them"*. There the
+answer is *you cannot* — no dismiss key, no verbosity level that hides a warning even
+though the `Warning` type's own doc claims `loud` adds them, and a resync or a reattach
+REPLANTS the wall at position 0, because a snapshot's warnings are unanchored history.
+
+**MEASURED on this head rather than assumed, and the answer is the opposite one.**
+
+This head has two mechanisms where letibot has one, plus a third place a warning can be
+specialised into. What each does, measured on the live head (pid 3102326) and on a
+throwaway head inside the same image:
+
+| | `head-status-note` | `session-warnings` | specialised arms |
+|---|---|---|---|
+| what it is for | the head's own `say`s | everything the daemon warns about | `turn_failed`, `job_output_refused`, `slash`/`slash_refused`, `secret_late` |
+| **is it drawn?** | yes, magenta above the composer | **NO — nothing reads it** | yes, by the arm |
+| **lifetime** | `*notice-ttl-frames*` = 60 loop passes ≈ **0.55 s** (measured 60 → 31 after 0.3 s, NIL by 0.8 s; the loop runs ~43 passes/s) | accumulates for the life of the session | — |
+| **dismiss key** | **none** — and not "any key" either: `%handle-key` has no notice arm at all, where the reference drops `notice_ttl` to 1 on every key but the four scroll keys (`app.rs:3080`) | N/A | esc, by the arm |
+| **verbosity hides it?** | no | no (and nothing is drawn to hide) | no |
+| **a RESYNC does** | **replaces** it — a snapshot's `resync` note overwrote the one that was up | **replaces** the list with the snapshot's (measured: 3 live → 2 from the snapshot) | — |
+| **a HELLO (reattach) does** | **clears** it | **replaces** the list (measured: 2 → 3 from the snapshot) | — |
+
+**And the decisive measurement:** a `warning` envelope handed to the live head —
+
+    warnings before 9 · after 10 · note NIL · on-screen NIL · detail-on-screen NIL
+    alarmed-p → (("dropped" . 358324) ("scrubbed" . 1) ("resync" . 1))
+
+— is **stored and appears nowhere**. Not a row, not a note, not a counter, and not on the
+alarm, which is truthy only for the three counters it already had. So the operator's 27
+red lines are **not this head's symptom**: mine draws zero of them.
+
+**That is worse, not better, and it is the same defect from the other side.** A
+disclosure that does not happen cannot be dismissed, and the rule this document keeps
+hearing — `event.rs:772-791`, *"a denial the operator cannot see manufactures the
+workaround"* — applies to every warning that has no specialised arm: `auto_compact`,
+`compacted`, `context_wall`, `transcript_store`, `decision_corpus`, `mode_set`, and
+whatever the daemon adds next. They are all collected into a list nobody reads.
+
+So R10's requirement, in this head's terms, is **two** things and not one:
+
+1. **draw it**, under the rule the requirement names — a note is a disclosure, the log
+   holds the durable fact — which means a warning row that a reader can retire; and
+2. **keep it retired across a resync and a reattach.** Both currently REPLACE from the
+   snapshot wholesale, so a retirement stored in the list itself would be undone by the
+   very event the requirement names. A retired set keyed by the warning's identity
+   `(code detail ts)` is what survives a snapshot, and it is the same identity `note`
+   already dedupes on in letibot (`app.rs:5210-5232`).
+
+**The measured difference worth recording**: this head's `head-status-note` is at the
+opposite end of the same axis — no dismiss key *and* a 0.55 s life, where the reference
+has a dismiss-on-any-key and the same 60-frame TTL. A note that a keystroke can retire
+and a note that expires before it can be read are the same bug in two directions, and the
+reference's "any key acknowledges the notice" (`app.rs:3080`) is the half worth taking
+regardless of what R10 does about warnings.
 ### R8, in its general form
 
 **A number about the SESSION is a property of the session, not of this head's uptime.**
