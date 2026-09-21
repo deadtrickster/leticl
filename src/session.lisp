@@ -519,7 +519,12 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
            (%round-boundary)))
        :dirty)
       ((:decision-requested)
-       (endp-open (session-open-decisions session))
+       ;; A fresh ask is PUSHED, so `%open-decision`'s `first` is the newest —
+       ;; which is what "one list on the screen at a time" needs. There used to be
+       ;; an `endp-open` call here that did nothing while its docstring claimed to
+       ;; close the others' cursor state; it was removed rather than left, because
+       ;; the cursor is HEAD state and a function in this file could never have
+       ;; touched it. The head resets it now, in `%handle-frame`.
        (push (list :req-id (getf env :req-id)
                    :kind (getf env :kind)
                    :call-id (getf env :call-id)
@@ -670,11 +675,15 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
 (defun appendf-text (turn slot text)
   (setf (getf turn slot) (concatenate 'string (getf turn slot) text)))
 
-(defun endp-open (open-decisions)
-  "One list on the screen at a time (agents.md): a new decision closes the
-others' cursor state. The daemon never leaves two genuinely open; this keeps
-the head honest if it ever does."
-  (declare (ignore open-decisions)))
+;;; `endp-open` used to live here: a function whose docstring said *"a new decision
+;;; closes the others' cursor state … this keeps the head honest if it ever does"*
+;;; and whose whole body was `(declare (ignore open-decisions))`. It could not have
+;;; done what it claimed — the cursor is `head-decision-sel`, HEAD state, and
+;;; nothing in this file can reach a head slot — so the head did not reset its
+;;; cursor on a new ask, and a typed line that named no option was answered at
+;;; whichever row the last decision left behind. Removed rather than left with a
+;;; corrected docstring: a hook that promises what the file cannot deliver is what
+;;; let the bug stand for as long as it did.
 
 ;;; `ack-frame` used to live here: a second spelling of the loop's own ack,
 ;;; which read

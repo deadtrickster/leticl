@@ -87,14 +87,22 @@ key that is not ↑ or ↓, which is where a vertical walk ends.")
 (defun %open-decision (head)
   (first (session-open-decisions (head-session head))))
 
+(defun %word-prefixes-option-p (word option)
+  "WORD is a case-insensitive PREFIX of OPTION's `option_id`."
+  (let ((id (string-downcase (or (getf option :option-id) "")))
+        (w (string-downcase word)))
+    (and (plusp (length w))
+         (<= (length w) (length id))
+         (string= w (subseq id 0 (length w))))))
+
 (defun match-option (decision typed)
   "TYPED as an answer to DECISION: `(values option-id pattern note)`, or NIL.
 
 Three things, and each is a rule the reference learned the hard way:
 
   · the WORD is matched against the option id or its label, case-insensitively,
-    falling back to a unique PREFIX — the ladder's option ids are long, and an
-    operator who types `allow` means the one option that starts with it;
+    falling back to a prefix of the option id — the ladder's option ids are long,
+    and an operator who types `deny_and` means `deny_and_tell`;
   · trailing words are a GLOB on the option that writes a rule (always-allow),
     and the operator's own words on the option that promised to carry a reason
     (`deny_and_tell`) — which used to be REFUSED, so the line stayed in the
@@ -102,7 +110,25 @@ Three things, and each is a rule the reference learned the hard way:
     sentence;
   · on any other option trailing words are refused rather than dropped: somebody
     who typed them meant them, and answering as though they had not is the answer
-    they did not give."
+    they did not give.
+
+**The prefix fallback was documented here and not implemented**, which is what
+made a typed line dangerous rather than merely annoying: `allow` matched nothing,
+fell through to the arm that answers the MARKED ROW, and told the operator their
+ask had been answered. The safety was in the half that was not ported.
+
+**An AMBIGUOUS prefix is refused, with the candidates named, rather than resolved
+by list position.** This is a gate — it decides what the model may do — and the
+live ladder is `allow_once, allow_session, allow_always`: `allow` prefixes three
+options, and picking one of them by its position in a list is *an answer the
+operator did not give*, which is the whole defect class this arm exists against.
+The reference takes the first match; it can afford to, because its alternative
+when nothing matches is to answer the marked row anyway. Here the alternative is
+to decline, so declining on an ambiguity costs the operator one more character and
+cannot grant something they did not name.
+
+Returns a second value saying WHY when the answer is NIL, so the caller can name
+the reason rather than printing one of two sentences."
   (when decision
     (let* ((line (string-trim " " (or typed "")))
            (sp (position #\space line))
@@ -111,24 +137,45 @@ Three things, and each is a rule the reference learned the hard way:
            (options (if (string= (getf decision :kind) "question")
                         (getf decision :choices)
                         (getf decision :options)))
-           (opt (find-if (lambda (o)
-                           (let ((id (or (getf o :option-id) ""))
-                                 (label (or (getf o :label) "")))
-                             (or (string-equal word id) (string-equal word label))))
-                         options)))
-      (when opt
-        (let ((kind (getf opt :kind))
-              (id (getf opt :option-id)))
-          (cond
-            ((zerop (length rest)) (list id nil nil))
-            ;; the option that WRITES a rule takes the glob
-            ((and kind (search "allow_always" (string-downcase kind)))
-             (list id rest nil))
-            ;; the option that PROMISED a reason takes the words
-            ((and kind (search "reject_always" (string-downcase kind)))
-             (list id nil rest))
-            ;; every other option refuses them, rather than dropping them
-            (t nil)))))))
+           (exact (find-if (lambda (o)
+                             (let ((id (or (getf o :option-id) ""))
+                                   (label (or (getf o :label) "")))
+                               (or (string-equal word id) (string-equal word label))))
+                           options))
+           (prefixed (unless exact
+                       (remove-if-not (lambda (o) (%word-prefixes-option-p word o))
+                                      options)))
+           (opt (cond (exact exact)
+                      ((= 1 (length prefixed)) (first prefixed))
+                      (t nil))))
+      ;; An empty or all-space word cannot match: `%submit-line` never sends one
+      ;; here (the zero-length check is its first arm), and an all-space line
+      ;; gives an empty word, which falls to the "names no option" arm below
+      ;; rather than being special-cased.
+      (cond
+        ;; an ambiguous prefix: name the candidates rather than choose
+        ((and (null opt) (> (length prefixed) 1))
+         (values nil (format nil "~s matches ~{~a~^, ~} — type more of one"
+                             word (mapcar (lambda (o) (getf o :option-id)) prefixed))))
+        ;; nothing at all matched
+        ((null opt)
+         (values nil (format nil "~s names no option here — the ask is still open"
+                             word)))
+        (t
+         (let ((kind (getf opt :kind))
+               (id (getf opt :option-id)))
+           (cond
+             ((zerop (length rest)) (values (list id nil nil) nil))
+             ;; the option that WRITES a rule takes the glob
+             ((and kind (search "allow_always" (string-downcase kind)))
+              (values (list id rest nil) nil))
+             ;; the option that PROMISED a reason takes the words
+             ((and kind (search "reject_always" (string-downcase kind)))
+              (values (list id nil rest) nil))
+             ;; every other option refuses them, rather than dropping them
+             (t (values nil (format nil "~a takes no words after it — ~s is held"
+                                    id rest))))))))))
+
 
 (defun decision-options (decision)
   "The rows DECISION offers, whichever name the frame gives them — one place,
@@ -210,22 +257,29 @@ text — which is what makes the ledger safe to forget about."
       ;; REFUSED, so the line stayed in the composer and NOTHING was answered
       ;; while the operator looked at their own sentence, with the ask still open.
       (decision
-       (let ((m (match-option decision line)))
+       (multiple-value-bind (m why) (match-option decision line)
          (cond
            (m (destructuring-bind (id pattern note) m
                 (%send head (make-answer (getf decision :req-id) id pattern note))
                 (setf (head-decision-sel head) 0)))
-           ;; IT NAMED NO OPTION. The line is not disposable — the ask arrived
-           ;; while it was being typed — and neither is the ask: Enter on a card
-           ;; means "answer this". So the words go BACK to the composer and the
-           ;; MARKED ROW is answered, which is what the reference does
-           ;; (app.rs:3983-4000). Saying *"…is not an option here"* and answering
-           ;; nothing left the operator looking at their own sentence with the ask
-           ;; still open — the same shape as the deny-and-tell defect, one arm over.
+           ;; **IT NAMED NO OPTION, SO NOTHING IS ANSWERED.**
+           ;;
+           ;; This arm used to put the words back and then call
+           ;; `%answer-decision` on `head-decision-sel` — it answered the MARKED
+           ;; ROW — while saying *"answered the ask — your line is held"*. It cited
+           ;; app.rs:4065-4082, and the reference does do that; but the reference
+           ;; only ever reaches it after a PREFIX match has failed too, and it
+           ;; resets its cursor to the first row on every new ask. This head had
+           ;; neither half, so typing `allow` — which names three of the live
+           ;; ladder's options — answered whichever row a PREVIOUS decision had
+           ;; left the cursor on, and told the operator their ask was answered.
+           ;; A gate that sends an answer the operator did not give is worse than
+           ;; a gate that does nothing.
+           ;;
+           ;; So: the words are held (the ask arrived while they were being typed)
+           ;; and the reason is SAID, and the ask stays open.
            (t (composer-insert (head-composer head) line)
-              (say head (if (%answer-decision head (head-decision-sel head))
-                            "answered the ask — your line is held, enter sends it"
-                            "this ask offers no options — your line is held"))))))
+              (say head (or why "that names no option here — the ask is still open"))))))
       (t (%prompt head line)))
     (setf (head-dirty head) t)))
 

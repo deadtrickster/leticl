@@ -342,6 +342,24 @@ first."
                       (format nil "password given by ~a" (getf env :by))
                       (format nil "no password given (~a)" (getf env :by)))
                   (head-dirty head) t)))
+         ((:decision-requested)
+          ;; **A FRESH QUESTION STARTS AT THE TOP OF ITS LADDER.**
+          ;;
+          ;; The reference's own reason (app.rs:2546-2548): *"the highlight must
+          ;; never be somewhere the operator did not put it when Enter is one key
+          ;; away"*. This head never reset it — `endp-open` in `session.lisp` was
+          ;; called here and did NOTHING (`(declare (ignore open-decisions))`), and
+          ;; the slot was zeroed only AFTER an answer went out
+          ;; (`editor.lisp`'s two `%answer-decision` paths). So an ask inherited
+          ;; the cursor of the last one, and with the no-match arm answering the
+          ;; marked row, a typed line that named nothing was answered at a row the
+          ;; operator had selected for a decision already dealt with.
+          ;;
+          ;; It lives HERE and not in `session.lisp` because the cursor is HEAD
+          ;; state: the session cannot reach a head slot, which is why the hook
+          ;; there could never have done it.
+          (setf (head-decision-sel head) 0
+                (head-dirty head) t))
          ((:job-settled)
           ;; FOLDED INTO THE ROW THE DAEMON GAVE US, never invented. The jobs
           ;; pane draws `head-jobs`, which is only ever the `Jobs` reply, so an

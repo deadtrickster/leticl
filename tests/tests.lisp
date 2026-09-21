@@ -4581,9 +4581,14 @@ take back (app.rs:4068-4109)."
 arrives — until i press down arrow I wont get into the permissions menu, by which
 time my prompt is erased and gone\"*. The whole ladder was gated on an empty
 composer (editor.lisp:332), so the words you were writing were the price of
-choosing an option. Up and Down move whether or not a line is being typed; Enter
-keeps the guard, answers the MARKED row and HOLDS the line (app.rs:3474-3498,
-3983-4000)."
+choosing an option.
+
+**Up and Down move whether or not a line is being typed; Enter on a line that
+NAMES no option answers NOTHING.** That last part is a departure from the
+reference, and it was this test that pinned the old behaviour: the words are held
+either way, but the ask used to be answered at the MARKED ROW while the status line
+said *\"answered the ask\"* — a gate sending an answer the operator did not give.
+The line is still held, and the ask is still open."
   (let* ((h (%on-head :cols 80 :rows 24))
          (wire (%wire h)))
     (setf (session-open-decisions (head-session h)) (list (%decision-with)))
@@ -4593,12 +4598,129 @@ keeps the guard, answers the MARKED row and HOLDS the line (app.rs:3474-3498,
     (is (string= "some prose" (composer-buffer (head-composer h))) "and takes nothing from it")
     (is (null (%sent wire)) "and answers nothing yet")
     (leticl::%handle-key h (list :type :enter))
-    (let ((f (first (%sent wire))))
-      (is (equal "answer" (getf f :frame)) "enter answers the ask")
-      (is (equal "allow_always" (getf f :option-id)) "with the row the cursor was on"))
+    (is (null (%sent wire))
+        "enter on a line that names no option answers NOTHING — not the marked row")
     (is (string= "some prose" (composer-buffer (head-composer h)))
-        "and the words are back in the composer, not sent under the ask")
-    (is (search "your line is held" (head-status-note h)) "and it says so")))
+        "and the words are held, not sent under the ask")
+    (is (search "names no option" (head-status-note h)) "and it says why")))
+
+(def-test a-typed-word-that-names-no-option-sends-nothing (:suite leticl)
+  "THE REQUESTED TEST, and the whole point of the item: a gate that can send an
+answer the operator did not give.
+
+Typing `allow` against the live ladder matched nothing — there was no prefix
+fallback — fell through to the arm that answers the MARKED ROW, and reported
+*\"answered the ask\"*. So the assertion is not only that the ask stays open: it is
+that **nothing at all reaches the wire**, which is the only version of this that
+cannot be satisfied by accident.
+
+Every word here names no option: a typo, a word from the question, and a bare
+number past the end of the ladder."
+  (dolist (typed '("alow" "maybe" "the file please" "9" "%"))
+    (let* ((h (%on-head :cols 80 :rows 24))
+           (wire (%wire h)))
+      (setf (session-open-decisions (head-session h)) (list (%decision-with)))
+      (composer-insert (head-composer h) typed)
+      (leticl::%handle-key h (list :type :enter))
+      (is (null (%sent wire))
+          (format nil "~s names no option, so no frame is sent" typed))
+      (is (string= typed (composer-buffer (head-composer h)))
+          "the line is held, not consumed")
+      (is (search "names no option" (head-status-note h)) "and the reason is said")
+      (is (= 1 (length (session-open-decisions (head-session h))))
+          "and the ask is still open"))))
+
+(def-test a-prefix-names-an-option-when-it-is-unambiguous (:suite leticl)
+  "The fallback the docstring promised and the body never implemented.
+
+`reject_` prefixes `reject_always` and nothing else, so it resolves. `deny` is
+exact. Both spellings were words that matched nothing at all before this."
+  (let ((d (%decision-with)))
+    (destructuring-bind (id pattern note) (match-option d "reject_")
+      (is (string= "reject_always" id) "an unambiguous prefix resolves")
+      (is (null pattern) "with no extra")
+      (is (null note) "and no note"))
+    (destructuring-bind (id pattern note) (match-option d "deny")
+      (is (string= "deny" id) "and an exact id still wins over any prefix")
+      (is (null pattern))
+      (is (null note)))
+    ;; case-insensitively, on the id and on the label. A multi-word label is split
+    ;; at its first space — as the reference does, and it is the reason the ID is
+    ;; the spelling that always works: `Allow Once` leaves `Once` as trailing
+    ;; words, which a plain option refuses.
+    (destructuring-bind (id pattern note) (match-option d "REJECT_ALWAYS")
+      (is (string= "reject_always" id) "the id is case-insensitive")
+      (is (null pattern))
+      (is (null note)))
+    ;; **A MULTI-WORD LABEL DOES NOT RESOLVE, and that is shared with the
+    ;; reference** rather than being a divergence: the line is split at its first
+    ;; space before anything is matched, so `Always allow` arrives as the word
+    ;; `Always`, which prefixes no id. The ID is the spelling that always works;
+    ;; a label is for reading. Asserted so the limit is recorded rather than
+    ;; discovered.
+    (multiple-value-bind (m why) (match-option d "Always allow")
+      (is (null m) "`Always allow` names no option — its first word is `Always`")
+      (is (search "names no option" why) "and the reason says so"))
+    ;; the prefix still yields its note the way an exact match does
+    (destructuring-bind (id pattern note) (match-option d "reject_always because")
+      (is (string= "reject_always" id))
+      (is (null pattern))
+      (is (string= "because" note) "and the trailing words are the note"))))
+
+(def-test an-ambiguous-prefix-is-refused-and-names-the-candidates (:suite leticl)
+  "**Why this refuses rather than taking the first match.**
+
+The live ladder is `allow_once, allow_session, allow_always`: `allow` prefixes
+three options, so *\"the option whose id it matches\"* has no single referent.
+Granting one of them by its position in a list is an answer the operator did not
+give — `allow_once` if the list happens to start that way, `allow_always` if it
+does not, and the difference is a standing rule versus a single call.
+
+The reference takes the first match, which it can afford because its fallback is to
+answer the marked row anyway. Here the fallback is to decline, so declining costs
+one more character and cannot grant what was not named."
+  (let* ((h (%on-head :cols 80 :rows 24))
+         (wire (%wire h))
+         (d (list :req-id "adj-9" :kind "permission" :summary "run"
+                  :options (list (list :option-id "allow_once" :kind "allow_once")
+                                 (list :option-id "allow_session" :kind "allow_session")
+                                 (list :option-id "allow_always" :kind "allow_always")))))
+    (multiple-value-bind (m why) (match-option d "allow")
+      (is (null m) "an ambiguous prefix does not resolve")
+      (is (search "allow_once" why) "and the candidates are named")
+      (is (search "allow_session" why) "all of them")
+      (is (search "allow_always" why) "not just the first"))
+    ;; and on a live head it sends nothing and keeps the ask
+    (setf (session-open-decisions (head-session h)) (list d))
+    (composer-insert (head-composer h) "allow")
+    (leticl::%handle-key h (list :type :enter))
+    (is (null (%sent wire)) "an ambiguous word sends nothing")
+    (is (search "matches" (head-status-note h)) "and says which options it matched")))
+
+(def-test a-new-decision-starts-with-the-first-row-marked (:suite leticl)
+  "The reference's own reason (app.rs:2546-2548): *\"the highlight must never be
+somewhere the operator did not put it when Enter is one key away\"*.
+
+This head never reset the cursor — `endp-open` in `session.lisp` was called on
+every ask and did nothing, and the slot was zeroed only after an answer went out.
+So an ask inherited the cursor of the last one, and combined with the no-match arm
+answering the marked row, a typed line that named nothing was answered at a row
+selected for a decision already dealt with."
+  (let ((h (%on-head :cols 80 :rows 24)))
+    ;; the operator moves the cursor on the FIRST ask
+    (setf (session-open-decisions (head-session h)) (list (%decision-with)))
+    (leticl::%handle-key h (list :type :down))
+    (leticl::%handle-key h (list :type :down))
+    (is (= 2 (leticl::head-decision-sel h)) "two downs, row 2")
+    ;; and a NEW ask arrives
+    (leticl::%handle-frame
+     h (list :frame "event" :event "decision_requested" :seq 7
+             :req-id "adj-2" :kind "permission" :summary "another"
+             :options (list (list :option-id "allow_once" :kind "allow_once")
+                            (list :option-id "allow_always" :kind "allow_always"))))
+    (is (= 0 (leticl::head-decision-sel h))
+        "the fresh ask starts at its FIRST row, not the row the last one was left on")
+    (is (head-dirty h) "and the frame is marked for a repaint")))
 
 (def-test a-digit-that-names-no-row-is-the-composers (:suite leticl)
   "G21. The ladder's digits take a row; a digit past the last one is a character.
