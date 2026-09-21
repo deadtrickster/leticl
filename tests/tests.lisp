@@ -6697,3 +6697,32 @@ beside it."
                   (is (leticl::%socket-exists-p sock) "a real socket is one"))
         (ignore-errors (sb-bsd-sockets:socket-close s))
         (ignore-errors (delete-file sock))))))
+
+(def-test a-table-with-an-empty-header-still-opens (:suite leticl)
+  "A GFM table whose HEADER cells are empty is a table.
+
+The guard rejected any line made only of spaces, dashes, colons and pipes, so
+`| | |` was not a row — and then `|---|---|` was not a delimiter either, because a
+delimiter row only counts when the table is already open. The whole table fell
+through to the paragraph path and rendered as ONE LINE of raw pipes joined by
+spaces. Measured on the operator's screen, in a session that is not this one:
+
+    The three commits that are now on GitHub:
+
+    | | | |---|---| | 2cd1dae | TODO: record the markdown inline regression | …
+
+A model writes an empty header when the first column is a LIST rather than a name,
+which is what that table was: three commits, two columns, nothing to call them."
+  (let* ((text (format nil "The three commits:~%~%| | |~%|---|---|~%| `2cd1dae` | TODO: the regression |~%| `f11738b` | markdown: one node at a time |~%"))
+         (lines (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l)))
+                        (markdown-lines text))))
+    (is (notany (lambda (l) (search "|---|---|" l)) lines)
+        "the delimiter row is consumed, never painted")
+    (is (notany (lambda (l) (search "| | |" l)) lines)
+        "and the empty header is not painted as raw pipes either")
+    (is (some (lambda (l) (search "2cd1dae" l)) lines) "the first row is there")
+    (is (some (lambda (l) (search "f11738b" l)) lines) "and the second")
+    ;; the columns are ALIGNED, which is the whole point of a table
+    (let ((rows (remove-if (lambda (l) (zerop (length (string-trim " " l))))
+                           lines)))
+      (is (>= (length rows) 3) "a header-with-no-names, a rule, and two rows"))))

@@ -473,10 +473,22 @@ that away."
             body)))))
 
 (defun %table-row-p (line)
-  "A GFM pipe row: has a pipe and is not a delimiter row (markdown.rs:476)."
+  "A GFM pipe row: has a pipe and is not a DELIMITER row.
+
+The delimiter test is the precise one, and it has to be: the previous guard
+rejected any line made only of spaces, dashes, colons and pipes, so a table whose
+HEADER has empty cells — `| | |` — never opened, and neither did the `|---|---|`
+under it, because a delimiter row only counts when the table is already open. The
+whole table then fell through to the paragraph path and rendered as one line of
+raw pipes joined by spaces. Measured on the operator's screen in the `rano`
+window: *"the three commits that are now on GitHub"* and its three-row table came
+out as `| | | |---|---| | 2cd1dae | …`.
+
+A table with an empty header is what a model writes when the first column is a
+list rather than a name, so this is not a corner: it is a table."
   (and (plusp (length line))
        (find #\| line)
-       (not (every (lambda (c) (member c '(#\space #\- #\: #\|))) line))))
+       (not (%delimiter-line-p line))))
 
 (defun %delimiter-line-p (line)
   "A raw delimiter LINE: `|---|---|`. See `%delimiter-row-p`."
