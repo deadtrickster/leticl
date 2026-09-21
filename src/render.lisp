@@ -204,14 +204,154 @@ neighbours: does a blank line belong between them. The reference's `RowClass`."
           ((:reasoning :tool_result) :activity)
           (t :other)))))
 
+;;; ------------------------------------------- the history line cache ;;;
+;;;
+;;; **Scroll cost nothing to find the lines and everything to build them.** The
+;;; walk renders every item from the newest down to the scroll depth, so a frame
+;;; at the bottom of a 2434-item session builds 61 lines and one 6000 lines back
+;;; builds 5098 — measured 0.5 ms and 62 ms, per frame, with nothing reused (two
+;;; identical viewports cost 63 ms and 61 ms). Holding the wheel then queues
+;;; events faster than the head can draw them, and the head looks frozen: the
+;;; operator's *"scroll doesn't work"*.
+;;;
+;;; The reference solves this with `hist_lines` and a careful invalidation key,
+;;; and `rendering.md` argues against porting that key — it would have to include
+;;; five defvars any eval can change, and a screen cache is a second source of
+;;; truth in a head whose contract is that redefining a renderer changes the next
+;;; frame. **This is a narrower cache with a narrower key**: only the committed
+;;; transcript's LINES, only while the things that produce them are unchanged.
+;;;
+;;; The key is everything `item-lines` reads — the read mark (bumped by every
+;;; event), the width, the item count, and the three prefs that change how a row
+;;; is drawn. Anything else is a bug in the key, so the key is built from what the
+;;; renderer actually reads rather than from a guess about what matters.
+;;;
+;;; **Scrolling changes none of them**, which is the whole point: while the
+;;; operator scrolls and no event arrives, the cache holds and a deep frame costs
+;;; a `subseq`. The walk is also EXTENDABLE: if a deeper scroll needs more lines
+;;; than the cache holds, it continues from where it stopped instead of starting
+;;; over, so scrolling further costs the difference and not the whole depth.
+
+(defvar *hist-cache* nil
+  "`(key lines next-index class-above)` for the committed transcript, or NIL.
+
+A defvar: a push must not drop a running head's cache, which would cost one
+rebuild rather than a wrong frame, but a cache that resets on every push is a
+cache that never helps while working on this file.")
+
+(defvar *hist-generation* 0
+  "Bumped by anything that can change a committed row: an event folded, a snapshot
+taken, a switch. The cache's key, and the reason it cannot be a guess at which
+fields matter.
+
+**Not** bumped by scrolling, by a keystroke, or by the composer — those change what
+is DRAWN, not what the rows are, and bumping on them would rebuild the history
+every frame and lose the whole point.")
+
+(defun %hist-key (head cols)
+  "Generation, width, and the IDENTITY of the items vector.
+
+**Three things, because no two of them are enough.** The first version was
+`(seq cols count prefs)` and it is wrong: two sessions can sit at the same seq with
+the same width and the same item COUNT and hold entirely different content — a
+resync or a switch can land on any of those. Measured by a test that set
+`session-items` directly and got the PREVIOUS test's lines back.
+
+  · `*hist-generation*` catches an event folded, a body filled in, a snapshot
+    taken — the things that change a row WITHOUT changing the count;
+  · the width catches a resize, which re-wraps every line;
+  · the vector's IDENTITY catches a wholesale replacement that no counter saw,
+    which is what `(setf (session-items …))` is.
+
+`eq` on the vector rather than `equal` on its contents: an item body filled in
+place leaves the vector and its count identical, and that case is the generation's."
+  (list *hist-generation* cols (session-items (head-session head))))
+
+(defun %hist-key= (a b)
+  "Two keys equal on the two numbers and the vector's IDENTITY."
+  (and a b
+       (= (first a) (first b))
+       (= (second a) (second b))
+       (eq (third a) (third b))))
+
+(defun %history-until (head cols need)
+  "The committed transcript's lines, oldest first, at least NEED of them.
+
+Cached: a call that needs no more than the cache holds does no rendering at all,
+which is the case that matters — scrolling."
+  (let* ((key (%hist-key head cols))
+         (s (head-session head))
+         (items (session-items s))
+         (cached (and *hist-cache* (%hist-key= key (first *hist-cache*)) *hist-cache*))
+         (lines (if cached (second cached) nil))
+         (next-i (if cached (third cached) (1- (length items))))
+         (class-above (if cached (fourth cached) nil)))
+    (loop while (and (>= next-i 0) (< (length lines) (1+ need)))
+          do (let* ((item (aref items next-i))
+                    (il (item-lines item cols (head-prefs head)))
+                    (class (item-row-class item)))
+               (unless (every #'%line-blank-p il)
+                 (when (and lines class-above
+                            (not (and (eq class :activity) (eq class-above :activity))))
+                   (setf lines (cons nil lines)))
+                 (setf class-above class))
+               ;; `revappend`: prepends IL in order in O(len il). `append` copies
+               ;; the whole accumulated list per item, which is O(depth²).
+               (setf lines (revappend il lines)))
+             (decf next-i))
+    (setf *hist-cache* (list key lines next-i class-above))
+    lines))
+
+(defun %window-of (hist tail start end)
+  "Elements START..END of the conceptual list `hist` + a blank + `tail`.
+
+Walks the three pieces and copies only the WINDOW, which is the point: `(append
+hist …)` copies every cached line to show sixty, and that copy is where the cache's
+whole win went — measured: a cached frame at 6000 lines back still cost 76 ms per
+twenty, the same as building it, because the 5098-line append dominated.
+
+START is never large (it is `1 + (length tail)` by construction), so the `nthcdr`
+costs nothing either."
+  (let* ((lh (length hist))
+         (lt (length tail))
+         (gap (if hist 1 0))
+         (n (+ lh gap lt))
+         (end (min end n))
+         (start (min start end))
+         (out nil)
+         (k start))
+    ;; the part inside HIST
+    (when (< k lh)
+      (let ((cursor (nthcdr k hist))
+            (take (min (- end k) (- lh k))))
+        (dotimes (i take)
+          (push (car cursor) out)
+          (setf cursor (cdr cursor)))
+        (incf k take)))
+    ;; THE GAP between the committed rows and the live turn
+    (when (and (plusp gap) (= k lh) (< k end))
+      (push nil out)
+      (incf k))
+    ;; the part inside TAIL — only once the window has actually passed HIST and the
+    ;; gap. Without the guard `(- k lh gap)` goes NEGATIVE for a window that ends
+    ;; inside hist, and `nthcdr` wants an unsigned byte: measured, `-6` for a
+    ;; 20-item test at scroll 6.
+    (when (>= k (+ lh gap))
+      (let ((cursor (nthcdr (- k lh gap) tail)))
+        (loop while (and cursor (< k end))
+              do (push (car cursor) out)
+                 (setf cursor (cdr cursor))
+                 (incf k))))
+    (nreverse out)))
+
 (defun %viewport-lines (head cols want)
   "The conversation's last WANT lines (scrolled up by head-scroll), as
-segment lines oldest-first. The running turn is the newest thing there is, so
-its lines go at the END, after every committed row: reasoning, then the answer,
-then the calls — the bottom of the screen, just above the composer. (Building
-newest-first and reversing the slice put the live turn at the TOP of the
-viewport, above the user prompt it answers — measured on the operator's
-terminal: the newest content sat at row 1 and the oldest at row 57.)"
+ segment lines oldest-first. The running turn is the newest thing there is, so
+ its lines go at the END, after every committed row: reasoning, then the answer,
+ then the calls — the bottom of the screen, just above the composer. (Building
+ newest-first and reversing the slice put the live turn at the TOP of the
+ viewport, above the user prompt it answers — measured on the operator's
+ terminal: the newest content sat at row 1 and the oldest at row 57.)"
   (let* ((s (head-session head))
          (need (+ (head-scroll head) want))
          ;; the running turn, then ITS FOOTER — the footer belongs to the turn and
@@ -222,59 +362,57 @@ terminal: the newest content sat at row 1 and the oldest at row 57.)"
                        ;; sentence the conversation has swallowed is visible here
                        ;; until the daemon appends its row
                        (queued-lines head cols)))
-         (hist nil))
-    ;; prepend committed rows, newest first, until enough lines exist; the
-    ;; accumulator stays oldest-first because each older row goes in front
-    ;;
-    ;; **AIR WHERE THE KIND CHANGES**, which is the reference's `RowClass` rule and
-    ;; the spacing this head was missing: a blank line goes before a row unless
-    ;; BOTH it and the row above are `Activity`. Two tool cards in a row are one
-    ;; block and read as one — a blank between each was a third of the vertical
-    ;; budget spent separating what a glyph in the first column already separates —
-    ;; while prose against a card is a change of kind and gets the air.
-    ;;
-    ;; A row that renders NOTHING gets no separator either. An assistant row whose
-    ;; text is whitespace and whose every call is drawn by its own result is a
-    ;; common shape (it is what a tool-calling round looks like), and paying two
-    ;; blank lines for it puts a hole in the transcript.
-    (let ((class-above nil))
-      (loop for i from (1- (length (session-items s))) downto 0
-            ;; one more than needed: the gap below costs a row
-            while (< (+ (length hist) (length tail)) (1+ need))
-            do (let* ((item (aref (session-items s) i))
-                      (il (item-lines item cols (head-prefs head)))
-                      (class (item-row-class item)))
-                 (unless (every #'%line-blank-p il)
-                   (when (and hist class-above
-                              (not (and (eq class :activity) (eq class-above :activity))))
-                     (setf hist (cons nil hist)))
-                   (setf class-above class))
-                 (setf hist (append il hist)))))
+         ;; **AIR WHERE THE KIND CHANGES**, which is the reference's `RowClass` rule
+         ;; and the spacing this head was missing: a blank line goes before a row
+         ;; unless BOTH it and the row above are `Activity`. Two tool cards in a row
+         ;; are one block and read as one — a blank between each was a third of the
+         ;; vertical budget spent separating what a glyph in the first column
+         ;; already separates — while prose against a card is a change of kind and
+         ;; gets the air.
+         ;;
+         ;; A row that renders NOTHING gets no separator either. An assistant row
+         ;; whose text is whitespace and whose every call is drawn by its own result
+         ;; is a common shape (it is what a tool-calling round looks like), and
+         ;; paying two blank lines for it puts a hole in the transcript.
+         ;;
+         ;; All of that lives in `%history-until` now, because it is per-ROW state
+         ;; (`class-above`) and a cache that forgets it inserts the gaps wrongly on
+         ;; the frame after a hit.
+         (hist (%history-until head cols need)))
     ;; **AIR ABOVE THE CHROME.** One blank row after the committed rows, always
     ;; (`body_window`: `if !hist_lines.is_empty() { segs.push(gap) }`), so the
     ;; transcript never sits on the box's top edge and the live turn never sits
     ;; on the last settled row. Measured on letibot's screen: row 59 blank, row
     ;; 60 the box's top edge; ours had prose on 59.
-    (let* ((all (append hist (and hist (list nil)) tail))
+    (let* ((lh (length hist))
+           (lt (length tail))
+           (gap (if hist 1 0))
+           (all-len (+ lh gap lt))
            ;; **NOTHING HAS HAPPENED YET.** An empty screen with a status line
-           ;; under it is indistinguishable from a head that attached to the
-           ;; wrong socket — the reference's own sentence (app.rs:6112-6117) —
-           ;; so it says so, and says what this window is and is not.
+           ;; under it is indistinguishable from a head attached to the wrong
+           ;; socket — the reference's own sentence (app.rs:6112-6117) — so it says
+           ;; so, and says what this window is and is not.
            ;;
            ;; Guarded on `attaching-p` the way the reference guards it on
-           ;; `!self.attaching`: the walking cat covers *not answered yet*, and
-           ;; a banner asserting the session is empty while nobody has reported
+           ;; `!self.attaching`: the walking cat covers *not answered yet*, and a
+           ;; banner asserting the session is empty while nobody has reported
            ;; would be a claim this head is in no position to make.
-           (all (if (and (null all) (not (attaching-p head)))
-                    (empty-session-lines cols)
-                    all))
-           (n (length all)))
+           (empty (and (zerop all-len) (not (attaching-p head))))
+           (empty-lines (when empty (empty-session-lines cols)))
+           (n (if empty (length empty-lines) all-len)))
       ;; the scroll is clamped to what exists: past the top there is nothing to
       ;; show, and a wheel that kept counting would need as many turns back
       (setf (head-scroll head) (max 0 (min (head-scroll head) (- n want))))
       (let* ((end (max 0 (- n (head-scroll head))))
              (start (max 0 (- end want)))
-             (out (subseq all start end)))
+             ;; **The window, not the whole transcript.** `(append hist …)` and then
+             ;; `subseq` copies every cached line to show sixty, and that copy is
+             ;; where the cache's whole win went — measured: a cached frame at 6000
+             ;; lines back still cost 76 ms per twenty, because the append of 5098
+             ;; lines dominated everything the cache had saved.
+             (out (if empty
+                      (subseq empty-lines start end)
+                      (%window-of hist tail start end))))
         ;; **PARKED IN THE SCROLLBACK, the last row says so** — the reference's
         ;; banner, in yellow, in the transcript's own last row: how far behind
         ;; the tail is, and how to follow it again. Without it a scrolled head is

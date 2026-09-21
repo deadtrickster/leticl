@@ -64,6 +64,8 @@
    #:tick-notice #:say
    #:turn-status #:composer-title #:composer-wiring
    #:attach-lines #:cat-frame #:attaching-p #:*attach-started-ms* #:+cat-frames+
+   ;; the history line cache, and the generation that invalidates it
+   #:*hist-cache* #:*hist-generation*
    #:composer-rows-needed #:composer-inner #:*notice-ttl-frames* #:hint-bar
    #:*notice-ttl* #:*stall-ms* #:*spent-micros* #:*last-event-ms*
    #:session-seq #:session-expected-seq #:session-session-id #:session-items

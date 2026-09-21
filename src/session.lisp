@@ -106,6 +106,8 @@ walking under the new session's composer."
 
 The id is compared BEFORE it is assigned, because that comparison is the only
 thing that knows whether this is the same conversation (app.rs:1897-1934)."
+  ;; the transcript's lines are replaced wholesale, so the render cache is stale
+  (incf *hist-generation*)
   (let ((id (or (getf snapshot :session-id) "")))
     (unless (string= id (session-session-id session))
       (%clear-session-scoped session)))
@@ -220,11 +222,17 @@ assigns the id explicitly on that path and keeps the state it already has
         when (string= (item-id i) item-id) return i))
 
 (defun push-item (session item)
+  ;; a new committed row: the render cache is one line stale
+  (incf *hist-generation*)
   (vector-push-extend item (session-items session)))
 
 (defun fill-item (session item-id body)
   (let ((hit (find-item session item-id)))
-    (when hit (setf (getf hit :item) body))))
+    (when hit
+      ;; a body arriving changes how the row RENDERS, and the item count does not
+      ;; move — which is why the cache's key is a generation and not a count
+      (incf *hist-generation*)
+      (setf (getf hit :item) body))))
 
 ;;; ------------------------------------------------------------- turns ;;;
 
