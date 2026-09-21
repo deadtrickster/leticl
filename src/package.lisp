@@ -126,6 +126,9 @@
    #:tilde-path #:short-id #:bytes-human #:split-row
    #:*rendered-total* #:*scrubbed-total* #:*filtered-total* #:*unreadable-total*
    #:*daemon-protocol*
+   ;; the payload window (T1): what makes the rest of a long result reachable
+   #:*payload-view* #:*payload-page* #:payload-view-page #:payload-view-close
+   #:payload-view-seed #:payload-view-open-p
    #:protocol-skew-said #:unreadable-said #:file-head-note
    #:%send-slash
    #:setting-choices #:setting-value

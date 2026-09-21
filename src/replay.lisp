@@ -134,6 +134,9 @@ see this file's header."
          (*filtered-total* 0)
          (*rendered-total* 0)
          (*unreadable-total* 0)
+         ;; the payload window: a page offset changes what a row renders to, and a
+         ;; replay must answer the same bytes twice
+         (*payload-view* nil)
          (*daemon-protocol* nil)
          (*skew-said-pending* nil)
          (*skew-last-said* nil)

@@ -476,7 +476,23 @@ Esc was a second thing to remember per pane."
              t))
       (case (getf key :ch)
         ((#\r) (%flip-fold head :show-reasoning) t)   ; fold the thinking
-        ((#\t) (%flip-fold head :show-tools) t)       ; fold tool output
+        ((#\t)
+         ;; **The fold AND a window into the newest payload.**
+         ;;
+         ;; The fold alone was the bug this whole mechanism exists for: it raises
+         ;; the BUDGET (which rows may be long — two rows folded, forty open) and
+         ;; gives no row an OFFSET, so a payload past its first screenful stayed
+         ;; unreachable and the seam said `… +N lines · ctrl-t` to a chord that
+         ;; revealed none of them. The reference at the same key (app.rs:3473-3496)
+         ;; explains it in one line: *"opening the fold changed the budget, not the
+         ;; offset. There was no offset."*
+         ;;
+         ;; Closing the fold closes the view WITH it: a page offset into a payload
+         ;; that is no longer drawn is a cursor in a closed file.
+         (if (%flip-fold head :show-tools)
+             (payload-view-seed (head-session head))
+             (payload-view-close))
+         t)
         ((#\l) (setf (head-full-repaint head) t (head-dirty head) t) t)
         ;; `o` on the subagents pane switches INTO the row under the cursor
         ;; (app.rs:3696-3707); anywhere else it promotes the running command,
@@ -848,6 +864,55 @@ long as the picker stayed open."
              (%answer-decision head (1- digit)))))
         (t nil)))))
 
+(defun %payload-key (head key type)
+  "The keys an OPEN PAYLOAD WINDOW owns. T when the key was claimed.
+
+`↑`/`↓` page it; `esc` closes it. **Esc closes the WINDOW and nothing else** — it
+does not arm the interrupt, and it does not jump the transcript back to the tail,
+because the seam on the row says `esc closes` and a key that did something else would
+make the seam a lie of exactly the kind this window was built to end. Esc giving the
+arrows BACK is part of the contract, not an afterthought: the reference's own test
+says why (*\"the original bug was that expanding tools cost the ability to scroll at
+all\"*, app.rs:14767-14772).
+
+**PageUp/PageDown and the wheel are deliberately NOT claimed**, and this is the
+reference's real behaviour rather than its written one. Its payload arm lists
+`Key::PageUp | Key::PageDown` (app.rs:3866-3889) and those patterns are DEAD CODE:
+the screen-moving arm for `PageUp | PageDown | WheelUp | WheelDown` is at :3628,
+inside the same `match`, and it returns — the payload arm is an `if` after the match.
+So in letibot an open window pages with ↑/↓ and the page keys still move the
+transcript, which is this head's contract too, and it is the one worth keeping: in
+this head the page keys and the wheel ARE the scroll, and a window that took them
+until Esc is indistinguishable from *\"scrolling broke again\"* — the complaint this
+operator has already made twice.
+
+**A view the reader OPENED keeps the arrows; an ask that ARRIVES does not take
+them.** A permission card is the one thing on the screen nobody asked for, and the
+reference puts the payload window ahead of the ladder for that reason
+(app.rs:3855-3862): with a 400-line log open and a call waiting to be answered,
+`↑` is still the reader's. `enter` is deliberately NOT claimed, so the ask is
+answered where it always was.
+
+**And it stands down entirely while something the reader opened is on top.** The
+window lives in the transcript: with the todos pane up, or the mode card, the
+transcript is not on the screen at all, and arrows that paged a window nobody can
+see would be the same class of defect as the seam that named a chord that revealed
+nothing.
+
+The reference is INCONSISTENT here and this head is not: its payload arm
+(app.rs:3862) sits after `sub_out`, `job_out` and `config_pane` — so those keep
+their arrows — and before the todos, subagents and jobs panes (:4167 and on), so
+those lose them to a window that is not on the screen. One rule — *anything the
+reader put on top wins* — is the version of that with nothing to remember."
+  (when (and (payload-view-open-p)
+             (eq (head-mode head) :normal)
+             (null *pick-open*))
+    (case type
+      ((:esc) (payload-view-close) (setf (head-dirty head) t) t)
+      ((:up) (payload-view-page (- *payload-page*)) (setf (head-dirty head) t) t)
+      ((:down) (payload-view-page *payload-page*) (setf (head-dirty head) t) t)
+      (t nil))))
+
 (defun %handle-key (head key)
   "Who a key belongs to, in the reference's precedence order (`App::key`).
 
@@ -895,6 +960,12 @@ for the lists)."
       ;; decision ladder (app.rs:3384, 3417 and 3481, all before :3609).
       ((and (member (head-mode head) '(:peek :job-out :config))
             (%pane-key head key type)))
+      ;; **A payload window is asked before the ASK.** It is a view the reader opened
+      ;; with `ctrl-t`; a permission card is the one card nobody asked for, and the
+      ;; reference settles this the same way (app.rs:3855-3862, ahead of the ladder).
+      ;; Everything the reader opened ON TOP of it — a pane, a card — is asked
+      ;; earlier and wins, which is where this head differs on purpose.
+      ((%payload-key head key type))
       ;; **An open ask is asked before every LIST on the screen.** The reference's
       ;; order puts the ladder at app.rs:3609 — ahead of the session picker (:3643),
       ;; the mode and models pickers (:3736) and the subagent, todos and jobs panes

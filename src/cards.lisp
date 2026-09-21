@@ -794,6 +794,130 @@ only line there is, which is three columns saying \"this is line one of one\"."
         (string-right-trim " " (subseq t0 (+ digits 2)))
         (string-trim " " line))))
 
+;;; ------------------------------------------------ the payload's own window ;;;
+;;;
+;;; **What makes the rest of a long result reachable at all.**
+;;;
+;;; A settled tool row drew `… +N lines · ctrl-t`, and the reader pressed ctrl-t and
+;;; got the same row back: the fold raises the BUDGET (which rows may be long — two
+;;; rows folded, forty open) and gives no row an OFFSET. So the chord the seam named
+;;; revealed nothing, and a 418 KB log was readable to its fortieth line and no
+;;; further. The reference records exactly this at the site this is ported from
+;;; (app.rs:10828-10840):
+;;; *"opening the fold changed the budget, not the offset. There was no offset."*
+;;;
+;;; So a row whose window is open draws a WINDOW into its payload — one line per
+;;; source line, which is why the seams can talk in lines — and the arrows page it.
+
+(defparameter *payload-page* 10
+  "How many lines one press pages a payload window.
+
+The reference's `BY` (app.rs:3863), and deliberately the SAME unit for the arrows
+and the page keys rather than a screenful: the window's height is a function of the
+frame, the fold and the payload, and the key handler knows none of those. The offset
+is clamped where it is USED — by the render, which is the only place that knows how
+long the payload is — which is what the reference does for the same reason.
+
+A `defparameter` and not a `defconstant`: the file pusher skips constants, so a
+constant could never be changed on a running head.")
+
+(defvar *payload-view* nil
+  "The one row whose payload window is OPEN, and how far into it the reader has
+paged: a cons `(ITEM-ID . OFFSET)`.
+
+**A pair and not a bare offset**, because *the view is open* and *how far down it
+is* have to agree about WHICH row: several rows can be long on one screen, and a
+bare offset would page every one of them together.
+
+**Keyed on the ITEM ID**, which is what `item-lines` holds and what is unique per
+row. `call-id` is the tempting key and the wrong one — it is round-positional and
+reused, so a view keyed on it opens on the wrong row after the next round; the
+reference's first version did exactly that and its own test caught it, the seam
+saying `ctrl-t pages` while ctrl-t had been pressed (`app.rs:10231-10238`).
+
+A `defvar` and not a head slot, for the reason all live state is: a struct layout
+change is a restart, and this has to be reachable from a push. Bound by
+`with-replay-globals`, because a replay must answer the same bytes twice.")
+
+(defun %payload-view-set (value)
+  "The ONE writer of `*payload-view*`, and the place that invalidates the rendered
+history.
+
+A page offset changes what a row RENDERS TO without moving any of the line cache's
+three terms — the generation, the width, the items vector's identity — so a paging
+that did not bump the generation would be served the previous window out of the
+cache and look like a key that does nothing. That is the reference's own finding at
+its cache (*the page moved to 10 and the screen still showed line 0*) and ours would
+have been the same one.
+
+One writer rather than an `(incf …)` at each call site, for the reason the
+preference setter gives: *\"the fifth site is the one that would forget\"*.
+(`*hist-generation*` is defined in `render.lisp`, beside the cache it invalidates and
+after this file — the same forward reference `push-item` in `session.lisp` already
+makes.)"
+  (setf *payload-view* value)
+  (incf *hist-generation*)
+  value)
+
+(defun payload-view-for (item)
+  "The offset THIS row's window is at, or NIL when this row has no window."
+  (let ((id (getf item :item-id)))
+    (when (and *payload-view* id (equal id (car *payload-view*)))
+      (cdr *payload-view*))))
+
+(defun payload-view-open-p () (and *payload-view* t))
+
+(defun payload-view-close ()
+  "Close the window. T when there was one."
+  (when (payload-view-open-p)
+    (%payload-view-set nil)
+    t))
+
+(defun payload-view-page (delta)
+  "Move the open window DELTA lines, floored at zero. T when there was a window.
+
+The UPPER clamp is the render's, not this function's: how far down a payload goes is
+a function of the payload and the frame, and neither is known here."
+  (when (payload-view-open-p)
+    (%payload-view-set (cons (car *payload-view*)
+                             (max 0 (+ (cdr *payload-view*) delta))))
+    t))
+
+(defun %tool-payload-rows (body)
+  "The rows a tool result's payload draws as.
+
+Sanitised FIRST and filtered second, the reference's order (app.rs:9712): a
+payload's bytes are the command's and not this terminal's (`%without-control`), and
+the envelope lines — the wrapper the harness adds around a result, addressed to the
+model — are not output."
+  (remove-if #'%envelope-line-p
+             (mapcar #'%without-control
+                     (%payload-lines (or (getf body :payload) "")))))
+
+(defparameter +payload-pageable-lines+ 2
+  "A payload longer than this is worth a window.
+
+The reference's test in `newest_payload_row` (`payload.lines().count() > 2`), and the
+same number for a reason rather than by coincidence: a folded row already draws one
+line and the seam, so two is the point past which paging gains anything.")
+
+(defun payload-view-seed (session)
+  "Open the window on the NEWEST row with something to page, at its first line.
+NIL when no row has one — which leaves the fold open with no view, and that is the
+right answer for a session whose last result is one line long.
+
+The newest, because that is the row a reader is looking at: rows are appended at the
+bottom, the fold is one switch for all of them, and the command just run is at the
+end. This is also the whole limit of the mechanism and is written down rather than
+implied: only ONE row has a window at a time, and it is this one."
+  (%payload-view-set
+   (loop for i of-type fixnum from (1- (length (session-items session))) downto 0
+         for item = (aref (session-items session) i)
+         for body = (item-body item)
+         when (and (consp body) (string= (getf body :type) "tool_result")
+                   (> (length (%tool-payload-rows body)) +payload-pageable-lines+))
+           return (cons (getf item :item-id) 0))))
+
 (defun %tool-result-lines (item body cols prefs)
   "One settled tool-result row — the reference's `TranscriptItem::ToolResult` arm,
 followed step for step, because a screen comparison showed ours had folded the
@@ -824,8 +948,7 @@ header, also printed `· 1 line` — a count for a fold with nothing to fold."
          ;; (app.rs:9712) — a payload's bytes are the command's, not this
          ;; terminal's (`%without-control`) — and then the envelope lines, which
          ;; are addressed to the model, are not output.
-         (rows (remove-if #'%envelope-line-p
-                          (mapcar #'%without-control (%payload-lines payload))))
+         (rows (%tool-payload-rows body))
          (n (length rows))
          (ind (activity-indent cols))
          (w (max 20 (- cols ind)))
@@ -928,18 +1051,45 @@ header, also printed `· 1 line` — a count for a fold with nothing to fold."
         ;; not content, it is where content was taken out — and the chord goes on
         ;; it, where there is something for it to do. Open, or a failure with no
         ;; reason printed above it, shows the body up to the budget.
-        (let ((limit (if (or open (and bad (null why))) 40 2)))
-          (if (and (> n limit) (>= limit 2))
-              (progn
-                (dolist (l (subseq rows 0 (1- limit))) (emit (dim-line l)))
-                (emit (list (cons (format nil "  … +~d lines · ctrl-t" (- n (1- limit)))
-                                  faint))))
-              (progn
-                (dolist (l rows) (emit (dim-line l)))
-                ;; the payload was short enough to show whole, but the REASON was
-                ;; cut — so the affordance has to be here
-                (when why-folded
-                  (emit (list (cons "  … the rest of the reason · ctrl-t" faint))))))))
+        ;;
+        ;; **FOLDED, OPEN, AND A WINDOW INTO IT.** Three states and not two, and the
+        ;; third is what makes the rest of a long result reachable: the fold alone
+        ;; raises the BUDGET, and a budget is not an offset — a 418 KB log was
+        ;; readable to its fortieth line however many times the chord was pressed.
+        ;;
+        ;; The window is the reference's (app.rs:10828-10893): `shown` includes the
+        ;; seam rows, the body gives up one for a seam that is present and one more
+        ;; for the one above when the reader has paged past the top, and `below`
+        ;; decides whether there is more. Every seam says which key does what NOW —
+        ;; the chord opens the view, the arrows move inside it, esc closes it —
+        ;; because a row that named only the chord was the row that could not be read
+        ;; past its head.
+        (let* ((window (payload-view-for item))
+               (page (if window (min window (max 0 (1- n))) 0))
+               (shown (if (or open (and bad (null why))) +body-lines-budget+ 2))
+               (above (plusp page))
+               (body-rows (max 1 (- shown 1 (if above 1 0))))
+               (end (min n (+ page body-rows)))
+               (below (< end n)))
+          (when above
+            (emit (list (cons (format nil "  ↑ ~d more lines above · ↑ scrolls up" page)
+                              faint))))
+          (dolist (l (subseq rows page end)) (emit (dim-line l)))
+          (cond
+            (below
+             (emit (list (cons (format nil "  … +~d lines · ~a" (- n end)
+                                       (if window
+                                           "↓ pages down · esc closes"
+                                           "ctrl-t pages"))
+                               faint))))
+            ;; The end of the payload, SAID — so "no more" cannot be confused with
+            ;; "the arrow stopped working", which is the other half of a seam's job.
+            (window
+             (emit (list (cons "  … end of output · esc closes" faint))))
+            ;; the payload was short enough to show whole, but the REASON was
+            ;; cut — so the affordance has to be here
+            (why-folded
+             (emit (list (cons "  … the rest of the reason · ctrl-t" faint)))))))
       ;; `item-lines` steps the whole row in by the activity indent
       (nreverse out))))
 

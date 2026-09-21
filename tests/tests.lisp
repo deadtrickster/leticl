@@ -2985,6 +2985,308 @@ position; and it was three columns short of the box's edge, with a trailing spac
       (is (equal '(:dim t) (cdr (car (last line)))) "the tail faint")
       (is (string= text (string-right-trim " " text)) "with nothing trailing"))))
 
+;;; ------------------------------- the payload's own window (T1) --------- ;;;
+;;;
+;;; **The rest of a long result, reachable.** The fold raises the BUDGET and gives no
+;;; row an OFFSET, so `… +N lines · ctrl-t` named a chord that revealed nothing above
+;;; forty lines — and that is the reference's own recorded bug at the site this is
+;;; ported from (*"opening the fold changed the budget, not the offset. There was no
+;;; offset."*). Measured against its screen for `tests/fixtures/payload-window.jsonl`:
+;;;
+;;;     ▸ Ran "echo \"size 60\"" · ok · 60 lines
+;;;       payload line 1 of 60
+;;;       … +59 lines · ctrl-t pages
+
+(defun %payload-text (n)
+  "N numbered lines, so \"which part is on screen\" is a decidable question."
+  (format nil "~{~a~^~%~}"
+          (loop for i from 1 to n collect (format nil "line ~a of ~d" i n))))
+
+(defun %payload-head (&rest sizes)
+  "A head whose transcript is one settled `bash` result per SIZE, OLDEST FIRST.
+
+The item ids are `t1`, `t2` … in that order, so the LAST is the newest and the one a
+window is seeded on."
+  (let ((h (%make-head)))
+    (setf (session-items (head-session h))
+          (coerce
+           (loop for n in sizes
+                 for i from 1
+                 collect (list :item-id (format nil "t~d" i) :kind "tool_result" :ts 0
+                               :item (list :type "tool_result"
+                                           :call-id (format nil "c~d" i)
+                                           :name "bash"
+                                           :outcome (list :outcome "ok")
+                                           :payload (%payload-text n))))
+           'vector))
+    h))
+
+(defun %payload-row (h &optional (index 0) (cols 80))
+  "The lines row INDEX of H draws, under H's own prefs and window."
+  (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l)))
+          (item-lines (aref (session-items (head-session h)) index)
+                      cols (head-prefs h))))
+
+(def-test a-long-payload-is-unreachable-until-a-window-is-opened (:suite leticl)
+  "The criterion, end to end: what the reader presses, what each seam says, and how
+they know they are at the end.
+
+Folded, a sixty-line result is its header, its first line, and a seam naming the key
+that pages it. `ctrl-t` opens the fold AND a window on it, so the seam changes to the
+key that moves INSIDE the window — and the row that used to say `… +59 lines · ctrl-t`
+with nothing behind the chord can now be read to its last line."
+  (let ((*item-facts* nil) (*payload-view* nil) (*hist-generation* 0)
+        (leticl::*write-prefs* nil)
+        (h (%payload-head 60)))
+    (setf (getf (head-prefs h) :show-tools) nil)
+    ;; --- folded: one line, and the seam names the chord that opens the view
+    (let ((rows (%payload-row h)))
+      (is (= 3 (length rows)) "header, first line, seam")
+      (is (search "line 1 of 60" (second rows)) "the first line")
+      (is (string= "    … +59 lines · ctrl-t pages" (third rows))
+          "and the seam names the chord AND what it does"))
+    ;; --- ctrl-t: the fold opens and the window is seeded on the newest payload
+    (%press h (list :type :ctrl :ch #\t))
+    (is (eq t (head-pref h :show-tools)) "the fold is open")
+    (is (equal (cons "t1" 0) leticl::*payload-view*)
+        "and a window is open on the row, at its first line")
+    (let ((rows (%payload-row h)))
+      (is (= 41 (length rows)) "header, 39 body rows, seam")
+      (is (search "line 1 of 60" (second rows)) "it starts at the head")
+      (is (search "line 39 of 60" (nth 39 rows)) "and runs to the fortieth row of the frame")
+      (is (string= "    … +21 lines · ↓ pages down · esc closes" (car (last rows)))
+          "the seam says which key moves INSIDE the window, and that esc leaves it")
+      (is (notany (lambda (l) (search "ctrl-t" l)) rows)
+          "and it never names the fold's chord: the fold is already open"))
+    ;; --- paging: the seam above names where the reader IS
+    (%press h (list :type :down))
+    (let ((rows (%payload-row h)))
+      (is (string= "    ↑ 10 more lines above · ↑ scrolls up" (second rows))
+          "the seam above says how many lines are above and which key goes back")
+      (is (search "line 11 of 60" (third rows)) "and the window moved ten lines")
+      (is (string= "    … +12 lines · ↓ pages down · esc closes" (car (last rows)))
+          "while the seam below counts what is left"))
+    (%press h (list :type :up))
+    (is (equal (cons "t1" 0) leticl::*payload-view*) "up comes back to the head")
+    (is (notany (lambda (l) (search "more lines above" l)) (%payload-row h))
+        "and the seam above is gone, because nothing is")
+    ;; --- **to the end, which is the whole point**
+    (dotimes (i 20) (%press h (list :type :down)))
+    (let ((rows (%payload-row h)))
+      (is (search "line 60 of 60" (apply #'concatenate 'string rows))
+          "the LAST line of the payload reaches the screen")
+      (is (string= "    … end of output · esc closes" (car (last rows)))
+          "and the seam says so, so 'no more' is not 'the key stopped working'")
+      (is (search "↑ 59 more lines above" (second rows))
+          "with the reader's position stated in lines"))
+    ;; --- esc gives the arrows back and closes NOTHING else
+    (%press h (list :type :esc))
+    (is (null leticl::*payload-view*) "esc closes the window")
+    (is (eq t (head-pref h :show-tools)) "and leaves the fold open")
+    ;; the fold is still open, so the row is the fold's 39-row body with the seam that
+    ;; opens the view again — not the folded one-line form
+    (is (string= "    … +21 lines · ctrl-t pages" (car (last (%payload-row h))))
+        "and the seam goes back to naming the chord that opens a view")))
+
+(def-test the-payload-seam-never-names-a-key-that-does-nothing (:suite leticl)
+  "The defect this mechanism exists for, asserted as a property rather than as a
+string: **a seam may not name `ctrl-t` while the fold is open**, because that is the
+chord that closes it again. That was the row the operator could not read past."
+  (let ((*item-facts* nil) (*payload-view* nil)
+        (leticl::*write-prefs* nil)
+        (h (%payload-head 60)))
+    (setf (getf (head-prefs h) :show-tools) nil)
+    (labels ((seams ()
+               (remove-if-not (lambda (l) (search "…" l)) (%payload-row h))))
+      (is (every (lambda (l) (search "ctrl-t pages" l)) (seams))
+          "folded, the seam names the chord that opens the view")
+      (%press h (list :type :ctrl :ch #\t))
+      (is (notany (lambda (l) (search "ctrl-t" l)) (seams))
+          "open, it never names it again")
+      (is (every (lambda (l) (or (search "pages down" l) (search "end of output" l)))
+                 (seams))
+          "it names the arrows and esc, which are what work"))))
+
+(def-test a-window-opens-on-the-newest-payload-that-has-one (:suite leticl)
+  "One row at a time, keyed on the ITEM id — and a payload with nothing behind it gets
+no view, because a seam offering a page with nothing there is a claim.
+
+The reference's own test for the second half (app.rs:15125-15138): *\"a one-line
+result has nothing to page, so a view on it is a claim\"*."
+  (let ((*item-facts* nil) (*payload-view* nil)
+        (leticl::*write-prefs* nil)
+        ;; oldest first: a 1-line result, then an 80-line one, then a 2-line one
+        (h (%payload-head 1 80 2)))
+    (setf (getf (head-prefs h) :show-tools) nil)
+    (%press h (list :type :ctrl :ch #\t))
+    (is (equal (cons "t2" 0) leticl::*payload-view*)
+        "the window is on the long row, not on the newest row outright")
+    (is (some (lambda (l) (search "↓ pages down" l)) (%payload-row h 1))
+        "that row's seam names the arrows that move inside it")
+    (is (notany (lambda (l) (search "pages down" l)) (%payload-row h 0))
+        "and the one-line result's row is not windowed at all — it is inlined whole")
+    ;; the two-line result sits UNDER the pageable threshold, so it gets no view: with
+    ;; the fold open it is simply drawn, both lines, and no seam anywhere
+    (is (notany (lambda (l) (search "pages down" l)) (%payload-row h 2))
+        "nor is the two-line one")
+    (is (= 3 (length (%payload-row h 2))) "which the open fold shows whole"))
+  ;; a session whose only result is one line long opens no view at all
+  (let ((*item-facts* nil) (*payload-view* nil)
+        (leticl::*write-prefs* nil)
+        (h (%payload-head 1)))
+    (setf (getf (head-prefs h) :show-tools) nil)
+    (%press h (list :type :ctrl :ch #\t))
+    (is (null leticl::*payload-view*)
+        "nothing to page, so no view is claimed")))
+
+(def-test a-payload-at-the-budget-shows-all-but-one-line (:suite leticl)
+  "The window's arithmetic, at the two boundaries worth pinning.
+
+`shown` INCLUDES the seam rows, so an open fold draws `budget - 1` body rows and
+reserves the last one — which means a payload of exactly forty lines shows
+thirty-nine and a seam. That is the reference's arithmetic and it moved this head's:
+we drew all forty and no seam, so a two-line result and a forty-line one had the same
+folded shape."
+  (let ((*item-facts* nil) (*payload-view* nil)
+        (leticl::*write-prefs* nil)
+        (h (%payload-head 40)))
+    (setf (getf (head-prefs h) :show-tools) t)
+    (let ((rows (%payload-row h)))
+      (is (= 41 (length rows)) "header, 39 body rows, seam")
+      (is (search "line 39 of 40" (nth 39 rows)) "the body stops one short")
+      (is (string= "    … +1 lines · ctrl-t pages" (car (last rows)))
+          "and the seam admits it")))
+  (let ((*item-facts* nil) (*payload-view* nil)
+        (leticl::*write-prefs* nil)
+        (h (%payload-head 39)))
+    (setf (getf (head-prefs h) :show-tools) t)
+    (let ((rows (%payload-row h)))
+      (is (= 40 (length rows)) "one line under the budget: header and 39 body rows")
+      (is (notany (lambda (l) (search "…" l)) rows) "and no seam at all"))))
+
+(def-test paging-a-payload-invalidates-the-rendered-history (:suite leticl)
+  "A page offset changes what a row RENDERS TO without moving the line cache's three
+terms, so a paging that did not bump the generation would be served the previous
+window out of the cache and look like a key that does nothing.
+
+That is the reference's own finding at its cache (app.rs:3864-3872: *the page moved
+to 10 and the screen still showed line 0*), found by its test. Ours is the same belt
+on the same braces."
+  (let ((*payload-view* (cons "t1" 0))
+        (*hist-generation* 7))
+    (is (payload-view-page 10) "paging says it moved something")
+    (is (= 10 (cdr *payload-view*)) "and the offset is ten")
+    (is (= 8 *hist-generation*) "and bumps the generation, so no cached frame is reused")
+    (payload-view-close)
+    (is (= 9 *hist-generation*) "closing is the same writer")
+    (is (not (payload-view-page 10)) "and a page with no window is nobody's")))
+
+(def-test the-payload-window-leaves-the-scroll-keys-alone (:suite leticl)
+  "**↑/↓ page the payload; the page keys and the wheel still scroll the transcript.**
+
+The reference's payload arm lists `Key::PageUp | Key::PageDown` (app.rs:3866-3889)
+and those patterns are DEAD: the screen-moving arm at :3628 is inside the same `match`
+and returns before the payload `if` is reached. So its real behaviour is this one, and
+it is the one worth keeping — in this head the page keys and the wheel ARE the
+scroll, and a window that took them until Esc is indistinguishable from *scrolling
+broke*, which the operator has reported twice.
+
+The reference's own test states the same contract from the other side
+(app.rs:14746-14775): a window holds the ARROWS, and Esc gives them back."
+  (let ((*item-facts* nil) (*payload-view* nil) (*pane-scroll* 0)
+        (leticl::*write-prefs* nil)
+        (h (%payload-head 60)))
+    (setf (getf (head-prefs h) :show-tools) t)
+    (leticl::payload-view-seed (head-session h))
+    (is (equal (cons "t1" 0) leticl::*payload-view*) "a window is open")
+    ;; the arrows page, and do NOT move the transcript
+    (let ((scroll (head-scroll h)))
+      (%press h (list :type :down))
+      (is (= 10 (cdr leticl::*payload-view*)) "down pages the payload")
+      (is (= scroll (head-scroll h)) "and leaves the transcript where it was"))
+    ;; while the page keys and the wheel still scroll it
+    (let ((scroll (head-scroll h)))
+      (%press h (list :type :page-up))
+      (is (> (head-scroll h) scroll) "page-up still scrolls the transcript")
+      (is (= 10 (cdr leticl::*payload-view*)) "and does not page the payload"))
+    (let ((scroll (head-scroll h)))
+      (%press h (list :type :wheel-up))
+      (is (> (head-scroll h) scroll) "and so does the wheel"))
+    ;; **Esc gives the arrows back**, which in this head means back to the composer:
+    ;; ↑/↓ are not the transcript's scroll keys here (the page keys and the wheel
+    ;; are), so what Esc restores is that ↑ no longer pages a window.
+    (%press h (list :type :esc))
+    (is (null leticl::*payload-view*) "esc closed the window")
+    (%press h (list :type :down))
+    (is (null leticl::*payload-view*) "and down is nobody's paging key again")
+    (let ((scroll (head-scroll h)))
+      (%press h (list :type :page-up))
+      (is (> (head-scroll h) scroll) "with the page keys still the transcript's")))
+  ;; and the reference's own statement of the contract, on this head: a window holds
+  ;; the arrows only while it is open, and nothing else about the transcript changes
+  (let ((*item-facts* nil) (*payload-view* (cons "t1" 0)) (leticl::*write-prefs* nil)
+        (h (%payload-head 60)))
+    (setf (getf (head-prefs h) :show-tools) t)
+    (let ((before (copy-list leticl::*payload-view*)))
+      (%press h (list :type :down))
+      (is (not (equal before leticl::*payload-view*)) "the window moved")
+      (is (= 0 (head-scroll h)) "and the transcript did not"))))
+
+(def-test a-pane-on-top-keeps-its-arrows (:suite leticl)
+  "The window lives in the transcript, so anything the reader puts ON TOP of it wins —
+including the panes whose arrows the reference hands to a window that is not on the
+screen (its payload arm sits before the todos, subagents and jobs arms).
+
+One rule instead of two: what the reader opened last is what the arrows move."
+  (let ((*item-facts* nil) (*payload-view* (cons "t1" 0)) (*pane-scroll* 0)
+        (*repo-todo-open* nil)
+        ;; `lecticl::` because `*pick-open*` is NOT exported: spelled bare it is a
+        ;; fresh LEXICAL in this package, the binding silently does nothing, and
+        ;; `open-pick` writes the real global — which then hijacked the next test's
+        ;; Esc. Measured, and the reason every test that binds it says `leticl::`.
+        (leticl::*pick-open* nil)
+        (h (%payload-head 60)))
+    (setf (getf (head-prefs h) :show-tools) t)
+    ;; the todos pane, which the reference would let a window steal the arrows from
+    (setf (head-mode h) :todos (head-picker-sel h) 0)
+    (%press h (list :type :down))
+    (is (= 0 (cdr leticl::*payload-view*)) "the payload did not page")
+    (is (eq :todos (head-mode h)) "and the pane kept the key")
+    ;; and the mode card, which runs with `:normal` and `*pick-open*` set. It needs
+    ;; the daemon's own rows to have a cursor at all (`pick-choices` reads them).
+    (setf (head-mode h) :normal
+          (head-settings h) (list (list :key "mode" :value "read-only"
+                                        :choices (list "read-only" "always-ask"
+                                                       "writes allowed"))))
+    (open-pick h :mode)
+    (let ((sel (head-picker-sel h)))
+      (%press h (list :type :down))
+      (is (= 0 (cdr leticl::*payload-view*)) "the card keeps its own arrows")
+      (is (/= sel (head-picker-sel h)) "as it must, or a row could not be chosen"))))
+
+(def-test a-payload-window-does-not-take-the-asks-keys (:suite leticl)
+  "An ask ARRIVES; a window is OPENED. The reference settles it the same way — its
+payload arm is ahead of the ladder (app.rs:3855-3862) — because a log being read is
+not something a permission request gets to interrupt.
+
+`enter` and the digits are deliberately NOT the window's, so the ask is answered
+where it always was."
+  (let ((*item-facts* nil) (*payload-view* (cons "t1" 0)) (*mode-confirm* nil)
+        (leticl::*pick-open* nil)
+        (h (%payload-head 60))
+        (*unreadable-total* 0))
+    (setf (getf (head-prefs h) :show-tools) t)
+    (setf (session-open-decisions (head-session h)) (list (%decision-with)))
+    (let ((wire (%wire h)))
+      (%press h (list :type :down))
+      (is (= 10 (cdr leticl::*payload-view*)) "down pages the log")
+      (is (null (%sent wire)) "and does not answer the ask")
+      (%press h (list :type :enter))
+      (let ((answer (first (%sent wire))))
+        (is (equal "answer" (getf answer :frame)) "while enter still answers it")
+        (is (equal "allow_once" (getf answer :option-id)) "with the marked row's option")
+        (is (equal "adj-1" (getf answer :req-id)) "and the ask's own id")))))
+
 (def-test the-tool-row-is-three-rows-folded-and-one-inlined (:suite leticl)
   "letibot, folded: the header with the count, the FIRST line dim, then `… +N
 lines · ctrl-t` as its own seam row. A one-line result rides the header with no
@@ -2999,14 +3301,25 @@ count. Ours had the seam on the header and the line nowhere."
     (is (search "· 3 lines" (segs-of (list (first lines)))) "the count on the header")
     (is (not (search "ctrl-t" (segs-of (list (first lines))))) "no chord on the header")
     (is (search "first" (segs-of (list (second lines)))) "the first line")
-    (is (equal "    … +2 lines · ctrl-t" (segs-of (list (third lines)))) "the seam, stepped in, with the chord"))
+    ;; `ctrl-t PAGES` — the chord opens the view and the arrows move inside it, and
+    ;; the seam says which is which. Measured against the reference's own screen for
+    ;; `tests/fixtures/payload-window.jsonl`: `… +59 lines · ctrl-t pages`.
+    (is (equal "    … +2 lines · ctrl-t pages" (segs-of (list (third lines))))
+        "the seam, stepped in, naming the key AND what it does"))
+  ;; **A two-line payload folds to ONE line and a seam**, which is the reference's
+  ;; arithmetic and was not ours: the folded body is `limit - 1` and the last row is
+  ;; always reserved for the seam, whether or not it turns out to be needed. Ours
+  ;; drew both lines and no seam, so a 2-line result and a 40-line one had the same
+  ;; folded shape. (The seam's advice is honest here: ctrl-t opens the fold, which
+  ;; shows the second line.)
   (let* ((*item-facts* nil)
          (two (list :type "tool_result" :call-id "c" :name "bash"
                     :outcome (list :outcome "ok") :payload (format nil "a~%b")))
          (lines (item-lines (list :item-id "t2" :kind "tool_result" :item two)
                             80 (list :show-tools nil))))
-    (is (= 3 (length lines)) "two lines fit under the limit: both shown, no seam")
-    (is (not (search "ctrl-t" (segs-of lines))) "and nothing to unfold")))
+    (is (= 3 (length lines)) "header, one line, seam")
+    (is (equal "    … +1 lines · ctrl-t pages" (segs-of (list (third lines))))
+        "and the second line is what the fold would show")))
 
 (def-test a-whitespace-bearing-target-is-debug-quoted (:suite leticl)
   "letibot shows a heredoc command as `<<'MSG'\\nthe step…`, Rust's `{:?}`; ours
@@ -7796,8 +8109,13 @@ head reads fine, which is a counter that stops meaning anything."
           (vector (list :item-id "t1" :kind "tool_result" :ts 0
                         :item (list :type "tool_result" :call-id "c" :name "bash"
                                     :outcome (list :outcome "ok")
+                                    ;; SHORTER THAN THE BUDGET, deliberately: with 40
+                                    ;; lines the open fold draws 39 of them and spends
+                                    ;; the fortieth on the seam, which is the reference's
+                                    ;; arithmetic and a different property from this one
+                                    ;; (`a-payload-at-the-budget-shows-all-but-one-line`)
                                     :payload (format nil "~{~a~^~%~}"
-                                                     (loop for i from 1 to 40
+                                                     (loop for i from 1 to 30
                                                            collect (format nil "line ~a" i)))))))
     (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l)))
             (leticl::%viewport-lines h 120 30))))
@@ -7821,8 +8139,8 @@ reading a summary as a loss."
         "folded keeps the FIRST line, which is what the tool did")
     (is (some (lambda (l) (search "… +" l)) folded)
         "and says how much it is hiding")
-    (is (some (lambda (l) (search "line 40" l)) open) "open, the whole body is there")
-    (is (notany (lambda (l) (search "line 40" l)) folded) "folded, it is not")
+    (is (some (lambda (l) (search "line 30" l)) open) "open, the whole body is there")
+    (is (notany (lambda (l) (search "line 30" l)) folded) "folded, it is not")
     (is (< (length folded) (length open)) "and folded is the shorter of the two")))
 
 (def-test a-preference-change-bumps-the-render-generation (:suite leticl)
