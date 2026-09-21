@@ -3675,6 +3675,184 @@ break decisions must not move."
                (with-output-to-string (o) (leticl::%move-to o 63 210)))
       "a move is 1-based in both coordinates"))
 
+(defun %screen-row-text (s row)
+  "The row of SCREEN as a reader sees it: a wide cluster's continuation cell is not a
+character of its own, and the row's padded tail is not text.
+
+This is the only measurement that catches a cell DROPPED at the right edge —
+`screen-put` refuses an out-of-range column in silence, so a line that overflows
+looks merely short from inside and loses its tail on the terminal."
+  (let ((out (make-string-output-stream)))
+    (loop for c of-type fixnum from 0 below (screen-cols s)
+          for ch = (cell-ch (screen-cell s row c))
+          unless (char= ch leticl::+wide-cont+)
+            do (write-char ch out))
+    (string-right-trim " " (get-output-stream-string out))))
+
+(defun %paint-lines (lines cols rows)
+  "LINES placed at the left of a fresh screen; the ROWS of text that reached it."
+  (let ((s (make-screen cols rows)))
+    (loop for line in lines
+          for r of-type fixnum from 0 while (< r rows)
+          do (leticl::put-segments s r 0 line))
+    (loop for r of-type fixnum from 0 below rows collect (%screen-row-text s r))))
+
+(defun %four-wide (n)
+  "N copies of a double-width character, as the wire would deliver them."
+  (format nil "~{~C~}" (loop repeat n collect (%ch #x4e2d))))
+
+;;; ------------------------ double-width text must not be eaten -------- ;;;
+;;;
+;;; The operator's report, and the ONLY entry in `docs/parity/` where content is
+;;; LOST rather than mis-drawn. `%split-words` split on `#\space` alone, so a CJK
+;;; paragraph was ONE word; `%hard-break` then chunked it by CHARACTER INDEX against
+;;; a COLUMN budget — `(subseq word i (+ i cols))` — and each chunk was 2*cols
+;;; COLUMNS. `screen-put` drops every write past the right edge without a word, so
+;;; half of every line was gone and the row merely looked short.
+
+(def-test a-wide-character-line-wraps-at-the-column-budget (:suite leticl)
+  "Ten double-width characters, twenty columns of text, in a body eight columns wide.
+
+Every cluster has to reach the terminal, which is a statement about the SCREEN and
+not about the string: `wrap-segments` can return lines that look right and still lose
+their tails, because the painter refuses an out-of-range column in silence.
+
+The break opportunity that makes this work is BETWEEN TWO WIDE CLUSTERS, which is
+letibot's second rule (width.rs:451-454): a space is not what separates one Chinese
+run from the next, so a space-only splitter returns the whole paragraph as one word."
+  (let* ((text (%four-wide 10))
+         (lines (wrap-segments (list (cons text nil)) 8))
+         (texts (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l))) lines)))
+    (is (string= text (apply #'concatenate 'string texts))
+        "wrapping alone keeps every cluster")
+    (is (= 3 (length texts)) "twenty columns of double-width text in rows of eight is three rows")
+    (dolist (row texts) (is (<= (string-width row) 8) "and no row exceeds the budget"))
+    ;; and through the painter, which is where a lost cell would show
+    (let ((rows (%paint-lines lines 8 4)))
+      (is (string= text (apply #'concatenate 'string
+                               (subseq rows 0 (length lines))))
+          "every cluster is on the screen, none dropped at the right edge")
+      (is (string= (%four-wide 4) (first rows)) "the first row is as many as fit")
+      (is (string= (%four-wide 2) (third rows)) "and the last holds the remainder"))))
+
+(def-test a-cjk-run-fills-the-row-it-started-on (:suite leticl)
+  "The break opportunity before a wide cluster is not only about DATA — the column
+rule alone keeps every cluster — it is about WHERE the line breaks, and this is the
+assertion that holds it to that.
+
+With the wide-cluster rule, each cluster is its own chunk and the row fills up:
+`hello ` is six columns, so two ideographs finish the row at ten. Without it the whole
+run is one chunk WIDER than the row, the row is closed at five columns, and the run is
+cut into fresh rows of its own — the same clusters, one wasted third of the screen."
+  (let* ((text (format nil "hello ~C~C~C~C~C~C"
+                       (%ch #x4e2d) (%ch #x597d) (%ch #x4e16)
+                       (%ch #x754c) (%ch #x4e2d) (%ch #x597d)))
+         (texts (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l)))
+                        (wrap-segments (list (cons text nil)) 10))))
+    (is (= 2 (length texts)) "six columns of prose and six clusters of text in rows of ten is two rows")
+    (is (string= text (apply #'concatenate 'string texts)) "and nothing is lost either way")
+    (is (string= (format nil "hello ~C~C" (%ch #x4e2d) (%ch #x597d)) (first texts))
+        "the row the run started on is filled to the budget, not closed early")
+    (is (= 10 (string-width (first texts))) "which is exactly ten columns")))
+
+(def-test an-over-wide-mixed-run-keeps-every-cluster (:suite leticl)
+  "The same rule one level down: when a single run is wider than a whole row, the
+HARD break has to be by COLUMNS over clusters too.
+
+A run of letters is where the character-index cut looked harmless — one column is one
+character — and the wide-cluster rule does not save it, because a run with ONE wide
+character in it is still a single chunk: `~Cabcdefgh` is ten columns in a four-column
+body, and cutting it four CHARACTERS at a time gives chunks of five, four and one
+columns — each of which loses its tail at the right edge in silence."
+  (let* ((mixed (format nil "~Cabcdefgh" (%ch #x4e2d)))
+         (lines (wrap-segments (list (cons mixed nil)) 4))
+         (texts (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l))) lines)))
+    (is (string= mixed (apply #'concatenate 'string texts))
+        "the hard break keeps every cluster")
+    (dolist (row texts) (is (<= (string-width row) 4) "and every chunk is at most the budget"))
+    (is (equal (list (format nil "~Cab" (%ch #x4e2d)) "cdef" "gh") texts)
+        "a wide cluster counts two columns wherever it falls in the run")
+    (let ((rows (%paint-lines lines 4 6)))
+      (is (string= mixed (apply #'concatenate 'string
+                                (subseq rows 0 (length lines))))
+          "and all of it reaches the terminal"))))
+
+(def-test a-wide-cluster-is-not-broken-in-half (:suite leticl)
+  "The break opportunity is between CLUSTERS, and two code points can be one — a ZWJ
+joins what follows it and two regional indicators are a flag. A guard on
+`(= 2 (char-width ch))` alone splits both, which is how an emoji family renders as
+three people at the right width."
+  (let ((family (format nil "~C~C~C~C~C" (%ch #x1f468) leticl::+esc-zwj+ (%ch #x1f469)
+                        leticl::+esc-zwj+ (%ch #x1f467)))
+        (flag (format nil "~C~C" (%ch #x1f1e9) (%ch #x1f1ea))))
+    (is (= 1 (length (leticl::%split-words family)))
+        "a ZWJ family is one chunk, whatever its code points")
+    (is (= 1 (length (leticl::%split-words flag))) "and a flag is one chunk")
+    (is (null (leticl::%wide-cluster-start-p family 2))
+        "the second member of the family is not a break point")
+    (is (null (leticl::%wide-cluster-start-p flag 1))
+        "nor is the second half of the flag")
+    (is (leticl::%wide-cluster-start-p (format nil "ab~C~C" (%ch #x4e2d) (%ch #x6587)) 2)
+        "a wide character after two narrow ones is one")
+    ;; and the family reaches a two-column body as ONE cluster of two columns, which
+    ;; is the cell the painter can hold today: its first code point plus the
+    ;; continuation marker. The rest of the sequence needs a cell that holds a
+    ;; STRING, which is a struct change and is recorded in TODO.md rather than
+    ;; half-done here — the point of this assertion is that the WRAPPER did not put a
+    ;; break inside it.
+    (let ((rows (%paint-lines (wrap-segments (list (cons family nil)) 2) 2 1)))
+      (is (= 1 (length (wrap-segments (list (cons family nil)) 2)))
+          "a body two columns wide wraps the family to one row")
+      (is (= 2 (string-width (first rows))) "which is one cluster of two columns")
+      (is (char= (%ch #x1f468) (char (first rows) 0)) "the family's own first code point"))))
+
+(def-test a-newline-in-the-text-is-a-hard-break-and-is-not-painted (:suite leticl)
+  "§2.2. `wrap-segments` had no newline rule at all, so `\\n` — which measures ZERO
+columns, like a combining mark — survived into a segment and was then dropped by
+`screen-put-string`'s zero-width arm (cells.lisp:248-251): two lines came back as one
+reflowed blob, which is what a tool result's reason shows when its card is open and
+what a system row's text showed always.
+
+The break belongs to the row it ENDS and the character itself is never painted; a
+CRLF is one break, not two."
+  (flet ((texts (t2 &optional (cols 40))
+           (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l)))
+                   (wrap-segments (list (cons t2 nil)) cols))))
+    (is (equal '("one" "two") (texts (format nil "one~%two")))
+        "a newline ends the row and is not painted")
+    (is (equal '("one" "two" "three") (texts (format nil "one~%two~%three")))
+        "every newline is one")
+    (is (equal '("one" "") (texts (format nil "one~%")))
+        "a trailing newline ends the last row and paints nothing after it")
+    (is (equal '("a" "") (texts (format nil "a~C~C" #\return #\newline)))
+        "a CRLF is ONE break, and the CR is not painted either")
+    (is (equal '("" "a") (texts (format nil "~%a"))) "a leading one starts an empty row")
+    ;; the newline is a break and NOT a width problem: a long line still wraps
+    (is (equal '("abc" "defgh") (texts (format nil "abc defgh") 5))
+        "and ordinary wrapping still happens on either side of it")
+    ;; through the painter: no newline character in any cell
+    (let ((rows (%paint-lines (wrap-segments (list (cons (format nil "one~%two") nil)) 10) 10 3)))
+      (is (equal '("one" "two") (subseq rows 0 2))
+          "both lines are on the screen, one per row")
+      (is (notany (lambda (ch) (or (char= ch #\newline) (char= ch #\return)))
+                  (format nil "~{~a~}" rows))
+          "and no newline character was painted into a cell"))))
+
+(def-test the-wrap-rules-cost-nothing-on-the-prose-corpus (:suite leticl)
+  "The wide-cluster and newline rules are two extra questions per character on the
+frame's hot path. The same (d) corpus the docstring quotes — a 1 KB paragraph wrapped
+2000 times — with the ceiling measured rather than asserted as a feeling."
+  (let* ((para (with-output-to-string (o)
+                 (dotimes (i 40)
+                   (format o "the quick brown fox jumps over the lazy dog ~d " i))))
+         (start (get-internal-real-time))
+         (n 2000))
+    (dotimes (i n) (wrap-segments (list (cons para nil)) 80))
+    (let ((ms (/ (* 1000.0 (- (get-internal-real-time) start))
+                 internal-time-units-per-second)))
+      (format t "~&[wrap] ~d wraps of a 1 KB paragraph: ~,1f ms~%" n ms)
+      (is (< ms 4000) "2000 wraps of a 1 KB paragraph stay well under four seconds"))))
+
 (def-test the-viewport-blank-test-matches-the-text-it-replaced (:suite leticl)
   "`%line-blank-p` answers what `(zerop (length (string-trim \" \" (segs-text-of l))))`
 did, without the copies."

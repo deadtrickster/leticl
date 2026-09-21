@@ -585,7 +585,7 @@ which lives in `src/render.lisp`, and two further truncators in
 | `truncate(s, cols)` reserves a column and appends **`…`**, closes open SGR | `width.rs:329-353` | `truncate-to-width` — cluster-aware, **no ellipsis**, no reserve | `src/width.lisp:415-430` | **DIFFERS**: elision is silent |
 | one truncator | — | **three**: `truncate-to-width` (cluster-aware), `%truncate-width` (per-**character**), `%truncate-segs` (segment-aware, built on `%truncate-width`) | `src/width.lisp:415`, `src/progress.lisp:160-170`, `src/markdown.lisp:473-482` | **DIFFERS-duplication**: `%truncate-width` cuts ZWJ sequences and flags in half, and it is on the card-header path (`src/cards.lisp:681,758`) |
 | `fit(s, cols)` truncate-then-pad | `width.rs:356-364` | `fit-to-width` | `src/width.lisp:432-438` | SAME shape |
-| `wrap(s, cols)` — three break rules in priority: space/tab, **between two wide clusters**, hard-break an over-wide run; hard-breaks on `\n`; `cols.max(4)` | `width.rs:380-408`, `break_cells` `:420-513` | `wrap-segments` — space only, over-wide word → `%hard-break` | `src/render.lisp:61-118,22-49` | **DIFFERS-major**: (a) no wide-cluster rule, (b) `%hard-break` slices by **character index** (`src/render.lisp:47`), so a CJK chunk is `2×cols` columns, (c) no `\n` hard break, (d) tab is not a break opportunity |
+| `wrap(s, cols)` — three break rules in priority: space/**tab**, **between two wide clusters**, hard-break an over-wide run; hard-breaks on `\n`; `cols.max(4)` | `width.rs:380-408`, `break_cells` `:420-513` | `wrap-segments` + `%split-words` — space and `\n` end a chunk, a wide cluster is a break opportunity before itself, and an over-wide chunk is cut **by columns over clusters**; **tab is not a break opportunity** | `src/render.lisp:130-235,40-117` | **SAME for (a) (b) (c)** as of `W1`; **DIFFERS still at (d)**: a tab measures zero columns and is dropped by `clusters`/`screen-put-string`, so a tab-separated payload loses its indentation whatever the wrapper does — a separate finding, not a wrapping one |
 | leading whitespace preserved; trailing space belongs to the row and is then stripped | `width.rs:464-470`, `:399-401` | same contract, documented | `src/render.lisp:36-38,65-71`, `src/markdown.lisp:495-504` | SAME |
 | `wrap_ranges` shares `break_cells` with `wrap` **by construction** — "two functions kept in sync by a comment is a bug with a schedule" | `width.rs:525-542`, `:410-419` | `wrap-ranges` is an independent char-by-char walker with different rules (`\n` breaks here and not in `wrap-segments`; hard-break at a *column* vs a *character count*) | `src/render.lisp:120-154` | **DIFFERS-drift**: exactly the defect the reference's comment names |
 | `wrap_ranges` is cluster- and escape-aware | `width.rs:529` | bare `char-width` per character | `src/render.lisp:141-142` | DIFFERS: a pasted emoji mis-places the composer caret |
@@ -603,12 +603,12 @@ which lives in `src/render.lisp`, and two further truncators in
 | `escapes_are_zero_columns_and_are_never_split` | `width.rs:691-698` | PASS |
 | `truncation_does_not_cut_a_cluster_in_half` | `width.rs:701-707` | **FAIL** (no `…`; via `%truncate-width`, also splits the cluster) |
 | `truncation_closes_an_open_attribute` | `width.rs:710-714` | N/A (leticl text carries no escapes) |
-| `cjk_prose_wraps_even_though_it_has_no_spaces` | `width.rs:717-725` | **FAIL** |
+| `cjk_prose_wraps_even_though_it_has_no_spaces` | `width.rs:717-725` | PASS (was FAIL; `W1`) |
 | `an_unbreakable_run_is_hard_broken_not_overflowed` | `width.rs:728-737` | PASS (ASCII) |
 | `every_wrapped_line_is_independently_paintable` | `width.rs:740-750` | PASS |
-| `wrapping_never_exceeds_the_width_for_any_input` | `width.rs:753-769` | **FAIL** on every CJK input |
+| `wrapping_never_exceeds_the_width_for_any_input` | `width.rs:753-769` | PASS (was FAIL on every CJK input; `W1`) |
 | `fit_pads_to_exactly_the_width` | `width.rs:771-776` | PASS |
-| `a_newline_is_a_row_break_and_never_reaches_the_terminal` | `width.rs:598-617` | **FAIL** for `wrap-segments`, PASS for `wrap-ranges` |
+| `a_newline_is_a_row_break_and_never_reaches_the_terminal` | `width.rs:598-617` | PASS (`W1`); the terminal half of it is asserted on the CELLS, because a newline is dropped by the painter's zero-width arm and never reaches the screen either way — which is what made the defect silent |
 | `wrap_ranges_tile_the_input_and_agree_with_wrap` | `width.rs:620-656` | **FAIL** |
 
 ---
@@ -716,14 +716,27 @@ Ordered by what a person would notice first.
 
 ### The transcript row
 
-1. **Wide/CJK prose does not wrap** — `src/render.lisp:43-49,61-118` vs
-   `width.rs:373-377,454-478`. A paragraph of Chinese emits rows twice the
-   requested width and the overflow is dropped at the screen edge. This breaks
-   the one invariant every other row depends on. **M**
-2. **Two divergent breakpoint finders** — `wrap-segments` (`src/render.lisp:61`)
-   vs `wrap-ranges` (`src/render.lisp:120`). The reference routes both through
+1. ~~**Wide/CJK prose does not wrap**~~ — **CLOSED in `W1`.**
+   `src/render.lisp:40-117,130-235` vs `width.rs:373-377,454-478`. Two halves,
+   and both were needed: `%split-words` split on spaces alone, so a CJK paragraph
+   was ONE chunk; an over-budget chunk was then cut **by character index**, so each
+   piece was `2×cols` columns and the painter dropped everything past the right
+   edge **in silence**. Measured on a 300-cluster paragraph in a 24-column body:
+   **156 of 300 clusters reached the screen and 144 were destroyed**, each row
+   ending mid-word and looking merely short. Now 300 of 300, in 25 rows rather
+   than 13. Asserted by `a-wide-character-line-wraps-at-the-column-budget`,
+   `a-cjk-run-fills-the-row-it-started-on` and
+   `an-over-wide-mixed-run-keeps-every-cluster` — each verified to fail without its
+   own half of the rule — and by the same paragraph drawn through a live head's
+   screen, 60 of 60 clusters. **S** (was estimated M; the fix is two functions and
+   a helper in `width.lisp`).
+2. **Two divergent breakpoint finders** — `wrap-segments` (`src/render.lisp:130`)
+   vs `wrap-ranges` (`src/render.lisp:240`). The reference routes both through
    one `break_cells` and says why (`width.rs:410-419`). Composer caret placement
-   and transcript wrapping can disagree. **L**
+   and transcript wrapping can disagree. **L.** The row above this one is now
+   closed and the drift is narrower: both finders break at a newline and at a wide
+   cluster, and differ only in where they cut an over-wide run (a column budget vs
+   a character index).
 3. **`shorten_subject` cuts a path at a character, not at a `/`** —
    `src/cards.lisp:501-520` vs `app.rs:9074-9109`. Every long tool-result header
    in a deep tree shows a subject that cannot be pasted back into a shell, and on

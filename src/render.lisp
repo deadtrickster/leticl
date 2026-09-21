@@ -19,33 +19,102 @@
 (in-package #:leticl)
 
 ;;; ------------------------------------------------------------- wrapping ;;;
+;;;
+;;; Four break rules, in priority order, and they are letibot's `break_cells`'
+;;; (width.rs:340-408):
+;;;
+;;;   1. at a SPACE, the ordinary case — and the space belongs to the chunk it ends,
+;;;      so re-joining the chunks is the text again;
+;;;   2. at a NEWLINE, which is a HARD break: a C0 byte measures zero columns for the
+;;;      same reason a combining mark does, so without this a two-line reason wraps to
+;;;      one row with a literal newline inside the segment — which `screen-put-string`
+;;;      drops on the floor (its zero-width arm), reflowing two lines into one blob;
+;;;   3. BETWEEN TWO WIDE CLUSTERS, which is what makes CJK wrap at all: a space-only
+;;;      wrapper returns one 400-column line for a paragraph of Chinese;
+;;;   4. ANYWHERE, when a single unbreakable run is longer than the width — a URL, a
+;;;      base64 blob — and that cut is by COLUMNS over clusters.
+;;;
+;;; Rules 1–3 decide where one CHUNK ends; rule 4 is `%hard-break`, and only a chunk
+;;; that is wider than a whole row ever reaches it.
+
 (defun %split-words (text)
   "Word chunks with their trailing spaces attached, so re-joining preserves
-spacing exactly.
+spacing exactly — and with a NEWLINE kept, because the caller has to see where the
+hard break is before it strips one.
 
 By index and `subseq`, not through a string stream: measured, the stream version
-was 6% of the frame (`character-out` + `get-output-stream-string` per word, then a
-`remove` pass for the empty chunk) and this is one allocation per word."
+was 6% of the frame (`character-out` + `get-output-string` per word, then a
+`remove` pass for the empty chunk) and this is one allocation per word.
+
+The wide-character rule is `%wide-cluster-start-p` from width.lisp, which is the
+cluster question and not `(= 2 (char-width …))`: a flag or a ZWJ emoji is ONE
+cluster of two columns across several code points, and a break inside one splits the
+glyph. It costs one width lookup per character on a path that was already walking
+the string; measured on the (d) corpus below."
   (declare (type (or null string) text))
   (let* ((s (%simple text))                ; NIL is no words, as `across nil` was
          (n (length s))
          (out nil)
          (start 0))
     (declare (type simple-string s) (type fixnum n start))
-    (loop for i of-type fixnum from 0 below n
-          do (when (char= (schar s i) #\space)
-               (push (subseq s start (1+ i)) out)
-               (setf start (1+ i))))
-    (when (< start n)
-      (push (subseq s start n) out))
+    (flet ((cut (end next)
+             ;; every boundary is an index into S, so a chunk that would be empty is
+             ;; not one — `split-words-keeps-every-space-and-drops-nothing-else`
+             (when (< start end) (push (subseq s start end) out))
+             (setf start next)))
+      (loop for i of-type fixnum from 0 below n
+            do (let ((ch (schar s i)))
+                 (cond
+                   ;; a space, and a newline, END the chunk and belong to it
+                   ((or (char= ch #\space) (char= ch #\newline))
+                    (cut (1+ i) (1+ i)))
+                   ;; a wide cluster is a break opportunity BEFORE itself
+                   ((and (plusp i) (%wide-cluster-start-p s i))
+                    (cut i i)))))
+      (cut n n))
     (nreverse out)))
 
 (defun %hard-break (word cols)
-  "One over-wide word to cols-sized chunks — a 400-column URL wraps, it does
-not overflow (width.rs's third mistake)."
-  (let ((out nil))
-    (loop for i from 0 below (length word) by (max 1 cols)
-          do (push (subseq word i (min (length word) (+ i (max 1 cols)))) out))
+  "One over-wide run to chunks of at most COLS COLUMNS — a 400-column URL wraps, it
+does not overflow, and a run of double-width text wraps AT THE BUDGET.
+
+**By COLUMNS over CLUSTERS, not by character index.** This was
+`(loop for i below (length word) by cols)` → `(subseq word i (min n (+ i cols)))`:
+each chunk was COLS CHARACTERS, which is 2*COLS COLUMNS once the characters are
+wide, and `screen-put` silently drops every write past the right edge
+(cells.lisp:200-204) — so HALF OF EVERY WIDE-CHARACTER LINE WAS DISCARDED, WITH NO
+MARK ANYWHERE. Measured on a 300-cluster CJK paragraph in a 24-column body: the old
+pair put **156 of 300 clusters on the screen and dropped the other 144**, each row
+ending mid-sentence and looking merely short. The same paragraph through the cluster
+rule puts 300 of 300 on it, in 25 rows instead of 13.
+
+The cut is where the CLUSTER budget runs out, which is the same thing the painter
+measures by — `string-width` and `screen-put-string` count clusters — so the two
+cannot disagree about where the row ends.
+
+An escape prefix rides with the cluster it precedes (that is where `clusters` puts
+it, and cutting before the escape rather than after keeps the style on the text it
+belongs to), and a zero-width cluster adds nothing to the budget.
+
+Only ever reached from `wrap-segments` with a chunk wider than a whole row, so the
+consing here — one struct and two `subseq`s per cluster — is not on any hot path."
+  (let ((cols (max 1 cols))
+        (out nil)
+        (start 0)
+        (pos 0)
+        (w 0))
+    (declare (type fixnum cols start pos w))
+    (dolist (cl (clusters word))
+      (let* ((cw (cluster-cols cl))
+             (len (+ (length (cluster-esc cl)) (length (cluster-text cl)))))
+        (declare (type fixnum cw len))
+        (when (and (plusp w) (> (+ w cw) cols))
+          (push (subseq word start pos) out)
+          (setf start pos w 0))
+        (incf pos len)
+        (incf w cw)))
+    (when (< start (length word))
+      (push (subseq word start) out))
     (nreverse out)))
 
 (defun %visible-end (word)
@@ -70,11 +139,34 @@ erases to the end of the row paints the background one column further than the
 text goes. Without this rule a paragraph whose words fit exactly wrapped one word
 early, and a row's last word could carry a space past the edge.
 
+**A NEWLINE is a hard break, and it is not painted.** It has to happen here rather
+than in a caller, because a C0 byte measures zero columns for the same reason a
+combining mark does: without this rule a two-line reason wrapped to one row with a
+literal newline inside the segment, and `screen-put-string`'s zero-width arm then
+dropped it — so the two lines came back as one reflowed blob. Both places that pass
+raw wire text to this function were affected: a tool result's reason with the card
+open (`cards.lisp`) and a system row's text.
+
 The visible width of a word is measured IN PLACE (`string-width … :end`) rather
 than on a trimmed copy: every word used to be copied once and measured twice, and
 the trimmed copy is only needed when the word is too wide for a row. Measured on
 the (d) corpus — a 1 KB paragraph wrapped 2000 times — 423 ms before the width
 rewrite, 37 ms after it, 19 ms with this and the typed word loop.
+
+**What the two extra rules cost, measured A/B on the same call path** (2000 wraps
+of an 1870-character English paragraph at 80 columns, and 2000 of a 300-cluster CJK
+paragraph at 24 columns, with `%split-words`/`%hard-break` swapped under the same
+`wrap-segments`):
+
+    prose  46 ms -> 45 ms      no change: English has no wide cluster and no newline,
+                               and the wide check is one lookup in the table
+                               `string-width` reads anyway
+    CJK     3 ms -> 14 ms      the old number is cheap because it does nothing useful:
+                               one chunk, cut 24 CHARACTERS at a time, and the painter
+                               then throws half of it away
+
+Seven microseconds for a paragraph of three hundred ideographs, against a frame
+budget of 0.46 ms.
 
 COLS is declared a fixnum at default safety: every caller passes a column count,
 and the declaration is what lets the per-word comparisons compile to fixnum
@@ -84,37 +176,65 @@ compares instead of generic ones (the note speed 3 raised here)."
       (list segs)
       (let ((lines nil)
             (cur nil)
-            (w 0))
+            (w 0)
+            ;; **A newline ENDS a row and leaves the cursor on the next one**, so a
+            ;; text that ends in a newline has a last row with nothing on it. TRAILING
+            ;; is that row: set by a hard break, cleared by anything placed after it,
+            ;; and emitted once at the end. It is what the reference's `break_cells`
+            ;; returns — it closes a final row unconditionally — and what this head's
+            ;; own composer already does (`wrap-ranges` emits the range after the last
+            ;; break). Without it, `"one\\n"` and `"one"` were the same one row.
+            (trailing nil))
         (declare (type fixnum w))
         (flet ((break-line ()
                  (when cur (push (%trim-line-end (nreverse cur)) lines))
                  (setf cur nil w 0)))
           (dolist (seg segs)
-            (dolist (word (%split-words (car seg)))
-              (let* ((ww (string-width word))
-                     (ve (%visible-end word))
-                     ;; a word is its visible part plus trailing spaces, each
-                     ;; one column, so the visible width is the difference
-                     (vw (if (= ve (length word)) ww (string-width word :end ve))))
-                (declare (type fixnum ww ve vw))
-                (cond
-                  ((> vw cols)
-                   (break-line)
-                   ;; ONE CHUNK PER ROW. The chunks were all pushed onto one row
-                   ;; and then broken once, so a 400-column URL still overflowed —
-                   ;; the exact thing the docstring on `%hard-break` says cannot
-                   ;; happen. Found reading the profile's hot loop, not the screen.
-                   (dolist (c (%hard-break (subseq word 0 ve) cols))
-                     (push (cons c (cdr seg)) cur)
-                     (break-line)))
-                  ((<= (+ w vw) cols)
-                   (push (cons word (cdr seg)) cur)
-                   (incf w ww))
-                  (t
-                   (break-line)
-                   (push (cons word (cdr seg)) cur)
-                   (setf w ww))))))
-          (break-line))
+            (dolist (chunk (%split-words (car seg)))
+              (let* ((n (length chunk))
+                     ;; a chunk that ends in a newline is a HARD BREAK: the segment's
+                     ;; text stops there and the newline is not painted. Stripped only
+                     ;; for the row it ends — the character is what told us the break
+                     ;; was here, and `screen-put-string`'s zero-width arm would
+                     ;; otherwise drop it silently and reflow two lines into one
+                     ;; (cells.lisp:248-251). `\r` goes with it: a CRLF is one break,
+                     ;; and a lone `\r` measures zero columns the same way.
+                     (hard (and (plusp n) (char= (schar chunk (1- n)) #\newline)))
+                     (word (if hard
+                               (subseq chunk 0 (if (and (> n 1)
+                                                        (char= (schar chunk (- n 2)) #\return))
+                                                   (- n 2)
+                                                   (1- n)))
+                               chunk)))
+                (declare (type fixnum n))
+                ;; content after a hard break means the open row is not the last one
+                (setf trailing nil)
+                (let* ((ww (string-width word))
+                       (ve (%visible-end word))
+                       ;; a word is its visible part plus trailing spaces, each
+                       ;; one column, so the visible width is the difference
+                       (vw (if (= ve (length word)) ww (string-width word :end ve))))
+                  (declare (type fixnum ww ve vw))
+                  (cond
+                    ((> vw cols)
+                     (break-line)
+                     ;; ONE CHUNK PER ROW. The chunks were all pushed onto one row
+                     ;; and then broken once, so a 400-column URL still overflowed —
+                     ;; the exact thing the docstring on `%hard-break` says cannot
+                     ;; happen. Found reading the profile's hot loop, not the screen.
+                     (dolist (c (%hard-break word cols))
+                       (push (cons c (cdr seg)) cur)
+                       (break-line)))
+                    ((<= (+ w vw) cols)
+                     (push (cons word (cdr seg)) cur)
+                     (incf w ww))
+                    (t
+                     (break-line)
+                     (push (cons word (cdr seg)) cur)
+                     (setf w ww))))
+                (when hard (break-line) (setf trailing t)))))
+          (break-line)
+          (when trailing (push nil lines)))
         (nreverse lines))))
 
 (defun wrap-ranges (text cols)
