@@ -52,7 +52,13 @@ reason `next` arrives on the event at all.")
   (expected-seq 0 :type fixnum)         ; what our next command carries
   (items (make-array 0 :adjustable t :fill-pointer 0) :type vector)
   turn                                   ; TurnView plist or nil
-  (open-decisions nil :type list)        ; OpenDecision plists, oldest first
+  (open-decisions nil :type list)        ; OpenDecision plists, NEWEST first: a fresh
+                                         ; ask is PUSHED, so `%open-decision` (and
+                                         ; panes.lisp) take `first`. The reference
+                                         ; APPENDS (app.rs:2599), so its `first` is
+                                         ; the OLDEST — unobservable while the
+                                         ; daemon serializes on the tool call and
+                                         ; only one ask is ever open.
   (settled-decisions nil :type list)
   (warnings nil :type list)
   (denials nil :type list)               ; DenialRaised, newest first
@@ -525,6 +531,20 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
        ;; close the others' cursor state; it was removed rather than left, because
        ;; the cursor is HEAD state and a function in this file could never have
        ;; touched it. The head resets it now, in `%handle-frame`.
+       ;;
+       ;; **THE SAME ASK DOES NOT JOIN THE LIST TWICE.** A reconnect replays from
+       ;; the read mark, so a `decision_requested` this head already drew arrives
+       ;; again — and without the line below the list grew a second, third, tenth
+       ;; identical entry. Measured on the live head: two deliveries of one
+       ;; `req_id` left `open` at 2, three left it at 3, while `%open-decision`
+       ;; kept handing back a row that answered for the same question over and
+       ;; over. The reference does this in one line, ahead of its own push
+       ;; (app.rs:2596): `self.open.retain(|d| d.req_id != req_id)`. A `req_id`
+       ;; names one question for its whole life, so a redelivery REPLACES the
+       ;; entry rather than appending a twin.
+       (setf (session-open-decisions session)
+             (remove (getf env :req-id) (session-open-decisions session)
+                     :key (lambda (d) (getf d :req-id)) :test #'string=))
        (push (list :req-id (getf env :req-id)
                    :kind (getf env :kind)
                    :call-id (getf env :call-id)

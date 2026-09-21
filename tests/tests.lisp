@@ -4722,6 +4722,55 @@ selected for a decision already dealt with."
         "the fresh ask starts at its FIRST row, not the row the last one was left on")
     (is (head-dirty h) "and the frame is marked for a repaint")))
 
+(def-test a-redelivered-ask-is-the-same-question-not-a-fresh-one (:suite leticl)
+  "A reconnect replays from the read mark, so a `decision_requested` the head has
+ALREADY drawn arrives a second time, same `req_id`. Measured on the live head,
+two deliveries of one `req_id` left the open list at 2 and three left it at 3,
+and a `down` that put the cursor on row 1 was undone by the redelivery putting
+it back to 0 — which is exactly what *\"the selector does not work\"* looked like.
+
+One `req_id` names one question for its whole life, so a redelivery REPLACES the
+open entry instead of appending a twin: the reference does it in one line ahead
+of its push (app.rs:2596, `self.open.retain(|d| d.req_id != req_id)`). The
+reference also zeroes its cursor inside that same arm, where the old entry is
+already gone; this head's cursor hook runs BEFORE `apply-event` drops the twin,
+so the twin is still in the list to be asked about — and a redelivery is not the
+FRESH question its reset is for."
+  ;; the session's own rule, without a head in the way
+  (let ((s (make-session)))
+    (apply-event s (list :seq 1 :event "decision_requested" :req-id "r1"
+                         :kind "permission" :summary "run a program" :options nil))
+    (apply-event s (list :seq 1 :event "decision_requested" :req-id "r1"
+                         :kind "permission" :summary "run a program" :options nil))
+    (is (= 1 (length (session-open-decisions s)))
+        "the same req_id twice is still one open decision")
+    (apply-event s (list :seq 2 :event "decision_requested" :req-id "r2"
+                         :kind "permission" :summary "another" :options nil))
+    (is (= 2 (length (session-open-decisions s))) "a new req_id is a second one"))
+  (let ((h (%on-head :cols 80 :rows 24)))
+    (flet ((deliver (req)
+             (leticl::%handle-frame
+              h (list :frame "event" :event "decision_requested" :seq 40
+                      :req-id req :kind "permission" :summary "run a program"
+                      :options (list (list :option-id "allow_once" :kind "allow_once")
+                                     (list :option-id "allow_always" :kind "allow_always"))))))
+      (deliver "adj-1")
+      (leticl::%handle-key h (list :type :down))
+      (is (= 1 (leticl::head-decision-sel h)) "the operator moved the cursor to row 1")
+      (deliver "adj-1")
+      (is (= 1 (length (session-open-decisions (head-session h))))
+          "a redelivery replaces the open entry rather than adding a twin")
+      (is (= 1 (leticl::head-decision-sel h))
+          "and does NOT undo the keystroke — the same question is not a fresh one")
+      (deliver "adj-1")
+      (is (= 1 (length (session-open-decisions (head-session h))))
+          "still one entry however often it replays")
+      (deliver "adj-2")
+      (is (= 2 (length (session-open-decisions (head-session h))))
+          "a genuinely new ask is a new entry")
+      (is (= 0 (leticl::head-decision-sel h))
+          "and a fresh question still starts at its first row"))))
+
 (def-test a-digit-that-names-no-row-is-the-composers (:suite leticl)
   "G21. The ladder's digits take a row; a digit past the last one is a character.
 The old arm answered on any digit, so `7` on a four-option ask answered the

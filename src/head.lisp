@@ -358,8 +358,25 @@ first."
           ;; It lives HERE and not in `session.lisp` because the cursor is HEAD
           ;; state: the session cannot reach a head slot, which is why the hook
           ;; there could never have done it.
-          (setf (head-decision-sel head) 0
-                (head-dirty head) t))
+          ;;
+          ;; **AND ONLY A FRESH ONE STARTS THERE.** The reset is guarded on the
+          ;; `req_id`, because a reconnect replays from the read mark and delivers
+          ;; an ask this head has already drawn — the same question a second time.
+          ;; Zeroing on that undid the operator's keystroke: measured on the live
+          ;; head, `down` left the cursor at 1 and a redelivery of the same
+          ;; `req_id` put it back to 0, which is exactly what "the selector does
+          ;; not work" looked like. A redelivery is the SAME question, not a fresh
+          ;; one, and the reference only resets unconditionally because its reset
+          ;; sits INSIDE the arm that has already dropped the old entry
+          ;; (app.rs:2596-2599: `retain`, then `sel = 0`, then `push`) — and its
+          ;; own comment names the thing that justifies the zero: a *FRESH*
+          ;; question. This head's hook runs BEFORE `apply-event` drops the twin,
+          ;; so the twin is still here to be asked about.
+          (unless (member (getf env :req-id)
+                          (session-open-decisions (head-session head))
+                          :key (lambda (d) (getf d :req-id)) :test #'string=)
+            (setf (head-decision-sel head) 0
+                  (head-dirty head) t)))
          ((:job-settled)
           ;; FOLDED INTO THE ROW THE DAEMON GAVE US, never invented. The jobs
           ;; pane draws `head-jobs`, which is only ever the `Jobs` reply, so an
