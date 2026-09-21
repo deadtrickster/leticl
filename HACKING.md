@@ -129,6 +129,33 @@ measures, and a constant derived from it carries the bias silently.** If the for
 to run is slow, run it in pieces — or measure from outside the head, where there is no
 lock to hold.
 
+### A chord you press through the socket is pressed for real
+
+The second half of the same lesson, and it has cost more: **an eval that drives a key is
+not a test, it is the operator typing.** There is no sandbox — the head it lands on is the
+one on their terminal, with their session, their composer and their daemon.
+
+```sh
+tui-eval '(%handle-key *head* (list :type :ctrl :ch #\c))'   # opens the QUIT CARD
+tui-eval '(%handle-key *head* (list :type :char :ch #\2))'    # …and asks the daemon to STOP
+```
+
+Two of those in a row, on a live head, are the operator's afternoon: a card they did not
+ask for on their screen, and a daemon going away under them. It is not hypothetical — a
+probe in this session wrote exactly that sequence into a live head while looking for a
+counter, and a batch of `:enter`s into a decision card would be worse, because those
+answer for them.
+
+So: **for anything that is a keystroke, use a scratch head.** Start a daemon and a head of
+its own (a `tmux` pane, or `--replay --no-tty` for the render path) and drive *that*.
+Global state has the same shape — `*head*` is the live one, and a form that redefines
+`head-status-note` or binds a global changes what the operator is looking at.
+
+**And a struct change cannot be pushed at all.** `notice-until` on `%make-head` (the R10
+follow-up) is a layout change, and this SBCL treats one as a hard error: a `--tree` push
+of `head.lisp` at a running head is not a soft failure, it is a head that dies mid-push
+with half a tree. When a change is to the struct, say so and take the restart instead.
+
 ## `--tree`: make the head match disk
 
 **The gate checks that the head can *paint*, not that your change is *loaded*.**

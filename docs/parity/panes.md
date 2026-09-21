@@ -94,7 +94,7 @@ path.
 | **quit** | bold title, `▸ 1 leave this head` / `2 leave and stop the daemon`, consequence wrapped dim 8 in, the second naming how many other heads will be told | `app.rs:7175-7226` | identical text, identical shape | `src/cards.lisp:1194-1222` | **SAME** |
 | **mode / models picker** | bold title, `▸ 1 name` with the row reversed whole and `← now` right, two dim hints (three for models) | `app.rs:7228-7303` | identical, reversal applied per-segment to match the reference's raw escapes | `src/panes.lisp:1163-1205` | **SAME** |
 | **allow-all confirm** | wrapped not trimmed, attention role, pinned at the front of the chrome; `y`/`Y`/Enter confirm, everything else cancels | `app.rs:5130-5136`, `app.rs:2963-2978` | same text verbatim, same keys | `src/cards.lisp` → `src/panes.lisp:1208-1216`, `1304-1318` | **SAME** (the two notices differ in wording only) |
-| **notice / `say` line** | its own chrome row, magenta `· {n}`, TTL 60 frames, first-but-one thing the fit ladder drops | `app.rs:5069-5073`, `app.rs:5112-5121`, `app.rs:4709-4712` | folded into `status-line`, which `%render` builds **only when `(not boxed)`**, and `boxed` is `(>= rows 8)` | `src/chrome.lisp:315-336`; `src/render.lisp:314-318` | **MISSING in practice** — see 1.5 |
+| **notice / `say` line** | its own chrome row, magenta `· {n}`, TTL 60 FRAMES, first-but-one thing the fit ladder drops | `app.rs:5069-5073`, `app.rs:5112-5121`, `app.rs:4709-4712` | its own chrome row (`notice-line`), magenta, one that **expires in TIME** — `+notice-ttl-ms+` 1600, armed by `say`, stopped by `clear-note`, the deadline a slot of the head — and a wait for a daemon that was asked to stop outranks it | `src/chrome.lisp:441-477, 934-1035` | **SAME screen, DIFFERENT clock** — see R10's follow-up, `57d20dc` |
 | **stall line** | its own yellow chrome row; gated on a **running turn**, quiet > 15 s; names the model and `esc esc interrupts it` | `app.rs:7582-7608` | a fragment appended inside `status-line`; 20 s; **not** gated on a running turn | `src/chrome.lisp:285-312`, `327` | **MISSING in practice** — same suppression |
 | **alarm indicator** | `⚠` inlaid in the composer's bottom border beside the turn status; the counters themselves on `/status`; an unboxed screen gets `⚠ dropped N · scrubbed N · resync N · /status` on its own row | `app.rs:5180-5192`, `app.rs:7650-7672` | `⚠` on the bottom edge via `composer-wiring` | `src/chrome.lisp:434-451`, `492-501` | **SAME** for the boxed case; the unboxed fallback row is suppressed the same way the notice is |
 | **a daemon `Warning`** | drawn as a note anchored where it arrived, folded to 3 lines + `… +N lines · /notes`, retired by the reader and still listed by `/notes` and counted on `/status` | `app.rs:3320-3358`, `app.rs:11365-11430`, `app.rs:5767-5882` | a row filed where the envelope arrived, folded to `+note-lines+` + `/notes`, retired by `/notes`/`/dismiss`, still in `session-warnings` and counted as `notes  N of M retired` | `src/session.lisp:490-660,1061-1111`, `src/cards.lisp:1351-1381`, `src/panes.lisp:261-269,1318-1369`, `src/commands.lisp:204-268` | **SAME** (R10, done) |
@@ -455,7 +455,7 @@ REPLANTED the wall at position 0, because a snapshot's warnings are unanchored h
 |---|---|---|---|
 | what it is for | the head's own `say`s | everything the daemon warns about | `turn_failed`, `job_output_refused`, `slash`/`slash_refused`, `secret_late` |
 | **was it drawn?** | yes, magenta above the composer | **NO — nothing read it** | yes, by the arm |
-| **lifetime** | `*notice-ttl-frames*` = 60 loop passes ≈ **0.55 s** (measured 60 → 31 after 0.3 s, NIL by 0.8 s; the loop runs ~43 passes/s) | accumulated for the life of the session | — |
+| **lifetime** | was `*notice-ttl-frames*` = 60 loop passes ≈ **1.6 s** (measured 60 → 31 after 0.3 s, NIL by 0.8 s, both from the shell; the loop is ~38-43 passes/s). **Now a millisecond deadline on the head** — `+notice-ttl-ms+` 1600, the same wall time, a unit that does not depend on the frame rate (`57d20dc`) | accumulated for the life of the session | — |
 | **dismiss key** | **none** — and not "any key" either: `%handle-key` has no notice arm at all, where the reference drops `notice_ttl` to 1 on every key but the four scroll keys (`app.rs:3080`) | N/A | esc, by the arm |
 | **verbosity hid it?** | no | no (and nothing was drawn to hide) | no |
 | **a RESYNC did** | **replace** it — a snapshot's `resync` note overwrote the one that was up | **replace** the list with the snapshot's (measured: 3 live → 2 from the snapshot) | — |
@@ -524,6 +524,32 @@ key *and* a 0.55 s life, where the reference acknowledges its notice on any key 
 four scroll keys (`app.rs:3080`). A note a keystroke can retire and a note that expires
 before it can be read are the same bug in two directions.
 
+#### And then the field found the third thing: the note outlived its own clock
+
+The operator, on a magenta `· permission answered` that would not go: frozen above the
+composer while a turn streamed underneath it. Measured through the eval socket —
+
+    :note "permission answered"  :ttl 0  :dirty NIL     <- identical 2 s later
+
+— a note with **no clock**, on a head whose loop was painting the whole time. The
+countdown was guarded on `(plusp ttl)` and left at 0 by every one of the **seventeen
+call sites that set `head-status-note` directly** rather than through `say`; a note with
+no clock was therefore IMMORTAL, and the guard that made it so was written as a feature
+("an alarm persists"). Two lessons, and they are the same one twice:
+
+  · **a TTL counted in FRAMES is a timer that stops when the frames stop** — which is
+    exactly when a notice is left standing longest; and
+  · **a clock that does not live with the thing it times is not that thing's clock.**
+    The deadline is now a slot of the head (`head-notice-until`), so no `let` of a
+    global — and this tree rebinds its globals wholesale for every replay — can give
+    one of them a private copy. Same class as `*hist-generation*` and the prefs write
+    switch, and the third time it has cost this repo a real defect.
+
+**Handed to letibot, not changed there**: `app.rs:5954` decrements `notice_ttl` inside
+its chrome builder and clears at 0, armed at 60 by `say` (`app.rs:5431`) — the same
+frame-counted shape, one layer down. Its `notice_ttl` is a field of the `App`, so it
+does not have the second defect, but on a quiet screen its count does not advance.
+
 **The measurement bias this requirement nearly shipped, recorded here because it is the
 first real cost of live-eval anybody here has named.** The TTL figures above were first
 taken the wrong way: a probe that ran 60 s of `sleep` **inside one `tui-eval` eval** held
@@ -533,6 +559,49 @@ the sleep in the **shell between short evals**, it is 43 passes/s and 60→31 in
 is the number in the table. **A measurement that takes time starves what it measures, and a
 constant derived from it carries the bias silently.** See `HACKING.md` and
 `scripts/tui-eval`.
+
+### R15 — an edit card's label is the file, with no elided-array placeholder
+
+**DONE** (`0446585`). The operator's rows, and the ruling on them:
+
+    ▸ Edited […] letibot/crates/harnessd/src/answers.rs · ok · 3ms · 10 lines
+    ▸ Edited […] /home/dead/Projects/leticl/src/commands.lisp · ok · 30ms · 195 lines
+
+*"`[…]` should be gone for Edit."* Not moved, not reordered — **gone**. This head's
+`display-target` is a faithful port of `sessionlog::display_target` (the scalar argument
+values in written order, a nested one elided at `cards.lisp:93`/`:142`), and the rule is
+right in general: what was wrong is that a batch `edit` writes its `edits` array before
+its `path`, so the placeholder took the best position on the row to point at the diff
+drawn directly underneath it. Measured, ten shapes:
+
+| arguments | before | after |
+|---|---|---|
+| `{"edits":[…],"path":"…/commands.lisp"}` | `[…] /home/dead/…/commands.lisp` | `/home/dead/…/commands.lisp` |
+| `{"path":"a.rs","edits":[{"old":"x"}]}` | `a.rs […]` | `a.rs` |
+| `{"path":"src/cards.lisp","ranges":[…]}` | `src/cards.lisp […]` | `src/cards.lisp` |
+| `{"todos":[…]}` | `[…]` | `[…]` |
+| `{"signal":"term","pids":[1,2,3]}` | `term […]` | `term […]` |
+| `[1,2,3]` | `[…]` | `[…]` |
+| `{}` | `{}` | `{}` |
+
+**Where the line is drawn**: the elision STAYS. What changed is what a nested value IS —
+**a placeholder, not a part of a label** — so it is dropped exactly when the arguments
+name a SUBJECT (`path`, `file_path`, `file`) and kept when they name nothing. **The tools
+that keep it**: `todo_write` (`{"todos":[…]}` — no scalar argument at all, so `[…]` is the
+only thing its label can say), and a `pkill`/`kill` with pids (`{"signal":"term","pids":
+[…]}` — `signal` is a MODIFIER, not a subject, so `term` alone would read as if `term`
+were the thing being signalled). A bare top-level array still says `[…]` and `{}` is
+still `{}`.
+
+**Not ported**: letibot's subject-key PREPEND (`event.rs:354-365`) is kept here — it is
+the same idea from the other side and it is still right for a `write`, where a huge
+`content` genuinely buries the `path`. The proposed extension of it to REORDER every
+edit row was rejected by the operator in favour of removal, and the reason is the better
+one: *a row should not need a rule to put the file first when on an edit nothing else
+belongs first.*
+
+Deliberate divergence, named: `event.rs:1061` pins `a.rs […]` as a unit test in the
+reference. That case now differs between the heads on purpose.
 
 ### R8, in its general form
 
