@@ -5602,6 +5602,38 @@ one row per entry, with the prefix rule for the daemon's coalescing."
              :item (list :type "user" :parts (list (list :text "somebody else's")))))
     (is (equal '("only") (head-queued h)) "another head's prompt retires nothing")))
 
+(def-test a-refused-head-does-not-claim-the-session-is-quiet (:suite leticl)
+  "**The screen after a `Bye` must not say the conversation is empty.**
+
+`attached, and this session has said nothing yet` is a claim about a SESSION, and a head
+the daemon just refused is in no position to make it: the daemon said why it ended, and
+a cheerful banner about a quiet conversation is the same defect as the walking cat
+standing in for a session nobody has described. Momentary — the loop exits on the next
+pass and `run` prints the farewell to stderr once the terminal is back — but it is the
+first frame on the screen, and on a version skew (R5) it is the frame somebody will
+screenshot while asking what broke.
+
+Found by refusing a 23 head against this box's 22 daemon for real: the attach came back
+`{\"frame\":\"bye\",\"reason\":\"protocol version 23, this daemon speaks 22\"}` and the
+head drew the banner under it."
+  (let* ((leticl::*stdout* (make-string-output-stream))
+         (h (%on-head :cols 100 :rows 20)))
+    (setf (head-connected h) t)
+    ;; the premise: an empty, attached head DOES draw the banner
+    (leticl::%render h)
+    (is (search "said nothing yet" (%screen-text h))
+        "the premise: an attached empty session says so")
+    ;; and after a refusal it must not
+    (leticl::%handle-frame
+     h (list :frame "bye" :reason "protocol version 23, this daemon speaks 22"))
+    (leticl::%render h)
+    (let ((text (%screen-text h)))
+      (is (not (search "said nothing yet" text))
+          "a refused head does not claim the session is quiet")
+      (is (search "bye: protocol version 23" text)
+          "it says what the daemon said instead")
+      (is (not (leticl::head-running h)) "and it is on its way out"))))
+
 (def-test a-bye-is-the-end-of-the-conversation (:suite leticl)
   "The daemon writes a `Bye` and returns; the reference's pump stops on it and
 the head leaves (client.rs:548, app.rs:1886-1889). This head only dropped

@@ -549,7 +549,16 @@ costs nothing either."
            ;; `!self.attaching`: the walking cat covers *not answered yet*, and a
            ;; banner asserting the session is empty while nobody has reported
            ;; would be a claim this head is in no position to make.
-           (empty (and (zerop all-len) (not (attaching-p head))))
+           ;; **AND NOT AFTER A FAREWELL.** `attached, and this session has said nothing
+           ;; yet` is a claim about a SESSION, and a head the daemon just refused with a
+           ;; `Bye` is in no position to make it — the daemon said why it ended, and the
+           ;; screen answering with a cheerful banner about a quiet conversation is the
+           ;; same defect as the walking cat standing in for a session nobody has
+           ;; described. Momentary (the loop exits on the next pass, and `run` prints the
+           ;; farewell on stderr once the terminal is back), but it is the frame the
+           ;; operator sees first, and on a version skew it is the frame they will
+           ;; screenshot.
+           (empty (and (zerop all-len) (not (attaching-p head)) (null (head-farewell head))))
            (empty-lines (when empty (empty-session-lines cols)))
            (n (if empty (length empty-lines) all-len)))
       ;; the scroll is clamped to what exists: past the top there is nothing to
