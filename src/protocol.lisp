@@ -28,6 +28,76 @@
 ;; and letibot --stop). Both are client frames, hence the ATTACH-time refusal
 ;; that told us about the bump in the first place.
 
+;;; ------------------------------------------------- other halves' versions ;;;
+;;;
+;;; **The protocol version is compared at the HANDSHAKE, the DIRECTION is named, and
+;;; the head does not exit.** The daemon's ATTACH check is exact equality and it is
+;;; the strict first line; this is the head's own, and it is not redundant for the
+;;; reason the whole skew sequence exists: **the two halves are built and run
+;;; separately.** A check is a thing a protocol GAINS at some version, so a daemon
+;;; older than the check has none — and a check is a candidate for being relaxed,
+;;; which is the direction `R3` itself argues for, since *a skew is usually
+;;; survivable* is exactly why an unknown event is passed through. A head must not be
+;;; silent about a skew because it is trusting the other side to have mentioned it.
+;;;
+;;; **The direction is not decoration: the two cases are different problems.**
+;;;
+;;;   · **A NEWER daemon is a READING problem, and a head survives it.** What arrives
+;;;     is a frame with a tag this build has never heard of, because it was added
+;;;     after this head was built. That is what `note-unreadable` answers: the line is
+;;;     kept, the sentence names it, the count goes on `/status`, and the reader
+;;;     carries on. Nothing is lost but what the unknown frame said, which is exactly
+;;;     the part this build cannot use.
+;;;   · **An OLDER daemon is a WRITING problem, and a head cannot survive it from its
+;;;     side.** Everything this head reads parses — the older half wrote it. What
+;;;     breaks is the other direction: a `ClientFrame` the daemon has never heard of
+;;;     fails ITS deserialiser, and its read loop answers by saying goodbye and
+;;;     closing the socket. **That is the case worth reading twice**: it is silent
+;;;     until it is fatal, and the operator is entitled to know before they spend an
+;;;     hour in a session that is going to drop on them.
+;;;
+;;; Neither sentence tells anybody to leave, and that is deliberate: a head that
+;;; exited at the handshake would never get to use `R3`, which is the mechanism that
+;;; makes surviving a skew real (letibot `787092b` on the same reasoning).
+
+(defvar *daemon-protocol* nil
+  "The protocol version the daemon last TOLD this head, or NIL for not told yet.
+
+NIL is a different statement from a number and `/status` renders it as one — the
+same distinction the empty-transcript banner draws. A `defvar` rather than a head
+slot: a struct layout change is a restart, and a live push of this head must not
+need one. Set from every `Hello`, so a `Switch` updates it and a reconnect re-states
+it.")
+
+(defun protocol-skew-said (daemon head)
+  "The sentence about a version skew, or NIL when there is none to say.
+
+ONE function, in the protocol's own file beside the number it is about, so every
+head says the same thing the same way — a sentence that lives in a head is a
+sentence the next head rewrites.
+
+HEAD is passed rather than taken from `+protocol-version+` so the function is a
+question about two numbers and can be tested as one. The daemon is named FIRST in
+the sentence, and the direction is spelled out, because a bare pair of numbers makes
+the reader work out which side they are on — and which side they are on changes what
+they should expect to happen next."
+  (when (and (integerp daemon) (integerp head) (/= daemon head))
+    (if (> daemon head)
+        (format nil "this daemon speaks protocol ~d and this head speaks ~d: the daemon is ~
+                     from a NEWER build. Frames it sends that this build does not know are ~
+                     reported as they arrive, counted on /status, and skipped — the ~
+                     connection stays up and the rest of the stream is unaffected. ~
+                     Restarting the daemon so both halves are the same build is the way ~
+                     to stop seeing them."
+                daemon head)
+        (format nil "this daemon speaks protocol ~d and this head speaks ~d: the daemon is ~
+                     from an OLDER build. Everything this head reads is fine; what is not ~
+                     safe is what it SENDS — a command the daemon has never heard of fails ~
+                     its reader, and it answers by saying goodbye and closing the socket. ~
+                     The session can end on the next command the two do not share. ~
+                     Restarting the daemon is the way to make them the same build."
+                daemon head))))
+
 ;;; Why a Rejected was sent — stable codes a head branches on (protocol.rs).
 (defparameter +reject-stale-seq+ "stale expected_seq")
 (defparameter +reject-unknown-decision+ "no such open decision")

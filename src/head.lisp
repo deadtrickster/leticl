@@ -149,6 +149,15 @@ the decode that would otherwise have dropped the line on the floor."
          (list :frame "warning" :code "read-error" :detail (format nil "~a" e)))
         (return)))))
 
+(defvar *skew-said-pending* nil
+  "The skew sentence the `Hello` being folded produced, held until the snapshot is
+in. `ingest-snapshot` replaces the session's items wholesale, so a row filed before
+it is not \"anchored at the frame that revealed this\", it is thrown away.")
+
+(defvar *skew-last-said* nil
+  "The last skew sentence this head filed, so a `Switch`'s second `Hello` on the same
+connection does not file a second identical row.")
+
 (defvar *filtered-total* 0
   "Events this head consumed and did not draw, over its life — what `/verbosity`
 reports beside the level, so \"terse\" is a number and not a mood.")
@@ -281,23 +290,40 @@ first."
            (head-dirty head) t)
      :control)
     ((string= (frame-name frame) "hello")
-     ;; **THE VERSION, BEFORE ANYTHING ELSE.** A daemon that speaks a different
-     ;; protocol refuses with a `Bye` and no `Hello` (server.rs:332-342), so a
-     ;; skew normally arrives the other way round — but a Hello whose version is
-     ;; not ours is a conversation neither side can trust, and nothing checked
-     ;; it. The reference exits with the daemon's sentence on a restored
-     ;; terminal (letibot-tui.rs:658-661) and the launcher refuses to route
-     ;; around it. *"A silent version skew looks like a bug in the other half,
-     ;; forever."*
-     (let ((theirs (getf frame :protocol-version)))
-       (when (and (integerp theirs) (/= theirs +protocol-version+))
-         (setf (head-status-note head)
-               (format nil "protocol ~d, this daemon speaks ~d — leaving"
-                       +protocol-version+ theirs)
-               (head-connected head) nil
-               (head-running head) nil
-               (head-dirty head) t)
-         (return-from %handle-frame :control)))
+     ;; **THE VERSION, BEFORE ANYTHING ELSE — AND THE HEAD STAYS.**
+     ;;
+     ;; A daemon that speaks a different protocol refuses with a `Bye` and no `Hello`
+     ;; (server.rs:332-342), so a skew normally arrives the other way round — but this
+     ;; check is the head's OWN, and it is not redundant, because **the two halves are
+     ;; built and run separately**: a check is a thing a protocol GAINS at some
+     ;; version, so a daemon older than the check has none, and a check is a candidate
+     ;; for being relaxed — which is the direction `R3` itself argues for.
+     ;;
+     ;; **It used to EXIT**, with the sentence on a status note: `head-running` nil on
+     ;; a version the daemon had merely disagreed about, which took the session with it
+     ;; and said so in a place that expires. That is the failure framing the fix, on
+     ;; the same argument `note-unreadable` is built on — a head that quits at the
+     ;; handshake never gets to use the survival the rest of the protocol is for, and
+     ;; the operator loses the conversation over a number.
+     ;;
+     ;; The sentence NAMES THE DIRECTION and the two directions are different
+     ;; problems: a NEWER daemon is a reading problem (`R3`: the frames the two share
+     ;; read fine, the first one they do not is reported and skipped), and an OLDER
+     ;; daemon is a WRITING problem this head cannot survive from its side, because a
+     ;; `ClientFrame` it has never heard of fails ITS deserialiser and its read loop
+     ;; answers by closing the socket — silent until fatal, which is the case the
+     ;; operator is entitled to know about before they spend an hour in it.
+     ;; `protocol-skew-said` is the one place that sentence is built, beside the
+     ;; number it is about, so every head says it the same way.
+     (let* ((theirs (getf frame :protocol-version))
+            (said (protocol-skew-said theirs +protocol-version+)))
+       (setf *daemon-protocol* (and (integerp theirs) theirs))
+       ;; held until the snapshot is folded in: `ingest-snapshot` replaces the
+       ;; session's items wholesale, so a row filed before it is not "anchored at
+       ;; the frame that revealed this", it is thrown away. Found by the test that
+       ;; asserts the sentence exists, which is the only reason this is not a
+       ;; silence nobody would have noticed.
+       (setf *skew-said-pending* said))
      ;; A Switch lands as a Hello on the new session, and the money meter is the
      ;; CONVERSATION's — carrying one session's bill onto another's header is
      ;; wrong in the direction that costs money. Cleared, not guessed.
@@ -333,6 +359,19 @@ first."
      ;; old session's model, and the rows a picker would read are another
      ;; session's.
      (%send head (make-settings))
+     ;; **Now it can be said.** A row in the conversation, not a status note: the
+     ;; fact is about the connection and outlives the next keystroke, and a note
+     ;; that expires would make a version skew disappear silently — the same
+     ;; argument `note-unreadable` is built on. Said ONCE per distinct sentence,
+     ;; because a `Switch` lands as a second `Hello` on the same connection and
+     ;; three Hellos must not be three identical rows (the reference dedupes its
+     ;; notes on `(code, detail, ts)` for exactly this).
+     (when (and *skew-said-pending*
+                (not (equal *skew-said-pending* *skew-last-said*)))
+       (note-protocol-skew (head-session head) *skew-said-pending*)
+       (setf *skew-last-said* *skew-said-pending*
+             (head-dirty head) t))
+     (setf *skew-said-pending* nil)
      :control)
     ((string= (frame-name frame) "event")
      (let* ((env frame)

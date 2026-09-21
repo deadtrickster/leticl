@@ -3470,8 +3470,8 @@ The counting itself is the subject of
     (let* ((lines (status-screen-lines h 210))
            (text (lines-text lines)))
       (is (string= "this head" (first text)) "the title")
-      (is (= 24 (count-if (lambda (l) (plusp (length l))) text))
-          "24 non-blank rows — 26 on the reference's screen with the header and the four chrome rows, and the unreadable row is the two this adds")
+      (is (= 28 (count-if (lambda (l) (plusp (length l))) text))
+          "28 non-blank rows — 21 here when the reference's screen had 26, plus the three the unreadable row costs and the four the protocol row does")
       (is (string= "  session     s-1789639478142928813" (third text)) "the key twelve wide, the value plain")
       (is (equal '(:dim t) (cdr (first (third lines)))) "the key dim")
       (is (null (cdr (second (third lines)))) "the value not")
@@ -4333,22 +4333,88 @@ unreadable AND unescapable."
     (leticl::%try-reconnect h)
     (is (null (funcall sent)) "and no further attach goes out, however long we wait")))
 
-(def-test a-protocol-skew-stops-the-head-and-names-both-numbers (:suite leticl)
-  "*\"A silent version skew looks like a bug in the other half, forever\"*
-(server.rs:332-342). Nothing read `Hello.protocol_version`, and the stale
-`protocol 18` headers in `src/protocol.lisp` and `leticl.asd` said a number that
-was not the constant — a comment, not a fact. The grep half is the same shape as
-`live-state-tables-are-defvar`: a rule in a document has already failed to
-prevent this once."
-  (let ((h (%make-head)) (*attach-started-ms* nil))
-    (leticl::%handle-frame h (list :frame "hello" :protocol-version 99
-                                   :session-id "s-1" :snapshot nil))
-    (is (null (leticl::head-running h)) "a head that cannot be understood stops")
-    (is (search (format nil "~d" +protocol-version+) (head-status-note h))
-        "the note names what we speak")
-    (is (search "99" (head-status-note h)) "and what the daemon speaks")
-    (is (equal "" (session-session-id (head-session h)))
-        "and nothing of the frame is folded"))
+(def-test a-protocol-skew-says-its-direction-and-the-head-stays (:suite leticl)
+  "**The version is compared at the HANDSHAKE, the DIRECTION is named, and the head
+does not exit.** *\"A silent version skew looks like a bug in the other half,
+forever\"* (server.rs:332-342).
+
+Nothing read `Hello.protocol_version`, and then the check that was added EXITED:
+`head-running` nil, the sentence on a status note that expires. That is the failure
+framing the fix — a head that quits at the handshake never gets to use `R3`, which is
+the mechanism that makes surviving a skew real, and the operator loses the
+conversation over a number.
+
+The two directions are NOT the same sentence, because they are not the same problem.
+A NEWER daemon is a READING problem: the frames the two share read fine, and the
+first one they do not is reported and skipped. An OLDER daemon is a WRITING problem
+this head cannot survive from its side: a `ClientFrame` it has never heard of fails
+ITS deserialiser and its read loop closes the socket — silent until fatal, which the
+operator is entitled to know before they spend an hour in that session."
+  ;; the sentence itself, as a question about two numbers
+  (is (null (protocol-skew-said +protocol-version+ +protocol-version+))
+      "equal versions say nothing at all — a line here would be furniture")
+  (let ((newer (protocol-skew-said 99 +protocol-version+))
+        (older (protocol-skew-said 9 +protocol-version+)))
+    (is (search "NEWER" newer) "a newer daemon is named as newer")
+    (is (search "OLDER" older) "and an older one as older")
+    (is (search (format nil "~d" +protocol-version+) newer)
+        "both name this head's version")
+    (is (not (equal newer older)) "and they are not the same sentence")
+    (is (search "reported" newer) "a newer daemon means frames reported and skipped")
+    (is (search "closing the socket" older)
+        "an older one means a command it cannot read ends the session")
+    (is (search "stays up" newer) "the newer case says the connection survives")
+    (dolist (s (list newer older))
+      (is (not (search "leave" s)) "and neither tells anybody to leave")))
+  ;; and the behaviour, both directions, through a real Hello
+  (flet ((hello (h version)
+           (leticl::%handle-frame
+            h (list :frame "hello" :protocol-version version
+                    :session-id "s-1" :snapshot nil :sessions nil :wiring nil))
+           h))
+    (let ((h (%make-head))
+          (*daemon-protocol* nil) (*skew-said-pending* nil) (*skew-last-said* nil))
+      ;; **before the handshake the row says so**, which is a different statement
+      ;; from a version number — and it cannot be read as "we agree".
+      (is (some (lambda (l) (string= "  protocol    not told yet" l))
+                (lines-text (status-screen-lines h 120)))
+          "/status says `not told yet` before anything has been heard")
+      (hello h 99)
+      (is (leticl::head-running h) "a newer daemon does not stop the head")
+      (is (head-connected h) "and it stays attached")
+      (is (equal 99 *daemon-protocol*) "the version it was TOLD is what is kept")
+      (let* ((s (head-session h))
+             (item (aref (session-items s) (1- (length (session-items s)))))
+             (row (format nil "~{~a~^ ~}"
+                          (lines-text (item-lines item 120 (head-prefs h))))))
+        (is (search "NEWER" row) "the conversation says which way round it is")
+        (is (search "protocol 99" row) "with both numbers in it")
+        (is (search (format nil "~d" +protocol-version+) row)
+            "including this head's own"))
+      (is (some (lambda (l) (string= "  protocol    99 · this head speaks 22 — NEWER build" l))
+                (lines-text (status-screen-lines h 120)))
+          "and /status carries the direction after the row has scrolled away")
+      ;; said once, however many Hellos a Switch produces
+      (let ((n (length (session-items (head-session h)))))
+        (hello h 99)
+        (hello h 99)
+        (is (= n (length (session-items (head-session h))))
+            "three Hellos are one sentence, not three"))
+      ;; and the older direction, on a fresh head
+      (let ((h2 (%make-head))
+            (*daemon-protocol* nil) (*skew-said-pending* nil) (*skew-last-said* nil))
+        (hello h2 9)
+        (is (leticl::head-running h2) "an older daemon does not stop the head either")
+        (let* ((item (aref (session-items (head-session h2))
+                           (1- (length (session-items (head-session h2))))))
+               (row (format nil "~{~a~^ ~}"
+                            (lines-text (item-lines item 120 (head-prefs h2))))))
+          (is (search "OLDER" row) "the older direction is named as older")
+          (is (search "closing the socket" row)
+              "and says the session can end on the next thing typed"))
+        (is (some (lambda (l) (string= "  protocol    9 · this head speaks 22 — OLDER build" l))
+                  (lines-text (status-screen-lines h2 120)))
+            "and /status names it"))))
   ;; the headers say the number the constant says
   (is (search (format nil "protocol version ~d" +protocol-version+)
               (source-of "protocol"))

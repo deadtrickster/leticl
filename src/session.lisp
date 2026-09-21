@@ -372,6 +372,43 @@ hold is."
 ;;; structural and silent is strictly worse: it is why this head could step over a
 ;;; frame from a newer daemon and never say a word about it.
 
+;;; ------------------------------------------------- this head's own rows ;;;
+;;;
+;;; **A sentence this head writes ABOUT ITSELF, filed where it happened.** The
+;;; conversation is the only place a fact about the connection can live and still be
+;;; readable an hour later: a status note sits pinned above the composer and expires
+;;; on a TTL, so anything filed there is gone — and gone SILENTLY — by the time
+;;; anybody thinks to look, which is the failure this shape exists to avoid.
+;;;
+;;; Two facts are filed this way and both are about the SOCKET rather than the session
+;;; log, which is why `ts` is 0 rather than invented: a frame this head could not read
+;;; (`note-unreadable`) and a protocol skew at the handshake (`note-protocol-skew`).
+
+(defvar *filed-notes* 0
+  "How many rows this head has filed about itself, over its life.
+
+A `defvar` so a push can introduce the next filer without a struct slot, and not a
+constant, because a constant is the one kind of definition the file pusher SKIPS.")
+
+(defun file-head-note (session text)
+  "FILE TEXT into the conversation as a row of this head's own, at the point it
+happened. Returns the item.
+
+`:kind`/`:type` are both `note`, which no daemon item uses — the wire's are `user`,
+`assistant`, `reasoning`, `tool_result`, `system` and `segment_mark` — so
+`item-lines` renders it as `! …` in the failure role, the reference's `warn_line`
+(app.rs:8425-8427), without a tag anybody could also send.
+
+An item id unique to this head, because the wire's ids are `s.3`, `t1.0` and the
+like and nothing the daemon sends must ever be confused with a row this head wrote."
+  (incf *filed-notes*)
+  (let ((item (list :item-id (format nil "leticl-note-~d" *filed-notes*)
+                    :kind "note"
+                    :ts 0
+                    :item (list :type "note" :text text))))
+    (push-item session item)
+    item))
+
 (defvar *unreadable-total* 0
   "Frames that arrived and could not be read, over this head's life.
 
@@ -429,13 +466,22 @@ there is no seq to report, and inventing one would rewind the mark over frames
 already read — the one thing a mark must never do. `/status`'s `filtered` is \"events
 I chose not to show\" and this is not that either."
   (incf *unreadable-total*)
-  ;; a unique item id, so nothing the daemon sends can ever be confused for it:
-  ;; the wire's ids are `s.3`, `t1.0` and the like, and this row is the head's own
-  (push-item session
-             (list :item-id (format nil "leticl-unreadable-~d" *unreadable-total*)
-                   :kind "note"
-                   :ts 0
-                   :item (list :type "note" :text (unreadable-said detail line))))
+  (file-head-note session (unreadable-said detail line))
+  :dirty)
+
+(defun note-protocol-skew (session said)
+  "FILE the skew sentence into the conversation, at the handshake. Returns `:dirty`.
+
+**Not counted as unreadable.** A skew is a fact about two BUILDS and it is said once
+per connection — counting it there would make `/status`'s number mean *frames I could
+not read* PLUS *times I noticed two versions*, and that first number is the one an
+operator uses to tell a chatty daemon from a broken one. The version it was about has
+its own `/status` row, which is the other half of this fact.
+
+**Nothing is acked for it and the read mark does not move**: a `Hello` carries no
+`seq` (it is a snapshot, not an event), so there is nothing to report and inventing
+one would rewind the mark over frames already read."
+  (file-head-note session said)
   :dirty)
 
 (defparameter +events-not-folded-here+

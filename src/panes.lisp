@@ -262,14 +262,34 @@ fourteen-column indent, then a blank. 26 rows against our 18."
            "Events the daemon's bounded scrollback threw away before this head asked for them. Not a rendering choice: they are gone.")
       (row "scrubbed" *scrubbed-total*
            "Interactive-only frames withheld from a head that attached late — partial tool output and the like, which has no durable form.")
+      (row "resync" *resyncs*
+           "Times this head threw its state away and took a fresh snapshot, because the gap since its read mark was past the daemon's bound.")
       ;; **PRESENT AND ZERO**, which is the point of the row. A head that has never met
       ;; a frame it cannot read says 0 — a different statement from a head that does not
       ;; count them at all, and the one that tells an operator where to look when a
       ;; screen is wrong. A daemon one version ahead is the cause almost every time.
       (row "unreadable" *unreadable-total*
            "Frames that arrived and could not be read. Almost always a daemon newer than this head: the frames the two share read fine, and the first one they do not is this. Each one is named in the conversation where it arrived.")
-      (row "resync" *resyncs*
-           "Times this head threw its state away and took a fresh snapshot, because the gap since its read mark was past the daemon's bound.")
+      ;; **The version, always present, and the DIRECTION when they differ.** §13.2b in
+      ;; the other direction from the counters: the question "which build is on the
+      ;; other end of this socket" has no answer anywhere else on the screen, and it is
+      ;; the first thing to check when a head behaves strangely. `not told yet` is a
+      ;; different statement from a version number — the same distinction the empty
+      ;; transcript banner draws — and the row is here BEFORE the handshake has happened
+      ;; so that "nobody told me" cannot be read as "we agree".
+      (row "protocol" (if (integerp *daemon-protocol*)
+                           (format nil "~d · ~a"
+                                   *daemon-protocol*
+                                   (cond ((= *daemon-protocol* +protocol-version+)
+                                          (format nil "the same build as this head (protocol ~d)"
+                                                  +protocol-version+))
+                                         ((> *daemon-protocol* +protocol-version+)
+                                          (format nil "this head speaks ~d — NEWER build"
+                                                  +protocol-version+))
+                                         (t (format nil "this head speaks ~d — OLDER build"
+                                                    +protocol-version+))))
+                           "not told yet")
+           "The protocol both halves were built against, compared at the handshake. A NEWER daemon sends frames this build may not know: they are reported as they arrive and skipped. An OLDER one cannot read a command it has never heard of, and answers that by closing the connection — so a session with an older daemon can end on the next thing you type, and a restart of the daemon is the fix either way.")
       ;; THE RENDER ERROR, first among the things that can go wrong, because it is
       ;; the one that can hide its own report: a render error paints a failure
       ;; frame, and if the failure is IN the painting the frame saying so is
