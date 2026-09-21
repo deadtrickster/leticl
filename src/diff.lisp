@@ -391,12 +391,26 @@ it, so the eye does not read a wrap as a second changed line."
       (:added (setf sign "+" role :added
                    text (elt new (second row))
                    new-num (+ new-base (second row) 1))))
-    (let* ((gutter (if line-numbers
-                       (format nil "~a ~a "
-                               (%pad-right (if old-num (format nil "~d" old-num) "")
-                                           numw)
-                               (%pad-right (if new-num (format nil "~d" new-num) "")
-                                           numw))
+    ;; **ONE column, carrying the line's number IN ITS OWN FILE**: the old file's
+    ;; on a deletion and on a context row, the new file's on an addition. Two
+    ;; columns print a number beside a blank on every changed line — `-` has no new
+    ;; number and `+` has no old one — so half the gutter was empty exactly where
+    ;; the reader is looking, and collapsing them is the point: a row always says
+    ;; which line of SOME file it is.
+    ;;
+    ;; Right-aligned, and `numw` still spans BOTH files' numbering even though one
+    ;; column is drawn, because that column carries either: a file that grew past
+    ;; the other's last line would otherwise truncate its own numbers.
+    ;;
+    ;; `body-w` and the continuation's blank prefix both derive from
+    ;; `(string-width gutter)`, so the body gains `numw + 1` columns and the prefix
+    ;; narrows to match without either number appearing here.
+    (let* ((num (if (eq (first row) :added) new-num old-num))
+           (gutter (if line-numbers
+                       (format nil "~a " (%pad-right (if num
+                                                         (format nil "~d" num)
+                                                         "")
+                                                     numw))
                        ""))
            (body-w (max 8 (- width (string-width gutter) 1)))
            (fg (case role (:added :green) (:removed :red) (t nil)))

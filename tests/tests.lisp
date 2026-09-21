@@ -747,15 +747,84 @@ decision and the wiring is not")
 (def-test diff-excerpt-is-numbered-from-where-it-starts (:suite leticl)
   "An excerpt of lines 310..314 must be numbered 310..314, not 1..5: the pair
 a finished edit carries is a window, and a diff numbered from 1 tells the
-reader line 4 changed when it was line 313."
+reader line 4 changed when it was line 313.
+
+And ONE column, carrying the line's number in its own file — the old file's on a
+deletion, the new file's on an addition. Both rows here are line 311 of the file
+they came from, so a two-column gutter would print `311` in one column and a blank
+in the other on BOTH of them."
   (let ((old (list "a" "b" "c"))
         (new (list "a" "B" "c")))
     (let ((text (diff-lines-text
                  (render-diff old new :width 80 :context 1 :line-numbers t
                               :intra-line nil :old-start 310 :new-start 310))))
-      (is (search "311     -b" text) "the removed line is numbered 311")
-      (is (search "    311 +B" text) "the added line is numbered 311")
-      (is (null (search " 1 " text)) "not numbered from 1"))))
+      (is (search "311 -b" text) "the removed line, numbered from the OLD file")
+      (is (search "311 +B" text) "the added line, numbered from the NEW file")
+      (is (search "310  a" text) "and a context row carries the old file's number")
+      (is (null (search " 1 " text)) "not numbered from 1")
+      (is (null (search "311     " text))
+          "no blank half-gutter: the collapse is the whole point"))))
+
+(def-test the-unified-gutter-is-one-column (:suite leticl)
+  "The property, measured on a line long enough to show the difference.
+
+`numw` spans both files' numbering (three columns here), and one column is drawn
+per row, right-aligned, then one space, then the sign. The body gets
+`width - (numw + 1) - 1` columns — so at width 40 a 35-column body fits — and a
+TWO-column gutter would leave only 31.
+
+Asserting the row's total width would not distinguish the shapes: both fill the
+width, they just show different amounts of CODE. So the assertion is how much
+content is visible."
+  (let* ((long-line (make-string 60 :initial-element #\x))
+         (old (list "a" long-line "c"))
+         (new (list "a" "B" "c"))
+         (rows (render-diff old new :width 40 :context 3 :line-numbers t
+                            :intra-line nil :old-start 310 :new-start 310))
+         (context (find-if (lambda (r) (search "xxx" (format nil "~{~a~}" (mapcar #'car r))))
+                           rows)))
+    (is (not (null context)) "the long context line is drawn")
+    (is (= 40 (leticl::%segs-width context))
+        "the row fills the width it was given")
+    ;; **How much CODE is visible**, which is the only thing that distinguishes the
+    ;; two shapes: both fill the width, they just show different amounts of the
+    ;; line. Counting the row's width passes for either — measured, which is how
+    ;; the first version of this test failed to fail.
+    (let* ((text (format nil "~{~a~}" (mapcar #'car context)))
+           (xs (length (remove-if-not (lambda (c) (char= c #\x)) text))))
+      (is (= 35 xs)
+          "35 columns of code: gutter (3 + 1) + sign (1) from 40, and a two-column
+gutter would show 31")
+      (is (not (= 31 xs)) "which is the shape the requirement collapses"))))
+
+(def-test deletions-precede-additions-in-a-change-region (:suite leticl)
+  "THE INVARIANT `%pair-rows` WALKS, and the reason it is written down.
+
+`%pair-rows` (`src/diff.lisp`) pairs a run of `:removed` rows with the run of
+`:added` rows immediately after it, positionally — the k-th removal with the k-th
+addition — and that pairing is what the intra-line emphasis is drawn from. It
+scans with two consecutive `while` loops, so an INTERLEAVED region (`-a +b -c +d`)
+would stop its second loop early and pair the wrong lines, or none.
+
+So the order is not a style: it is what the emphasis walks. Asserted on the rows
+themselves, in every shape a change region takes."
+  (flet ((kinds (old new)
+           (loop for h in (hunks (diff-lines (coerce old 'vector)
+                                             (coerce new 'vector))
+                                 3)
+                 append (mapcar #'first (getf h :rows)))))
+    (dolist (case (list (cons "a replacement" (list (list "a" "b" "c") (list "a" "B" "c")))
+                        (cons "a whole-file replacement" (list (list "a" "b" "c") (list "X" "Y" "Z")))
+                        (cons "2 removed, 1 added" (list (list "a" "b" "c" "d") (list "a" "Z" "d")))
+                        (cons "1 removed, 2 added" (list (list "a" "b" "d") (list "a" "Y" "Z" "d")))
+                        (cons "two regions" (list (list "a" "b" "c" "e" "f")
+                                                  (list "a" "X" "c" "Y" "f")))))
+      (let ((ks (kinds (first (cdr case)) (second (cdr case)))))
+        ;; no `:added` may be followed later by a `:removed` inside one region:
+        ;; the first transition added → removed means the runs were interleaved
+        (is (not (loop for (a b) on ks while b
+                       thereis (and (eq a :added) (eq b :removed))))
+            (format nil "~a: every removal run precedes its addition run" (car case)))))))
 
 ;;; ------------------------------------------------------------- hack ;;;
 
