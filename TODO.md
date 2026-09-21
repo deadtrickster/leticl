@@ -58,6 +58,7 @@ predicate.
 | **§2.5, the carry line** | a fork announced every carried row before a body followed, and drew one placeholder per row — *"insane amount of grainess"*. One line now, in the cat and the bar the head already had: `1400 of 2702 rows`, landed cells `█` and never `▓`, the count derived from the rows themselves rather than from a tally or from how many still lack a body, and the line stops claiming to be progress after three seconds of no movement | `R-carry` |
 | **T1, the payload window** | a long tool result had an UNREACHABLE TAIL: the fold raised the budget and gave no row an offset, so `… +N lines · ctrl-t` named a chord that revealed nothing past forty lines. `ctrl-t` now opens a window on the newest pageable row, ↑/↓ page it, `esc` closes it, and the three seams say which key does what and where the reader is | `f655e7a` |
 | **W1, double-width text** | `%split-words` split on spaces alone, so a CJK paragraph was one chunk; it was then cut by CHARACTER INDEX against a COLUMN budget, so each piece was `2×cols` columns and the painter dropped the overflow in silence — **156 of 300 clusters reached the screen**. Now wraps at the column budget over clusters, and a newline in a wrapped text is a hard break instead of a character the painter discards | `W1` |
+| **R10, a warning is a disclosure** | the mirror of letibot's wall: a `Warning` went into `session-warnings` and was read by nothing, so `auto_compact`, `compacted`, `context_wall`, `transcript_store`, `decision_corpus` and `mode_set` had never once reached this head. Now drawn as a row where it arrived, folded to three lines plus a `… +N lines · /notes` seam, retired by `/notes`/`/dismiss` into a set keyed `(code detail ts)` **outside the transcript** — so a resync and a reattach replant the wall retired instead of replanting it — and counted on `/status` as `notes  N of M retired`. The four specialised homes (`turn_failed`, `job_output_refused`, `slash`/`slash_refused`, `secret_late`) are kept | `R10` |
 
 ## In flight
 
@@ -105,7 +106,9 @@ predicate.
   time, on the newest row, because the transcript has no pointer to aim one with;
   (3) Enter on a jobs row still posts `/job ID` into the conversation rather than
   reading it in the overlay — that is `ReadJobOutput`/`JobOutput` on the wire
-  (protocol 22, `make-read-job-output` exists) with no HEAD sending it. Size M for
+  (protocol 22, `make-read-job-output` exists) with no HEAD sending it. **R10 made
+  the reply visible** (a row, or the pane when it is a listing), so the Enter is no
+  longer silent — but it is still the wrong frame. Size M for
   (3) alone; (1) is its own item.
 - [ ] **T2 · the launcher** — `~/bin/letibot` needs `exec "$HEAD"` at its four
   remaining TUI exec sites and `~/bin/leticl` replaced by `scripts/leticl`;

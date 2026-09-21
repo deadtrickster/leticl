@@ -1190,6 +1190,14 @@ screen: its cards sit at column 4 and its prose at 2, while every row of ours wa
 at 2. The step is what makes a turn readable as a turn — the answer at the body's
 own column, the working subordinate to it — and it costs no colour, so it survives
 a terminal-native palette."
+  ;; **A row the reader has retired draws NOTHING** (R10). It is still an ITEM — it
+  ;; is in the transcript, `/status` counts it and `/notes` lists it with its text —
+  ;; and only its rendering is withheld, which is what "retired is not deleted"
+  ;; means. The flag is on the item rather than read from the session because this
+  ;; function is handed an item and nothing else, and the session's set is what
+  ;; keeps the two from disagreeing across a resync.
+  (when (getf item :retired)
+    (return-from item-lines nil))
   (let ((body (item-body item)))
     (cond
       ;; **The announcement arrived and the body has not — so draw NOTHING**
@@ -1343,15 +1351,33 @@ a terminal-native palette."
          ;; **A ROW THIS HEAD WROTE ABOUT ITSELF.** No daemon item has this type — the
          ;; wire's are `user`, `assistant`, `reasoning`, `tool_result`, `system` and
          ;; `segment_mark` — so this is the head filing a sentence of its own into the
-         ;; conversation at the point it happened. `note-unreadable` is the only writer
-         ;; today, and the contract is the one the reference's `warn_line` keeps: an
-         ;; `!`, the words, and the failure role (app.rs:8425-8427).
+         ;; conversation at the point it happened. `note-unreadable` and `note-warning`
+         ;; are the writers, and the contract is the one the reference's `warn_line`
+         ;; keeps: an `!`, the words, and the failure role (app.rs:8425-8427).
+         ;;
+         ;; **`:cap` and `:seam` fold a long one** (R10). A warning's detail can be a
+         ;; whole rule, and the operator-facing complaint was a WALL of them — 27 red
+         ;; lines from two gate timeouts. A note with a `:cap` shows that many rows and
+         ;; a `:seam` naming the verb that has the rest, and the seam is DIM rather than
+         ;; failure-role because it is not part of the warning: it is the instrument.
+         ;; The whole text is still what `/notes` prints, so this folds a disclosure
+         ;; and never the record.
          ((:note)
-          (mapcar (lambda (l)
-                    (mapcar (lambda (seg) (cons (car seg) +role-failure+)) l))
-                  (wrap-segments (list (cons (format nil "! ~a" (or (getf body :text) ""))
-                                             nil))
-                                 cols)))
+          (let* ((rows (wrap-segments
+                        (list (cons (format nil "! ~a" (or (getf body :text) "")) nil))
+                        cols))
+                 (cap (getf body :cap))
+                 (seam (getf body :seam))
+                 (hidden (and cap seam (> (length rows) cap) (- (length rows) cap)))
+                 (out (mapcar (lambda (l)
+                                (mapcar (lambda (seg) (cons (car seg) +role-failure+)) l))
+                              (if hidden (subseq rows 0 cap) rows))))
+            (if hidden
+                (append out
+                        (list (list (cons (format nil "  … +~d line~a · ~a"
+                                                  hidden (if (= hidden 1) "" "s") seam)
+                                          '(:dim t)))))
+                out)))
          (t nil))
         ;; the step: reasoning and tool calls are the model WORKING, under the
         ;; answer. Speech — the operator's message and the model's prose — sits at

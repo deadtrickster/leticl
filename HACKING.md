@@ -98,6 +98,37 @@ tui-eval '(setf (getf (head-prefs *head*) :show-reasoning) nil)'
 tui-eval '(setf (head-status-note *head*) "restyled by the model")'
 ```
 
+### A measurement that takes time starves what it measures
+
+**An eval holds the paint lock, and the loop you are measuring runs under it.** `tui-eval`
+takes `paint-lock` for the whole eval so a push cannot land in the middle of a frame
+(`src/render.lisp:873-895`), and the same mutex is held by `%render-and-paint`. So a form
+that blocks — a `sleep`, a long walk, a big allocation — holds the lock for its whole
+duration, and **the head stops drawing, stops folding and stops counting until it returns**.
+The loop is not slow; it is not running.
+
+This was measured the wrong way and produced a wrong constant. The loop rate and the
+`head-status-note` TTL were first read with the `sleep` **inside one eval**:
+
+```sh
+# WRONG — the sleep holds the paint lock and freezes the loop for the whole 60 s
+tui-eval '(progn (sleep 60) *tick-count*)'
+```
+
+`*tick-count*` barely moved and the TTL read 60 → 59, i.e. "one loop pass a minute" — which
+is exactly the bias, stated as a fact. The sleep belongs in the **shell, between short
+evals**, so the lock is held for microseconds per call:
+
+```sh
+tui-eval '*tick-count*'; sleep 2; tui-eval '*tick-count*'
+```
+
+Run that way the loop is ~43 passes/s and the TTL goes 60 → 31 in 0.3 s (R10, and the
+table in `docs/parity/panes.md`). **The rule: a measurement that takes time starves what it
+measures, and a constant derived from it carries the bias silently.** If the form you want
+to run is slow, run it in pieces — or measure from outside the head, where there is no
+lock to hold.
+
 ## `--tree`: make the head match disk
 
 **The gate checks that the head can *paint*, not that your change is *loaded*.**

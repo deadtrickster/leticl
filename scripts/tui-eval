@@ -38,6 +38,20 @@ screen tore, with no error in any log. The source is `defvar` there now, and no
 future change of that kind gets to announce itself only on the operator's
 terminal.
 
+**A measurement that takes time starves what it measures.** An eval holds the
+head's paint lock for its whole duration (`src/render.lisp:873-895`), and the
+render loop runs under the same lock — so a form that blocks (a `sleep`, a long
+walk) freezes the loop, and anything you measure about it (loop passes, a
+notice's TTL, a counter) is measuring the freeze, not the head. Put the sleep in
+the SHELL between short evals:
+
+    tui-eval '*tick-count*'; sleep 2; tui-eval '*tick-count*'
+
+Measured that way the loop is ~43 passes/s; with the sleep inside one eval it
+reads as one pass a minute, and a constant derived from that carries the bias
+silently. See `HACKING.md`, "A measurement that takes time starves what it
+measures".
+
 A head listens on <runtime-dir>/tui-<pid>.sock, where runtime-dir is
 $XDG_RUNTIME_DIR, falling back to /tmp/leticl-<uid> (src/socket.lisp
 runtime-dir). That is the environment of the shell that STARTED the head,

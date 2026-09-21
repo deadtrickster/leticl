@@ -60,7 +60,8 @@ reason `next` arrives on the event at all.")
                                          ; daemon serializes on the tool call and
                                          ; only one ask is ever open.
   (settled-decisions nil :type list)
-  (warnings nil :type list)
+  (warnings nil :type list)              ; Warning plists, NEWEST first
+  (retired nil :type list)               ; warning identities the reader has retired
   (denials nil :type list)               ; DenialRaised, newest first
   (notices nil :type list)               ; CommandIssued etc, newest first
   (heads nil :type list)                 ; HeadPresence plists
@@ -129,7 +130,12 @@ thing that knows whether this is the same conversation (app.rs:1897-1934)."
         (session-turn session) (getf snapshot :turn)
         (session-open-decisions session) (getf snapshot :open-decisions)
         (session-settled-decisions session) (getf snapshot :settled-decisions)
-        (session-warnings session) (getf snapshot :warnings)
+        ;; **REVERSED into this slot's own order.** A snapshot's warnings are the
+        ;; daemon's `Vec` pushed in arrival order — oldest first (`view.rs:660`) —
+        ;; while a live warning is PUSHED here, so the slot is newest-first. The two
+        ;; orders have to agree or `/notes` numbers the list backwards after a resync,
+        ;; and `warning-order` would then hand `/notes dismiss N` the wrong warning.
+        (session-warnings session) (reverse (getf snapshot :warnings))
         (session-heads session) (getf snapshot :heads)
         (session-items session) (%items-vector (getf snapshot :items)))
   ;; ONE PASS over the items, for the display targets a head that attached AFTER
@@ -139,6 +145,22 @@ thing that knows whether this is the same conversation (app.rs:1897-1934)."
   (note-snapshot-answered (getf snapshot :items))
   ;; and the carry, which is what a snapshot with bodiless rows IS: see `note-carry`
   (note-carry (getf snapshot :items))
+  ;; **A snapshot's warnings are history this head has not shown, so it shows it.**
+  ;; The rows went with the transcript the snapshot replaced, and the retired set —
+  ;; which a snapshot does NOT carry and must not — decides which of them come back
+  ;; visible. This is the path that made the reference's wall come back at position 0
+  ;; above the whole conversation, and keying the set outside the transcript is the
+  ;; answer: a retired warning is filed HIDDEN here, so a resync and a reattach
+  ;; replant the wall retired.
+  ;;
+  ;; `turn_failed` is filtered here as well as on the live path, which the reference
+  ;; needs too and for the same reason: a snapshot that put it back would replant the
+  ;; one sentence the screen already says in the turn's own footer
+  ;; (app.rs:2527-2534), and the two paths have to agree about every filter
+  ;; (`bacf495`).
+  (dolist (w (session-warnings session))
+    (unless (equal (getf w :code) "turn_failed")
+      (note-warning session w)))
   session)
 
 (defvar *scrubbed-total* 0
@@ -485,6 +507,176 @@ its own `/status` row, which is the other half of this fact.
 one would rewind the mark over frames already read."
   (file-head-note session said)
   :dirty)
+
+;;; ---------------------------------------------------- the warning record ;;;
+;;;
+;;; R10. **A warning is a DISCLOSURE, not a permanent record.**
+;;;
+;;; The defect this file had was the mirror of letibot's, and the operator's own
+;;; measurement is the specification: a `warning` envelope arrived, `session-warnings`
+;;; went from 9 to 10, and it was visible NOWHERE — not a row, not a note, not a
+;;; counter, not the alarm. So `auto_compact`, `compacted`, `context_wall`,
+;;; `transcript_store`, `decision_corpus` and `mode_set` had never once reached this
+;;; head, and every one of those is a sentence the daemon meant the operator to read.
+;;;
+;;; Two halves, and they are the two halves of the same rule:
+;;;
+;;;   · **draw it.** A warning is filed as a row in the conversation AT THE POINT IT
+;;;     ARRIVED — `note-warning`, the `note-unreadable` shape — because a status note
+;;;     expires on a TTL and takes the fact with it, while an item scrolls away with
+;;;     the conversation, which is what "where it arrived" means.
+;;;   · **keep it retired.** A reader can retire one, and a retired warning stays
+;;;     retired across a resync and a reattach. Both of those REPLACE the transcript
+;;;     from a snapshot, so a retirement stored on the row itself would be undone by
+;;;     the very event the requirement names: the set is keyed by the warning's own
+;;;     `(code detail ts)` identity and kept on the session, outside anything a
+;;;     snapshot replaces.
+;;;
+;;; **The retired set is NOT cleared by a `/switch`**, and that is deliberate: it is
+;;; this head's memory of what it has shown, and the reference keeps its `dismissed`
+;;; the same way (`app.rs:886` is not in its `load`'s clear list, `app.rs:1902-1934`).
+;;; An identity is `(code ts detail)` and `ts` is the log's clock, so two sessions
+;;; colliding on one is the same warning at the same instant either way.
+;;;
+;;; **What is NOT here, deliberately.** `turn_failed` is filed by neither half: the
+;;; turn's own terminal state already says it on the screen, the log holds it, and a
+;;; second copy three lines under the first is the shape this head avoids everywhere
+;;; (app.rs:3320-3330 answers `Disposition::Filtered`). `job_output_refused` answers
+;;; the pane that asked AND files the row; `slash`/`slash_refused` open the listing
+;;; pane when they are long enough to be one and file the row otherwise. A code with
+;;; a better home keeps it; this default is for every other code, including the ones
+;;; the daemon has not invented yet.
+
+(defparameter +note-lines+ 3
+  "Lines of a warning the conversation shows before it is a wall.
+
+R10's other half, and the number is the reference's `NOTE_LINES` rather than a taste
+of ours: two gate timeouts rendered 27 red lines there (*\"how to remove this red
+wall?\"*), which is about thirteen lines a warning — a `denied:` detail carrying the
+whole rule. Three lines keeps the code, the first sentence and the fact that there is
+more, and puts the rest one verb away. `/notes` prints the whole text, so this is a
+disclosure decision and NEVER a cap on the record.
+
+A `defparameter` and not a `defconstant`: the file pusher SKIPS constants, so a
+constant here could never be changed on a running head.")
+
+(defun warning-identity (w)
+  "The name a warning keeps across a resync and a reattach.
+
+Built from the warning's OWN facts and nothing about where it is on the screen: its
+`code`, the log's `ts` for the envelope that carried it, and its `detail`. `ts` is
+what tells one announcement from a redelivery of it, which is the same reason the
+reference's `note` dedupes on the triple (`app.rs:5689-5697`).
+
+The detail is NOT hashed, where the reference hashes it: its key is written into
+`head.toml` as one comma-separated value and a paragraph there would be a file
+nobody can read, while this set lives in memory for the life of the process. If it
+ever has to be written down, it has to be hashed — and that is a change to make
+when it is asked for, not a cost to pay now."
+  (format nil "~a|~a|~a"
+          (or (getf w :code) "") (or (getf w :ts) 0) (or (getf w :detail) "")))
+
+(defun session-retired-p (session w)
+  "Has the reader already retired W?"
+  (and (member (warning-identity w) (session-retired session) :test #'string=) t))
+
+(defun %reflag-warning-rows (session)
+  "Point every warning row at the session's retired set, after the set moved.
+
+The row carries `:retired` so `item-lines` can answer without a session — it is
+handed an item and nothing else — and the set is the truth, so the rows are derived
+from it rather than the other way round."
+  (loop for item across (session-items session)
+        when (getf item :warning)
+          do (setf (getf item :retired)
+                   (and (session-retired-p session (getf item :warning)) t))))
+
+(defun warning-note-text (w)
+  "What a warning SAYS, without the register.
+
+ONE function, because the row in the conversation and the `/notes` listing must not
+describe the same warning two ways: the reference makes the same point by rendering
+the listing with the transcript's own `note_lines_unfolded` (`app.rs:5860-5864`). The
+row prefixes this with `!` at its own renderer; the listing prefixes it here."
+  (format nil "~a — ~a" (or (getf w :code) "?") (or (getf w :detail) "")))
+
+(defun note-warning (session w)
+  "DISCLOSE W: file a row for it where it arrived. Returns the row.
+
+A retired warning is filed too, HIDDEN. That is not laziness: `/notes restore` then
+has a row to bring back instead of one to invent, and a snapshot that replants the
+wall replants it retired, which is the whole point of keying the set outside the
+transcript. The row is the disclosure and `session-warnings` is the record — the
+same division `/status`'s `filtered` counter keeps, where *\"I chose not to show
+this\"* must not look like *\"nothing happened\"*."
+  (let* ((id (warning-identity w))
+         (row (list :item-id (format nil "leticl-note-~d" (incf *filed-notes*))
+                    :kind "note"
+                    :ts (or (getf w :ts) 0)
+                    :warning w
+                    :retired (and (member id (session-retired session) :test #'string=) t)
+                    :item (list :type "note"
+                                :text (warning-note-text w)
+                                :cap +note-lines+
+                                :seam "/notes"))))
+    (push-item session row)
+    row))
+
+(defun warning-order (session)
+  "The warnings this head holds, OLDEST first — the order `/notes` numbers them in.
+
+`session-warnings` is newest-first because a live warning is pushed; a snapshot's
+own list is the daemon's, which is chronological. Reversing gives the reading order
+the listing wants, and the numbering a reader types back."
+  (reverse (session-warnings session)))
+
+(defun retire-warning (session w)
+  "Retire W: take its row off the screen and remember that it is retired.
+
+**Retired is not deleted.** The warning stays in `session-warnings`, `/status` counts
+it, and `/notes` lists it with its whole text — the temptation is a dismiss key that
+drops the sentence, and a head that can drop a warning silently is a head whose
+warnings cannot be trusted to be complete. Returns NIL when it was already retired."
+  (let ((id (warning-identity w)))
+    (if (member id (session-retired session) :test #'string=)
+        nil
+        (progn
+          (push id (session-retired session))
+          (%reflag-warning-rows session)
+          ;; a row that renders as nothing is a change the cache cannot see: the
+          ;; item count and the vector's identity both hold still
+          (incf *hist-generation*)
+          t))))
+
+(defun retire-all-warnings (session)
+  "Retire every warning this head holds. Returns how many newly went.
+
+Through `retire-warning` one at a time rather than by emptying the list, so the row
+flags and the generation bump happen by the one path that knows how to do them."
+  (let ((n 0))
+    (dolist (w (session-warnings session))
+      (when (retire-warning session w) (incf n)))
+    n))
+
+(defun restore-warnings (session)
+  "Put every retired warning back on the screen. Returns how many came back."
+  (let ((back (length (session-retired session))))
+    (setf (session-retired session) nil)
+    (%reflag-warning-rows session)
+    (incf *hist-generation*)
+    back))
+
+(defun warning-counts (session)
+  "`(values HELD RETIRED)` for `/status`: how many warnings this head holds, and how
+many of them the reader has retired.
+
+Computed from the WARNINGS rather than kept as a counter, for the reason the
+reference computes it the same way (`app.rs:5727-5732`): a counter can disagree with
+the screen, and a count of what is hidden is the one count that may not be wrong.
+`HELD` is the session's list, so `RETIRED` can never exceed it."
+  (let ((ws (session-warnings session)))
+    (values (length ws)
+            (count-if (lambda (w) (session-retired-p session w)) ws))))
 
 (defparameter +events-not-folded-here+
   '(:explain :screen-requested :secret-requested :secret-settled)
@@ -885,31 +1077,56 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
                (note-call-decision (getf req :call-id) settled)))))
        :dirty)
       ((:warning)
-       ;; **A refused job-output read is answered IN THE PANE THAT ASKED**, which
-       ;; is still open — otherwise it sits at `reading…` for ever, waiting for a
-       ;; window that is not coming. A job can fall out of the exec host's table
-       ;; between the listing and Enter, and the daemon says so with this code
-       ;; (app.rs:2764-2774). The conversation gets the note as well: the warning
-       ;; is still pushed below, because suppressing it here would make this head's
-       ;; screen disagree with the log every other head sees — which is the first
-       ;; shortcut letibot ruled out (`bacf495`).
-       (when (and *job-out* (equal (getf env :code) "job_output_refused"))
-         (setf (getf *job-out* :loading) nil
-               (getf *job-out* :error) (or (getf env :detail) "")))
-       ;; **A slash LISTING opens a pane; a slash SENTENCE stays a note.** The daemon
-       ;; sends both under one code — `detail` is the command echoed back, then the
-       ;; reply — so the head splits them by the only thing that distinguishes them,
-       ;; which is length (app.rs:3266-3275). Returning here rather than falling
-       ;; through is the reference's behaviour and the right one: the listing is ON a
-       ;; screen now, so a second copy of it in the log would be the same text twice,
-       ;; three lines apart, which is the shape `turn_failed` above already avoids.
-       (when (and (member (getf env :code) '("slash" "slash_refused") :test #'string=)
-                  (note-slash-reply (getf env :detail)))
-         (return-from apply-event :dirty))
-       (push (list :code (getf env :code) :detail (getf env :detail)
-                   :ts (getf env :ts))
-             (session-warnings session))
-       :dirty)
+       ;; **A warning is a DISCLOSURE** (R10). See the note above `note-warning`:
+       ;; the record is `session-warnings`, the disclosure is a row filed where the
+       ;; envelope arrived, and three codes have a better home than a plain row.
+       (let ((w (list :code (getf env :code) :detail (getf env :detail)
+                      :ts (getf env :ts))))
+         (cond
+           ;; 1. **`turn_failed` has a better home: the turn's own terminal state.**
+           ;;    The daemon publishes both on purpose — one is state, the other is
+           ;;    history (app.rs:3320-3327) — and on a screen they are one sentence
+           ;;    twice, three lines apart. So the footer draws it and this counts as
+           ;;    FILTERED, not dropped: `:quiet` here becomes `*filtered-total*` in
+           ;;    `run-loop`, which is what keeps "I chose not to show this" apart
+           ;;    from "nothing happened". It is not added to the record either,
+           ;;    because the record is what `/notes` lists and a snapshot filters it
+           ;;    out of its own notes for the same reason (app.rs:2527-2534).
+           ((equal (getf w :code) "turn_failed") :quiet)
+           (t
+            ;; 2. **A refused job-output read is answered IN THE PANE THAT ASKED**,
+            ;;    which is still open — otherwise it sits at `reading…` for ever,
+            ;;    waiting for a window that is not coming. A job can fall out of the
+            ;;    exec host's table between the listing and Enter, and the daemon
+            ;;    says so with this code (app.rs:2764-2774). The conversation gets
+            ;;    the row as well, below: suppressing it would make this head's
+            ;;    screen disagree with the log every other head sees — the first
+            ;;    shortcut letibot ruled out (`bacf495`).
+            (when (and *job-out* (equal (getf w :code) "job_output_refused"))
+              (setf (getf *job-out* :loading) nil
+                    (getf *job-out* :error) (or (getf w :detail) "")))
+            (if
+             ;; 3. **A slash LISTING opens a pane; a slash SENTENCE stays a row.**
+             ;;    The daemon sends both under one code — `detail` is the command
+             ;;    echoed back, then the reply — so the head splits them by the only
+             ;;    thing that distinguishes them, which is length (app.rs:3266-3275).
+             ;;    A listing that opened a pane is ON a screen, so a second copy in
+             ;;    the log would be the same text twice; it does not enter the record
+             ;;    either, which is why this branch returns before the push.
+             (and (member (getf w :code) '("slash" "slash_refused") :test #'string=)
+                  (note-slash-reply (getf w :detail)))
+             :dirty
+             (progn
+               ;; 4. **Everything else is a row**, and everything that is a row is
+               ;;    also the record: what `/status` counts and `/notes` lists is
+               ;;    this list. `secret_late` lands here, which is a statement about
+               ;;    this head's OWN answer to a password request ("nothing was
+               ;;    waiting on …"): the card that asked is already gone, so the row
+               ;;    is the only place left that can say the password was not used
+               ;;    (`wire.md` W14).
+               (push w (session-warnings session))
+               (note-warning session w)
+               :dirty))))))
       ((:denial-raised)
        (push (list :request-id (getf env :request-id)
                    :tool (getf env :tool) :summary (getf env :summary)

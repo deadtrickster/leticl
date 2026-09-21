@@ -47,9 +47,11 @@ close to complete, and four classes of defect sit underneath that —
   goes to a `getf` place that does not exist (**W11**); `ToolStarted` never moves
   a proposed call to running (**W9**); `turn.appended` is initialised and never
   written (**W20**); `turn.progress` outlives its turn (**W18**).
-- **(c) five session slots that the fold fills and nothing reads** — warnings,
-  notices, settled decisions, denials, job settlements (**W13**, **W12**,
-  **W15**). Every daemon-side `Slash` reply lands in one of them.
+- **(c) four session slots that the fold fills and nothing reads** — notices,
+  settled decisions, denials, job settlements (**W13**, **W12**, **W15**).
+  Every daemon-side `Slash` reply lands in one of them. `warnings` was the
+  fifth and left this list with R10: it is drawn as a row where it arrived,
+  retired by `/notes`, and counted as `notes  N of M retired`.
 - **(d) the job-output round trip**, missing at both ends (**W2**).
 
 ---
@@ -152,10 +154,10 @@ where it changes what the ack reports.
 | `TranscriptContent{item_id,item}` | `event.rs:665` | `fill-item`, then hand-over + round boundary | `session.lisp:296-312` | SAME in effect. Unlike the reference (`app.rs:4744-4751`) it does **not** retire a queued prompt here; see §4f |
 | `HeadAttached{head_id,kind,identity}` | `event.rs:669` | adds to `session-heads`, loud-only | `session.lisp:365-373` | SAME — leticl keeps the whole presence row, the reference keeps only a count (`app.rs:2700`) |
 | `HeadDetached{…}` | `event.rs:674` | removes, loud-only | `session.lisp:374-378` | SAME |
-| `Warning{code,detail}` | `event.rs:680` | pushes to `session-warnings` | `session.lisp:350-354` | **DIFFERS — the fold writes into a slot nothing reads.** `session-warnings` is set by `ingest-snapshot` (`session.lisp:67`) and pushed here, and grep over `render.lisp`/`cards.lisp`/`chrome.lisp`/`panes.lisp` finds no reader. The reference puts every warning into the transcript where it happened (`app.rs:2766-2803`), and splits `slash`/`slash_refused` listings into a pane and `job_output_refused` into the jobs pane. See gap **W13** |
+| `Warning{code,detail}` | `event.rs:680` | pushes to `session-warnings` and files a row | `session.lisp:490-660`, `1061-1111` | **DONE (R10) — it was *"the fold writes into a slot nothing reads"*, and now it is read, drawn and retired.** Every code except the three with a better home is filed as a transcript row where the envelope arrived (`note-warning`, the `note-unreadable` shape), folded to `+note-lines+` plus a `… +N lines · /notes` seam, retired by `/notes`/`/dismiss` and still counted by `/status` as `notes  N of M retired`. The reference's four homes are kept: `turn_failed` → the turn's own footer, FILTERED and filtered from a snapshot too (`app.rs:3320-3330`, `2527-2534`); `job_output_refused` → the jobs pane's error **and** the row; `slash`/`slash_refused` → the listing pane when the reply is over three lines (app.rs:3266-3275), the row otherwise; `secret_late` → the row, the only place left to say a password went unused once the card is gone. A long listing and `turn_failed` do not enter `session-warnings`, which is what `/status` counts — the reference's `self.notes` excludes them for the same reason |
 | `ScreenRequested{req_id}` | `event.rs:685` | QUEUED in `%handle-frame`, answered by `%answer-screen-requests` after the paint | `head.lisp:307-322`, `head.lisp:681-704` | SAME — **W6 is closed**: the id is queued and the answer carries the rows just drawn, with the size that paint used (`driver.rs:93-99`, `app.rs:2723-2732`) |
 | `SecretRequested{req_id,prompt,command,deadline}` | `event.rs:690` | raises the secret card | `head.lisp:189-192` | SAME |
-| `SecretSettled{req_id,given,by}` | `event.rs:699` | — | falls to `(t :quiet)` `session.lisp:400` | **MISSING.** `probe:` disposition `:QUIET`, nothing else. The reference dismisses its own card when somebody else answered first and posts who (`app.rs:2750-2765`). Without it leticl's masked password field stays up over a `sudo` that has already been answered — and the daemon's own `secret_late` warning (`server.rs:403-410`), which would explain it, is a `Warning`, which leticl also does not render (**W13**). See gap **W14** |
+| `SecretSettled{req_id,given,by}` | `event.rs:699` | — | falls to `(t :quiet)` `session.lisp:400` | **MISSING.** `probe:` disposition `:QUIET`, nothing else. The reference dismisses its own card when somebody else answered first and posts who (`app.rs:2750-2765`). Without it leticl's masked password field stays up over a `sudo` that has already been answered — and the daemon's own `secret_late` warning, which would explain it, reaches the screen as a row since R10 (it is the row this head has instead of a card to dismiss). See gap **W14** |
 | `Explain{turn_id,plan}` | `event.rs:705` | `(t :quiet)` | `session.lisp:400` | SAME — the reference is `Disposition::Filtered` and nothing else (`app.rs:2825`) |
 | `CommandIssued{head_id,identity,command,client_request_id,note}` | `event.rs:726` | pushes to `session-notices`, always `:dirty` | `session.lisp:385-390` | DIFFERS twice. (i) `session-notices` has no reader — see **W13**. (ii) The reference says it out loud **only when `head_id` is not its own** (`app.rs:2815`), because your own routine acceptances are already covered by `Accepted`; and it is `Filtered` below loud. leticl counts every one as rendered |
 | `DenialRaised{request_id,turn_id,call_id,tool,summary,baseline,by,basis,tier,outcome,repeat_count,breaker_open,grant}` | `event.rs:801-832` | pushes ten of thirteen to `session-denials` | `session.lisp:355-364` | **DIFFERS — and this is the one with a requirement behind it.** `breaker_open` and `grant` are dropped, and `session-denials` has no reader. `event.rs:772-791` and the reference's own arm (`app.rs:2841-2909`) turn on exactly the two dropped fields: the breaker line, and *"what the operator can do about it right now"*. `docs/boundary-and-adjudication.md` §4b, quoted at `event.rs:773`: *"a denial the operator cannot see manufactures the workaround"*. leticl renders none of them, at any verbosity. See gap **W12** |
@@ -179,10 +181,10 @@ where it changes what the ack reports.
 | `turn` | `view.rs:289` | `session.lisp:64` | SAME — the whole `TurnView` plist is kept raw, so `raw_calls`, `appended`, `tokens`, `progress` and each `CallView.edit` survive a snapshot even where the *live* fold drops them |
 | `open_decisions` | `view.rs:291` | `session.lisp:65` | SAME |
 | `settled_decisions` | `view.rs:294` | `session.lisp:66` | Stored, never read. The reference partitions them: call-bound ones ride the call's card, the rest become notes (`app.rs:2002-2005`) |
-| `warnings` | `view.rs:295` | `session.lisp:67` | Stored, never read — see **W13** |
+| `warnings` | `view.rs:295` | `session.lisp:67` | **DONE (R10).** Each one is filed as a row where it arrived (`note-warning`), folded to `+note-lines+` + a `/notes` seam, retired by `/notes`/`/dismiss` into a set keyed `(code detail ts)` that a snapshot does not carry, and counted by `/status` as `notes  N of M retired`. The reference's `self.notes` is replaced by a snapshot and re-filtered for `turn_failed` (`app.rs:2527-2534`); this head re-files from `session-warnings` on `ingest-snapshot` and filters `turn_failed` the same way |
 | `heads` | `view.rs:296` | `session.lisp:68` | SAME (read at `panes.lisp:255`, `cards.lisp:1197`) |
 
-**10 of 10 ingested. 3 of 10 write-only.**
+**10 of 10 ingested. 2 of 10 write-only.**
 
 `ingest-hello` (`session.lisp:87-109`) against `Hello` (`protocol.rs:744-781`):
 
@@ -397,10 +399,12 @@ to the helper, not here.
   `app.rs:1786-1792` and `app.rs:1661`. `SettingRow.choices`
   (`protocol.rs:242-243`) is read at `panes.lisp:510-515` — the drift this field
   exists to stop is not present here.
-- **`Slash`** — SAME on the way out (`commands.lisp:173`, `197`). **DIFFERS on
-  the way back**: the reply is a `Warning` on the log (`app.rs:2777-2790`) and
-  leticl renders no warnings at all (**W13**), so every daemon-side verb —
-  `/tools`, `/models`, `/supervise`, `/job` — is sent into silence.
+- **`Slash`** — SAME on the way out (`commands.lisp:210`, `234`). **SAME on the way
+  back since R10**: the reply is a `Warning` on the log, a listing over three body
+  lines opens the slash pane (`app.rs:3266-3275`) and anything shorter is filed as a
+  row, so `/tools`, `/models`, `/supervise` and `/job` are no longer sent into
+  silence. What is still missing on this half is **W2**'s other end — there is no
+  `ReadJobOutput`/`JobOutput` fold — and **W15**'s settlement fold.
 - **Jobs** — the `ListJobs`/`Jobs` half is SAME; `JobSettled` folds nowhere
   useful (**W15**) and `ReadJobOutput`/`JobOutput` do not exist (**W2**).
 - **Subagents** — SAME by effect (fold at draw rather than at apply), with the
@@ -439,7 +443,7 @@ frame, a new pane, or a fold that changes shape).
 |---|---|---|---|---|---|
 | **W25** | a `Hello` with `snapshot: null` raises `TYPE-ERROR` | this is the **reconnect** answer and the resume answer — every `since_seq > 0` attach whose gap is in the daemon's ring (`hub.rs:636-643`). The head is left half-attached with its session id wiped, no settings asked, and the attach indicator walking forever. Measured: `probe2:` `RESUME-ERROR: TYPE-ERROR` against `SNAPSHOT-OK` for the same Hello with a snapshot | `protocol.rs:752-753`, `app.rs:1680-1685`, `hub.rs:628-652` | `session.lisp:56-75`, `session.lisp:88` | **S** |
 | **W1** | `Mode` sends `"consented":null` | `consented: bool` does not accept a present `null`; the daemon's read loop breaks with `Err` and **the connection closes** (`server.rs:897-898`). Every `/mode NAME` that is not `allow-all` — which is every mode an operator normally picks — takes the head down. Measured: `probe:` `{"frame":"mode",…,"consented":null}` | `protocol.rs:438-453` | `panes.lisp:1218-1223`, `json.lisp:84-86` | **S** |
-| **W2** | no `ReadJobOutput`, no `job_output` fold, no window | jobs-pane Enter sends `/job ID` as a slash, whose reply is a `Warning` on the log — precisely the complaint that created the frame: *"im brought back to the main conversation with /job <id> posted - this is not what i want"*. And leticl does not render warnings, so the pane's Enter is silent | `protocol.rs:704-708`, `event.rs:894-938`, `app.rs:2200-2233`, `driver.rs:167-169` | `editor.lisp:300`, `session.lisp:400` | **L** |
+| **W2** | no `ReadJobOutput`, no `job_output` fold, no window | jobs-pane Enter sends `/job ID` as a slash, whose reply is a `Warning` on the log — precisely the complaint that created the frame: *"im brought back to the main conversation with /job <id> posted - this is not what i want"*. **R10 made that reply visible** (it is a row, or the pane when long), so the Enter is no longer silent — but it is still the wrong frame, and the window it should open does not exist | `protocol.rs:704-708`, `event.rs:894-938`, `app.rs:2200-2233`, `driver.rs:167-169` | `editor.lisp:300`, `session.lisp:1061-1111` | **L** |
 | **W3** | `NewSession.workspace` always `""` | the new session's read-only tools get seated at the daemon's cwd, *"and every path in it resolved, so the only symptom was answers about the wrong tree"* | `protocol.rs:599-607`, `driver.rs:147-150` | `protocol.lisp:160-164` | **S** |
 | **W4** | `Sessions.created` and `.current` dropped | `/new` and `--new TITLE` create a session and leave you in the old one — a command whose effect is invisible | `app.rs:1736-1744` | `head.lisp:230-234` | **S** |
 | **W5** | `Bye` is not terminal | a refusal the daemon meant as final becomes a 2 s reconnect loop; a version skew is then unreadable and unescapable | `app.rs:1886-1889`, `client.rs:548` | `head.lisp:262-266`, `head.lisp:283-316` | **S** |
@@ -450,7 +454,7 @@ frame, a new pane, or a fold that changes shape).
 | **W10** | `DecisionAnswered` drops `advice` and `call_id` | the oracle's verdict is on the *request* and never on the answer; both the view and the head read it off the open decision before removing it because *"nothing downstream can recover"* it | `view.rs:494-516`, `app.rs:2503-2524` | `session.lisp:330-349` | **S** |
 | **W11** | `ToolProgress` note goes nowhere | `setf getf` on a local plist with an absent key mutates the local, not the list in the turn. Measured: `probe:` `PROGRESS-NOTE-AFTER-FINISH = NIL`. The card has a slot for it (`cards.lisp:942`) that is always nil | `app.rs:2409-2421` | `session.lisp:244-247` | **S** |
 | **W12** | a denial reaches no screen; `breaker_open` and `grant` are not even folded | `docs/boundary-and-adjudication.md` §4b is a requirement: *"a denial the operator cannot see manufactures the workaround"*. The two dropped fields are the two the reference's arm turns on — the breaker sentence and *"what the operator can do about it right now"* | `event.rs:772-832`, `app.rs:2841-2909` | `session.lisp:355-364`, and no reader | **M** (fold) / **L** (with the render) |
-| **W13** | `warnings`, `notices`, `settled-decisions`, `items-dropped`, `jobs` are write-only | every daemon-side slash reply, every post-flight assertion, every `secret_late`, every `job_output_refused` and every settled question with no call is folded and then never drawn. This is one root cause behind W2, W12 and W14 looking like separate silences | `app.rs:2766-2803`, `app.rs:2002-2016` | `session.lisp:33-35`, `350-354`, `385-390`; no reader in `render.lisp`/`cards.lisp`/`chrome.lisp`/`panes.lisp` | **L** |
+| **W13** | `notices`, `settled-decisions`, `items-dropped`, `jobs` are write-only (**`warnings` left this list with R10**) | every post-flight assertion, every `secret_late`, every `job_output_refused` and every settled question with no call is folded and then never drawn. `warnings` was the loudest of them and is now the counter-example: a row where it arrived, a `/notes` verb to retire one, and `notes  N of M retired` on `/status` | `app.rs:2766-2803`, `app.rs:2002-2016` | `session.lisp:33-35`, `385-390`; no reader in `render.lisp`/`cards.lisp`/`chrome.lisp`/`panes.lisp` for the four that remain | **L** |
 | **W14** | `SecretSettled` unhandled | the password card stays up after another head has answered, over a `sudo` that is already through. Measured: `probe:` `:QUIET` | `app.rs:2750-2765` | `session.lisp:400` | **S** |
 | **W15** | `JobSettled` folded into a list nobody draws | an open jobs pane shows `running` for a job that exited — *"a panel built from the tool events alone would still show a build as running an hour after it exited"* | `app.rs:2176-2195` | `session.lisp:394-396`, `panes.lisp:555` | **S** |
 | **W16** | withdraw removes one entry; retire pops the wrong end | after `WithdrawPrompts` the daemon has dropped every queued prompt and leticl still announces the rest; and the first user row to land retires the newest entry instead of the oldest | `app.rs:3851-3860`, `4685-4703`, `4744-4751` | `editor.lisp:436-445`, `head.lisp:194-199` | **M** |
@@ -493,7 +497,7 @@ assertion is "what state the fold left".
 | **W10** | a `decision_requested` carrying `advice` and `call_id`, answered, leaves a settled record whose `:advice` and `:call-id` are both non-nil | pure fold |
 | **W11** | after `tool_progress`, `(getf (call-view turn "c1") :progress-note)` is the note — read back off the **turn**, never off the return value of the setter | pure fold |
 | **W12** | the folded denial has `:breaker-open` and `:grant`; and (with W13) a denial produces a line in the body at every verbosity including `:terse` | pure fold, then a render assertion |
-| **W13** | a `warning` envelope produces a row in `(render-body …)`; a `slash` warning with more than three body lines opens the pane; a `job_output_refused` reaches the jobs pane | pure fold + render |
+| ~~**W13**~~ | `warnings` was write-only | **CLOSED (R10)** — and it is the counter-example the rest of this section should be read against. A `warning` envelope now produces a row in the body where it arrived, a long `slash`/`slash_refused` reply opens the pane while a short one becomes a row, a `job_output_refused` reaches the jobs pane **and** the row, `turn_failed` is `Filtered` into the turn's own footer, and `secret_late` is a row. The retired set is keyed `(code detail ts)` outside the transcript, so a resync and a reattach replant the wall retired, and `/status` reads `notes  N of M retired`. `notices`, `settled-decisions`, `items-dropped` and `jobs` are still write-only and are the rest of **W13** | `app.rs:3320-3358`, `app.rs:5767-5882` | `tests: a-warning-the-daemon-sends-is-drawn-where-it-arrived`, `a-long-warning-folds-to-three-lines-and-names-the-verb`, `a-retired-warning-leaves-the-screen-and-stays-counted`, `a-retired-warning-stays-retired-across-a-resync-and-a-reattach`, `the-turn-failed-warning-is-not-a-second-copy-of-the-footer`, `the-notes-verb-lists-retires-and-restores` | **done** |
 | **W14** | with a secret card up, a `secret_settled` for the same `req_id` clears `head-secret-req`; for a different one it does not | pure fold at the head level (`%handle-frame`), no stream needed |
 | **W15** | `/jobs` reply with one running row, then a `job_settled` for its id ⇒ that row in `head-jobs` has `running` false and the new `state`/`produced`/`elapsed_ms`; a settlement for an unknown id invents no row | fake daemon (for the `jobs` frame) + fold |
 | **W16** | two queued prompts, then ctrl-u ⇒ the composer holds both joined, `head-queued` is empty, one `withdraw_prompts` on the wire. Separately: two queued prompts of different text, then a `transcript_content` carrying the **first** ⇒ the first is retired, not the last | fake daemon + fold |
@@ -511,6 +515,7 @@ assertion is "what state the fold left".
 **W25** (no reconnect or resume works at all) and **W1** (`/mode NAME` closes
 the connection). Then the three one-line folds with one-line assertions:
 **W9**, **W11**, **W19**. Then **W18**, **W14**, **W15**, **W8** and **W3**,
-which are the same shape. **W13** is the one that has to be done before W2, W12
-and several of the `Slash` replies stop looking like separate silences; it is
-the only **L** here that other gaps are waiting on.
+which are the same shape. **W13** has been started from its loudest end —
+`warnings`, done by R10 — and the four slots that remain (`notices`,
+`settled-decisions`, `items-dropped`, `jobs`) are still the reason W2 and W12
+look like separate silences rather than one.

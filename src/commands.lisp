@@ -25,6 +25,8 @@
     ("rename" . "NAME — name the session you are in")
     ("help" . "the key and command reference")
     ("status" . "telemetry, full screen")
+    ("notes" . "what this head has warned about — and retire one")
+    ("dismiss" . "retire every warning on the screen (/notes has the rest)")
     ("think" . "fold or unfold the model's reasoning")
     ("tools" . "fold or unfold tool output")
     ("config" . "every setting, as the daemon reports it")
@@ -74,6 +76,10 @@ on ClientFrame::Slash)."
        (%toggle-pane head :help))
       ((member verb '("status" "stats") :test #'string=)
        (%toggle-pane head :status))
+      ;; R10's reader: what this head has warned about, and how to retire one.
+      ;; `/dismiss` is the same action under the word a person types at a red block.
+      ((member verb '("notes" "dismiss") :test #'string=)
+       (%notes head verb rest))
       ((member verb '("think" "r") :test #'string=)
        (%flip-fold head :show-reasoning))
       ;; `/t` folds tool output; `/tools` ASKS what this conversation can call —
@@ -194,6 +200,72 @@ on ClientFrame::Slash)."
                            :client-request-id (next-request-id)
                            :expected-seq (session-expected-seq (head-session head))
                            :line line))))))
+
+(defun %notes (head verb rest)
+  "`/notes` and `/dismiss`: what this head has warned about, and how to retire one.
+
+R10's reader. Three verbs in one because they are one subject: nothing listed the
+warnings, nothing retired one, and a reader who has just retired a wall needs a way
+back if they were wrong. `/dismiss` is the same action under the word a person types
+at a red block, and with no argument it retires every one — the reference's grammar
+(app.rs:5772-5839), kept so the two heads take the same sentence.
+
+**Retired is not deleted**, and every message says so: the warning is off the screen,
+counted on `/status`, and listed by `/notes` with its whole text. A verb that dropped
+the sentence would be a head whose warnings cannot be trusted to be complete."
+  (let* ((s (head-session head))
+         ;; `/dismiss` with nothing after it means `all` (app.rs:5775-5779)
+         (arg (if (and (string-equal verb "dismiss") (string= rest "")) "all" rest)))
+    (cond
+      ;; nothing after the verb: SHOW them
+      ((string= arg "")
+       (open-notes-listing s)
+       (setf (head-mode head) :slash
+             (head-dirty head) t))
+      ((member arg '("restore" "back" "undismiss") :test #'string=)
+       (let ((back (restore-warnings s)))
+         (%refresh-notes-listing head)
+         (say head (if (zerop back)
+                       "nothing was retired, so nothing came back"
+                       (format nil "~d retired warning~a back on the screen — the log ~
+                                    was never the thing they were hidden from"
+                               back (if (= back 1) "" "s"))))))
+      (t
+       ;; `dismiss` is the word itself: `/notes dismiss` and `/dismiss all` land here
+       (let* ((tail (if (and (>= (length arg) 7) (string-equal arg "dismiss" :end1 7))
+                        (string-trim " " (subseq arg 7))
+                        arg)))
+         (cond
+           ((or (string= tail "") (string= tail "all"))
+            (let ((hidden (retire-all-warnings s)))
+              (%refresh-notes-listing head)
+              (say head (format nil "retired ~d warning~a — off the screen, still counted ~
+                                     on /status, and /notes shows them"
+                                hidden (if (= hidden 1) "" "s")))))
+           ((every #'digit-char-p tail)
+            (let* ((n (parse-integer tail))
+                   (ws (warning-order s)))
+              (if (and (>= n 1) (<= n (length ws)))
+                  (progn
+                    (retire-warning s (nth (1- n) ws))
+                    (%refresh-notes-listing head)
+                    (say head (format nil "retired warning ~d — off the screen, still ~
+                                           counted on /status, and /notes shows it" n)))
+                  (say head (format nil "there is no warning ~d — /notes lists the ~d ~
+                                         this head holds" n (length ws))))))
+           (t
+            (say head (format nil "`~a` is not a number — /notes lists them, and ~
+                                   `/notes dismiss N` retires the Nth" tail)))))))))
+
+(defun %refresh-notes-listing (head)
+  "Redraw the notes listing, if the listing on the screen is the NOTES one.
+
+A daemon slash reply that happens to be up is not this head's to replace, and a
+listing that has just gone stale — the reader retired one and the `[retired]` marks
+moved — is exactly the pane that must not be left showing the old answer."
+  (when (notes-listing-open-p)
+    (open-notes-listing (head-session head))
+    (setf (head-dirty head) t)))
 
 (defun %toggle-pane (head mode &optional ask)
   "Open MODE, or CLOSE it when it is already the screen — and call ASK first when

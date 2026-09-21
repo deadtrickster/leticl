@@ -82,6 +82,10 @@
    #:session-seq #:session-expected-seq #:session-session-id #:session-items
    #:session-dropped #:session-title #:session-turn #:session-heads #:session-head-id
    #:session-warnings #:session-denials #:session-subagents #:session-jobs
+   #:session-retired #:warning-identity #:session-retired-p #:note-warning
+   #:warning-order #:warning-note-text #:retire-warning #:retire-all-warnings
+   #:restore-warnings #:warning-counts #:+note-lines+
+   #:warning-listing-lines #:open-notes-listing #:notes-listing-open-p
    #:session-todos #:session-wiring #:session-open-decisions #:session-sessions
    #:item-lines #:turn-lines #:outcome-name #:edit-lines #:call-lines
    #:turn-footer-lines #:queued-lines #:render-split #:edit-split-lines

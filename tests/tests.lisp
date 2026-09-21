@@ -3782,9 +3782,10 @@ section. The two heads must teach the same keys the same way."
     (is (null (second lines)) "a blank under it")
     ;; 36 measured against letibot `2deceb8`'s screen; `ce31f1a` added the
     ;; `/config` row (the operator's running binary predates it, so its screen
-    ;; still shows 36 — the source is the reference here, the binary the evidence)
-    (is (= 37 (count-if (lambda (l) (plusp (length l))) text))
-        "37 non-blank rows at the capture's width: the reference's 36 plus /config")
+    ;; still shows 36 — the source is the reference here, the binary the evidence),
+    ;; and R10 added `/notes`, which the reference teaches too (`app.rs:9793-9797`)
+    (is (= 38 (count-if (lambda (l) (plusp (length l))) text))
+        "38 non-blank rows at the capture's width: the reference's 36 plus /config and /notes")
     (is (string= "  enter           send what you typed; while a turn runs it is queued as a follow-up"
                  (third text))
         "the first row, key sixteen wide after two")
@@ -3828,8 +3829,8 @@ The counting itself is the subject of
     (let* ((lines (status-screen-lines h 210))
            (text (lines-text lines)))
       (is (string= "this head" (first text)) "the title")
-      (is (= 28 (count-if (lambda (l) (plusp (length l))) text))
-          "28 non-blank rows — 21 here when the reference's screen had 26, plus the three the unreadable row costs and the four the protocol row does")
+      (is (= 31 (count-if (lambda (l) (plusp (length l))) text))
+          "31 non-blank rows — 21 here when the reference's screen had 26, plus the three the unreadable row costs, the four the protocol row does, and the three R10's `notes` row costs (its value and two wrapped lines of why)")
       (is (string= "  session     s-1789639478142928813" (third text)) "the key twelve wide, the value plain")
       (is (equal '(:dim t) (cdr (first (third lines)))) "the key dim")
       (is (null (cdr (second (third lines)))) "the value not")
@@ -4575,6 +4576,208 @@ SENTENCE is still a note, because a note is all there is."
     (leticl::%handle-frame h (%slash-warning (%slash-detail "/gate grant 7" "not yours" "and" "four"
                                                    "lines") "slash_refused"))
     (is (eq :slash (head-mode h)) "a refused listing opens it too")))
+
+;;; ----------------------- a warning is a DISCLOSURE (R10) ------------------- ;;;
+;;;
+;;; The operator's own measurement is the specification: *"a warning envelope arrives,
+;;; session-warnings goes from 9 to 10, and it is visible NOWHERE — not a row, not a
+;;; note, not a counter, not the alarm. So auto_compact, compacted, context_wall,
+;;; transcript_store, decision_corpus and mode_set have never once reached this head."*
+;;; Both halves of the rule are asserted here: it is DRAWN where it arrived, and a
+;;; warning the reader has retired STAYS retired across the two events that used to
+;;; replant it — a resync and a reattach — while never leaving the record.
+
+(defun %warning-frame (code detail &optional (ts 0))
+  "The frame the daemon publishes a warning as — a full event envelope."
+  (list :frame "event" :seq 1 :event "warning" :code code :detail detail :ts ts))
+
+(defun %warning-rows (h)
+  "The warning rows in HEAD's transcript, oldest first."
+  (loop for item across (session-items (head-session h))
+        when (getf item :warning) collect item))
+
+(defun %list-text (lines)
+  "A listing's strings joined, for asserting on."
+  (format nil "~{~a~^~%~}" lines))
+
+(def-test a-warning-the-daemon-sends-is-drawn-where-it-arrived (:suite leticl)
+  "R10's DRAW half. A warning is filed as a row ANCHORED WHERE THE ENVELOPE ARRIVED —
+the `note-unreadable` shape — and not as a status note, which expires on a TTL and takes
+the fact with it by the time anybody looks."
+  (let ((*slash-out* nil) (*pane-scroll* 0) (*pane-lines* 0) (*pane-room* 0)
+        (*job-out* nil)
+        (h (%on-head :cols 96 :rows 24)))
+    (is (eq :rendered (leticl::%handle-frame
+                       h (%warning-frame "auto_compact" "240 rows folded")))
+        "the frame renders rather than being silently consumed")
+    (is (= 1 (length (session-warnings (head-session h)))) "it is in the record")
+    (is (equal "auto_compact" (getf (first (session-warnings (head-session h))) :code))
+        "with the daemon's own code, which is what /status counts")
+    (let ((row (first (%warning-rows h))))
+      (is (equal "note" (getf row :kind)) "filed as a row of this head's own")
+      (is (equal "auto_compact — 240 rows folded" (getf (leticl::item-body row) :text))
+          "saying exactly what the daemon said")
+      (is (equal "! auto_compact — 240 rows folded"
+                 (segs-of (item-lines row 96 (head-prefs h))))
+          "drawn in the failure role, the reference's warn_line"))
+    (leticl::%render h)
+    (is (search "! auto_compact — 240 rows folded" (%screen-text h))
+        "and it is ON THE SCREEN, which is the whole point")))
+
+(def-test a-long-warning-folds-to-three-lines-and-names-the-verb (:suite leticl)
+  "R10's other half, and the number is the reference's rather than a taste of ours: two
+gate timeouts rendered 27 red lines there. Three lines keeps the code, the first sentence
+and the fact that there is more, and `/notes` prints the whole text — so this folds a
+DISCLOSURE and never the record."
+  (let* ((*slash-out* nil) (*job-out* nil)
+         (detail (format nil "~{~a ~}" (loop for i from 1 to 60 collect (format nil "w~d" i))))
+         (h (%on-head :cols 40 :rows 40)))
+    (leticl::%handle-frame h (%warning-frame "context_wall" detail))
+    (let* ((row (first (%warning-rows h)))
+           (rows (item-lines row 40 (head-prefs h))))
+      (is (> (length (wrap-segments (list (cons (format nil "! context_wall — ~a" detail) nil)) 40))
+             3)
+          "the premise: the unfolded warning is longer than the cap")
+      (is (= 4 (length rows)) "three lines, then the seam")
+      (is (search "… +" (segs-of (last rows))) "the seam counts what went")
+      (is (search "· /notes" (segs-of (last rows))) "and names the verb that has the rest"))
+    ;; **the record is the WHOLE text** — the fold is a disclosure decision, not a cap
+    (is (string= detail (getf (first (session-warnings (head-session h))) :detail))
+        "every word is still in the record")
+    (is (search detail (%list-text (warning-listing-lines (head-session h))))
+        "and /notes prints it unfolded")))
+
+(def-test a-retired-warning-leaves-the-screen-and-stays-counted (:suite leticl)
+  "**Retired is not deleted.** The row stops being drawn and nothing else changes: the
+warning stays in `session-warnings`, `/notes` lists it with its whole text, and `/status`
+counts it — the same rule `/status`'s `filtered` counter keeps, where *\"I chose not to
+show this\"* must not look like *\"nothing happened\"*."
+  (let ((*slash-out* nil) (*pane-scroll* 0) (*pane-lines* 0) (*pane-room* 0)
+        (*job-out* nil)
+        (h (%on-head :cols 96 :rows 24)))
+    (leticl::%handle-frame h (%warning-frame "mode_set" "mode → allow-all"))
+    (leticl::%render h)
+    (is (search "! mode_set — mode → allow-all" (%screen-text h)) "the row is up")
+    (leticl::%notes h "notes" "dismiss 1")
+    (leticl::%render h)
+    (is (not (search "mode → allow-all" (%screen-text h))) "and gone from the screen")
+    (is (= 1 (length (session-warnings (head-session h)))) "but not from the record")
+    (multiple-value-bind (held retired) (warning-counts (head-session h))
+      (is (= 1 held) "the warning is still held")
+      (is (= 1 retired) "and counted as retired, so a dismissal is counted and not a disappearance"))
+    (is (search "[retired]" (%list-text (warning-listing-lines (head-session h))))
+        "/notes still lists it, marked")
+    (is (search "mode → allow-all" (%list-text (warning-listing-lines (head-session h))))
+        "with its whole text, which is the part that must not be droppable")))
+
+(def-test a-retired-warning-stays-retired-across-a-resync-and-a-reattach (:suite leticl)
+  "Both events the requirement names REPLACE the transcript from a snapshot, which is
+exactly why a retirement stored on the row would be undone by them. The set is keyed by
+the warning's own `(code detail ts)` and lives outside anything a snapshot carries — the
+reference's `dismissed` and its `note_key` (`app.rs:5713-5732`), which `load` does not
+touch while it replaces `self.notes` wholesale."
+  (let ((*slash-out* nil) (*job-out* nil) (h (%on-head :cols 96 :rows 24)))
+    (leticl::%handle-frame h (%warning-frame "context_wall" "the context is nearly full"))
+    (leticl::%notes h "notes" "dismiss all")
+    (is (= 1 (length (session-retired (head-session h)))) "one dismissal recorded")
+    ;; a RESYNC: a snapshot carrying the same warning replaces the transcript
+    (ingest-snapshot (head-session h)
+                     (list :session-id (session-session-id (head-session h)) :seq 9
+                           :dropped 0 :items-dropped 0 :items nil :turn nil
+                           :open-decisions nil :settled-decisions nil :heads nil
+                           :warnings (list (list :code "context_wall"
+                                                 :detail "the context is nearly full"
+                                                 :ts 0))))
+    (leticl::%render h)
+    (is (not (search "the context is nearly full" (%screen-text h)))
+        "the wall does NOT come back: the snapshot replants it retired")
+    (is (= 1 (length (session-warnings (head-session h)))) "the record has it")
+    (let ((rows (%warning-rows h)))
+      (is (= 1 (length rows)) "the row is back, as one and not as two")
+      (is (getf (first rows) :retired) "and it is retired"))
+    ;; and a reader who was wrong can have it back
+    (leticl::%notes h "notes" "restore")
+    (leticl::%render h)
+    (is (search "the context is nearly full" (%screen-text h))
+        "/notes restore puts it back on the screen")
+    (is (null (session-retired (head-session h))) "and the dismissal is undone")))
+
+(def-test a-snapshot-warning-list-keeps-the-conversations-order (:suite leticl)
+  "The daemon's list is a `Vec` pushed in arrival order — OLDEST first (`view.rs:660`) —
+and this slot is newest-first because a live warning is PUSHED. Both orders have to
+agree, or `/notes` numbers the list backwards after a resync and `/notes dismiss N`
+retires the wrong warning."
+  (let ((h (%on-head :cols 96 :rows 24)))
+    (ingest-snapshot (head-session h)
+                     (list :session-id "s-order" :seq 9 :dropped 0 :items-dropped 0
+                           :items nil :turn nil :open-decisions nil :settled-decisions nil
+                           :heads nil
+                           :warnings (list (list :code "first" :detail "one" :ts 1)
+                                           (list :code "second" :detail "two" :ts 2))))
+    (is (equal '("first" "second")
+               (mapcar (lambda (w) (getf w :code)) (warning-order (head-session h))))
+        "the conversation's order, oldest first, survives the snapshot")
+    (leticl::%notes h "notes" "dismiss 1")
+    (is (equal "first|1|one" (first (session-retired (head-session h))))
+        "so `/notes dismiss 1` retires the OLDEST — the one the listing numbered 1")))
+
+(def-test the-turn-failed-warning-is-not-a-second-copy-of-the-footer (:suite leticl)
+  "The daemon publishes both on purpose — one is the turn's STATE, the other its HISTORY —
+and on a screen they are one sentence twice, three lines apart. So the turn's footer draws
+it and the warning is FILTERED, which `/status` counts, rather than also filed as a row
+(app.rs:3320-3330). It is filtered out of a snapshot's notes too, and the two paths have
+to agree about every filter (`bacf495`)."
+  (let ((*slash-out* nil) (*job-out* nil) (h (%on-head :cols 96 :rows 24)))
+    (is (eq :filtered (leticl::%handle-frame
+                       h (%warning-frame "turn_failed" "the model died")))
+        "consumed as filtered, which is not dropped")
+    (is (null (session-warnings (head-session h))) "and not in the record")
+    (is (null (%warning-rows h)) "so there is no row")
+    ;; the snapshot path agrees — a resync must not put it back either
+    (ingest-snapshot (head-session h)
+                     (list :session-id (session-session-id (head-session h)) :seq 9
+                           :dropped 0 :items-dropped 0 :items nil :turn nil
+                           :open-decisions nil :settled-decisions nil :heads nil
+                           :warnings (list (list :code "turn_failed" :detail "the model died" :ts 0))))
+    (is (null (%warning-rows h)) "and a snapshot does not replant it")))
+
+(def-test the-notes-verb-lists-retires-and-restores (:suite leticl)
+  "`/notes`, `/notes dismiss N`, `/notes dismiss all`, `/notes restore` and `/dismiss` —
+the reference's grammar (app.rs:5772-5839), so the two heads take the same sentence. The
+listing is a SLASH listing, which is the pane this head already has for a verb's answer."
+  (let ((*slash-out* nil) (*pane-scroll* 0) (*pane-lines* 0) (*pane-room* 0)
+        (*job-out* nil)
+        (h (%on-head :cols 96 :rows 24)))
+    (leticl::%handle-frame h (%warning-frame "compacted" "12 rows folded" 1))
+    (leticl::%handle-frame h (%warning-frame "mode_set" "mode → plan" 7))
+    ;; `/notes` shows them, numbered in the conversation's order
+    (leticl::%command h "notes")
+    (is (eq :slash (head-mode h)) "the listing takes the screen")
+    (is (equal "/notes" (car *slash-out*)) "as the notes listing")
+    (let ((text (%list-text (warning-listing-lines (head-session h)))))
+      (is (search "2 warnings, 0 retired" text) "with the count and how many are retired")
+      (is (search "! compacted — 12 rows folded" text) "the first, oldest first")
+      (is (search "! mode_set — mode → plan" text) "and the second")
+      (is (search "/notes dismiss" text) "and the verb that retires one"))
+    ;; `/notes dismiss 2` retires the SECOND, which is the newest
+    (leticl::%command h "notes dismiss 2")
+    (is (= 1 (length (session-retired (head-session h)))) "one went")
+    (is (equal "mode_set" (getf (first (session-warnings (head-session h))) :code))
+        "and it is the second-listed one that is now hidden")
+    (is (search "[retired]" (%list-text (warning-listing-lines (head-session h))))
+        "the listing redrew with the mark, because it was open")
+    ;; `/dismiss` with nothing after it retires every one
+    (leticl::%command h "dismiss")
+    (is (equal 2 (length (session-retired (head-session h)))) "the rest went")
+    (multiple-value-bind (held retired) (warning-counts (head-session h))
+      (is (= 2 held)) (is (= 2 retired)))
+    ;; and a wrong number is a sentence, not a silence
+    (leticl::%command h "notes dismiss 9")
+    (is (search "there is no warning 9" (head-status-note h)) "it says so")
+    ;; `/notes restore` undoes the lot
+    (leticl::%command h "notes restore")
+    (is (null (session-retired (head-session h))) "everything is back")
+    (is (search "back on the screen" (head-status-note h)) "and it says so too")))
 
 ;;; --------------------- a counted operation the daemon reports --------------- ;;;
 ;;;
