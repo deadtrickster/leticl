@@ -19,6 +19,8 @@
    #:truncate-to-width #:fit-to-width
    ;; progress — the numbers a turn produces, said in a way a person reads
    #:thousands #:duration #:spinner #:internal-real-time-ms
+   #:unix-now-ms #:wire-deadline->monotonic #:deadline-remaining-ms #:deadline-said
+   #:on-timeout-said #:+deadline-coarse-ms+ #:+on-timeout-said+ #:*unix-offset-ms*
    #:prefill-fraction #:prefill-cached-fraction #:prefill-computed
    #:prefill-rate #:prefill-eta-ms #:progress-bar #:prefill-line #:decode-line
    ;; cells
@@ -78,7 +80,8 @@
    ;; the render cache — see prefs.lisp's header
    #:head-pref
    #:composer-rows-needed #:composer-inner #:+notice-ttl-ms+ #:hint-bar
-   #:+live-frame-ms+ #:live-frame-p #:live-frame-due-p #:*last-paint-ms*
+   #:+live-frame-ms+ #:+live-frame-coarse-ms+ #:live-frame-p #:live-frame-tenths-p
+   #:live-frame-interval-ms #:live-frame-due-p #:*last-paint-ms*
    #:notice-remaining-ms #:clear-note #:head-notice-until
    #:*stall-ms* #:*spent-micros* #:*last-event-ms*
    #:session-seq #:session-expected-seq #:session-session-id #:session-items

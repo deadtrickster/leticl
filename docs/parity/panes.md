@@ -560,6 +560,90 @@ is the number in the table. **A measurement that takes time starves what it meas
 constant derived from it carries the bias silently.** See `HACKING.md` and
 `scripts/tui-eval`.
 
+### §1.6 — the gate card says what silence will do, and how long there is
+
+**MISSING IN BOTH HEADS, and this head is now the reference for both** (`letibot` was
+blocked on an operator card, so there was nothing to take an argument from). The
+operator was bitten the same night: *"two gate cards timed out unanswered at 300
+seconds with `not_run by gate:timeout` — nothing on the card had said that was
+coming."* Both heads carried the two fields (`deadline`, `on_timeout`,
+`event.rs:569-574`) and drew neither, while **both drew a countdown on the SECRET
+card** — the instrument existed in both trees and was never pointed at the gate,
+where the consequence of silence is a decision rather than a missing password.
+
+#### First, a defect found by measuring the instrument that already existed
+
+`SecretRequested.deadline` is *"Unix millis"* (`event.rs:746`) and this head's clock
+is `internal-real-time-ms` — SBCL's counter since process start — so the secret card's
+countdown was subtracting a Unix instant from a monotonic counter. Measured:
+
+    monotonic now : 105 ms
+    unix now      : 1790030450000 ms
+
+The card drew the difference, so its countdown read a number in the hundreds of
+thousands of seconds: **R13's two-clocks trap in a second place, and the one it had
+been living with since the countdown was written.** The conversion now happens where
+the frame ARRIVES (`wire-deadline->monotonic`, R13's *anchor on arrival* — the one
+moment the two readings describe the same thing, and the two clocks differ by a
+constant measured once), so the card subtracts two readings of one clock.
+
+#### The three rulings letibot should build from
+
+**1. A SHORT deadline and a LONG one — a ladder, not a number.** *"A countdown that
+ticks for five minutes is furniture and one that ticks for ten seconds is a pressure
+the operator did not ask for"*. Both are avoided by changing the UNIT with the
+remaining time, measured on the glass with a real 300 s budget:
+
+| left | the card | |
+|---|---|---|
+| 300 s → 240 s | `expires in 5 min` | whole minutes, and it changes once a minute |
+| 181 s | `expires in 4 min` | **rounded UP**: never claim less time than there is |
+| 120 s | `expires in 2 min` | |
+| 119 s | `1m59s left` | from here it counts in seconds, where the number is acted on |
+| 59 s | `59s left` | whole seconds under a minute — `47s`, never `47.0s` |
+| 47 s | `47s left` | the spelling the secret card already used, and the reference's |
+| 0 s | `0s left` | |
+
+The daemon's own `ANSWER_BUDGET` is 300 s (`harnessd/src/answers.rs:66`), so at the
+real value the card reads whole minutes for its first three and seconds for its last
+two. **And the ladder is why the repaint is affordable**: a countdown says whole
+seconds at the finest, so an ask waiting on its own clock asks for ONE frame a second
+(`live-frame-interval-ms`, `+live-frame-coarse-ms+`), not the ten a spinner needs.
+
+**2. A card that has ALREADY timed out — the case the operator actually hit.**
+
+    past its deadline by 14s; the daemon has not said what became of it · if nobody answers, it RUNS anyway
+
+A card still on the screen after its own deadline is one whose answer the daemon has
+already settled, and the head has not been told which way. What it must NOT do is keep
+counting into negative seconds — that is a number that means nothing and reads as a
+rendering fault — and what it must say is that the clock ran out and the outcome is
+unreported. The consequence clause stays, because it is a RULE rather than an
+observation: an operator looking at an expired card with `on_timeout: allow` learns
+the thing they most need to from it.
+
+**3. NO deadline — draw nothing.** `deadline: null` is §11.5's *"wait forever"*
+(`event.rs:571-573`): a policy, not missing information, so an ask that cannot expire
+says nothing about time. This is the §13.2b present-and-zero question answered in the
+other direction, and deliberately — `unreadable 0` on `/status` IS shown at zero,
+because a head that does not count frames it cannot read is a different head, while a
+countdown on an ask with no deadline is a number nobody took. `permission.jsonl` is
+this case (`"deadline": null`), so the fixture's golden is unchanged.
+
+#### What silence does, in the daemon's own three words
+
+    deny  → if nobody answers, nothing runs
+    allow → if nobody answers, it RUNS anyway
+    ask   → if nobody answers, the guard model decides
+
+Drawn on every card that has a deadline, dim, **below the options** — the order a
+person reads is the question, then the choices, then what happens if they do nothing.
+The upper case on `RUNS` is deliberate: it is the only one of the three that does
+something nobody asked for, and an operator who walked away believing the default was
+`deny` when it was `allow` has been told nothing by a clock. A word this head does not
+know draws no clause rather than a guess — the same rule the unreadable-frame path
+keeps, because a wrong consequence is worse than an absent one.
+
 ### R13 — a running tool call shows a live elapsed time
 
 **DONE** (the commit after `9d08b8d`). The operator, on a `cargo build` that prints

@@ -2334,19 +2334,19 @@ part\"*. The option was labelled `Deny, and tell the model why` and the why had
 nowhere to go — worse, typing it was REFUSED, so the line stayed in the composer
 and NOTHING was answered while they looked at their own sentence."
   (let ((d (%decision-with)))
-    (destructuring-bind (id pattern note) (match-option d "reject_always use the scratch dir")
+    (multiple-value-bind (id tag note) (match-option d "reject_always use the scratch dir")
       (is (string= "reject_always" id) "the option is named")
-      (is (null pattern) "and no glob is sent")
+      (is (eq :note tag) "the words go in the NOTE field, and the tag says so")
       (is (string= "use the scratch dir" note) "and the words ARE the note"))))
 
 (def-test the-glob-still-goes-to-the-option-that-writes-a-rule (:suite leticl)
   "The change must not take the glob away from always-allow: both trailing-word
 cases live in one matcher and only one of them may win per option."
   (let ((d (%decision-with)))
-    (destructuring-bind (id pattern note) (match-option d "allow_always /tmp/*")
+    (multiple-value-bind (id tag pattern) (match-option d "allow_always /tmp/*")
       (is (string= "allow_always" id))
-      (is (string= "/tmp/*" pattern) "the glob rides on always-allow")
-      (is (null note) "and no note"))))
+      (is (eq :glob tag) "and its trailing words are a GLOB, which the tag says")
+      (is (string= "/tmp/*" pattern) "the glob rides on always-allow"))))
 
 (def-test an-option-that-promised-nothing-refuses-trailing-words (:suite leticl)
   "Somebody who typed them meant them, and answering as though they had not is the
@@ -2358,10 +2358,10 @@ answer they did not give — so the words are refused, not silently dropped."
 (def-test a-ladder-answer-needs-no-words (:suite leticl)
   "The ladder answers by id alone, which is what most answers are."
   (let ((d (%decision-with)))
-    (destructuring-bind (id pattern note) (match-option d "allow_once")
+    (multiple-value-bind (id tag extra) (match-option d "allow_once")
       (is (string= "allow_once" id) "the id matches")
-      (is (null pattern) "with nothing extra")
-      (is (null note)))))
+      (is (eq :option tag) "and it answers by option id")
+      (is (null extra) "with nothing extra"))))
 
 (def-test a-refusal-does-not-say-its-reason-twice (:suite leticl)
   "The operator, counting the repeats in one card: *\"how many times is 'nothing
@@ -6559,35 +6559,36 @@ number past the end of the ladder."
 `reject_` prefixes `reject_always` and nothing else, so it resolves. `deny` is
 exact. Both spellings were words that matched nothing at all before this."
   (let ((d (%decision-with)))
-    (destructuring-bind (id pattern note) (match-option d "reject_")
+    (multiple-value-bind (id tag extra) (match-option d "reject_")
       (is (string= "reject_always" id) "an unambiguous prefix resolves")
-      (is (null pattern) "with no extra")
-      (is (null note) "and no note"))
-    (destructuring-bind (id pattern note) (match-option d "deny")
+      (is (eq :option tag) "as an option id, which the tag says")
+      (is (null extra) "with no extra"))
+    (multiple-value-bind (id tag extra) (match-option d "deny")
       (is (string= "deny" id) "and an exact id still wins over any prefix")
-      (is (null pattern))
-      (is (null note)))
+      (is (eq :option tag))
+      (is (null extra)))
     ;; case-insensitively, on the id and on the label. A multi-word label is split
     ;; at its first space — as the reference does, and it is the reason the ID is
     ;; the spelling that always works: `Allow Once` leaves `Once` as trailing
     ;; words, which a plain option refuses.
-    (destructuring-bind (id pattern note) (match-option d "REJECT_ALWAYS")
+    (multiple-value-bind (id tag extra) (match-option d "REJECT_ALWAYS")
       (is (string= "reject_always" id) "the id is case-insensitive")
-      (is (null pattern))
-      (is (null note)))
+      (is (eq :option tag))
+      (is (null extra)))
     ;; **A MULTI-WORD LABEL DOES NOT RESOLVE, and that is shared with the
     ;; reference** rather than being a divergence: the line is split at its first
     ;; space before anything is matched, so `Always allow` arrives as the word
     ;; `Always`, which prefixes no id. The ID is the spelling that always works;
     ;; a label is for reading. Asserted so the limit is recorded rather than
     ;; discovered.
-    (multiple-value-bind (m why) (match-option d "Always allow")
+    (multiple-value-bind (m tag why) (match-option d "Always allow")
       (is (null m) "`Always allow` names no option — its first word is `Always`")
+      (is (null tag) "and nothing is picked")
       (is (search "names no option" why) "and the reason says so"))
     ;; the prefix still yields its note the way an exact match does
-    (destructuring-bind (id pattern note) (match-option d "reject_always because")
+    (multiple-value-bind (id tag note) (match-option d "reject_always because")
       (is (string= "reject_always" id))
-      (is (null pattern))
+      (is (eq :note tag) "and the tag names the field the words go in")
       (is (string= "because" note) "and the trailing words are the note"))))
 
 (def-test an-ambiguous-prefix-is-refused-and-names-the-candidates (:suite leticl)
@@ -6608,8 +6609,9 @@ one more character and cannot grant what was not named."
                   :options (list (list :option-id "allow_once" :kind "allow_once")
                                  (list :option-id "allow_session" :kind "allow_session")
                                  (list :option-id "allow_always" :kind "allow_always")))))
-    (multiple-value-bind (m why) (match-option d "allow")
+    (multiple-value-bind (m tag why) (match-option d "allow")
       (is (null m) "an ambiguous prefix does not resolve")
+      (is (null tag))
       (is (search "allow_once" why) "and the candidates are named")
       (is (search "allow_session" why) "all of them")
       (is (search "allow_always" why) "not just the first"))
@@ -7698,6 +7700,166 @@ summary sentence and once on its own line under it."
         "and the absence of a verdict is SAID: `not asked` and `said nothing`
 are different facts and looked identical on a card that drew neither")))
 
+;;; ---------------- §1.6: the gate card says what silence will do ---------------- ;;;
+;;;
+;;; MISSING IN BOTH HEADS before this, and the operator was bitten by it the same
+;;; night: *"two gate cards timed out unanswered at 300 seconds with `not_run by
+;;; gate:timeout` — nothing on the card had said that was coming."* Both heads carry
+;;; the two fields (`deadline`, `on_timeout`, `event.rs:569-574`) and both drew
+;;; neither, while both drew a countdown on the SECRET card. The instrument existed
+;;; in both trees and was never pointed at the gate, where the consequence of silence
+;;; is a decision rather than a missing password.
+
+(def-test a-deadline-is-drawn-coarse-until-it-is-worth-counting (:suite leticl)
+  "**The operator's question, as a table**: *a countdown that ticks for five minutes is
+furniture and one that ticks for ten seconds is a pressure the operator did not ask
+for*. Both are avoided by a LADDER rather than by a number, and the daemon's own
+budget is what the ladder is measured against — `ANSWER_BUDGET` is 300 s
+(`harnessd/src/answers.rs:66`), so the card reads `5 min` for its first three minutes
+and counts in seconds for the last two.
+
+Minutes round UP, because the sentence is *expires in …* and a rounded-down figure
+claims less time than there is."
+  (let ((leticl::*fixed-clock-ms* 10000000)
+        (now 10000000))
+    (flet ((said (secs) (deadline-said (+ now (* secs 1000)))))
+      (is (equal "expires in 5 min" (said 300)) "the daemon's own budget, at the start")
+      (is (equal "expires in 5 min" (said 250)) "and still five, one minute later")
+      (is (equal "expires in 4 min" (said 181)) "rounding up: 3m01s is not 3 min")
+      (is (equal "expires in 3 min" (said 180)) "on the minute")
+      (is (equal "expires in 2 min" (said 120)) "two minutes out")
+      (is (equal "1m59s left" (said 119)) "and from here it counts in seconds")
+      (is (equal "59s left" (said 59)) "under a minute, whole seconds")
+      (is (equal "47s left" (said 47)) "the number the secret card already spelled")
+      (is (equal "0s left" (said 0)) "at the last second, not `0.0s`")
+      ;; **and it never says a NEGATIVE number** — a countdown into minus is a
+      ;; rendering fault, not a fact, and a card whose clock ran out is a different
+      ;; state with its own sentence
+      (is (search "past its deadline by 12s" (said -12))
+          "past it says so, and says how long ago rather than counting down")
+      (is (not (search "-" (said -12))) "without a minus sign on a duration"))))
+
+(def-test a-deadline-is-read-on-this-heads-clock-not-the-daemons (:suite leticl)
+  "**R13's trap in a second place, and the one the SECRET card had been living
+with.** `DecisionRequested.deadline` and `SecretRequested.deadline` are *Unix
+millis* (`event.rs:573`, `:746`) and `internal-real-time-ms` is SBCL's counter since
+process start, so subtracting one from the other is a duration across two clocks —
+silently wrong by an enormous constant. Measured before the fix: the secret card's
+countdown read a number in the hundreds of thousands of seconds.
+
+The conversion happens **where the frame arrives** (R13's *anchor on arrival*: the one
+place the two readings describe the same moment) and the card then subtracts two
+readings of ONE clock."
+  (let ((leticl::*unix-offset-ms* nil))
+    (let* ((wall (unix-now-ms))
+           (mono (internal-real-time-ms)))
+      (is (> (abs (- wall mono)) 1000000)
+          "the two clocks really are in different units: a Unix instant is 1.8e12 ms
+ and this head's counter is a process-relative count, which is why the conversion
+ exists — subtracting one from the other is what the secret card used to draw")
+      (let ((converted (wire-deadline->monotonic (+ wall 300000))))
+        (is (<= 299000 (deadline-remaining-ms converted) 300500)
+            "a 300 s wire deadline becomes 300 s of this head's time: ~d"
+            (deadline-remaining-ms converted))))
+    ;; and the same conversion is what the fold does, so the card sees one clock
+    (is (null (wire-deadline->monotonic nil))
+        "no deadline in, no deadline out — §11.5's `deadline: null` is a policy")
+    (is (null (wire-deadline->monotonic 0))
+        "and a zero is not an instant anybody meant")))
+
+(def-test a-card-with-no-deadline-says-nothing-about-time (:suite leticl)
+  "§13.2b in the other direction, and deliberately.
+
+`deadline: null` is *\"wait forever\"* (`event.rs:571-573`) — a policy, not missing
+information — so an ask that cannot expire draws no countdown, and *\"I was not told\"*
+cannot be manufactured by a card that never had a clock to show. The contrast is
+`unreadable 0` on `/status`, which IS shown at zero: a head that does not count frames
+it cannot read is a different head, while a countdown on an ask with no deadline is a
+number nobody took.
+
+`permission.jsonl` is exactly this case — `\"deadline\": null` — so this is the fixture
+the golden renders."
+  (is (null (deadline-said nil)) "no deadline, no clause")
+  (is (null (deadline-said 0)) "and a zero is treated as none")
+  (let ((leticl::*fixed-clock-ms* 10000000)
+        (h (%make-head)))
+    (setf (session-open-decisions (head-session h))
+          (list (list :req-id "d" :kind "permission" :summary "`bash` wants exec access"
+                      :options (list (list :option-id "allow_once" :label "Allow once")))))
+    (let ((text (format nil "~{~a~^~%~}" (lines-text (leticl::permission-card-lines h 90)))))
+      (is (search "Allow once" text) "the card is there")
+      (is (not (search "left" text)) "and nothing counts down")
+      (is (not (search "expires" text)) "and nothing expires"))))
+
+(def-test the-card-says-what-silence-will-do (:suite leticl)
+  "The fact that does not change, and the one an operator who walked away needs.
+
+`deny` costs one refused call; `allow` runs it UNATTENDED. An operator who left
+believing the default was `deny` when it was `allow` has been told nothing by a clock
+— so the consequence is drawn on every card that has a deadline, in the daemon's own
+three words (`deny | allow | ask`, `event.rs:250-257`). The upper case on `RUNS` is
+deliberate: it is the only one of the three that does something nobody asked for.
+
+A word this head does not know draws no clause rather than a guess, which is the same
+rule the unreadable-frame path keeps: a wrong consequence is worse than an absent one."
+  (is (equal "if nobody answers, nothing runs" (on-timeout-said "deny")))
+  (is (search "RUNS" (on-timeout-said "allow")) "the unattended one shouts")
+  (is (search "guard model" (on-timeout-said "ask")) "the third answers by itself")
+  (is (null (on-timeout-said "timeout")) "a word this head does not know says nothing")
+  (is (null (on-timeout-said nil)) "and neither does an absent one")
+  ;; on the card, under the options, where the answer is being asked for
+  (let ((leticl::*fixed-clock-ms* 10000000)
+        (h (%make-head)))
+    (setf (session-open-decisions (head-session h))
+          (list (list :req-id "d" :kind "permission" :summary "`bash` wants exec access"
+                      :target "cargo test --workspace"
+                      :options (list (list :option-id "allow_once" :label "Allow once"))
+                      :deadline (+ 10000000 47000)
+                      :on-timeout "deny")))
+    (let* ((lines (leticl::permission-card-lines h 90))
+           (text (lines-text lines))
+           (clause (find-if (lambda (l) (search "47s left" (format nil "~{~a~}" (mapcar #'car l))))
+                            lines)))
+      (is (not (null clause)) "the time clause is on the card")
+      (is (search "if nobody answers, nothing runs" (format nil "~{~a~}" (mapcar #'car clause)))
+          "with what silence does, on the same line")
+      (is (equal '(:dim t) (cdr (first clause)))
+          "dim — the ladder is what the card is asking for and a second yellow line
+ competes with it")
+      (is (> (position-if (lambda (l) (search "Allow once" l)) text)
+             (position-if (lambda (l) (search "wants exec access" l)) text))
+          "and below the options, which is the order the consequence matters in"))))
+
+(def-test a-countdown-is-a-reason-to-repaint-but-not-a-tenth-one (:suite leticl)
+  "**The link to R13.** A clock on a card is a reason to repaint for the same reason a
+spinner is — the frame is a snapshot and nothing else would ask for another one — so
+an open ask with a deadline joins `live-frame-p`.
+
+**But not at the tenth-of-a-second rate.** A countdown says whole minutes far out and
+whole seconds near, so ten frames a second would draw the same characters nine times:
+the interval is `+live-frame-ms+` when something is drawn in tenths (a spinner, a
+running call's elapsed, the carry bar) and `+live-frame-coarse-ms+` when the only live
+part is a countdown."
+  (let ((leticl::*last-paint-ms* 0)
+        (h (%make-head)))
+    (setf (head-dirty h) nil)
+    (is (not (live-frame-p h)) "idle: no clock on the frame")
+    (is (= +live-frame-coarse-ms+ (live-frame-interval-ms h)) "and the slow rate waiting")
+    (setf (session-open-decisions (head-session h))
+          (list (list :req-id "d" :deadline (+ (internal-real-time-ms) 60000))))
+    (is (live-frame-p h) "an open ask with a deadline is a function of time")
+    (is (not (live-frame-tenths-p h)) "but nothing on the frame moves in tenths")
+    (is (= +live-frame-coarse-ms+ (live-frame-interval-ms h))
+        "so it asks for one frame a second")
+    ;; a running turn joins it, and takes the rate back to tenths
+    (setf (session-turn (head-session h)) (list :state (list :state "running") :calls nil))
+    (is (live-frame-tenths-p h))
+    (is (= +live-frame-ms+ (live-frame-interval-ms h)) "a spinner is drawn in tenths")
+    ;; an ask WITHOUT a deadline is not a clock and must not ask for frames
+    (setf (session-turn (head-session h)) nil
+          (session-open-decisions (head-session h)) (list (list :req-id "d")))
+    (is (not (live-frame-p h)) "an ask that cannot expire is not a clock")))
+
 (def-test the-password-card-counts-down-and-the-dots-are-in-the-field (:suite leticl)
   "`secret_lines` (app.rs:7305-7327) and `composer_rows` (app.rs:5343-5348).
 
@@ -7709,7 +7871,10 @@ been typed before sudo asked sat on the screen while a password was entered over
 the top of it. The reference renders the dots in the composer box and never even
 measures the text."
   (let* ((*stdout* (make-string-output-stream))
-         (leticl::*now-ms* 1000000)
+         ;; **the deadline on `head-secret-req` is already on THIS head's clock**,
+         ;; converted where the frame arrived — so the test's clock is the fixed one
+         ;; `internal-real-time-ms` answers, and 47 s from now is what it means
+         (leticl::*fixed-clock-ms* 1000000)
          (h (%on-head :cols 80 :rows 24 :buffer "the sentence I was typing")))
     (setf (head-secret-req h) (list :req-id "r" :prompt "[sudo] password for dead:"
                                     :command "apt install ripgrep"
@@ -7721,11 +7886,15 @@ measures the text."
       (is (search "sudo wants a password — [sudo] password for dead:" text))
       (is (search "for: apt install ripgrep" text))
       (is (search "· 47s left" text) "the countdown, from the deadline on the frame"))
-    ;; no clock, no number: a head that was never told the time must not guess
-    (let ((leticl::*now-ms* 0))
-      (is (not (search "s left" (format nil "~{~a~}"
-                                        (lines-text (leticl::secret-ask-lines h 120)))))
-          "and no countdown at all when nobody has said what time it is"))
+    ;; **no deadline, no clause.** §11.5's `deadline: null` is "wait forever", which
+    ;; is a policy rather than missing information, so a card whose ask cannot expire
+    ;; says nothing about time — an ask with no clock must not have one invented for
+    ;; it, and "I was not told" must not be manufacturable by a card that never had a
+    ;; countdown to show. The gate card's own rule is `deadline-said`'s.
+    (setf (getf (head-secret-req h) :deadline) nil)
+    (is (not (search "s left" (format nil "~{~a~}"
+                                      (lines-text (leticl::secret-ask-lines h 120)))))
+        "and no countdown at all when the daemon sent no deadline")
     (leticl::%render h)
     (let ((screen (%screen-text h)))
       (is (search "•••••••" screen) "a dot per character, in the composer's own box")

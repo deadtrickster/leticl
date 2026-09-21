@@ -1041,7 +1041,12 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
                    :choices (getf env :choices)
                    :because (getf env :because)
                    :advice (getf env :advice)
-                   :deadline (getf env :deadline)
+                   ;; **converted HERE and not at the card** — see
+                   ;; `wire-deadline->monotonic`: the wire's value is a Unix instant
+                   ;; and this head's clock is a counter since process start, so the
+                   ;; subtraction can only be made where the frame arrived
+                   :deadline (wire-deadline->monotonic (getf env :deadline))
+                   :deadline-wire (getf env :deadline)
                    :on-timeout (getf env :on-timeout)
                    :asked-ts (getf env :ts))
              (session-open-decisions session))

@@ -1077,14 +1077,23 @@ path, including the failure one — a paint that fell back to the failure frame 
 still a frame, and a stamp that did not move would ask for another one immediately,
 which is a head spinning on a broken renderer.")
 
+(defun %live-decision (head)
+  "The open ask whose DEADLINE the frame is counting down, or NIL.
+
+§1.6's card carries a clock — `expires in 5 min`, `47s left` — and a clock on a card
+is a reason to repaint for the same reason a spinner is. It is the one part of this
+frame whose *granularity* is not a tenth of a second: see `live-frame-interval-ms`."
+  (let ((d (first (session-open-decisions (head-session head)))))
+    (and d (numberp (getf d :deadline)) t)))
+
 (defun live-frame-p (head)
   "Is something on HEAD's frame a function of the CLOCK?
 
 Each part named here is drawn from `*now-ms*` or from `internal-real-time-ms` while
 the frame is built, so a frame built a second from now would differ with NO event in
 between: the composer's spinner and its `· {since}` (`turn-status`), a running call's
-elapsed (`%call-elapsed-ms`), the stall row becoming due (`stall-text`), and the
-carry/filling line's bar and its patience.
+elapsed (`%call-elapsed-ms`), the stall row becoming due (`stall-text`), the
+carry/filling line's bar and its patience, and an open ask's deadline (§1.6).
 
 **A notice and a pending stop-wait are deliberately NOT here.** They arm their own
 deadline and mark the head dirty when a tenth of it passes (`tick-notice`,
@@ -1096,7 +1105,36 @@ rots."
         (some (lambda (c) (string= (getf (getf c :state) :state) "running"))
               (getf turn :calls))
         (filling-active-p)
+        (and *carry-last-done* *carry-moved-at*)
+        (and (%live-decision head) t))))
+
+(defun live-frame-tenths-p (head)
+  "Is any live part of the frame drawn in TENTHS — the rate `+live-frame-ms+` is for?
+
+The spinner, a running call's elapsed and the carry bar all move continuously, so
+they want the fastest rate a person can read. **A deadline does not**, and neither
+does the stall row: those change once a second at most, so a decision card waiting on
+its own clock asks for ONE frame a second rather than ten — the difference between a
+countdown and a head burning a core to redraw the same number."
+  (let ((turn (session-turn (head-session head))))
+    (or (and turn (string= (turn-state-name turn) "running"))
+        (some (lambda (c) (string= (getf (getf c :state) :state) "running"))
+              (getf turn :calls))
+        (filling-active-p)
         (and *carry-last-done* *carry-moved-at*))))
+
+(defparameter +live-frame-coarse-ms+ 1000
+  "How often a frame whose only live part is a COUNTDOWN is rebuilt.
+
+One second, because that is the finest thing a countdown can say: the ladder in
+`deadline-said` is whole minutes far out and whole seconds near, and a repaint at ten
+times that rate would draw the same characters nine times. Measured: a live frame at
+`+live-frame-ms+` costs 0.07 % of a core; a head idling on the one-second rate is
+inside the noise.")
+
+(defun live-frame-interval-ms (head)
+  "How long a frame with a clock in it may stand: 100 ms, or 1000 for a countdown only."
+  (if (live-frame-tenths-p head) +live-frame-ms+ +live-frame-coarse-ms+))
 
 (defun live-frame-due-p (head)
   "Has the CLOCK asked for a frame — as opposed to an event — and is one due?
@@ -1104,7 +1142,8 @@ rots."
 False on a head with nothing live in it, which is the state that keeps an idle head
 at `sleep 0.03` and off the operator's CPU."
   (and (live-frame-p head)
-       (>= (- (internal-real-time-ms) *last-paint-ms*) +live-frame-ms+)))
+       (>= (- (internal-real-time-ms) *last-paint-ms*)
+           (live-frame-interval-ms head))))
 
 ;;; ------------------------------------------------------- the attach wait ;;;
 ;;;

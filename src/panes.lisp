@@ -2035,7 +2035,30 @@ fills with rows recording a keystroke rather than a judgement."
           ;; was typed into the composer and left sitting there unanswered.
           (when (and (not question) (%option-kind-p options "reject_always"))
             (wrapped "  `deny_and_tell <why>` denies and sends those words to the model"
-                     '(:fg :yellow))))
+                     '(:fg :yellow)))
+          ;; **§1.6: WHAT SILENCE DOES, AND HOW LONG THERE IS.** Both facts ride on
+          ;; the frame (`deadline`, `on_timeout`, event.rs:569-574) and neither was
+          ;; drawn, so two cards sailed past their own 300-second budget and the
+          ;; operator learned the consequence *afterwards*, from the daemon's
+          ;; `not_run by gate:timeout` sentence in the log.
+          ;;
+          ;; It is DIM, not yellow: the ladder and the keys are what the card is
+          ;; asking for, and a second yellow line competes with them. It sits below
+          ;; them, because the order a person reads is the question, then the
+          ;; options, then what happens if they do nothing.
+          ;;
+          ;; Each half is OMITTED rather than improvised when the daemon did not say
+          ;; it — see `deadline-said` and `on-timeout-said` for why each silence is
+          ;; right, and why the two silences are not the same silence.
+          (let ((time (deadline-said (getf d :deadline)))
+                (silence (on-timeout-said (getf d :on-timeout))))
+            ;; ` · ` between the clauses, and neither is improvised: a conditional
+            ;; consequence and a deadline past are two facts about the same card, and
+            ;; the operator reads one line rather than two
+            (when (or time silence)
+              (wrapped (format nil "  ~{~a~^ · ~}"
+                               (remove nil (list time silence)))
+                       '(:dim t)))))
         (nreverse out)))))
 
 ;;; ----------------------------------------------------- the secret card ;;;
@@ -2051,18 +2074,24 @@ Two differences from what was on the screen before, both measured:
 
   · **the countdown.** `SecretAsk.deadline` (app.rs:10060) arrives on the frame
     and was folded onto `head-secret-req` and never read, so a sudo prompt about
-    to time out looked exactly like one that had just arrived. It is omitted
-    rather than guessed when this head has no clock — a number nobody took is
-    not a number;
+    to time out looked exactly like one that had just arrived. It is drawn from the same
+    `deadline-said` ladder the gate card uses, so the two cannot disagree about what
+    a countdown looks like, and it is omitted rather than guessed when the daemon
+    sent no deadline;
   · **the dots are not here.** They are drawn in the composer's own box
     (`composer-box-body`), which is where the field is; this card says what is
     being asked and for what, and never measures the text."
   (let ((req (head-secret-req head)))
     (when req
       (let* ((w (max 20 cols))
-             (deadline (getf req :deadline))
-             (left (and (numberp deadline) (plusp deadline) (plusp *now-ms*)
-                        (max 0 (floor (- deadline *now-ms*) 1000)))))
+             ;; **the deadline is already on THIS head's clock.** It is converted
+             ;; where the frame arrived (`wire-deadline->monotonic`), because the
+             ;; wire's value is a Unix instant and this head's clock is a counter
+             ;; since process start. This card subtracted one from the other and drew
+             ;; the result, so its countdown read a number in the hundreds of
+             ;; thousands of seconds — R13's two-clocks trap, in a second place, and
+             ;; found here first.
+             (time (deadline-said (getf req :deadline))))
         (append
          (list (list (cons (truncate-to-width
                             (format nil "sudo wants a password — ~a"
@@ -2072,8 +2101,8 @@ Two differences from what was on the screen before, both measured:
          (mapcar (lambda (l) (list (cons l nil)))
                  (wrap-text (format nil "for: ~a" (or (getf req :command) "")) w))
          (list (list (cons (truncate-to-width
-                            (format nil "type it below (shown as dots), Enter sends it once to sudo and nowhere else; Esc refuses~@[ · ~as left~]"
-                                    left)
+                            (format nil "type it below (shown as dots), Enter sends it once to sudo and nowhere else; Esc refuses~@[ · ~a~]"
+                                    time)
                             w)
                            '(:dim t)))))))))
 

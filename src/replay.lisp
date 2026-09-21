@@ -139,6 +139,14 @@ see this file's header."
          (*skew-said-pending* nil)
          (*skew-last-said* nil)
          (*filed-notes* 0)
+         ;; the wall clock the wire's deadlines are read against. ZERO, which
+         ;; makes `wire-deadline->monotonic` the IDENTITY — so a deadline in a
+         ;; fixture stays the number it was written with and a replayed card
+         ;; answers the same bytes twice. No fixture carries a live deadline
+         ;; today (`permission.jsonl` has `"deadline": null`); one that does
+         ;; wants its own `ts` values and the fixed clock to be the same clock,
+         ;; and this is the line that says so.
+         (*unix-offset-ms* 0)
          ;; the clock's own reason to repaint: a replay paints on what the FILE
          ;; says, and a live-frame rule would put a frame per tenth into a byte
          ;; comparison that has to answer the same bytes twice

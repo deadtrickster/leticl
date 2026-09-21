@@ -396,7 +396,10 @@ first."
           (push (getf env :req-id) (head-screen-reqs head))
           (setf (head-dirty head) t))
          ((:secret-requested)
-          (setf (head-secret-req head) env
+          ;; the deadline is converted ON ARRIVAL, like the gate's: the wire's
+          ;; `deadline` is a Unix instant and this head's clock is not one
+          (setf (head-secret-req head)
+                (list* :deadline (wire-deadline->monotonic (getf env :deadline)) env)
                 (head-secret-buf head) ""
                 (head-dirty head) t))
          ((:secret-settled)
