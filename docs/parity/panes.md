@@ -762,6 +762,82 @@ After, every case at or under the budget:
     61 emoji                    in 122 cols -> out 119 cols
     60 CJK (exactly 120 cols)   in 120 cols -> out 120 cols, untouched
 
+### §3.1 — content this head did not author cannot drive the terminal
+
+**PROVEN, not patched.** The section's claim is *control characters in anything the head
+did not write are neutralised before they reach the tty*, and the finding here is that
+**this head does it with one invariant rather than a list of sanitised call sites** —
+which is the sentence letibot needs, because it says what to build toward instead of
+which four places to patch.
+
+#### The measurement
+
+Each source the section names, carrying each real byte (an SGR pair, `?1002`, `?1006`,
+`?1049`, `?2004`, `?2026`, an OSC title, `[2J`, `[8m`, `0x9B`, `0x9C`, DEL), through the
+real pipeline and out through `--replay --no-tty`, which writes `screen-rows-ansi` —
+the same function that answers `ScreenRequested` and that `/cells` sends:
+
+| the payload the model wrote | what reached the tty |
+|---|---|
+| `ESC[?1002h mouse on` | `mouse on` |
+| `ESC[?2004h paste on` | `paste on` |
+| `ESC[?1049h alt screen` | `alt screen` |
+| `ESC[?2026h sync on` | `sync on` |
+| `ESC]0;pwned BEL` | *(nothing)* |
+| `ESC[31mredESC[0m` | `red` |
+| `0x9B[31m 8-bit CSI` | `[31m 8-bit CSI` |
+| `a DEL b` | `ab DEL` |
+
+**Not one ESC-prefixed sequence reached stdout**, and the frame is not vacuous — it
+carries 103 of the head's OWN escapes, which is the contrast that makes the count mean
+something. Two shapes are worth naming: an **ESC run is consumed whole** (`?1002h`
+vanishes with its introducer, because `%skip-escape` walks the sequence to its final
+byte), while a **C1 or DEL is dropped alone** and its following text stays — harmless
+either way, and `ESC[?1049h` is the one that would have switched the operator's screen.
+
+#### Where the guarantee lives, and why it is one invariant and not six patches
+
+Nothing sanitises the model's prose, its reasoning, the user's own message, the system
+row, a fence body or a diff excerpt read off disk — **and the test asserts that**, so a
+reader knows the safety is at the painter rather than at the source. Four facts, and
+together they close the path:
+
+1. **The frame is a CELL GRID**, and every cell is written by `screen-put-string`
+   (`cells.lisp:210`), which walks **clusters** and **skips any cluster of zero
+   columns** (`cells.lisp:243-248`, the `(or (zerop w) (zerop (length text)))` arm).
+2. **A control character measures zero columns** — `%c1-control-p` covers C0, C1 and
+   DEL (`width.lisp:136-139`) and the width table is derived from it
+   (`width.lisp:144-150`).
+3. **So a control character cannot reach a cell**, whatever the caller does: the
+   painter is not *choosing* not to write it, it has no cell to write it into. The
+   guarantee is `zero columns ⇒ unwritable`, not `six call sites sanitise`.
+4. **The one-character fast path is not a hole either**: `plain-columns-p` refuses any
+   string containing `+esc+` (`width.lisp:421`), so a string with an escape in it takes
+   the cluster walk, where (1) applies.
+
+This is why the sanitising this head already has — `%without-control`, on the tool
+payload and the job pane — is **belt-and-braces rather than the rule**, and why adding
+it to the other four sources would have been work that does nothing. Which is worth
+saying plainly, because the section's *resolution for phase 1* is *sanitise the
+remaining sources in both*, and for this head the honest answer is that the remaining
+sources are already safe and the sanitising would be a no-op.
+
+**It is still a backstop rather than a contract**, which is the caveat the section
+raises and this measurement does not remove: it would not survive a change of painter.
+So the two tests are written at the two layers — the pipeline (every source, no
+sequence on the frame) and the mechanism (`%code-width`, `plain-columns-p`,
+`screen-put-string`) — and a painter that stopped skipping zero-width clusters would
+fail the second one rather than the first.
+
+#### What letibot needs, since its painter is different
+
+Its `paint_full` writes ANSI-bearing strings verbatim (`term.rs:441`), so an escape in
+model prose reaches its terminal and this is a real exposure there, not a confirmation.
+The property to build toward is the one stated above — **a control character must not
+be storable in a cell** — whether the cells hold a string or a `(char, style)` pair. A
+sanitiser on each source is the other shape, and it is strictly worse: it has to be
+remembered at seven sites, and the eighth is the one that leaks.
+
 ### §6 — the last of the B-side list
 
 Eight items, and each was a chord, a verb or a row that existed on the other head and

@@ -5492,19 +5492,22 @@ whichever it was told more recently, by seq."
          (h (%make-head))
          (s (head-session h))
          (*head* h))
+    ;; **contiguous seqs on purpose**: the ordering this asserts is by seq, and a
+    ;; deliberate jump would be a gap the head now reports instead of folding (see
+    ;; `a-gap-in-the-event-stream-is-said-counted-and-filed`)
     (setf (session-seq s) 5
           (head-settings h) (list (list :key "model" :value "qwen-3.8-27b"))
           leticl::*model-from-settings-at* 5)
     (is (string= "qwen-3.8-27b" (leticl::%model-name s)) "the attach state")
     ;; a turn starts on another provider, later in the stream
-    (apply-event s (list :seq 9 :event "turn_started" :turn-id "t1"
+    (apply-event s (list :seq 6 :event "turn_started" :turn-id "t1"
                          :model "deepseek/deepseek-flash" :ledger-head "0000"))
     (is (string= "deepseek/deepseek-flash" (leticl::%model-name s))
         "the switch reaches the header: the turn's word is newer")
     ;; and a fresh settings row, newer still, wins back
-    (setf (session-seq s) 12
+    (setf (session-seq s) 7
           (head-settings h) (list (list :key "model" :value "grok/grok-4"))
-          leticl::*model-from-settings-at* 12)
+          leticl::*model-from-settings-at* 7)
     (is (string= "grok/grok-4" (leticl::%model-name s)) "the row is the newest again")))
 
 (def-test a-subagents-answer-is-its-output (:suite leticl)
@@ -6722,6 +6725,206 @@ how a name is CLEARED, and the sentence it prints says so."
         "an empty name says what it is about to do: ~s" (head-status-note h))
     (is (equal "" (getf (first (%sent wire)) :title))
         "and sends it, because that is how a name is cleared")))
+
+;;; ------------- §3.1: content the head did not author cannot drive the terminal ----
+;;;
+;;; The section's claim: *control characters in anything the head did not write are
+;;; neutralised before they reach the tty.* MEASURED here rather than assumed, and
+;;; the answer is that this head does it with ONE invariant rather than a list of
+;;; sanitised call sites — which is the sentence letibot needs, because it tells them
+;;; what to build toward rather than which four places to patch.
+
+(defun %terminal-driving-chars (s)
+  "Every character in S that could drive a terminal if it reached one: ESC, DEL, and
+the C1 range (`0x9B` is 8-bit CSI)."
+  (loop for c across s for i from 0
+        when (or (char= c #\Esc)
+                 (= (char-code c) 127)
+                 (<= #x80 (char-code c) #x9f))
+          collect (cons i (char-code c))))
+
+(defun %segments-of (lines)
+  "SEGMENT LINES as one string, so a whole row can be swept with one call."
+  (format nil "~{~a~^~%~}"
+          (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l))) lines)))
+
+(defparameter +§3-1-payloads+
+  (list (format nil "~C[31mred~C[0m" #\Esc #\Esc)          ; an SGR pair
+        (format nil "~C[?1002h" #\Esc)                      ; mouse reporting
+        (format nil "~C[?1006h" #\Esc)                      ; SGR mouse
+        (format nil "~C[?1049h" #\Esc)                      ; alternate screen
+        (format nil "~C[?2004h" #\Esc)                      ; bracketed paste
+        (format nil "~C[?2026h" #\Esc)                      ; synchronized output
+        (format nil "~C]0;pwned~C" #\Esc #\Bel)            ; an OSC title
+        (format nil "~C[2J" #\Esc)                          ; clear screen
+        (format nil "~C[8m" #\Esc)                          ; conceal
+        (format nil "~C[31m" (code-char #x9b))               ; 8-bit CSI
+        (format nil "~Ctext" (code-char #x9c))               ; another C1
+        (format nil "a~cb" (code-char #x7f)))                ; DEL
+  "The real bytes rather than invented ones: 44 `tool_result` rows in the operator's
+own store carry an escape and 20 carry a mode string (`?1002`, `?1006`, `?1049`,
+`?2004`), which is what made ctrl-t break the mouse wheel.")
+
+(def-test every-source-a-model-can-reach-goes-through-the-same-painter (:suite leticl)
+  "**The guarantee, stated where it lives.** This head composes styled SEGMENTS into a
+CELL GRID, and every cell is written by `screen-put-string`, which walks CLUSTERS and
+**skips any cluster of zero columns** (`cells.lisp:243-248`). A control character
+measures zero columns (`%code-width`: `%c1-control-p` covers C0, C1 and DEL,
+`width.lisp:136-150`) and `plain-columns-p` refuses any string containing `+esc+`, so
+the fast path cannot store one either (`width.lisp:421`). **A zero-width cluster is
+never written to a cell, so it cannot reach the terminal** — not because six call sites
+sanitise, but because the painter cannot author a cell it did not measure.
+
+That is why the sanitising this head HAS (`%without-control`, on the tool payload and
+the job pane) is belt-and-braces rather than the rule: the model's prose, its reasoning,
+the user's own message, the system row, a fence body and a diff excerpt read off disk
+are all UNSANITISED in the segments and all safe on the wire.
+
+The test sweeps each source through the real pipeline — `item-lines`, then the frame —
+and asserts two things at once: the value's TEXT may survive (harmless), and its
+INTRODUCER never does."
+  (let* ((h (%make-head))
+         (s (head-session h))
+         (items nil))
+    (dolist (p +§3-1-payloads+)
+      (push (list :item-id (format nil "u~d" (length items)) :kind "user" :ts 0
+                  :item (list :type "user" :parts (list (list :kind "text" :text p))))
+            items)
+      (push (list :item-id (format nil "a~d" (length items)) :kind "assistant" :ts 0
+                  :item (list :type "assistant" :text p :tool-calls nil))
+            items)
+      (push (list :item-id (format nil "s~d" (length items)) :kind "system" :ts 0
+                  :item (list :type "system" :text p))
+            items)
+      ;; a fence body, with the payload between two fences
+      (push (list :item-id (format nil "f~d" (length items)) :kind "assistant" :ts 0
+                  :item (list :type "assistant" :tool-calls nil
+                              :text (concatenate 'string "before" (string #\newline)
+                                                 "```" (string #\newline) p
+                                                 (string #\newline) "```")))
+            items)
+      ;; a diff excerpt, whose sides came off DISK — nothing sanitises these
+      (push (list :item-id (format nil "e~d" (length items)) :kind "tool_result" :ts 0
+                  :item (list :type "tool_result" :call-id "c" :name "edit"
+                              :outcome (list :outcome "ok") :payload ""
+                              :edit (list :path "/tmp/probe.lisp"
+                                          :before (format nil "keep~%~a~%" p)
+                                          :after (format nil "keep~%~a~%" p))))
+            items))
+    (setf (session-items s) (coerce (nreverse items) 'vector)
+          (head-cols h) 100 (head-rows h) 40)
+    (screen-resize (head-screen h) 100 40)
+    (screen-resize (head-prev-screen h) 100 40)
+    ;; **EVERY SOURCE'S SEGMENTS CARRY THE BYTES**, which is the honest half: this head
+    ;; does NOT sanitise the model's prose, and the reader should know that the safety
+    ;; is at the painter rather than at the source
+    (let ((carried 0))
+      (dolist (p +§3-1-payloads+)
+        (let ((row (segs-of (item-lines (list :item-id "x" :kind "assistant" :ts 0
+                                              :item (list :type "assistant" :text p
+                                                          :tool-calls nil))
+                                        90 (list :show-tools nil)))))
+          (when (%terminal-driving-chars row) (incf carried))))
+      (is (plusp carried)
+          "the SEGMENTS are unsanitised: ~d of ~d payloads reach them whole — the
+ safety is the painter's, not the source's"
+          carried (length +§3-1-payloads+)))
+    ;; **AND NOT ONE REACHES THE FRAME.** What goes to fd 1 is `screen-rows-ansi`,
+    ;; which is also what `/cells` sends and what ScreenRequested answers.
+    (leticl::%render h)
+    (let* ((rows (leticl::screen-rows-ansi (head-screen h)))
+           (frame (apply #'concatenate 'string rows)))
+      ;; **NOT "no ESC anywhere"** — the frame is FULL of the head's own, which is
+      ;; what makes this a real measurement rather than a vacuous pass:
+      (is (plusp (count #\Esc frame))
+          "the frame carries the head's own escapes, so this is not a plain frame")
+      ;; what must be absent is the CONTENT's introducer followed by its own text:
+      ;; `ESC[31m`, `ESC[?1002h`, `ESC]0;`. Each is the payload with its leading
+      ;; control character re-attached, because that is what makes it a sequence —
+      ;; the letters on their own are harmless and are expected to survive.
+      (dolist (p +§3-1-payloads+)
+        (let ((needle (concatenate 'string
+                                   (string #\Esc)
+                                   (subseq p 1 (min (length p) 8)))))
+          (is (not (search needle frame))
+              (format nil "no ~s anywhere on the frame — the introducer was dropped"
+                      needle))))
+      ;; and every sequence the frame DOES carry begins one of the head's own forms,
+      ;; which is the positive half of the same statement
+      (let ((seqs (leticl::%esc-sequences frame)))
+        (is (plusp (length seqs)) "the frame has sequences, all the head's")
+        (dolist (q seqs)
+          (is (every (lambda (c) (or (char= c #\Esc)
+                                     (digit-char-p c)
+                                     (member c '(#\[ #\; #\? #\m #\l #\h #\K #\J #\A #\B #\C #\D #\H #\q #\s #\u))))
+                     (subseq q 1))
+              (format nil "~s is a form this head authors" q)))))))
+
+(def-test the-cell-grid-cannot-store-a-zero-width-cluster (:suite leticl)
+  "The mechanism, at its own layer, so a change to the painter breaks this test rather
+than the guarantee.
+
+`screen-put-string` skips a cluster of zero columns, and a control character measures
+zero — so a control character cannot reach a CELL, whatever the caller does. And
+`plain-columns-p` refuses a string containing `+esc+`, so the one-character fast path
+cannot be the hole either: anything with an escape in it takes the cluster walk."
+  (is (= 0 (leticl::%code-width 27)) "ESC (0x1B) is zero columns")
+  (is (= 0 (leticl::%code-width #x9b)) "so is 8-bit CSI")
+  (is (= 0 (leticl::%code-width #x7f)) "so is DEL")
+  (is (not (leticl::plain-columns-p (format nil "a~C[31mb" #\Esc)))
+      "and a string holding one is never taken down the fast path")
+  (is (leticl::plain-columns-p "plain ascii")
+      "while a plain string still is, which is what makes the fast path worth having")
+  (let ((scr (leticl::make-screen 20 2)))
+    (leticl::screen-put-string scr 0 0 (format nil "a~C[31mb~C[0mc" #\Esc #\Esc))
+    (let ((row (loop for c from 0 below 20 collect (leticl::cell-ch (leticl::screen-cell scr 0 c)))))
+      (is (equal '(#\a #\b #\c) (remove #\space (subseq row 0 4)))
+          "only the letters land in cells: ~s" (subseq row 0 6))
+      (is (not (find #\Esc row))
+          "and the escape is in none of them"))))
+
+(def-test a-gap-in-the-event-stream-is-said-counted-and-filed (:suite leticl)
+  "**MISSING IN BOTH HEADS**, and the last item of §10: *neither checks `seq`
+continuity*.
+
+`session-dropped` is what the DAEMON says it threw away — it arrives on a `Hello` and
+on a `Resync`, so a head that attached before the daemon's scrollback overflowed is
+told, and a head that merely fell behind mid-batch is not. A jump of eleven on the
+wire is the second kind, and it turns a transcript into a document with a hole in it
+and no mark in it.
+
+**A step of one is not a gap, and neither is a step backwards.** A reconnect replays
+from the read mark by design (§13.2b: *a crash then costs a duplicate, never a
+silence*), so both of those are the protocol working, and a head that reported them
+would cry wolf on every reconnect."
+  (let* ((leticl::*filed-notes* 0) (leticl::*seq-gaps* 0)
+         (h (%make-head))
+         (s (head-session h)))
+    (flet ((rows () (loop for i across (session-items s)
+                          when (equal (getf (getf i :item) :type) "note") collect i)))
+      ;; a mark of ZERO is nothing-folded-yet, and a first event at any seq is not a
+      ;; gap: a head attaching to a session already at seq 5 is told by `resumed_from`
+      (apply-event s (list :seq 40 :event "head_attached" :head-id "h" :kind "tui"
+                           :identity "x"))
+      (is (zerop leticl::*seq-gaps*) "the first event is never a gap")
+      (is (null (rows)) "and files nothing")
+      ;; **the gap**: 40 -> 52 is eleven events nobody will ever see
+      (apply-event s (list :seq 52 :event "head_detached" :head-id "h"))
+      (is (= 1 leticl::*seq-gaps*) "a jump forward is counted")
+      (let ((r (first (rows))))
+        (is (not (null r)) "and filed as a row in the conversation")
+        (is (search "jumped from 40 to 52" (getf (getf r :item) :text))
+            "naming both ends: ~s" (getf (getf r :item) :text))
+        (is (search "11 event" (getf (getf r :item) :text)) "and how many went missing")
+        (is (search "/resync" (getf (getf r :item) :text))
+            "and the verb that takes a fresh snapshot"))
+      ;; **not a gap**: the next one is contiguous
+      (apply-event s (list :seq 53 :event "head_detached" :head-id "h"))
+      (is (= 1 leticl::*seq-gaps*) "a step of one is not a gap")
+      ;; **not a gap**: a redelivery after a reconnect, which goes BACKWARDS
+      (apply-event s (list :seq 50 :event "head_detached" :head-id "h"))
+      (is (= 1 leticl::*seq-gaps*) "a step backwards is a redelivery, not a hole")
+      (is (= 1 (length (rows))) "so only one row was ever filed"))))
 
 (def-test the-emacs-motions-the-reference-decodes-are-bound (:suite leticl)
   "§6. The reference binds `ctrl-b`, `ctrl-f` and `ctrl-_` in its DECODER

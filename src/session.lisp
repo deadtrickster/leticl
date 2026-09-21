@@ -832,15 +832,78 @@ that never moved — *\"so, counter wasnt moving - 0 always\"*."
                    (incf done)))
         (values total done))))
 
+;;; --------------------------------------------------------- the seq gap ;;;
+;;;
+;;; MISSING IN BOTH HEADS, and the last item of §10: *"neither checks `seq`
+;;; continuity"*. A gap in the stream is a fact this head can see for itself, and
+;;; nothing looked.
+;;;
+;;; **Why it matters even though `dropped` exists.** `session-dropped` is what the
+;;; DAEMON says it threw away — it arrives on a `Hello` and on a `Resync`, so a head
+;;; that attached before the daemon's scrollback overflowed is told, and a head that
+;;; merely fell behind mid-batch is not. And the two are not the same measurement: a
+;;; `dropped` of 358324 says *the daemon holds 358324 events I will never see*, while a
+;;; jump of eleven says *this stream went from 40 to 52, and nobody said so*. The
+;;; second is the one that turns a transcript into a document with a hole in it and no
+;;; mark in it.
+;;;
+;;; **Reported where the other connection facts are reported**, because it is the same
+;;; class: a row in the conversation at the point it was noticed, and a counter on
+;;; `/status`. Not a note (they expire), and not `filtered` (that is *I chose not to
+;;; show this*, which the daemon reads back).
+
+(defvar *seq-gaps* 0
+  "How many discontinuities this head has seen in the event stream, over its life.
+
+A `defvar` rather than a slot, and NOT reset by a snapshot: it counts this head's
+lifetime, so a `/status` row reading 0 is a head that has never met one, which is a
+different statement from a head that does not count them. The same distinction
+`*unreadable-total*` keeps.")
+
+(defun note-seq-gap (session from to)
+  "FILE a row for a gap from FROM to TO, count it, and return how many went missing.
+
+**A step of one is not a gap.** A reconnect replays from the read mark by design
+(§13.2b: *a crash then costs a duplicate, never a silence*), so `to` can be less than
+`from` or equal to it, and neither is a hole — both are the protocol working. A jump
+FORWARD is the only shape the daemon's bounded scrollback can produce: it dropped what
+it could no longer hold, and the next event it had is `to`."
+  (let ((missing (- to from 1)))
+    (when (plusp missing)
+      (incf *seq-gaps*)
+      (file-head-note session
+                      (format nil "the event stream jumped from ~a to ~a — ~d ~
+                                   event~:p never arrived. The daemon's scrollback is ~
+                                   bounded, so events are dropped when a head falls ~
+                                   far enough behind; `/resync` takes a fresh ~
+                                   snapshot, and `/status` counts these."
+                              from to missing))
+      missing)))
+
 (defun apply-event (session env)
   "Fold one envelope into state. Returns :dirty when something visible
 changed, :quiet when not — the head loop paints on :dirty and acks on both."
   (let ((name (event-name env))
-        (seq (getf env :seq)))
+        (seq (getf env :seq))
+        (gap nil))
+    ;; **THE GAP IS MEASURED BEFORE THE MARK MOVES**, because afterwards there is
+    ;; nothing left to compare against. `session-seq` is the last seq FOLDED, which is
+    ;; the right thing to compare with: the loop's own `last-seq` counts frames READ,
+    ;; and a frame this head rejected still arrived in order.
+    ;; a mark of ZERO is *nothing folded yet*, not a gap from zero: a head that
+    ;; attaches to a session already at seq 5, or a replay of a log that starts
+    ;; there, is told where it is starting by `resumed_from` rather than by a hole
+    (when (and (integerp seq) (integerp (session-seq session))
+               (plusp (session-seq session)))
+      (setf gap (note-seq-gap session (session-seq session) seq)))
     ;; the seq is consumed either way: a filtered frame still advances the read
     ;; mark, or a head that draws little rereads its own output forever
     (setf (session-seq session) seq
           (session-expected-seq session) seq)
+    (when gap
+      ;; the row is filed, so this is a visible change even when the event itself is
+      ;; one this head filters — the gap is about the STREAM, not about the frame
+      (return-from apply-event :dirty))
     ;; a stranger's turn is consumed and not folded — before any side effect
     (when (and (member name +per-turn-events+) (%foreign-turn-p session env))
       (return-from apply-event :quiet))

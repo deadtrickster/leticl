@@ -26,6 +26,7 @@
    ;; cells
    #:make-screen #:screen-resize #:screen-clear
    #:screen-cols #:screen-rows #:screen-cell #:screen-row #:screen-put #:screen-put-string
+   #:%esc-sequences
    #:cell-ch #:cell-style
    #:style-index #:paint-diff #:paint-full
    ;; the render failure, and the lock that keeps a push out of a frame. EXPORTED
@@ -147,6 +148,7 @@
    #:picker-sessions #:config-rows #:config-change #:pane-width #:wrap-text
    #:tilde-path #:short-id #:bytes-human #:split-row
    #:*rendered-total* #:*scrubbed-total* #:*filtered-total* #:*unreadable-total*
+   #:*seq-gaps* #:note-seq-gap
    #:*daemon-protocol*
    ;; the payload window (T1): what makes the rest of a long result reachable
    #:*payload-view* #:*payload-page* #:payload-view-page #:payload-view-close

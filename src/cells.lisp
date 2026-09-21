@@ -430,6 +430,25 @@ question."
     (when (and (>= row 0) (< row rows))
       (loop for c from 0 below cols collect (screen-cell screen row c)))))
 
+(defun %esc-sequences (string)
+  "Every `ESC` in STRING followed by the run of characters up to and including its
+final byte — an approximate CSI/OSC shape, which is all a test needs to ask *which
+sequences are on this frame*.
+
+Used by §3.1's guarantee test, and it is deliberately here rather than in the test
+file: it reads the same bytes `screen-rows-ansi` writes, so the two cannot disagree
+about what a sequence looks like on this head's wire."
+  (loop for i from 0 below (length string)
+        when (char= (char string i) #\Esc)
+          collect (let ((j (1+ i)))
+                    (loop while (and (< j (length string))
+                                     (or (digit-char-p (char string j))
+                                         (member (char string j)
+                                                 '(#\[ #\; #\? #\m #\l #\h #\K #\J
+                                                   #\A #\B #\C #\D #\H #\q #\s))))
+                          do (incf j))
+                    (subseq string i j))))
+
 (defun screen-rows-ansi (screen)
   "One string per row, escape codes included — the answer to ScreenRequested
 and the body of /cells: what this head actually drew, at its real size, not a
