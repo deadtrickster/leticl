@@ -278,6 +278,16 @@ fourteen-column indent, then a blank. 26 rows against our 18."
       ;; a frame it cannot read says 0 — a different statement from a head that does not
       ;; count them at all, and the one that tells an operator where to look when a
       ;; screen is wrong. A daemon one version ahead is the cause almost every time.
+      ;; **the eval channel**, and it is a row because a count nobody shows is a
+      ;; number nobody can act on: a head that has stopped being evaluatable and has
+      ;; not said so cannot be told from a head nobody has asked. 0 is a real reading
+      ;; here — this head has never had an accept fail — and that is a different
+      ;; statement from a head that does not count them, which is the rule the
+      ;; `unreadable` row below already keeps.
+      (row "eval" (format nil "~a listening · ~d failed accept~:p"
+                          (if (head-hack-listener head) "yes" "NO")
+                          *hack-accept-errors*)
+           "The live-modification socket: whether this head is still accepting eval connections, and how many times an accept failed and was retried. A head that stopped accepting runs on with a socket file and nothing behind it, which is what this row is for.")
       (row "unreadable" *unreadable-total*
            "Frames that arrived and could not be read. Almost always a daemon newer than this head: the frames the two share read fine, and the first one they do not is this. Each one is named in the conversation where it arrived.")
       ;; **The version, always present, and the DIRECTION when they differ.** §13.2b in

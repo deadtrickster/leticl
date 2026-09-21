@@ -148,7 +148,7 @@
    #:picker-sessions #:config-rows #:config-change #:pane-width #:wrap-text
    #:tilde-path #:short-id #:bytes-human #:split-row
    #:*rendered-total* #:*scrubbed-total* #:*filtered-total* #:*unreadable-total*
-   #:*seq-gaps* #:note-seq-gap
+   #:*seq-gaps* #:note-seq-gap #:*hack-accept-errors*
    #:*daemon-protocol*
    ;; the payload window (T1): what makes the rest of a long result reachable
    #:*payload-view* #:*payload-page* #:payload-view-page #:payload-view-close
@@ -173,7 +173,8 @@
    #:head-settings #:head-queued #:head-scroll #:head-screen-reqs #:head-want-new
    #:head-jobs #:head-subagents #:head-peeked #:head-picker-sel
    ;; hack
-   #:hack-start #:hack-stop #:hack-socket-path #:list-live-heads #:hack-handle))
+   #:hack-start #:hack-stop #:hack-socket-path #:list-live-heads #:hack-handle
+   #:head-hack-listener #:head-hack-path #:hack-accept-loop #:hack-serve))
 
 (defpackage #:leticl/tests
   (:documentation "Zero-dep test harness; see PLAN.md §11.")

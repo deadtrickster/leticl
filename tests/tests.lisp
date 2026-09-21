@@ -4085,8 +4085,8 @@ The counting itself is the subject of
     (let* ((lines (status-screen-lines h 210))
            (text (lines-text lines)))
       (is (string= "this head" (first text)) "the title")
-      (is (= 31 (count-if (lambda (l) (plusp (length l))) text))
-          "31 non-blank rows — 21 here when the reference's screen had 26, plus the three the unreadable row costs, the four the protocol row does, and the three R10's `notes` row costs (its value and two wrapped lines of why)")
+      (is (= 34 (count-if (lambda (l) (plusp (length l))) text))
+          "34 non-blank rows — 21 here when the reference's screen had 26, plus the three the unreadable row costs, the four the protocol row does, the three R10's `notes` row costs (its value and two wrapped lines of why), and the three the `eval` row costs")
       (is (string= "  session     s-1789639478142928813" (third text)) "the key twelve wide, the value plain")
       (is (equal '(:dim t) (cdr (first (third lines)))) "the key dim")
       (is (null (cdr (second (third lines)))) "the value not")
@@ -6882,6 +6882,161 @@ cannot be the hole either: anything with an escape in it takes the cluster walk.
           "only the letters land in cells: ~s" (subseq row 0 6))
       (is (not (find #\Esc row))
           "and the escape is in none of them"))))
+
+;;; ------------------- the eval socket: a client's failure is not the head's ------- ;;;
+;;;
+;;; The live-modification surface (HACKING.md). MEASURED on a scratch head: a client
+;;; that vanished between its request and its reply killed the PROCESS —
+;;;
+;;;     round 1: head alive after the client vanished mid-reply: False
+;;;     VERDICT: THE HEAD IS DEAD
+;;;     ... (HACK-SERVE) ... (SB-IMPL::%WRITE-LINE ...)
+;;;     unhandled condition in --disable-debugger mode, quitting
+;;;
+;;; — because `hack-serve`'s write was unguarded and it ran in a non-main thread,
+;;; where an unhandled error quits a `--disable-debugger` image. A `tui-eval`
+;;; interrupted at the wrong moment took the operator's session with it.
+
+(defun %socket-pair ()
+  "A connected `(values SERVER CLIENT)` pair of unix sockets, and their path.
+
+Built rather than taken from `sb-bsd-sockets`, which has no `socket-pair`
+(`find-symbol` answers NIL). The path is under the test's own scratch directory so
+a stale file cannot collide with anything.
+"
+  (let* ((path (format nil "/tmp/leticl-test-hack-~d.sock" (sb-posix:getpid)))
+         (listen (make-instance 'sb-bsd-sockets:local-socket :type :stream)))
+    (ignore-errors (delete-file path))
+    (sb-bsd-sockets:socket-bind listen path)
+    (sb-bsd-sockets:socket-listen listen 1)
+    (let ((client (make-instance 'sb-bsd-sockets:local-socket :type :stream)))
+      (sb-bsd-sockets:socket-connect client path)
+      (let ((server (sb-bsd-sockets:socket-accept listen)))
+        (ignore-errors (sb-bsd-sockets:socket-close listen))
+        (values server client path)))))
+
+(def-test a-client-that-vanishes-mid-reply-does-not-take-the-head-down (:suite leticl)
+  "**A client that has gone is a client, not a head failure.**
+
+`hack-serve`'s `write-line` and `force-output` ran unguarded in a thread made by
+`hack-accept-loop`, and a client that disappeared between its request and its reply
+signalled `BROKEN-PIPE` out of a NON-MAIN thread — where, in an image saved with
+`--disable-debugger`, an unhandled error QUITS THE PROCESS. Measured end to end
+against a scratch head: the head was dead before its first sleep was over.
+
+**`unwind-protect` was already there and is not the fix** — it closes the connection
+on the way out and then RE-RAISES, which is exactly why the process died rather than
+the connection. The guard has to be a `handler-case`.
+
+The write is what meets the gone client, so the test drives it: the client asks a
+question and closes without reading, which is what a killed `tui-eval` looks like.
+The form is `(sleep 0.2)` so there is a window in which the client can leave — the
+same window the real one has."
+  (multiple-value-bind (server client path) (%socket-pair)
+    (unwind-protect
+         (progn
+           ;; the client asks, then goes, exactly as a killed tui-eval does
+           (let ((cstream (sb-bsd-sockets:socket-make-stream
+                           client :input t :output t :element-type 'character
+                           :external-format :utf-8 :buffering :none)))
+             ;; hold the client open to send, then close it BEFORE the reply is written
+             (write-line "eval (progn (sleep 0.2) :answered)" cstream)
+             (force-output cstream)
+             (close cstream))
+           (let ((h (leticl::%make-head)))
+             ;; in the MAIN thread: a regression is a test failure, not a dead image
+             (finishes (leticl::hack-serve h server)
+                       "the connection ends quietly instead of signalling")))
+      (ignore-errors (sb-bsd-sockets:socket-close server))
+      (ignore-errors (sb-bsd-sockets:socket-close client))
+      (ignore-errors (delete-file path)))))
+
+(def-test a-failed-accept-is-retried-and-counted-rather-than-ending-the-loop (:suite leticl)
+  "**A failed accept is not a reason to stop accepting.**
+
+`hack-accept-loop` read `(error () (return))`: ANY accept error ended the loop for the
+REST OF THE HEAD'S LIFE, and the socket file stayed on disk because `hack-stop` owns
+the `delete-file`. A path with nothing listening behind it is what this file's own
+watchdog already describes — *\"the process was alive, logged nothing, looked healthy,
+and was permanently deaf\"* — and here the loss is the whole live-modification surface
+HACKING.md documents. It is the same defect the session daemon paid for and wrote down
+(`sessionlog/src/server.rs`: *\"a failed accept is almost never a reason to stop
+accepting\"*).
+
+**What I could NOT reproduce, said plainly, and one thing I found instead:**
+
+- the TRIGGER is unproven. Eight connect-and-vanish clients in a row raised no accept
+  error — a socket that closes before being picked up is accepted cleanly and ends at
+  `read-line` — so the hazard is visible in the source and has no field reproduction.
+  The fix is kept because the failure mode is silent and permanent if it does happen;
+- **and `socket-accept` on a listener closed UNDERNEATH it neither errors nor returns
+  — it blocks for ever** (measured). So the retry covers the errors that RETURN
+  (`BAD-FILE-DESCRIPTOR-ERROR` when the fd is already gone, `EMFILE` under pressure),
+  and `hack-stop`'s slot-clearing is a courtesy that the loop usually cannot read,
+  because it is asleep inside accept. Worth knowing before anyone tries to stop this
+  thread on purpose.
+
+This test uses the shape that IS deterministic: the listener is closed before any
+accept is attempted, so every accept errors at once and the behaviour is pinned
+rather than raced."
+  (let* ((before *hack-accept-errors*)
+         (path (format nil "/tmp/leticl-test-accept-~d.sock" (sb-posix:getpid)))
+         (head (leticl::%make-head))
+         (listen (make-instance 'sb-bsd-sockets:local-socket :type :stream))
+         (thread nil))
+    (ignore-errors (delete-file path))
+    (sb-bsd-sockets:socket-bind listen path)
+    (sb-bsd-sockets:socket-listen listen 4)
+    (sb-bsd-sockets:socket-close listen)      ; gone BEFORE the loop ever looks
+    (setf (head-hack-listener head) listen)
+    (unwind-protect
+         (progn
+           (setf thread (sb-thread:make-thread
+                         (lambda () (hack-accept-loop head))
+                         :name "leticl hack test"))
+           (sleep 0.3)
+           (is (sb-thread:thread-alive-p thread)
+               "an accept that fails does NOT end the loop: it is still listening")
+           (is (> *hack-accept-errors* before)
+               "and the failure is COUNTED, because a head that stopped accepting and
+ did not say so cannot be told from a head nobody has asked")
+           ;; **and it still ends when it SHOULD** — the listener being gone for good,
+           ;; which is `hack-stop` and nothing else. Here the accept returns an error
+           ;; at once rather than blocking, so the loop reaches its top and sees it.
+           (setf (head-hack-listener head) nil)
+           (loop repeat 40 until (not (sb-thread:thread-alive-p thread)) do (sleep 0.02))
+           (is (not (sb-thread:thread-alive-p thread))
+               "and it ends when the listener is cleared, which is `hack-stop` and
+ nothing else"))
+      (setf (head-hack-listener head) nil)
+      (when (and thread (sb-thread:thread-alive-p thread))
+        (ignore-errors (sb-thread:join-thread thread :timeout 1)))
+      (ignore-errors (sb-bsd-sockets:socket-close listen))
+      (ignore-errors (delete-file path))
+      (setf *hack-accept-errors* before))))
+
+(def-test the-status-screen-says-whether-the-head-can-still-be-evaluated (:suite leticl)
+  "A head that has stopped accepting eval connections runs on with a socket file and
+nothing behind it — so whether it is still listening, and how many accepts failed, is
+a `/status` row: *a number a head keeps and does not show is a number nobody can act
+on*, which this file's own docstring says about the counters it replaced.
+
+0 failed accepts on a head that has never had one, and that is a DIFFERENT reading
+from a head that does not count them — the rule the `unreadable` row already keeps."
+  (let ((*hack-accept-errors* 0)
+        (h (%pane-head)))
+    (let ((text (lines-text (leticl::status-screen-lines h 210))))
+      (is (some (lambda (l) (search "NO listening · 0 failed accept" l)) text)
+          "a head with no listener says so, and calls it NO: ~s"
+          (find-if (lambda (l) (search "listening" l)) text)))
+    ;; and a live listener reads yes, with the count of failures it has survived
+    (let ((*hack-accept-errors* 3)
+          (h2 (%pane-head)))
+      (setf (head-hack-listener h2) :a-listener)
+      (let ((text (lines-text (leticl::status-screen-lines h2 210))))
+        (is (some (lambda (l) (search "yes listening · 3 failed accepts" l)) text)
+            "a listening head says yes and counts its failures: ~s"
+            (find-if (lambda (l) (search "listening" l)) text))))))
 
 (def-test a-gap-in-the-event-stream-is-said-counted-and-filed (:suite leticl)
   "**MISSING IN BOTH HEADS**, and the last item of §10: *neither checks `seq`
