@@ -738,7 +738,7 @@ scrolls the transcript by a row every keystroke.
           (put-segments s 0 gutter (top-border head cols)))
         (cond
           ;; full-body screens replace the transcript
-          ((member (head-mode head) '(:help :status :config :jobs :subagents :peek :job-out :picker :todos))
+          ((member (head-mode head) '(:help :status :config :jobs :subagents :peek :job-out :picker :todos :slash))
            (let ((room (max 1 (- body-bottom body-top)))
                  (lines nil)
                  (sel-line nil))
@@ -761,7 +761,11 @@ scrolls the transcript by a row every keystroke.
                  (:job-out (job-out-lines head cols room))
                  (:picker (picker-lines (head-session head)
                                         (head-picker-sel head) cols))
-                 (:todos (todos-lines head cols))))
+                 (:todos (todos-lines head cols))
+                 ;; a listing that ARRIVED, drawn from the TOP like a document —
+                 ;; `*pane-lines*` below takes this list's length, so its scroll
+                 ;; clamps against the whole thing and `pane-view` windows it
+                 (:slash (slash-out-lines head cols room))))
              ;; tell the KEY handler what it may scroll: it clamps without
              ;; re-rendering, and the cursor can then scroll itself into view
              (setf *pane-lines* (case (head-mode head)

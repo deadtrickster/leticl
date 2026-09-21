@@ -4394,6 +4394,184 @@ screen — indistinguishable from a head on the wrong socket — for the whole w
     (is (not (search "asking the daemon" (%screen-text h)))
         "and gone once the hello has landed")))
 
+;;; ------------------------ a slash listing opens a pane (§2.4) ------------- ;;;
+;;;
+;;; The operator: *"12. A slash listing scrolls past instead of opening a pane. (G10)
+;;; First /gate recent, /tools or /models."* A reply that is a LISTING has to be
+;;; scrollable; a reply that is a sentence stays a note. The daemon sends both under one
+;;; warning code, so `detail` — the command echoed back, a newline, then the reply — is
+;;; the only thing that says which, and length is what splits them (app.rs:3266-3275).
+
+(defun %slash-warning (detail &optional (code "slash"))
+  "The FRAME the daemon publishes a slash reply as — a full event envelope.
+
+Fed through `%handle-frame` rather than `apply-event`, because that is the operator's
+path: the session folds the reply and the HEAD is what puts the pane up, so a test that
+called the fold directly would be asserting half the mechanism (it did, and failed)."
+  (list :frame "event" :seq 1 :event "warning" :code code :detail detail :ts 0))
+
+(defun %slash-detail (echo &rest lines)
+  "A reply's `detail`: ECHO, a newline, and LINES — the daemon's own format."
+  (format nil "~a~%~{~a~^~%~}" echo lines))
+
+(def-test a-long-slash-reply-opens-a-scrollable-pane (:suite leticl)
+  "The criterion: `/gate recent`, `/tools`, `/flowy status` and `/models` open a screen
+with the whole reply on it, the echo bold at the top and the keys that work at the
+bottom.
+
+The four verbs are the operator's own list, and they all reach the head the same way —
+a `Warning` code `slash` whose detail is the command, a newline, then the reply — so one
+test covers them and the count of lines is the only thing that differs."
+  (let ((*slash-out* nil) (*pane-scroll* 0) (*pane-lines* 0) (*pane-room* 0)
+        (h (%on-head :cols 60 :rows 20)))
+    ;; --- a LISTING opens a pane
+    (leticl::%handle-frame h
+                 (%slash-warning
+                  (%slash-detail "/tools"
+                                 "read        failed   1.2s   read a file"
+                                 "glob        ok       0.3s   find by pattern"
+                                 "grep        ok       0.4s   search contents"
+                                 "bash        ok       2.1s   run a command"
+                                 "task        declined 0.0s   spawn a subagent")))
+    (is (not (null *slash-out*)) "a five-line reply opens the listing")
+    (is (equal "/tools" (car *slash-out*)) "the echo is kept")
+    (is (= 5 (length (cdr *slash-out*))) "and the five body lines")
+    ;; --- and the pane draws it: bold echo, blank, wrapped body, the key row
+    (leticl::%render h)
+    (let ((text (%screen-text h)))
+      (is (search "/tools" text) "the command it is answering")
+      (is (search "read" text) "and the reply")
+      (is (search "task" text) "all of it, including the last line")
+      (is (search "esc closes · up/down scrolls" text)
+          "with the keys that work named under it"))
+    ;; the footer is the one place a pane says what its keys do, so assert it is the
+    ;; LAST content row rather than anywhere on the screen
+    (let* ((lines (slash-out-lines h 60))
+           (footer (car (last (remove-if #'null lines)))))
+      (is (search "esc closes" (format nil "~{~a~}" (mapcar #'car footer)))
+          "and it is the last row of the listing"))
+    ;; --- a SENTENCE stays a note
+    (setf *slash-out* nil)
+    (leticl::%handle-frame h (%slash-warning "mode → allow-all"))
+    (is (null *slash-out*) "a one-line reply does not open a pane")
+    ;; --- and the boundary, which is the reference's `> 3`
+    (setf (session-warnings (head-session h)) nil)
+    (leticl::%handle-frame h
+                 (%slash-warning (%slash-detail "/x" "one" "two" "three")))
+    (is (null *slash-out*) "three lines is still a note — the split is `> 3`")
+    (leticl::%handle-frame h
+                 (%slash-warning (%slash-detail "/x" "one" "two" "three" "four")))
+    (is (not (null *slash-out*)) "and four lines is a listing")))
+
+(def-test a-slash-listing-keeps-its-text-on-the-screen (:suite leticl)
+  "**A listing that opened and then scrolled away is the defect with extra steps.**
+
+The reply is a LISTING and it has to be reachable to its end, which is the same claim the
+payload window makes and for the same reason: the operator's `/gate recent` is how they
+learn what the gate decided, and a pane that shows its first screenful and no more is a
+screen they have to close and re-ask for."
+  (let ((*slash-out* nil) (*pane-scroll* 0) (*pane-lines* 0) (*pane-room* 0)
+        (h (%on-head :cols 60 :rows 20)))
+    (leticl::%handle-frame h
+                 (%slash-warning
+                  (%slash-detail "/gate recent"
+                                 (loop for i from 1 to 40 collect (format nil "row ~d of the gate log" i)))))
+    (leticl::%render h)
+    (is (search "row 1 of the gate log" (%screen-text h)) "the listing starts at its top")
+    (is (not (search "row 40 of the gate log" (%screen-text h)))
+        "and forty rows do not fit on a twenty-row screen — the premise")
+    ;; the pane's total is what the scroll clamps against, and the arrows walk it
+    (is (> *pane-lines* 20) "the pane knows how many rows it has")
+    (let ((first *pane-scroll*))
+      (loop repeat 6 do (leticl::%handle-key h (list :type :page-down))
+            until (>= *pane-scroll* (pane-scroll-max)))
+      (is (> *pane-scroll* first) "page-down scrolls the listing forward")
+      (leticl::%render h)
+      (is (search "row 40 of the gate log" (%screen-text h))
+          "to the last row of the reply"))
+    (loop repeat 40 do (leticl::%handle-key h (list :type :page-up)))
+    (is (zerop *pane-scroll*) "and page-up comes back to the top")))
+
+(def-test a-slash-listing-owns-esc-and-the-arrows-and-nothing-else (:suite leticl)
+  "The pane is up, so Esc closes it and the arrows scroll it — and a character still
+reaches the composer, which is the rule every pane here keeps (`%pane-key`'s own
+docstring: *\"a pane open was a head you could not talk to\"*)."
+  (let ((*slash-out* nil) (*pane-scroll* 0) (*pane-lines* 0) (*pane-room* 0)
+        (*esc-at* nil) (*ctrlc-at* nil) (*pick-open* nil) (*mode-confirm* nil)
+        (h (%on-head :cols 60 :rows 20)))
+    (leticl::%handle-frame h
+                 (%slash-warning (%slash-detail "/tools" "a" "b" "c" "d")))
+    (is (eq :slash (head-mode h)) "the reply put the pane up")
+    ;; the arrows scroll rather than walking a cursor
+    (setf *pane-lines* 40 *pane-room* 10)
+    (leticl::%handle-key h (list :type :down))
+    (is (= 1 *pane-scroll*) "down scrolls the listing")
+    (leticl::%handle-key h (list :type :up))
+    (is (zerop *pane-scroll*) "and up comes back")
+    ;; a letter is still the composer's
+    (leticl::%handle-key h (list :type :char :ch #\z))
+    (is (string= "z" (composer-buffer (head-composer h)))
+        "a letter typed under the pane reaches the composer")
+    ;; esc closes it, and closes NOTHING else
+    (leticl::%handle-key h (list :type :esc))
+    (is (null *slash-out*) "esc closes the listing")
+    (is (eq :normal (head-mode h)) "and leaves nothing on the screen")
+    (is (null *esc-at*) "and does not arm the interrupt")))
+
+(def-test ctrl-c-closes-a-slash-listing (:suite leticl)
+  "`ctrl-c` closes whatever list is on the screen, exactly as Esc does — and the listing
+is a list. This is G11's own bug one pane over: an unhandled arm fell through and offered
+to quit the head instead of closing the thing in front of the operator."
+  (let ((*slash-out* nil) (*pane-scroll* 0) (*ctrlc-at* nil) (*pick-open* nil)
+        (*mode-confirm* nil) (h (%on-head :cols 80 :rows 24)))
+    (leticl::%handle-frame h
+                 (%slash-warning (%slash-detail "/gate recent" "a" "b" "c" "d")))
+    (is (eq :slash (head-mode h)) "the pane is up")
+    (leticl::%handle-key h (list :type :ctrl :ch #\c))
+    (is (null *slash-out*) "ctrl-c closes it")
+    (is (eq :normal (head-mode h)) "and nothing is left on the screen")
+    (is (not (head-quit-open h)) "and it does not offer to leave")))
+
+(def-test a-listing-does-not-survive-a-session-switch (:suite leticl)
+  "A reply belongs to the session it was asked in. Carried across a `/switch` it is
+another session's `/tools` on this screen, which is worse than a stale job row: it looks
+like an answer to something nobody asked here."
+  (let ((*slash-out* nil) (*pane-scroll* 0) (*pick-open* nil) (*mode-confirm* nil)
+        (h (%on-head :cols 80 :rows 24)))
+    (setf (session-session-id (head-session h)) "s-1")
+    (leticl::%handle-frame h
+                 (%slash-warning (%slash-detail "/tools" "a" "b" "c" "d")))
+    (is (eq :slash (head-mode h)) "the pane is up")
+    ;; a Hello for a DIFFERENT session
+    (leticl::%handle-frame h (list :frame "hello" :protocol-version 22
+                                   :session-id "s-2" :snapshot nil :sessions nil
+                                   :wiring nil))
+    (is (null *slash-out*) "the listing is gone")
+    (is (eq :normal (head-mode h)) "and the screen is the conversation again")))
+
+(def-test a-slash-reply-is-not-said-twice (:suite leticl)
+  "A listing that opened a pane is ON a screen; pushing it into the warnings list as well
+is the same text twice, three lines apart — the shape `turn_failed` already avoids. A
+SENTENCE is still a note, because a note is all there is."
+  (let ((*slash-out* nil) (*pane-scroll* 0) (*pick-open* nil) (*mode-confirm* nil)
+        (h (%on-head :cols 80 :rows 24))
+        (s nil))
+    (setf s (head-session h))
+    (setf (session-warnings s) nil)
+    (leticl::%handle-frame h (%slash-warning (%slash-detail "/tools" "a" "b" "c" "d")))
+    (is (eq :slash (head-mode h)) "the listing opened")
+    (is (null (session-warnings s)) "and the warning was consumed, not also noted")
+    ;; a sentence still lands in the log
+    (leticl::%handle-frame h (%slash-warning "mode → allow-all"))
+    (is (= 1 (length (session-warnings s))) "a one-line reply is still a note")
+    (is (equal "slash" (getf (first (session-warnings s)) :code))
+        "with its code, so /status can count it")
+    ;; and a REFUSED listing opens the same pane — the same code's other spelling
+    (setf *slash-out* nil)
+    (leticl::%handle-frame h (%slash-warning (%slash-detail "/gate grant 7" "not yours" "and" "four"
+                                                   "lines") "slash_refused"))
+    (is (eq :slash (head-mode h)) "a refused listing opens it too")))
+
 ;;; ------------------------------ the carry line (§2.5) --------------------- ;;;
 ;;;
 ;;; `/reseat` and `/compact` announce every carried row before a single body follows.

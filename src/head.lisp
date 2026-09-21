@@ -58,7 +58,7 @@ globals a frame reads.")
   (last-rows-n 0 :type fixnum)
   (scroll 0 :type fixnum)
   (composer (make-composer))
-  (mode :normal :type symbol)            ; :normal :picker :help :status :config :jobs :subagents :peek :job-out :todos
+  (mode :normal :type symbol)            ; :normal :picker :help :status :config :jobs :subagents :peek :job-out :todos :slash
   (picker-sel 0 :type fixnum)
   (decision-sel 0 :type fixnum)
   (secret-req nil)
@@ -343,11 +343,14 @@ first."
                (head-peeked head) nil
                (head-queued head) nil
                (head-picker-sel head) 0)
-         ;; and the job-output overlay, for the reason the job ROWS are cleared:
-         ;; a window belongs to the session that produced it, and a `j12` carried
-         ;; across a switch is a question about a job that was never here
-         (close-job-out)
-         (when (eq (head-mode head) :job-out)
+         ;; and the overlays, for the reason the job ROWS are cleared: a window
+         ;; belongs to the session that produced it, so a `j12` carried across a
+         ;; switch is a question about a job that was never here — and a slash
+         ;; listing carried across one is another session's `/tools` on this
+         ;; screen, which is worse, because it looks like an answer to something
+         ;; nobody asked here.
+         (shut-overlays)
+         (when (member (head-mode head) '(:job-out :slash))
            (setf (head-mode head) :normal))))
      (ingest-hello (head-session head) frame)
      (setf (head-connected head) t
@@ -475,9 +478,26 @@ first."
                                when (getf p :text) return (getf p :text))))
                (when text (%retire-pending head text))))))
        ;; apply-event is the classifier: :dirty means something visible moved.
-       (if (eq (apply-event (head-session head) env) :dirty)
-           (progn (setf (head-dirty head) t) :rendered)
-           :filtered)))
+       (let ((disposition (apply-event (head-session head) env)))
+         ;; **A REPLY THAT ARRIVED IS SHOWN, AND THAT IS THE ONE THING THE SESSION
+         ;; CANNOT DO.** `note-slash-reply` — called from the `:warning` arm inside
+         ;; `apply-event` — fills `*slash-out*`; the MODE is head state, so the head
+         ;; follows the state HERE, after the fold that produced it. (It was first
+         ;; written above the fold, where `*slash-out*` was always still empty: a
+         ;; check with nothing to check, which the live probe caught and no test
+         ;; could, because both halves are correct on their own.)
+         ;;
+         ;; The operator typed the verb, so the answer is what they asked for and it
+         ;; takes the screen — the reference draws `slash_out` ahead of every other
+         ;; pane for the same reason. A pane that was up is not lost (`/help` is one
+         ;; key away again), and the alternative is worse: a reply CONSUMED as a
+         ;; listing and then drawn nowhere at all.
+         (when (and *slash-out* (not (eq (head-mode head) :slash)))
+           (setf (head-mode head) :slash
+                 (head-dirty head) t))
+         (if (eq disposition :dirty)
+             (progn (setf (head-dirty head) t) :rendered)
+             :filtered))))
     ((string= (frame-name frame) "resync")
      ;; a resync means this head lost its place; the count is on /status and in
      ;; the alarm, because "it happened at all" is the operator's business

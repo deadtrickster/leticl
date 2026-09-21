@@ -550,6 +550,9 @@ is worse than no hint at all."
          (tail (cond
                  ((head-quit-open head) "1/2 or ↑↓ then enter · esc stays")
                  ((member (head-mode head) '(:help :status)) "esc closes this")
+                 ;; a listing arrived, it is not a screen you opened from a list of
+                 ;; keys: `esc closes` alone would not say that the arrows do anything
+                 ((eq (head-mode head) :slash) "↑↓ and the wheel scroll · esc closes")
                  ((eq (head-mode head) :picker) "type a number to switch · /new [title] · esc closes")
                  (*pick-open* "a row number switches · ↑↓ then enter · or type a name · esc closes")
                  ((eq (head-mode head) :todos) "↑↓ moves · enter or tab unfolds · pgup/pgdn and the wheel scroll · esc closes")

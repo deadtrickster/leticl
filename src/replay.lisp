@@ -147,6 +147,8 @@ see this file's header."
          (*carry-last-done* nil)
          (*carry-moved-at* nil)
          (*filling* nil)
+         ;; the slash listing, which a replayed log can open
+         (*slash-out* nil)
          (*pane-scroll* 0)
          (*pick-open* nil)
          (*mode-confirm* nil)

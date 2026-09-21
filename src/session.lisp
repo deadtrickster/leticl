@@ -886,6 +886,16 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
        (when (and *job-out* (equal (getf env :code) "job_output_refused"))
          (setf (getf *job-out* :loading) nil
                (getf *job-out* :error) (or (getf env :detail) "")))
+       ;; **A slash LISTING opens a pane; a slash SENTENCE stays a note.** The daemon
+       ;; sends both under one code — `detail` is the command echoed back, then the
+       ;; reply — so the head splits them by the only thing that distinguishes them,
+       ;; which is length (app.rs:3266-3275). Returning here rather than falling
+       ;; through is the reference's behaviour and the right one: the listing is ON a
+       ;; screen now, so a second copy of it in the log would be the same text twice,
+       ;; three lines apart, which is the shape `turn_failed` above already avoids.
+       (when (and (member (getf env :code) '("slash" "slash_refused") :test #'string=)
+                  (note-slash-reply (getf env :detail)))
+         (return-from apply-event :dirty))
        (push (list :code (getf env :code) :detail (getf env :detail)
                    :ts (getf env :ts))
              (session-warnings session))

@@ -124,6 +124,9 @@
    #:peek-row-count #:pane-escape-target #:pane-initial-sel #:picker-initial-sel
    ;; the job-output overlay the jobs pane's enter opens
    #:*job-out* #:*job-out-total* #:open-job-out #:close-job-out
+   ;; the slash listing — a verb's reply, when it is a listing and not a sentence
+   #:*slash-out* #:note-slash-reply #:close-slash-out #:slash-out-lines
+   #:slash-out-row-count #:+slash-listing-lines+
    #:job-out-lines #:job-out-body #:job-out-row-count
    #:subagent-switch
    #:jobs-lines #:subagent-lines #:subagent-rows #:pick-card-lines #:open-pick #:close-pick

@@ -703,6 +703,24 @@ two sides in circles."
          (setf (head-mode head) :normal)))))
   (setf (head-dirty head) t))
 
+(defun shut-overlays ()
+  "Close every overlay that is a SPECIAL rather than a mode flag.
+
+**A special is not a mode flag**, and the rule they share is the one that is easy to
+forget: *leaving the mode does not leave the thing.* A window left holding bytes goes on
+taking what arrives into a pane nobody can see, and a listing left holding a reply is
+shown again by the next `/tools` for one frame before that reply replaces it
+(app.rs:3277-3281).
+
+Named once because there are two of them now and a third is coming, and because the
+alternative is what this file already had: `(when (eq mode :job-out) (close-job-out))`
+written out in two arms, which is exactly how the next one gets forgotten. **It does not
+touch the MODE** — where Esc goes is `pane-escape-target`'s decision and each caller
+makes it, and the two keys that call this want different places."
+  (close-slash-out)
+  (close-job-out)
+  t)
+
 (defun %pane-key (head key type)
   "A full-body screen's own keys. T when the pane claimed the key — and
 **anything else is the COMPOSER's**.
@@ -732,7 +750,7 @@ one thing this head must not need."
              ;; the overlay goes with the key that leaves it: a window kept open
              ;; after Esc would quietly take the answer to a read nobody is
              ;; waiting for any more (app.rs:3277-3281)
-             (when (eq mode :job-out) (close-job-out))
+             (shut-overlays)
              (reset-pane-scroll)
              t))
       (flet ((move-cursor (n)
@@ -783,6 +801,11 @@ one thing this head must not need."
                ;; with no rows to select, so its arrows scroll the loaded window
                ;; rather than walking a cursor (app.rs:3256-3268)
                (:job-out (scroll n))
+               ;; **and the slash listing**, which is a document read from the
+               ;; top: `pane-row-count` answers 0 for it, so without this arm its
+               ;; footer would name `up/down scrolls` and move nothing — the
+               ;; defect `peek-row-count`'s own docstring records, one pane over
+               (:slash (scroll n))
                (t (move-cursor n))))
            t)
           ;; **→ and ← PAGE the job-output overlay**, by the offsets the daemon
@@ -942,14 +965,19 @@ for the lists)."
       ((and (%ctrl-c-p key)
             (or *pick-open*
                 (member (head-mode head)
-                        '(:help :status :config :jobs :subagents :peek :job-out :todos :picker))))
+                        '(:help :status :config :jobs :subagents :peek :job-out :todos :picker
+                          :slash))))
        (if *pick-open*
            (close-pick head)
            (progn
-             ;; the job-output overlay is a SPECIAL, not a mode flag, so leaving
-             ;; the mode is not leaving the overlay: an open one would go on
-             ;; taking windows into a pane nobody can see (app.rs:3277-3281)
-             (when (eq (head-mode head) :job-out) (close-job-out))
+             ;; **A SPECIAL IS NOT A MODE FLAG**, so leaving the mode is not leaving
+             ;; the thing: an overlay left holding bytes would go on taking what
+             ;; arrives into a pane nobody can see, and a listing left holding a
+             ;; reply would be shown again by the next `/tools` for one frame before
+             ;; that reply replaced it (app.rs:3277-3281). Both are closed HERE, in
+             ;; the one arm that closes panes, rather than in each key that can
+             ;; leave one.
+             (shut-overlays)
              (setf (head-mode head) :normal (head-dirty head) t)))
        t)
       ((and (eq type :mouse) (eq (getf key :kind) :press) (%click head key)))
@@ -979,7 +1007,7 @@ for the lists)."
       ;; can be typed under the card
       ((and *pick-open* (pick-key-event head key)))
       ((and (member (head-mode head)
-                    '(:help :status :jobs :subagents :todos :picker))
+                    '(:help :status :jobs :subagents :todos :picker :slash))
             (%pane-key head key type)))
       (t (%normal-key head key)))))
 
