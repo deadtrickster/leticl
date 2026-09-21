@@ -34,7 +34,13 @@
 ;;;  · a string with whitespace is QUOTED, so `grep "two words" src` cannot be
 ;;;    misread as three arguments;
 ;;;  · nested values are ELIDED, never flattened: `[…]` and `{…}` say there is
-;;;    more without pretending a JSON dump is a label.
+;;;    more without pretending a JSON dump is a label — **and a nested value is a
+;;;    PLACEHOLDER, not a part, so a row that already names a SUBJECT does not
+;;;    draw one.** See `display-target`: what a `[…]` points at is the card drawn
+;;;    directly underneath it, so beside a file name it spends four characters of
+;;;    the most valuable space on the row saying nothing. It stays exactly where
+;;;    the row would otherwise be empty or a bare modifier — `todo_write` sends
+;;;    `{todos: […]}` and nothing else, and that label has no other source.
 
 (defparameter *target-max-bytes* 120
   "How much of a display target a person reads before the rest is an ellipsis.")
@@ -89,8 +95,32 @@ side-by-side of the two heads showed."
     (t :elided)))
 
 (defun %elision-of (json)
-  "How a nested value is shown: `[…]` for an array, `{…}` for an object."
+  "How a nested value is shown when it is the only thing there is: `[…]` for an
+array, `{…}` for an object."
   (if (%json-object-p json) "{…}" "[…]"))
+
+(defun %part (v)
+  "V as one part of a display label: its text, or `(:nested . V)` for a value that
+is not scalar. The CALLER decides whether a nested one is drawn at all.
+
+A cons and not a marker symbol, because the elision's own text depends on V — an
+array says `[…]` and an object says `{…}` — so the part has to carry the value it
+came from."
+  (let ((label (%scalar-label v)))
+    (if (eq label :elided) (cons :nested v) label)))
+
+(defun %part-text (part subject-seen)
+  "PART as text, or NIL when it is not to be drawn.
+
+**The one rule about a nested part**: it is drawn only when the arguments named no
+subject. A subject is what the row is ABOUT — for an `edit` the file, for a `read`
+the file — and the nested value's own content is the card drawn directly underneath
+it, so the placeholder spends the best position on the row announcing what the
+reader is already looking at. Where there is no subject it is the only thing the
+label CAN say, and it stays: `todo_write` sends `{todos: [...]}` and nothing else."
+  (if (consp part)
+      (and (not subject-seen) (%elision-of (cdr part)))
+      part))
 
 (defun truncate-target (s)
   "S cut to `*target-max-bytes*` with an ellipsis, control characters flattened.
@@ -127,17 +157,24 @@ column past the terminal and scrolls the frame."
                do (when (member k *subject-keys*)
                     (setf subject-seen t
                           subject-value (or subject-value v)))
-                  (let ((label (%scalar-label v)))
-                    (push (if (eq label :elided) (%elision-of v) label) parts)))
+                  (push (%part v) parts))
          (setf parts (nreverse parts))
          ;; a subject the loop never reached is PREPENDED: a write's content
          ;; buries its path, and the file is what a person reads
-         (unless subject-seen
-           (when subject-value
-             (let ((label (%scalar-label subject-value)))
-               (push (if (eq label :elided) (%elision-of subject-value) label)
-                     parts))))
-         (truncate-target (string-trim " " (format nil "~{~a~^ ~}" parts)))))
+         (when (and (not subject-seen) subject-value)
+           (push (%part subject-value) parts))
+         ;; **and a nested part is dropped when a subject named the row.** The
+         ;; ruling (R15, the operator): a batch `edit` writes its `edits` array
+         ;; before its `path`, so the placeholder took the row's best position to
+         ;; point at the diff drawn underneath it. Not moved, not reordered —
+         ;; gone; the file is the label, and the line this draws is that a nested
+         ;; value is a placeholder, never a peer of a subject.
+         (truncate-target
+          (string-trim " "
+                       (format nil "~{~a~^ ~}"
+                               (loop for p in parts
+                                     for text = (%part-text p subject-seen)
+                                     when text collect text))))))
       ;; an array is not a label
       ((consp json) (truncate-target "[…]"))
       (t (let ((label (%scalar-label json)))

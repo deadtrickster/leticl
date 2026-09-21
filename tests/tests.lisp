@@ -3363,6 +3363,47 @@ printed the newline and then flattened it to a space."
   (is (search "<<'MSG'\\nthe step" (display-target "{\"command\":\"cd x <<'MSG'\\nthe step\\nMSG\"}"))
       "and so on the row"))
 
+(def-test a-batch-edit-names-the-file-and-not-the-edits-array (:suite leticl)
+  "R15, the operator's ruling: the ellipsis is GONE for `edit` — not moved, not
+reordered.
+
+A batch edit carries an `edits` array and a `path`, and the array is written FIRST,
+so `[…]` took the most valuable position on the row to point at the diff sitting
+directly underneath it. The file is the label. Both orders are asserted, because
+which one arrives depends on the writer: a Rust `serde_json::Map` is a BTreeMap and
+iterates `edits` before `path` alphabetically, while this head's decoder keeps the
+order the model wrote — so the two heads see the array in different places and must
+agree about dropping it.
+
+**And the line this draws**: the elision rule STAYS. A nested value is a
+PLACEHOLDER, not a part of a label, so it is dropped when the arguments name a
+subject — and kept when they name nothing, which is the tool whose label would
+otherwise be empty or a bare modifier. Both halves are asserted here, and the tools
+that keep it are named."
+  ;; an `edit` names a file, so nothing is drawn before it
+  (is (equal "/home/dead/Projects/leticl/src/commands.lisp"
+             (display-target
+              "{\"edits\":[{\"old_string\":\"a\",\"new_string\":\"b\"}],\"path\":\"/home/dead/Projects/leticl/src/commands.lisp\"}"))
+      "the array first, as the model wrote it")
+  ;; the reference's own test case, `a.rs […]` before this ruling, `a.rs` after it
+  (is (equal "a.rs" (display-target "{\"path\":\"a.rs\",\"edits\":[{\"old\":\"x\"}]}"))
+      "and with the array after the path, which is the order letibot's own test uses")
+  ;; the same rule one tool over: a `read` with ranges names its file
+  (is (equal "src/cards.lisp"
+             (display-target "{\"path\":\"src/cards.lisp\",\"ranges\":[{\"offset\":100}]}"))
+      "a windowed read names the file and not the windows")
+  ;; **THE HALF THAT MUST SURVIVE.** `todo_write` sends an array and nothing else —
+  ;; no scalar at all — and `[…]` is the only thing its label can say.
+  (is (equal "[…]"
+             (display-target "{\"todos\":[{\"content\":\"x\",\"status\":\"pending\"}]}"))
+      "todo_write has no scalar to name, so the placeholder is the label")
+  ;; and where the only scalar is a MODIFIER rather than a subject, the placeholder
+  ;; is what stops the row reading as if `term` were the thing being signalled
+  (is (equal "term […]" (display-target "{\"signal\":\"term\",\"pids\":[1,2,3]}"))
+      "a modifier is not a subject, so pkill keeps it")
+  ;; a tool with no arguments at all is not made to invent one
+  (is (equal "{}" (display-target "{}")) "and nothing is not stretched into something"))
+
 (def-test the-reasoning-header-counts-screen-lines-and-its-mark-is-plain (:suite leticl)
   "letibot: `▸ ESC[1mThoughtESC[0;2m · 13 lines · ctrl-r` — the mark carries no
 escape, and 13 is how many ROWS the fold would cost, not how many paragraphs."
