@@ -98,7 +98,8 @@
    #:activity-indent #:step-in-lines #:+activity-indent-cols+
    ;; the item-id maps (S3): what a settled row keeps of the live card
    #:item-facts #:note-call-started #:note-call-finished #:note-call-decision
-   #:display-target #:verb-label #:call-target-of #:note-call-target
+   #:display-target #:verb-label #:call-target-of #:note-call-target #:*target-max-cols*
+   #:%control-char-p
    #:note-assistant-targets #:note-snapshot-targets #:*call-targets*
    #:call-answered-p #:note-answered-call #:*answered-calls* #:%live-elapsed-ms
    #:*item-facts* #:*call-facts* #:*call-started-ms*

@@ -1006,6 +1006,70 @@ the rail stay faint; the code inside them does not."
     (is (equal "let x = 1;" (car first-seg)) "the text survives verbatim")
     (is (null (cdr first-seg)) "and is plain, neither dimmed nor dropped")))
 
+;;; ------------------- §3.3: `truncate-target` must agree with the reference ------- ;;;
+;;;
+;;; The claim: **a display target is cut to the same cap in both heads.** They agreed
+;;; on 120 and disagreed about what of.
+
+(def-test a-display-target-is-cut-to-a-column-budget-not-a-byte-count (:suite leticl)
+  "**Columns, and the unit is the whole of the requirement.**
+
+The reference counts BYTES (`s.len()`, `is_char_boundary`, `event.rs:428-439`) and
+this head counted CHARACTERS (`(length clean)`); both are wrong for text that is not
+ASCII, in opposite directions. MEASURED on the same target, before the fix:
+
+| target | reference | this head, before |
+|---|---|---|
+| 121 ASCII characters | 117 + an ellipsis, 118 columns | 117 + an ellipsis, the same |
+| a target carrying `0x9B` | stripped | **kept** — the two measured it differently |
+| 61 CJK characters (122 columns) | 39 + a mark, 79 columns | **all 61, 122 columns**, untruncated |
+| 61 emoji (122 columns) | 39 + a mark, 79 columns | **all 61, 122 columns** |
+
+Counting characters lets a wide target EXCEED the budget — 61 CJK characters are 122
+columns — which is the exact failure the cap exists to prevent and the one this tree
+spent `W1` learning about rendering; counting bytes under-fills it by a factor of two.
+The cap is about how much room the row has, so it is measured in the unit the row is
+drawn in.
+
+**And the ellipsis counts**, which both heads already agreed on: a cap that forgets
+the mark is a cap the output is allowed to exceed."
+  (let ((cap leticl::*target-max-cols*))
+    (is (= 120 cap) "the cap is the number both heads agreed on")
+    (is (= 120 (length (leticl::truncate-target (make-string 121 :initial-element #\a))))
+        "121 ASCII characters become 119 and an ellipsis — the FULL budget, where the
+ reference's byte-counted cut stops at 118 columns on the same input")
+    (is (equal 120 (length (leticl::truncate-target (make-string 120 :initial-element #\a))))
+        "and 120 characters are not touched at all")
+    ;; **the C1 half of the requirement.** `0x9B` is 8-bit CSI: the reference strips it
+    ;; (Rust's `is_control` covers U+0080–U+009F) and this head did not, so the two
+    ;; measured the same target differently
+    (is (leticl::%control-char-p (code-char #x9b)) "C1 is a control character")
+    (is (leticl::%control-char-p (code-char #x80)) "from the bottom of the range")
+    (is (leticl::%control-char-p (code-char #x9f)) "to the top of it")
+    (is (leticl::%control-char-p (code-char 127)) "and DEL")
+    (is (leticl::%control-char-p (code-char 10)) "and C0")
+    (is (not (leticl::%control-char-p (code-char #xa0))) "and not U+00A0, which is a space")
+    (is (not (leticl::%control-char-p #\a)) "nor an ordinary letter")
+    (is (not (search (string (code-char #x9b))
+                     (leticl::truncate-target (format nil "a~c b" (code-char #x9b)))))
+        "and one inside a target is flattened before anything is measured")
+    (is (= 119 (string-width (leticl::truncate-target (make-string 61 :initial-element #\中))))
+        "61 CJK characters (122 columns) are cut to 118 columns and a mark")
+    (is (= 119 (string-width (leticl::truncate-target (make-string 61 :initial-element #\🙂))))
+        "and 61 emoji (122 columns) to the same")
+    ;; a target that exactly fits is not touched, on either measure
+    (is (= 120 (string-width (leticl::truncate-target (make-string 60 :initial-element #\中))))
+        "120 columns of CJK fit exactly")
+    (dolist (case (list (make-string 61 :initial-element #\中)
+                        (make-string 61 :initial-element #\🙂)
+                        (make-string 121 :initial-element #\a)))
+      (is (<= (string-width (leticl::truncate-target case)) cap)
+          (format nil "never over the cap: ~d columns" (string-width (leticl::truncate-target case)))))
+    (is (not (find #\newline (leticl::truncate-target (format nil "a~%b"))))
+        "a newline in a header is not a row the head did not count")
+    (is (not (find #\tab (leticl::truncate-target (format nil "a~cb" #\tab))))
+        "nor a tab, which measures as one column and draws as eight")))
+
 (def-test fence-language-names-map-to-the-highlighter (:suite leticl)
   "A fence carries a NAME; the shim takes a PATH. Both spellings work."
   (is (eq 0 (lang-for-fence "no-such-language")) "an unknown name is 0, not a guess")

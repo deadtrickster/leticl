@@ -644,6 +644,124 @@ something nobody asked for, and an operator who walked away believing the defaul
 know draws no clause rather than a guess — the same rule the unreadable-frame path
 keeps, because a wrong consequence is worse than an absent one.
 
+### §2.6 — a fence's first word names the grammar, and `console` is not one
+
+**DONE**, and it brings a **ruling letibot should follow** — the one CONFLICT in the
+item.
+
+#### The rule, and why this head's table was the wrong table
+
+*A fence info string resolves to a grammar by its FIRST WORD, case-insensitively,
+ignoring trailing attributes.* letibot gets this from
+`rano::syntax::Lang::from_token` (`crates/tui/src/render.rs:217`), so for the two heads
+to agree this head has to answer the same token the same way.
+
+What it had was the **extension** table (`fence.{ext}` dressed as a filename) with no
+comma or whitespace splitting, so every info string carrying anything after the
+language fell through to plain. Measured, `fence-token` before and after:
+
+| info string | before | after |
+|---|---|---|
+| `rust` | rust | rust |
+| `RUST` | rust | rust |
+| `rust,ignore` | **plain** | rust |
+| `python title="x"` | **plain** | python |
+| `rust title="y" ignore` | **plain** | rust |
+
+and of the doc's list of colours-here-plain-there, every one now resolves:
+
+    tsx lua php make makefile dockerfile ini cfg conf diff patch
+    scheme scm rkt clojure clj edn golang python3 mjs jsx xml svg htm gfm psql
+
+**Resolution is by TOKEN, not by extension**, and the difference is not cosmetic —
+`mk` IS Make as a path extension (`detect`, `syntax.rs:646`) and is NOTHING as a token,
+which `from_token` says twice (it is absent, and `make`/`makefile` map to Make). A fence
+carries a name, so the token table is the one that applies.
+
+**Only grammars this build HAS are in the table**, and that is a rule rather than a
+shortcut: the painter's 27 grammars (`native/hl/src/lib.rs:32-60`) reach the token table
+through a representative extension, so a grammar this build lacks resolves to nothing
+and the fence renders plain. **A row claiming a language the painter cannot draw is
+worse than an honest miss**, because the box header names the grammar that ran. `xml`
+and `svg` map to the HTML grammar — there is no XML lexer, and `from_token` maps them
+the same way — and a language with no grammar at all is simply not in the list.
+
+Live, rendering rather than resolving:
+
+    fence rust,ignore        resolved=rust        5 distinct roles on the line
+    fence python title="x"   resolved=python      4
+    fence makefile           resolved=make        2
+    fence psql               resolved=sql         2
+    fence xml                resolved=html        1
+    fence console            resolved=NIL         0
+    fence text               resolved=NIL         0
+
+#### RULED: `console` is not a language. Plain, in both heads.
+
+This head coloured `console` as bash; letibot returns `None` deliberately, calling it
+*the archetypal unknown* (`rano/src/syntax.rs:93-96`). Four reasons, in the order they
+weigh, and the first is the one that decides it:
+
+1. **A console transcript is not a language.** `console` is a convention (Pygments,
+   Chroma) for a terminal SESSION: a prompt, a command, then the command's OUTPUT. What
+   a bash grammar would colour is mostly output, and output is not bash — so the painter
+   **invents structure the bytes do not have**, which is the rule this file already
+   keeps three lines above `highlight-fence`: *a wrong colour is worse than none*.
+2. **The invented structure HIDES things.** A `#` that opens a comment — a shebang, a
+   glob, a `#` inside a path — greys out the rest of the line, and in a transcript the
+   rest of the line is often THE OUTPUT, which is the one thing the fence is being read
+   for. A quote in output opens a string that never closes. `if`, `do` and `in` appear in
+   output as prose and would take keyword colour.
+3. **The painter owns the vocabulary.** `from_token` is one function, in one crate, with
+   one caller, and it answers `None` because there is no ShellSession grammar to point
+   at. A head that answers differently keeps a private dialect of a shared table, which
+   is the drift this task exists to end.
+4. **There is no other way for the two to agree.** letibot colours by calling
+   `from_token`; agreeing means answering what it answers. Keeping `bash` here means
+   permanent divergence on a token, or changing letibot's shared table to suit one head.
+
+What would change the ruling is a **real ShellSession grammar** — one that knows a prompt
+from output. Then `console` is a language and colouring it is honest. That is a painter
+change, not a head change.
+
+### §3.3 — `truncate-target` must agree
+
+**DONE**, both halves, and the first half is a **ruling for letibot** as well.
+
+**The cap is 120 COLUMNS, and one column of it is spent on the mark.** The two heads
+agreed on 120 and disagreed about what of: the reference counts BYTES (`s.len()`,
+`is_char_boundary`, `event.rs:428-439`) and this head counted CHARACTERS — wrong in
+opposite directions for anything not ASCII, measured on the same input:
+
+| target | reference | this head, before |
+|---|---|---|
+| 121 ASCII characters | 117 + mark, **118 columns** | 117 + mark, the same |
+| 61 CJK characters (122 columns) | 39 + mark, 79 columns | **all 61, 122 columns**, untruncated |
+| 61 emoji (122 columns) | 39 + mark, 79 columns | **all 61, 122 columns** |
+| a target carrying `0x9B` | **stripped** | **kept** — the two measured it differently |
+
+**Counting characters lets a wide target EXCEED the budget** — 61 CJK characters are 122
+columns — which is the exact failure the cap exists to prevent, and the one this tree
+spent `W1` learning about rendering; counting bytes under-fills it by a factor of two.
+The reference's own comment states the intent it is failing (*"that puts a status line
+one column past the terminal and scrolls the frame"*): what it wants is the room the row
+has, which is columns. So the ruling is **both heads count columns**, and the reference
+should move — its two-column shortfall on ASCII is the smaller half of the same bug.
+
+**And the strip class is C0 + DEL + C1.** C1 was missing here: `0x9B` is 8-bit CSI, the
+reference strips it (Rust's `char::is_control` covers `U+0080`–`U+009F`,
+`event.rs:426`) and this head's `(char< c #\space)` covered only C0 with `127` for DEL.
+It does not reach the terminal — width 0, dropped by the painter — but a string carrying
+one truncates to a DIFFERENT ANSWER in the two heads, and two heads that disagree about
+how wide a label is place the same row differently.
+
+After, every case at or under the budget:
+
+    121 a                       in 121 cols -> out 120 cols (mark at 119)
+    61 CJK                      in 122 cols -> out 119 cols
+    61 emoji                    in 122 cols -> out 119 cols
+    60 CJK (exactly 120 cols)   in 120 cols -> out 120 cols, untouched
+
 ### R13 — a running tool call shows a live elapsed time
 
 **DONE** (the commit after `9d08b8d`). The operator, on a `cargo build` that prints

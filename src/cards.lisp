@@ -42,8 +42,26 @@
 ;;;    the row would otherwise be empty or a bare modifier — `todo_write` sends
 ;;;    `{todos: […]}` and nothing else, and that label has no other source.
 
-(defparameter *target-max-bytes* 120
-  "How much of a display target a person reads before the rest is an ellipsis.")
+(defparameter *target-max-cols* 120
+  "How many COLUMNS of a display target a person reads before the rest is an ellipsis.
+
+**Columns, and the unit is the whole of §3.3.** The two heads agreed on 120 and
+disagreed about what of: the reference counts BYTES (`s.len()`, `is_char_boundary`,
+`event.rs:428-439`) and this head counted CHARACTERS (`(length clean)`), and both are
+wrong in opposite directions for text that is not ASCII — measured on the same target:
+
+| target | reference | this head, before |
+|---|---|---|
+| 121 ASCII characters | 117 + `…` (118 columns) | 117 + `…` — the same |
+| 61 `中` | 39 + `…` (79 columns) | **all 61 (122 columns)**, untruncated |
+| 40 `🙂` | 29 + `…` (59 columns) | **all 40 (80 columns)** |
+
+Counting characters lets a wide target EXCEED the budget — 61 CJK characters are 122
+columns — which is the exact failure the cap exists to prevent, and the one this tree
+spent `W1` learning about rendering. Counting bytes under-fills it by a factor of two.
+The cap is about how much room the row has, so it is measured in the unit the row is
+drawn in; `truncate-to-width` is the same instrument every other row here uses, and it
+spends a column on saying it cut rather than cutting silently.")
 
 (defparameter *subject-keys* '(:path :file-path :file)
   "The keys that name a call's subject, in preference order.
@@ -122,21 +140,38 @@ label CAN say, and it stays: `todo_write` sends `{todos: [...]}` and nothing els
       (and (not subject-seen) (%elision-of (cdr part)))
       part))
 
-(defun truncate-target (s)
-  "S cut to `*target-max-bytes*` with an ellipsis, control characters flattened.
+(defun %control-char-p (c)
+  "C is a character that must never reach the terminal from a label: C0, DEL, C1.
 
-The ellipsis COUNTS: `…` is three bytes, and a cap that forgets that is a cap the
-output is allowed to exceed — which is the off-by-a-few that puts a line one
-column past the terminal and scrolls the frame."
-  (let* ((clean (map 'string (lambda (c) (if (or (char< c #\space)
-                                                 (= (char-code c) 127))
-                                            #\space
-                                            c))
-                     s))
-         (limit (max 1 (- *target-max-bytes* 3))))
-    (if (<= (length clean) *target-max-bytes*)
-        clean
-        (concatenate 'string (subseq clean 0 limit) "…"))))
+**C1 belongs here and was missing** — `U+0080`–`U+009F`, of which `0x9B` is the
+8-bit CSI. It used to be stripped by the reference and not by this head (`(char< c
+#\space)` covers C0 and 127 is DEL, and nothing covered 128–159), so the two heads
+measured the same target differently, which is the whole of §3.3. Measured: `0x9B`
+does not reach the terminal — its width is 0 and the painter drops it — but a string
+carrying one `truncate-to-width`s to a different answer here than there, and two
+heads that disagree about how wide a label is will place the same row differently.
+
+Rust's `char::is_control` is exactly this set (`event.rs:426`), so the three ranges
+are written out rather than reached for through a Unicode table."
+  (or (char< c #\space)
+      (= (char-code c) 127)
+      (<= #x80 (char-code c) #x9f)))
+
+(defun truncate-target (s)
+  "S cut to `*target-max-cols*` columns, control characters flattened.
+
+**The ellipsis counts**, which both heads already agreed on and which
+`truncate-to-width` is written around: a cap that forgets the mark is a cap the output
+is allowed to exceed, which is the off-by-a-few that puts a line one column past the
+terminal and scrolls the frame. The unit is COLUMNS for the same reason — see
+`*target-max-cols*` for the three-row table that decided it.
+
+Control characters go FIRST, before anything is measured: a newline inside a header
+would put a row on the screen the head did not count, and a tab measures as one column
+and draws as eight (`%control-char-p`)."
+  (truncate-to-width
+   (map 'string (lambda (c) (if (%control-char-p c) #\space c)) s)
+   *target-max-cols*))
 
 (defun display-target (arguments)
   "The one argument a person reads, from a tool call's ARGUMENTS string."
