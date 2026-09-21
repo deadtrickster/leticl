@@ -6543,6 +6543,130 @@ composer's edge expanded a different one.
     (let ((parts (format nil "~{~a~^ · ~}" (leticl::%usage-numbers s))))
       (is (search "900 ctx" parts) "and the kept usage when no prefill is running"))))
 
+;;; ------------------------ R8: the context outlives the head -------------- ;;;
+;;;
+;;; The operator: *"leticl doesnt show context size for whatever reason"*. Measured,
+;;; and it is not the header — the header builds the same `(total cached
+;;; cache-measured)` triple the reference does and draws `633.5k ctx` correctly while a
+;;; turn's usage is in hand. **The divergence is the fallback under it.** A daemon that
+;;; restarted has no turn state in the snapshot, so after a reattach, a resume, or a
+;;; session opened from disk the usage is empty and the whole `ctx` segment vanished —
+;;; which is most of the time, and precisely when somebody asks how big the
+;;; conversation is. The daemon writes the answer on the session's OWN row at every
+;;; round finish (`persist_context`, harness.rs:4930-4941) and the reference reads it
+;;; there (app.rs:2116-2140).
+
+(defun %header-facts (h)
+  "The header's right-hand numbers as one string — `%usage-numbers`, which is what the
+header draws, so an assertion here is about the row and not about a helper.
+
+`top-border` is asserted separately in the criterion test: it is the same numbers,
+and asserting on both is how `the header says X` stays a claim about the header."
+  (format nil "~{~a~^ · ~}" (leticl::%usage-numbers (head-session h))))
+
+(defun %session-with-row (&key context-tokens context-cached (turn nil))
+  "The head R8 is about: a session whose turn state is GONE, with a daemon row."
+  (let* ((h (%make-head))
+         ;; `let*`: `(head-session h)` is evaluated in the same binding list `h` is
+         ;; introduced by, so a plain `let` had `h` unbound — the error was three
+         ;; tests deep and looked like a missing helper
+         (s (head-session h)))
+    (setf (session-session-id s) "s-r8"
+          (session-title s) "the cache question"
+          (session-turn s) turn
+          (session-sessions s)
+          (list (list :session-id "s-r8" :title "the cache question"
+                      :stored-items 2647
+                      :context-tokens context-tokens
+                      :context-cached context-cached)))
+    h))
+
+(def-test the-context-size-survives-a-daemon-restart (:suite leticl)
+  "R8, in the operator's terms: **attach to a session that is not running and the
+header still says how big it is.**
+
+No turn, no usage, no snapshot turn state — only the session's own row, which the
+daemon writes at the end of every round. Before this the header showed nothing at all
+here, which is the screen a reattach lands on."
+  (let ((leticl::*write-prefs* nil))
+    ;; the size, and the fraction when the row knows it
+    (let* ((h (%session-with-row :context-tokens 633512 :context-cached 590000))
+           (parts (%header-facts h)))
+      (is (search "633.5k ctx" parts) "the header says how big the conversation is")
+      (is (search "93% cached" parts) "and the fraction the row measured")
+      ;; and on the ROW itself, which is the claim — `%usage-numbers` is what it draws
+      (let ((text (format nil "~{~a~}" (mapcar #'car (top-border h (head-cols h))))))
+        (is (search "633.5k ctx · 93% cached" text)
+            "the assembled header row carries both numbers")
+        (is (not (search "$" text)) "and no money, which this row never measured")))
+    ;; **THE SIZE WITHOUT THE FRACTION.** A row that predates the `context_cached`
+    ;; column knows how big the prompt was and not how much of it was cached, so the
+    ;; percentage is ABSENT — not `0% cached`, which would be a measurement nobody made.
+    (let* ((h (%session-with-row :context-tokens 633512))
+           (parts (%header-facts h)))
+      (is (search "633.5k ctx" parts) "a row with no cached count still knows the size")
+      (is (not (search "cached" parts)) "and says nothing about the cache at all"))
+    ;; a row with neither, and a row whose count is zero, are both "not measured"
+    (dolist (h (list (%session-with-row)
+                     (%session-with-row :context-tokens 0 :context-cached 0)))
+      (is (not (search "ctx" (%header-facts h)))
+          "a row that has never measured a prompt says nothing"))
+    ;; **NO COST FROM A BACKFILLED ROW.** A zero there would report a metered session as
+    ;; free — §13.2b in its most expensive form — so the meter stays silent.
+    (let ((h (%session-with-row :context-tokens 633512 :context-cached 590000)))
+      (leticl::reset-spent)
+      (is (null (spent-text)) "a size from the row is not a bill")
+      (is (search "633.5k ctx" (%header-facts h)))
+      (is (null (spent-text)) "and drawing the header still does not light the meter"))))
+
+(def-test a-live-turn-still-wins-over-the-sessions-own-row (:suite leticl)
+  "The fallback is a FALLBACK. The order is the reference's: the prompt being sent,
+what the last turn cost, and only then the row — because the row is a round behind by
+construction, it is written when a round FINISHES."
+  (let* ((leticl::*write-prefs* nil)
+         (h (%session-with-row
+             :context-tokens 1000 :context-cached 100
+             :turn (list :turn-id "t1"
+                         :state (list :state "running"
+                                      :usage (list :prompt-tokens 5000 :cached-tokens 2500)))))
+         (s (head-session h)))
+    (is (search "5000 ctx" (%header-facts h))
+        "a turn this head saw beats the session row (`thousands` shortens past 9999)")
+    ;; and the live prefill beats even that, which is the rule R8 must not disturb
+    (setf (getf (session-turn s) :progress)
+          (list :total 41200 :cache 37000 :processed 1000 :time-ms 500))
+    (let ((parts (%header-facts h)))
+      (is (search "41.2k ctx" parts) "and the prompt being sent beats everything")
+      (is (not (search "5000 ctx" parts)) "including the last turn's"))
+    ;; a turn with no usage of its own falls through to the row
+    (setf (session-turn s) (list :turn-id "t2" :state (list :state "running")))
+    (is (search "1000 ctx" (%header-facts h))
+        "a turn that has measured nothing does not hide the session's own number")))
+
+(def-test the-session-row-is-read-not-invented (:suite leticl)
+  "The `sessions` frame and the `Hello` both carry the brief, so a `/switch` gets the
+new session's number with it — and the head never guesses one.
+
+The wire spellings are the daemon's (`context_tokens`, `context_cached`,
+`registry.rs:238-244`); the decoder turns them into the keywords the rest of this head
+speaks, and this is the assertion that the two agree."
+  (let* ((leticl::*write-prefs* nil)
+         (h (%session-with-row :context-tokens 100))
+         (s (head-session h)))
+    ;; as decoded off the wire, through the same path a real frame takes
+    (let ((frame (json-decode
+                  (format nil "{\"frame\":\"sessions\",\"current\":\"s-r8\",\"created\":null,\"sessions\":[{\"session_id\":\"s-r8\",\"title\":\"t\",\"created_ms\":0,\"stored_items\":3,\"live\":false,\"context_tokens\":633512,\"context_cached\":590000}]}"))))
+      (leticl::%handle-frame h frame)
+      (is (search "633.5k ctx" (%header-facts h))
+          "the row's own numbers, off the wire")))
+  (let* ((leticl::*write-prefs* nil)
+         (h (%session-with-row :context-tokens 633512))
+         (s (head-session h)))
+    ;; a session the daemon no longer lists has no row to read
+    (setf (session-sessions s) nil)
+    (is (not (search "ctx" (%header-facts h)))
+        "and a session with no row claims nothing")))
+
 (def-test a-scrubbed-head-shows-the-triangle (:suite leticl)
   "`alarmed()` is `dropped + scrubbed + resyncs > 0` (app.rs:7619-7620 in the old
 tree, `:7929-7931` on the current pin, where R3 added a fourth term) and

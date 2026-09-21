@@ -53,6 +53,8 @@ predicate.
 | **T5, the ladders' order** | the decision ladder was the tail of the key chain, so a permission arriving over an open session list left ↑↓ moving the PICKER; the reference asks the ask first (app.rs:3609) and keeps only the deliberate overlays ahead of it (:3384, :3417, :3481) | `6b87351` |
 | **R3, unreadable frames** | a frame this head could not read was consumed and counted NOWHERE — the reader turned a bad line into a status note that expired, and an unknown frame or event tag fell through in silence, which makes *"this daemon is sending me something I do not understand"* look exactly like a quiet daemon. Now said in the conversation, counted on `/status` and the border, and survived | `f70920d` |
 | **R5, a protocol skew** | the `Hello` version check EXITED the head and said so on a note that expires. It now names the DIRECTION (a newer daemon is a reading problem R3 answers; an older one is a writing problem this head cannot survive from its side), files the sentence in the conversation, and stays attached; `/status` has a `protocol` row that reads `not told yet` before the handshake | `3025082` |
+| **R8, the context size** | the header's `ctx` came from the TURN only, so it vanished after a restart, a reattach or a resume — `TurnFinished` is ephemeral. It now falls back to the session's own row (`context_tokens`/`context_cached`), which the daemon writes at every round finish; the cache fraction is refused unless the row measured it, and a backfilled row never lights the money meter | `R8` |
+| **T1, the payload window** | a long tool result had an UNREACHABLE TAIL: the fold raised the budget and gave no row an offset, so `… +N lines · ctrl-t` named a chord that revealed nothing past forty lines. `ctrl-t` now opens a window on the newest pageable row, ↑/↓ page it, `esc` closes it, and the three seams say which key does what and where the reader is | `f655e7a` |
 | **W1, double-width text** | `%split-words` split on spaces alone, so a CJK paragraph was one chunk; it was then cut by CHARACTER INDEX against a COLUMN budget, so each piece was `2×cols` columns and the painter dropped the overflow in silence — **156 of 300 clusters reached the screen**. Now wraps at the column budget over clusters, and a newline in a wrapped text is a hard break instead of a character the painter discards | `W1` |
 
 ## In flight
@@ -78,13 +80,20 @@ predicate.
 
 ## Open, in the order they would stop the operator
 
-- [ ] **T1 · the payload window** (`keys.md` G13, `wire.md` W2/W13,
-  `panes.md` G4/G10). A 418 KB tool result is a logical string that wraps to
-  thousands of display lines; `ctrl-t` never reached the end of one, and Enter on
-  a jobs row posts `/job ID` into the conversation instead of reading it. The
-  reference answered with a protocol frame (`FetchRow` / `RowFetched`,
-  `ReadJobOutput` / `JobOutput`) and a paged overlay. **Wire and pane together —
-  the one item that needs two strands.** Size L.
+- [~] **T1 · the payload window** (`keys.md` G13, `wire.md` W2/W13,
+  `panes.md` G4/G10). **Half closed in `f655e7a`**: the OFFSET now exists —
+  `ctrl-t` opens a window on the newest pageable row, ↑/↓ page it by ten lines,
+  `esc` closes it, and three seams say which key does what and where the reader is
+  (`↑ N more lines above · ↑ scrolls up`, `… +N lines · ↓ pages down · esc closes`,
+  `… end of output · esc closes`). **What is NOT there, and why the row stays open:**
+  (1) a row the daemon did not send is still unreachable — `ViewBounds` trims the
+  snapshot at 2000 rows / 8 MB and `FetchRow`/`RowFetched` is answered by every
+  daemon and sent by neither head (letibot files it as R19.2); (2) one window at a
+  time, on the newest row, because the transcript has no pointer to aim one with;
+  (3) Enter on a jobs row still posts `/job ID` into the conversation rather than
+  reading it in the overlay — that is `ReadJobOutput`/`JobOutput` on the wire
+  (protocol 22, `make-read-job-output` exists) with no HEAD sending it. Size M for
+  (3) alone; (1) is its own item.
 - [ ] **T2 · the launcher** — `~/bin/letibot` needs `exec "$HEAD"` at its four
   remaining TUI exec sites and `~/bin/leticl` replaced by `scripts/leticl`;
   blocked on the operator, since the edit is in their own `~/bin`. Until then

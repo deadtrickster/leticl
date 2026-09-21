@@ -204,6 +204,60 @@ that identifies it, and `~/Projects/…` names nothing."
       (let ((keep (max 1 (- room 1))))
         (concatenate 'string "…" (subseq path (max 0 (- (length path) keep)))))))
 
+(defun %session-brief (s)
+  "This session's OWN row from the daemon's list, or NIL when it is not there.
+
+The list arrives on the `Hello` and on every `sessions` frame, and this head already
+keeps it and reads it for `:stored-items` (the picker's `N rows`). The two fields it
+did not read are the ones that answer *how big is this conversation* without a turn.
+
+**A subagent session finds no row here, and the reference has the same gap**: both
+heads filter `parent_session_id` rows out of the list they keep (a subagent is not a
+session a picker lists), so a head switched INTO one has nothing to read. Recorded
+rather than half-fixed — the fix is a second, unfiltered list, and it is not needed for
+the screen R8 is about."
+  (find (session-session-id s) (session-sessions s)
+        :key (lambda (b) (getf b :session-id)) :test #'string=))
+
+(defun %usage-backfilled (s)
+  "The context the SESSION's own row remembers, as a usage plist, or NIL.
+
+**R8: the context size is a property of the SESSION, not of this head's uptime.**
+A daemon that restarted has no turn state in the snapshot — `TurnFinished` is
+ephemeral and a view rebuilt from the transcript has no turn — so after a reattach, a
+resume, or opening a session from disk, the turn's usage is empty and this head's
+whole `ctx` segment disappeared. On the operator's screen the symptom was intermittent
+in exactly the way the cause predicts: it showed while a turn had run in THIS head's
+lifetime and showed nothing after a reattach — most of the time, and precisely when
+somebody asks how big the conversation is (*\"leticl doesnt show context size for
+whatever reason\"*).
+
+The daemon writes both columns on EVERY round finish (`persist_context`,
+harness.rs:4930-4941, from `TurnMetrics`), so the row is the durable half of the same
+measurement. The reference reads it in its `Sessions` arm (app.rs:2116-2140) and only
+when it has no usage of its own.
+
+**Two disciplines, and they are the reason this is not a one-liner.**
+
+  · **The size is known and the cache FRACTION may not be.** A row carries
+    `context_cached` only if a turn finished after that column existed, so the same
+    refusal the header already makes applies here: `:cached-tokens` is ABSENT from the
+    plist rather than zero, and `%usage-numbers`' own `(third ctx)` guard is what keeps
+    `0% cached` off the screen. A zero would read as *nothing was cached*, which is a
+    measurement, where the truth is that nobody measured.
+  · **A backfilled row carries NO COST.** `:cost-micros-usd` is absent, never 0 —
+    nothing recorded a per-turn cost on the row, and a zero there would report a
+    metered session as free. That is §13.2b in its most expensive form: a number that is
+    absent is not a number that is zero."
+  (let* ((brief (%session-brief s))
+         (tokens (and brief (getf brief :context-tokens)))
+         ;; the same guard the turn path uses: a count of zero is not a measurement of a
+         ;; prompt, it is a row nobody wrote
+         (cached (and brief (getf brief :context-cached))))
+    (when (and (numberp tokens) (plusp tokens))
+      (append (list :prompt-tokens tokens)
+              (when (numberp cached) (list :cached-tokens cached))))))
+
 (defun %usage-numbers (s)
   "The four telemetry numbers the header shows, each present only when measured:
 context size, cache fraction, decode rate, elapsed — plus output tokens.
@@ -226,7 +280,13 @@ turn as `(:total :cache :processed :time-ms)` and had no reader."
                     ;; a finished turn's usage is kept past the end of the turn,
                     ;; so the header still says what the conversation costs while
                     ;; nothing is running — which is most of the time
-                    (and turn (getf turn :usage))))
+                    (and turn (getf turn :usage))
+                    ;; **AND WHEN THERE IS NO TURN AT ALL** — a reattach, a resume, a
+                    ;; session opened from disk — the SESSION's own row. This is the
+                    ;; fallback that was missing: without it the whole `ctx` segment
+                    ;; vanished on exactly the screens where nobody can answer the
+                    ;; question any other way.
+                    (%usage-backfilled s)))
          (pp (getf turn :progress))
          ;; `(TOTAL CACHED CACHE-MEASURED)`, the reference's own triple: a live
          ;; prefill always measured its own cache, a kept usage did so only if it

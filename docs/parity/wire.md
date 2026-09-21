@@ -195,7 +195,7 @@ where it changes what the ack reports.
 | `resumed_from` | `session.lisp:104-108` | SAME |
 | `scrubbed` | `session.lisp:89`, `%scrub-total` | SAME — `ScrubReport` is five `u64` counts and nothing else (`scrub.rs:134-150`), so summing every integer in the plist equals `total()` (`scrub.rs:153-159`) |
 | `wiring` | `session.lisp:93` | SAME — all four of `SessionWiring` (`registry.rs:255-260`) kept raw |
-| `sessions` | `session.lisp:92`, title lookup at 100-103 | DIFFERS — kept unfiltered. The reference drops rows with a `parent_session_id` before storing, twice (`app.rs:1668-1671`, `1732-1735`), because subagents are not sessions a picker lists. leticl also never reads `SessionBrief.context_tokens`/`context_cached` (`registry.rs:238-244`), which is how the reference shows a context figure after a daemon restart when the snapshot has no turn (`app.rs:1692-1713`) |
+| `sessions` | `session.lisp:92`, title lookup at 100-103 | DIFFERS — kept unfiltered. The reference drops rows with a `parent_session_id` before storing, twice (`app.rs:1668-1671`, `1732-1735`), because subagents are not sessions a picker lists. **`context_tokens`/`context_cached` are READ now** (`src/chrome.lisp:216-253`, R8): the header's `ctx` comes from the session's own row when the head has no turn of its own — a restart, a reattach, a resume. That closes the second half of this row; the missing `parent_session_id` filter is still open |
 
 **What `ingest-snapshot` does not do that `load` does:** clear the session-scoped
 state that is not in the snapshot. `app.rs:1902-1934` clears call tables, usage,

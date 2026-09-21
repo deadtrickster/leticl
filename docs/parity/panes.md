@@ -242,7 +242,7 @@ list of breakages.
 | `alarmed` | `dropped + scrubbed + resyncs > 0` | `app.rs:7619-7620` | `dropped` and `resync` only — **`scrubbed` is not an alarm** — plus `(not connected)` | `src/chrome.lisp:82-93` | **DIFFERS** — a scrubbed-only head shows no ⚠; a detached head shows a ⚠ the reference would not |
 | where the alarm shows | `⚠` on the box's bottom edge; full counters on the unboxed fallback row | `app.rs:5180-5192`, `app.rs:7650-7672` | `⚠` on the bottom edge; the fallback row exists but is never drawn (§1.5) | `src/chrome.lisp:444-445`, `263-283` | **DIFFERS** |
 | money meter | `$%.4f` from `spent_micros`, only when `spent_seen`; **reset on a session switch** | `app.rs:6291-6294`, `App::spent_*` `app.rs:984-987` | identical rule and identical reset-on-Hello | `src/chrome.lisp:110-136`, `src/head.lisp:164` | **SAME**; the `$0.5602` vs `$0.0074` in the captures is each head's own since-attach spend, which is the contract |
-| context / cache | **live prefill wins while a turn runs** (`turn.progress.total/cache`), else the kept usage; `% cached` refused unless the usage measured its own cache | `app.rs:6274-6301` | `state.usage` or `turn.usage` — **no `progress` path**; `% cached` printed whenever both numbers are present | `src/chrome.lisp:170-208` | **DIFFERS** — during a running turn leticl shows the *previous* turn's ctx |
+| context / cache | **live prefill wins while a turn runs** (`turn.progress.total/cache`), else the kept usage, else **the session's own row**; `% cached` refused unless the usage measured its own cache | `app.rs:6274-6301`, and the row at `app.rs:2116-2140` | the same four-step order — live prefill, then `state.usage`, then `turn.usage`, then the brief's `context_tokens`/`context_cached`; the fraction is refused unless the row carried `context_cached` | `src/chrome.lisp:207-300` | **SAME**. The third step is **R8** (below) and the second was G12, both closed |
 | tok/s, elapsed, out | printed only when measured | `app.rs:6305-6322` | same rule | `src/chrome.lisp:190-207` | **SAME** |
 | session position | `at/total`, shown for one session too, subagents excluded | `app.rs:6213-6221`, `app.rs:1667-1671` | same, via the shared `picker-sessions` filter | `src/chrome.lisp:151-160` | **SAME** |
 | model on the header | later of `settings.model` and the turn's model, ranked by seq | `app.rs:6245-6268` | same rule | `src/chrome.lisp:49-73`, `src/session.lisp:187` | **SAME** |
@@ -430,12 +430,42 @@ Ranked by how soon it bites in the first hour of daily use.
 9. **The peek pane advertises three keys and honours one.** (G5) *First subagent read.*
 10. **A crash leaves the terminal raw.** (G8) Low frequency, high cost: an unusable
     shell, requiring `reset`. *Whenever it happens.*
-11. **The header's context number is stale while a turn runs.** (G12) *Every long turn,
-    quietly.*
+11. ~~**The header's context number is stale while a turn runs.**~~ (G12) **CLOSED** —
+    the live prefill path (`turn.progress`) won the header, as the reference's
+    `header_line` has it. See R8 below for the other half of the same screen: the
+    number was also *absent* whenever the head had not seen a turn itself.
 12. **A slash listing scrolls past instead of opening a pane.** (G10) *First `/gate
     recent`, `/tools` or `/models`.*
 
 Everything else on the gap list is real and none of it would stop a switch.
+
+### R8, in its general form
+
+**A number about the SESSION is a property of the session, not of this head's uptime.**
+
+The header's `ctx` was correct whenever a turn had run in the head's own lifetime and
+ABSENT on every other screen — after a daemon restart, a reattach, a `--resume`, or a
+session opened from disk — because the only place it looked was the turn, and
+`TurnFinished` is ephemeral: a view rebuilt from the transcript has no turn. That is
+most of the time, and precisely when somebody asks how big the conversation is
+(*"leticl doesnt show context size for whatever reason"*). The answer was already on the
+wire, on the session's own row, written at every round finish.
+
+Two disciplines come with it, and they are why it is not a one-liner:
+
+1. **A backfilled row knows the size and may not know the cache FRACTION.** It carries
+   `context_cached` only if a turn finished after that column existed, so the size is
+   shown and the percentage is absent — never `0% cached`, which is a measurement
+   nobody made. The header already refused an unmeasured fraction (G12's guard); it
+   simply had nothing to feed it.
+2. **A backfilled row carries NO COST.** Nothing recorded a per-turn cost on that row,
+   and a zero there reports a metered session as free — §13.2b in its most expensive
+   form. A number that is ABSENT is not a number that is zero.
+
+The order is the reference's and each step wins over the next: **the prompt being sent
+(live prefill), what the last turn cost, then the session's own row.** The row is a
+round behind by construction — it is written when a round finishes — so it is the last
+word and never the first.
 
 ---
 
@@ -458,7 +488,8 @@ screen is right.
 | G9 `--resume` | End-to-end: stop the daemon, start a fresh one, `leticl --continue` into a session that is on disk but not held. letibot succeeds; leticl must too. |
 | G10 slash_out | Unit: feed a `warning` frame with code `slash` whose detail has 5+ lines and assert a pane opened. Live: `/gate recent` and compare screens. |
 | G11 counters | Unit: ingest Hello with `dropped 10`, then a Resync snapshot with `dropped 3`, and assert `/status` still says at least 10. Add a `scrubbed` case across a resync. Then assert `alarmed-p` is true for `scrubbed > 0` alone. |
-| G12 header ctx | Unit: a running turn with a `:progress` plist whose `total` differs from the kept usage; assert the header shows the progress number. |
+| G12 header ctx | Unit: a running turn with a `:progress` plist whose `total` differs from the kept usage; assert the header shows the progress number. Landed: `the-header-prefers-the-prompt-being-sent`. |
+| R8 session ctx | Unit, three cases, because the discipline is the point: a head with **no turn at all** and a brief carrying `context_tokens`+`context_cached` shows `N ctx` and the percentage; the same brief **without** `context_cached` shows the size and says nothing about the cache; and neither lights the money meter. Then the order: a live prefill beats a turn's usage, which beats the row. Landed: `the-context-size-survives-a-daemon-restart`, `a-live-turn-still-wins-over-the-sessions-own-row`, `the-session-row-is-read-not-invented`. |
 | G13 `o` | Unit: `:char #\o` on `:subagents` sends a `switch` frame. |
 | G14 picker cursor | Unit: open the picker on a session list where the current session is row 3 and assert `head-picker-sel` is 2. |
 | G16 config | Unit: Enter at the last row wraps to 0; Enter with a non-empty composer submits the line rather than flipping the row; give `*prefs*` a real temp `:path` and **read the file back** after Enter (the existing test at `tests/tests.lisp:2043-2066` uses a NIL path and never touches disk, which is the one assertion the reference has and leticl does not — `app.rs:11256-11260`). |
