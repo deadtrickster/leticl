@@ -264,6 +264,14 @@ fourteen-column indent, then a blank. 26 rows against our 18."
            "Interactive-only frames withheld from a head that attached late — partial tool output and the like, which has no durable form.")
       (row "resync" *resyncs*
            "Times this head threw its state away and took a fresh snapshot, because the gap since its read mark was past the daemon's bound.")
+      ;; THE RENDER ERROR, first among the things that can go wrong, because it is
+      ;; the one that can hide its own report: a render error paints a failure
+      ;; frame, and if the failure is IN the painting the frame saying so is
+      ;; exactly what does not arrive. It has a row here so the question "why is
+      ;; the screen wrong" has an answer that does not depend on the screen.
+      (when *last-render-error*
+        (row "render" (format nil "~a" (type-of *last-render-error*))
+             (format nil "THE LAST FRAME FAILED TO RENDER: ~a — the failure is painted into the screen and this line is the same fact in a place that survives it. Fix the definition and re-push; clearing it is not the fix." *last-render-error*)))
       (row "verbosity" (string-downcase (symbol-name *verbosity*))
            "What reaches the transcript at the current filter. /verbosity walks terse → normal → loud. It used to sit on the composer's border, which was a row of attention paid for ever for a fact read once.")
       (let ((ws (getf (session-wiring s) :workspace)))

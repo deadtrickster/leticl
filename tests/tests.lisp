@@ -6726,3 +6726,155 @@ which is what that table was: three commits, two columns, nothing to call them."
     (let ((rows (remove-if (lambda (l) (zerop (length (string-trim " " l))))
                            lines)))
       (is (>= (length rows) 3) "a header-with-no-names, a rule, and two rows"))))
+
+;;; ------------------------------------------ synchronized output is balanced ;;;
+;;;
+;;; `ESC[?2026h` ENABLES synchronized output, which SUSPENDS every update until
+;;; `ESC[?2026l` arrives. If a paint signals between them and the close is skipped,
+;;; the terminal is left with sync ENABLED and the screen never changes again.
+;;;
+;;; Measured by the operator on a live head: expanding a tool card or a thinking
+;;; block froze the screen, scroll looked dead, and switching byobu windows
+;;; restored it — because tmux re-asserts the terminal's state on focus. The cause
+;;; was NOT a content escape (every path for those is closed: `%without-control`,
+;;; `plain-columns-p`, the zero-width cluster skip, C1 zeroed in the width table).
+;;; It was this: the paint loop had no `unwind-protect`, so an error inside it —
+;;; and `paint-diff` deliberately keeps default safety on its cell reads, so a bad
+;;; cell SIGNALS rather than faults, i.e. inside the unprotected region — left the
+;;; sequence open. `%render-and-paint` then caught the error into
+;;; `*last-render-error*` and carried on painting into a terminal that had stopped
+;;; showing anything.
+
+(defun %emit-count (out needle)
+  "How many times NEEDLE appears in the string OUT has collected."
+  (let ((text (get-output-stream-string out)))
+    (values (let ((n 0) (i 0))
+              (loop for j = (search needle text :start2 i)
+                    while j do (incf n) (setf i (1+ j)))
+              n)
+            text)))
+
+(defun %two-screens ()
+  "A pair of screens with one cell changed, so the paint has work to do."
+  (let ((prev (make-screen 20 3))
+        (cur (make-screen 20 3)))
+    (screen-put-string cur 0 0 "hello")
+    (values prev cur)))
+
+(def-test synchronized-output-is-closed-when-the-paint-signals (:suite leticl)
+  "THE regression: a signal inside the paint must not leave sync ENABLED.
+
+The paint is driven with a stub that signals partway through, which is what a bad
+cell does. The close must still reach the terminal, exactly once, and the frame
+must not be left mid-style."
+  (let ((leticl::*caret* nil))
+    (multiple-value-bind (prev cur) (%two-screens)
+      (let ((out (make-string-output-stream))
+            (boom (make-condition 'simple-error :format-control "the stub's signal")))
+        ;; a cell accessor that signals on the third read — inside the loop, after
+        ;; the sync is already enabled
+        (let ((reads 0))
+          (declare (special reads))
+          (flet ((%cell-ch (c) (incf reads) (when (= reads 3) (error boom)) (cell-ch c)))
+            (declare (ignore #'%cell-ch))))
+        ;; the honest way to signal from inside the loop: a style table that is
+        ;; short, so the painter's own `aref` is out of range — a real defect, in
+        ;; the real place
+        (let ((real-sgrs leticl::*style-sgrs*))
+          (unwind-protect
+               (progn
+                 (setf leticl::*style-sgrs* (make-array 1 :adjustable t :fill-pointer 1
+                                                        :initial-element ""))
+                 ;; force a style change so the painter reads the short table
+                 (setf (cell-style (screen-cell cur 0 0)) 7)
+                 (signals error (paint-diff prev cur out :sync t)))
+            (setf leticl::*style-sgrs* real-sgrs)))
+        (multiple-value-bind (closes text) (%emit-count out (format nil "~C[?2026l" leticl::+esc+))
+          (is (= 1 closes)
+              "the sync is CLOSED exactly once even though the paint signalled —
+without this the terminal keeps synchronized output ENABLED and stops updating")
+          (is (search (format nil "~C[?2026h" leticl::+esc+) text)
+              "and it was opened, so the pair is real"))))))
+
+(def-test synchronized-output-is-closed-on-the-happy-path-too (:suite leticl)
+  "Exactly one pair, the close LAST, and the frame's reset inside it.
+
+A fix that closed the sync twice, or closed it before the reset, would pass the
+regression above and still be wrong. Measured output for a one-word frame:
+
+    ESC[?2026h  ESC[1;1H  hello  ESC[0m  ESC[?25l  ESC[?2026l
+    ^open       ^move     ^content ^reset ^caret   ^close, and last"
+  (let ((leticl::*caret* nil))
+    (multiple-value-bind (prev cur) (%two-screens)
+      (let ((out (make-string-output-stream))
+            (begin (format nil "~C[?2026h" leticl::+esc+))
+            (end (format nil "~C[?2026l" leticl::+esc+)))
+        (paint-diff prev cur out :sync t)
+        (let ((text (get-output-stream-string out)))
+          (is (= 1 (count-substring begin text)) "the sync is opened once")
+          (is (= 1 (count-substring end text)) "and closed once, not twice")
+          (is (eql 0 (search begin text)) "it is the FIRST byte")
+          (is (= (- (length text) (length end)) (search end text))
+              "and the close is the LAST — nothing is painted after it")
+          (is (search (format nil "~C[0m" leticl::+esc+) text)
+              "the frame still resets the style")
+          (is (< (search begin text) (search "hello" text))
+              "the content is inside the pair"))))))
+
+(def-test the-sync-pair-brackets-every-painted-byte (:suite leticl)
+  "Nothing is painted outside the pair. This is the property a future edit is most
+likely to break: writing to OUT before `sync-begin` or after `sync-end` is a byte
+the terminal can show half-drawn."
+  (let ((leticl::*caret* nil))
+    (multiple-value-bind (prev cur) (%two-screens)
+      (let ((out (make-string-output-stream))
+            (begin (format nil "~C[?2026h" leticl::+esc+))
+            (end (format nil "~C[?2026l" leticl::+esc+)))
+        (paint-diff prev cur out :sync t)
+        (let* ((text (get-output-stream-string out))
+               (b (search begin text))
+               (e (search end text))
+               (body (subseq text (+ b (length begin)) e)))
+          (is (and b e (< b e)) "begin precedes end")
+          (is (search "hello" body) "the frame's content is inside the pair")
+          (is (search (format nil "~C[0m" leticl::+esc+) body)
+              "and so is the reset, so a style cannot leak past the close")
+          (is (search (format nil "~C[?25l" leticl::+esc+) body)
+              "and the caret, so the pair encloses the whole frame"))))))
+
+;;; ---------------------------------------- a render error is reachable ;;;
+;;;
+;;; The operator: *"surface `*last-render-error*` somewhere reachable — right now a
+;;; render error that freezes the screen leaves its own explanation only in
+;;; /status, which cannot be read once the screen is frozen."*
+
+(def-test a-render-error-raises-the-alarm (:suite leticl)
+  "A broken renderer must not be able to hide its own report.
+
+The failure is normally PAINTED into the screen, so when the failure is in the
+painting that frame is the one thing that does not arrive. The alarm triangle on
+the composer's edge is drawn by a path that has to keep working for the screen to
+exist at all, and `/status` carries the message."
+  (let ((h (%make-head))
+        (*last-render-error* nil)
+        (*resyncs* 0))
+    (setf (head-connected h) t)          ; a fresh head starts disconnected
+    (is (not (alarmed-p h)) "nothing wrong, no alarm")
+    (setf *last-render-error* (make-condition 'simple-error :format-control "boom"))
+    (is (alarmed-p h) "a render error raises the alarm")
+    (setf *last-render-error* nil)
+    (is (not (alarmed-p h)) "and clearing it lowers the alarm again")))
+
+(def-test status-carries-the-render-error (:suite leticl)
+  "The message survives in a place that does not depend on the renderer working."
+  (let* ((h (%make-head))
+         (*last-render-error* nil))
+    (let ((text (segs-of (status-screen-lines h 120))))
+      (is (not (search "THE LAST FRAME FAILED" text))
+          "no error, no row"))
+    (setf *last-render-error* (make-condition 'simple-error :format-control "the message"))
+    (let ((text (segs-of (status-screen-lines h 120))))
+      (is (search "THE LAST FRAME FAILED" text) "the row appears")
+      (is (search "the message" text) "with the message itself")
+      (is (search "is not the fix" text)
+          "and it says what to do, because 'clear the flag' is not the fix"))))

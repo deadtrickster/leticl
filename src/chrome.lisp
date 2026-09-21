@@ -112,9 +112,15 @@ restart; there is one head per process, so a global costs nothing and pushes."
 `alarm-counts` now carries `scrubbed`, which is the reference's third term. The
 `(not connected)` clause is ours and stays: the reference exits on a dead socket
 (`driver.rs:102-108`) and this head reconnects, so \"detached\" is a state it can
-be in and the reference cannot."
+be in and the reference cannot.
+
+**A render error alarms too**, and it is the one that most needs to: the failure
+is normally painted into the screen, so if the failure is IN the painting the frame
+saying so is exactly what does not arrive. `⚠` on the composer's edge is the one
+channel a broken renderer cannot take away, and `/status` carries the message."
   (or (alarm-counts head)
-      (not (head-connected head))))
+      (not (head-connected head))
+      (and *last-render-error* t)))
 
 ;;; ---------------------------------------------------------------- money ;;;
 ;;;

@@ -26,6 +26,10 @@
    #:screen-cols #:screen-rows #:screen-cell #:screen-row #:screen-put #:screen-put-string
    #:cell-ch #:cell-style
    #:style-index #:paint-diff #:paint-full
+   ;; the render failure, and the lock that keeps a push out of a frame. EXPORTED
+   ;; because the head's contract now names it in three places outside this file:
+   ;; the gate reports it, `/status` explains it, and the alarm raises it.
+   #:*last-render-error* #:paint-lock
    ;; the two parallel style tables — a restyle may want to read or extend them,
    ;; and the cache is derivable from the specs so it can be repaired in place
    #:*styles* #:*style-sgrs* #:rebuild-style-sgrs

@@ -334,58 +334,84 @@ paints of a 210×63 frame with every row changed took 15 ms at default safety an
              (type simple-vector cells)
              (type (or null simple-vector) pcells))
     (when sync (sync-begin out))
-    (dotimes (r rows)
-      (declare (type fixnum r))
-      (let ((c 0)
-            (base (* r cols)))
-        (declare (type fixnum c base))
-        (loop while (< c cols)
-              do (let* ((i (+ base c))
-                        (cell (svref cells i))
-                        (pcell (if pcells (svref pcells i) blank)))
-                   (declare (type fixnum i) (type cell cell pcell))
-                   (if (%cell= pcell cell)
-                       (incf c)
-                       (progn
-                         ;; start of a changed run: move there, write until it ends
-                         (%move-to out r c)
-                         (loop while (< c cols)
-                               do (let* ((j (+ base c))
-                                         (cc (svref cells j))
-                                         (pp (if pcells (svref pcells j) blank)))
-                                    (declare (type fixnum j) (type cell cc pp))
-                                    (when (%cell= pp cc) (return))
-                                    (let ((ch (cell-ch cc)))
-                                      (cond
-                                        ((char= ch +wide-cont+)
-                                         ;; covered by the wide char before it
-                                         (incf c))
-                                        (t
-                                         (when (/= (cell-style cc) last-style)
-                                           (write-string (%sgr (cell-style cc)) out)
-                                           (setf last-style (cell-style cc)))
-                                         (let ((w (char-width ch)))
-                                           (if (and (= 2 w) (= c (1- cols)))
-                                               ;; a wide char on the last column would
-                                               ;; wrap; the buffer never holds one there
-                                               ;; (screen-put-string degrades it), but a
-                                               ;; direct screen-put could — guard anyway
-                                               (progn (write-char #\space out) (incf c))
-                                               (progn (write-char ch out)
-                                                      (incf c (max 1 w))))))))))))))))
-    (write-char +esc+ out)
-    (write-string "[0m" out)
-    ;; THE CARET, last: a frame is a run of absolute moves, so wherever the last
-    ;; changed run left the cursor is arbitrary — the caret has to be placed after
-    ;; the painting and only then shown.
-    (if *caret*
-        (progn (%move-to out (car *caret*) (cdr *caret*))
-               (write-char +esc+ out)
-               (write-string "[?25h" out))
-        (progn (write-char +esc+ out)
-               (write-string "[?25l" out)))
-    (when sync (sync-end out))
-    (force-output out)))
+    ;; **THE SYNC MUST CLOSE, WHATEVER HAPPENS.**
+    ;;
+    ;; `ESC[?2026h` ENABLES synchronized output, which SUSPENDS every update until
+    ;; `ESC[?2026l` arrives. Between them there is no protection, so anything that
+    ;; signals inside the paint loop — a bad cell, a plist that changed shape, an
+    ;; error from the alien highlight shim — skips the close and leaves the
+    ;; terminal with sync still ENABLED. The head keeps painting, `%render-and-paint`
+    ;; catches the error into `*last-render-error*`, sets `head-dirty` and loops,
+    ;; and every frame after that goes into a terminal that has stopped showing
+    ;; anything. Measured by the operator: expanding a tool card or a thinking
+    ;; block froze the screen, scroll looked dead, and switching tmux windows
+    ;; restored it because tmux re-asserts the terminal's state on focus.
+    ;;
+    ;; The fix is the `unwind-protect` and nothing cleverer: on the way out — the
+    ;; happy path and a signal alike — the sync is closed and the output flushed.
+    ;; A reset goes with it, because this module's invariant is that every paint
+    ;; BEGINS at default style and an aborted paint never wrote the body's own.
+    (let ((painted nil))
+      (unwind-protect
+           (progn
+             (dotimes (r rows)
+               (declare (type fixnum r))
+               (let ((c 0)
+                     (base (* r cols)))
+                 (declare (type fixnum c base))
+                 (loop while (< c cols)
+                       do (let* ((i (+ base c))
+                                 (cell (svref cells i))
+                                 (pcell (if pcells (svref pcells i) blank)))
+                            (declare (type fixnum i) (type cell cell pcell))
+                            (if (%cell= pcell cell)
+                                (incf c)
+                                (progn
+                                  ;; start of a changed run: move there, write until it ends
+                                  (%move-to out r c)
+                                  (loop while (< c cols)
+                                        do (let* ((j (+ base c))
+                                                  (cc (svref cells j))
+                                                  (pp (if pcells (svref pcells j) blank)))
+                                             (declare (type fixnum j) (type cell cc pp))
+                                             (when (%cell= pp cc) (return))
+                                             (let ((ch (cell-ch cc)))
+                                               (cond
+                                                 ((char= ch +wide-cont+)
+                                                  ;; covered by the wide char before it
+                                                  (incf c))
+                                                 (t
+                                                  (when (/= (cell-style cc) last-style)
+                                                    (write-string (%sgr (cell-style cc)) out)
+                                                    (setf last-style (cell-style cc)))
+                                                  (let ((w (char-width ch)))
+                                                    (if (and (= 2 w) (= c (1- cols)))
+                                                        ;; a wide char on the last column would
+                                                        ;; wrap; the buffer never holds one there
+                                                        ;; (screen-put-string degrades it), but a
+                                                        ;; direct screen-put could — guard anyway
+                                                        (progn (write-char #\space out) (incf c))
+                                                        (progn (write-char ch out)
+                                                               (incf c (max 1 w))))))))))))))))
+             (write-char +esc+ out)
+             (write-string "[0m" out)
+             ;; THE CARET, last: a frame is a run of absolute moves, so wherever the
+             ;; last changed run left the cursor is arbitrary — the caret has to be
+             ;; placed after the painting and only then shown.
+             (if *caret*
+                 (progn (%move-to out (car *caret*) (cdr *caret*))
+                        (write-char +esc+ out)
+                        (write-string "[?25h" out))
+                 (progn (write-char +esc+ out)
+                        (write-string "[?25l" out)))
+             (setf painted t))
+        ;; the cleanup: reached on the happy path AND on a signal, and it is the
+        ;; only thing that stands between a render error and a frozen terminal
+        (unless painted
+          (write-char +esc+ out)
+          (write-string "[0m" out))
+        (when sync (sync-end out))
+        (ignore-errors (force-output out))))))
 
 (defun paint-full (cur out)
   "Clear and paint everything — after a resize, on attach, on resync."
