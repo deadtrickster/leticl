@@ -289,6 +289,24 @@ suppressing it would throw away the diagnostic to protect the decoration.
     the carries this session has actually seen       2702 and 4473 rows
     =>  +carry-min-rows+ 64
 
+**And the two ranges OVERLAP, which is the whole argument for the trigger being a
+trigger.** letibot measured the same question on its own store, independently and not
+by copying these numbers, and got:
+
+    rows per turn, its store, 957 turns    median 17 · p90 130 · p99 290 · max 591
+    the carries IT has seen, 42            smallest 448 · largest 576,374
+    =>  its own threshold 256
+
+**An ordinary turn reached 591 rows and the smallest carry is 448**, so on either store
+size cannot separate a turn from a carry at all: a threshold drawn from one head's data
+would be wrong on the other's, and both would be wrong on the tenth session. The only
+thing that separates them is *what the evidence IS* — a bulk announcement, or an
+operation the daemon is running — and each head arrived at that separately.
+
+That is the argument for measuring the same question twice on different data: the two
+thresholds differ (64 and 256) and neither is right, because the number was never the
+separator. The trigger is, and each head's own store is what proved it.
+
 **The patience, likewise.** `+body-patience-ms+`, and the reference's 3000 ms is the
 number that produced its own false alarm (*"9,570 row(s) announced and never filled in"*,
 three seconds into a healthy import — false, alarming, and it burns the one diagnostic

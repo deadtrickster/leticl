@@ -544,13 +544,23 @@ a bar claiming progress for ever — and *a bar that cannot end is worse than no
          (and (plusp total) (< done total)))))
 
 (defun note-filling (env)
-  "Fold one `filling` tick. Returns `:dirty` when the line should be redrawn."
+  "Fold one `filling` tick. Returns `:dirty` when the line should be redrawn.
+
+**The completion is the clear.** `done == total` is the daemon saying it is finished,
+and the line goes — the operation's own finish note is what says it ended, and a bar
+left at `total of total` would sit on the screen for ever. A tick with no `total`, or
+with `total` zero, is not an operation to draw either: there is nothing to be a
+fraction OF, and a line reading `0 of 0` is a render fault dressed as a measurement.
+
+**`what` and `unit` are the daemon's and are kept as they arrive**, verbatim, including
+`NIL` — `filling-progress-line` is what decides how to draw each, so one place knows
+the fallbacks rather than two. A daemon that sent `filling` without the words (a
+version skew, R5) gets the head's own cause-free sentence rather than a `NIL` where a
+noun goes."
   (let ((done (or (getf env :done) 0))
         (total (or (getf env :total) 0)))
-    ;; **The completion is the clear.** `done == total` is the daemon saying it is
-    ;; finished, and the line goes — the import's own finish note is what says the
-    ;; operation ended.
-    (setf *filling* (when (and (integerp total) (plusp total) (< done total))
+    (setf *filling* (when (and (integerp total) (plusp total)
+                               (integerp done) (< done total))
                       (list :what (getf env :what)
                             :unit (getf env :unit)
                             :done done :total total
@@ -953,20 +963,17 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
        (push env (session-jobs session))
        :dirty)
       ((:filling)
-       ;; **The daemon's own count.** `what` and `unit` are its words and are drawn
-       ;; verbatim — a head that renames the operation is naming a cause it inferred.
-       ;; `import-progress` is the SAME event under its first name, for a daemon built
-       ;; in the hour before this landed: the rename to `filling` is a ruling that the
-       ;; event is general (a carry is not an import), and this arm exists only until
-       ;; the daemon sends the new name. Delete it then, not before.
-       (note-filling (if (getf env :what)
-                         env
-                         ;; the old name carried no words, so the head supplies the
-                         ;; two the new shape asks for; that is a translation table,
-                         ;; not an inference
-                         (list :what "reading an opencode conversation into this session"
-                               :unit "parts"
-                               :done (getf env :done) :total (getf env :total)))))
+       ;; **The daemon's own count, and the daemon's own words.** `what` and `unit`
+       ;; are its to name — `parts` for an import, `rows` for a carry are not the same
+       ;; thing — so they are drawn verbatim: a head that renames the operation is
+       ;; naming a cause it inferred, which is the defect this event exists to end.
+       ;;
+       ;; The four fields are checked rather than assumed, because a head meets this
+       ;; event across a version skew (R5) as well as in a test: `unit` reached this
+       ;; protocol with the rename, so a daemon that sends `filling` without it is not
+       ;; a shape `protocol.rs` produces and the line falls back to the head's
+       ;; unnamed form rather than printing `NIL` where a noun goes.
+       (note-filling env))
       ((:job-output)
        ;; **The answer to the jobs pane's Enter, folded into the overlay that
        ;; asked and nowhere else.** The whole window is kept — job, from, to,

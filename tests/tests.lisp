@@ -201,9 +201,13 @@ position, and a list element has no absence to fall back to."
 ;;; ------------------------------------------------------------ protocol ;;;
 
 (def-test attach-golden (:suite leticl)
+  ;; the version is the CONSTANT's, not a literal: this golden is about the frame's
+  ;; SHAPE — defaults, omitted serde-default fields, caps present — and a bump that
+  ;; had to be applied here by hand would be a bump somebody forgets
   (is
    (equal
-    "{\"frame\":\"attach\",\"protocol_version\":22,\"session_id\":\"\",\"since_seq\":0,\"kind\":\"tui\",\"identity\":\"\",\"caps\":{\"queue\":1024,\"can_decide\":true}}"
+    (format nil "{\"frame\":\"attach\",\"protocol_version\":~d,\"session_id\":\"\",\"since_seq\":0,\"kind\":\"tui\",\"identity\":\"\",\"caps\":{\"queue\":1024,\"can_decide\":true}}"
+            +protocol-version+)
     (encode-frame (make-attach)))
    "defaults, serde-default fields omitted, caps present"))
 
@@ -4572,6 +4576,71 @@ SENTENCE is still a note, because a note is all there is."
                                                    "lines") "slash_refused"))
     (is (eq :slash (head-mode h)) "a refused listing opens it too")))
 
+;;; --------------------- a counted operation the daemon reports --------------- ;;;
+;;;
+;;; **`SessionEvent::Filling { what, unit, done, total }`** (protocol 23, letibot
+;;; `4d01aca`, which replaced `ImportProgress`). The field names and the tag are pinned
+;;; here against a REAL wire line rather than against the plist this head happens to
+;;; expect, because the whole reason the head folds this event is that the daemon is the
+;;; only layer that knows which operation is running: a head that renamed it, or read a
+;;; field that is not there, would be inferring again with extra steps.
+
+(def-test a-filling-tick-is-read-from-the-real-wire-fields (:suite leticl)
+  "The words stay the daemon's, and the tag is the daemon's spelling.
+
+Decoded from a literal line of the shape `protocol.rs` produces — snake_case tag,
+snake_case fields — so a rename on either side of the wire is a failure here rather
+than a bar that draws `NIL of NIL NIL`."
+  (let ((*filling* nil) (*now-ms* 1000)
+        (h (%make-head)))
+    (let ((frame (json-decode
+                  (format nil "{\"frame\":\"event\",\"seq\":1,\"event\":\"filling\",~
+                               \"what\":\"carrying the conversation onto the new prompt\",~
+                               \"unit\":\"rows\",\"done\":1234,\"total\":2702}"))))
+      (is (equal :filling (event-name frame))
+          "the tag decodes to the keyword the fold's arm matches")
+      (is (eq :dirty (apply-event (head-session h) frame)))
+      (is (equal "rows" (getf *filling* :unit)) "the unit is what the daemon counted")
+      (is (= 1234 (getf *filling* :done)) "and the count is its count")
+      (is (= 2702 (getf *filling* :total))))
+    ;; **and the daemon's own words are drawn VERBATIM.** This is the whole point of
+    ;; the event: a head that renamed the operation would be naming a cause it cannot
+    ;; see, which is the defect the event was landed to end.
+    (let* ((f *filling*)
+           (text (segs-of (filling-progress-line (getf f :what) (getf f :unit)
+                                                 (getf f :done) (getf f :total) 100 1000))))
+      (is (search "1234 of 2702 rows" text) "the count and the unit as the daemon named them")
+      (is (search "carrying the conversation onto the new prompt" text)
+          "and its sentence, not one this head composed"))
+    ;; --- the units honestly differ, and both render
+    (dolist (case (list (list "parts" "100 of 9570 parts")
+                        (list "rows" "100 of 2702 rows")))
+      (destructuring-bind (unit expect) case
+        (is (search expect (segs-of (filling-progress-line
+                                     "some operation" unit 100 (if (string= unit "parts") 9570 2702)
+                                     100 1000)))
+            (format nil "~a is drawn in its own unit" unit))))
+    ;; --- and the completion clears rather than pinning the bar at the end
+    (apply-event (head-session h)
+                 (json-decode "{\"frame\":\"event\",\"seq\":2,\"event\":\"filling\",\"what\":\"x\",\"unit\":\"rows\",\"done\":2702,\"total\":2702}"))
+    (is (null *filling*) "done == total is the operation finished, and the line goes")
+    (is (not (filling-active-p)) "so nothing is drawn")
+    ;; --- and a tick from a daemon that did not send the words (a skew, R5) gets the
+    ;; head's own cause-free sentence rather than NIL where a noun goes
+    (apply-event (head-session h)
+                 (json-decode "{\"frame\":\"event\",\"seq\":3,\"event\":\"filling\",\"done\":1,\"total\":9}"))
+    (let ((text (segs-of (filling-progress-line
+                          (getf *filling* :what) (getf *filling* :unit) 1 9 100 1000))))
+      (is (search "1 of 9" text) "the count is still drawn")
+      (is (not (search "NIL" text)) "and no NIL is printed where a word goes"))
+    ;; --- a tick whose count is not a count is not an operation to draw
+    (dolist (line (list "{\"frame\":\"event\",\"seq\":4,\"event\":\"filling\",\"what\":\"x\",\"unit\":\"rows\",\"done\":\"lots\",\"total\":9}"
+                        "{\"frame\":\"event\",\"seq\":5,\"event\":\"filling\",\"what\":\"x\",\"unit\":\"rows\",\"done\":1,\"total\":0}"))
+      (setf *filling* nil)
+      (apply-event (head-session h) (json-decode line))
+      (is (null *filling*)
+          (format nil "a tick that cannot be a fraction of anything sets nothing: ~a" line)))))
+
 ;;; ------------------------------ the carry line (§2.5) --------------------- ;;;
 ;;;
 ;;; `/reseat` and `/compact` announce every carried row before a single body follows.
@@ -5608,7 +5677,9 @@ operator is entitled to know before they spend an hour in that session."
         (is (search "protocol 99" row) "with both numbers in it")
         (is (search (format nil "~d" +protocol-version+) row)
             "including this head's own"))
-      (is (some (lambda (l) (string= "  protocol    99 · this head speaks 22 — NEWER build" l))
+      (is (some (lambda (l) (string= (format nil "  protocol    99 · this head speaks ~d — NEWER build"
+                                              +protocol-version+)
+                                    l))
                 (lines-text (status-screen-lines h 120)))
           "and /status carries the direction after the row has scrolled away")
       ;; said once, however many Hellos a Switch produces
@@ -5629,7 +5700,9 @@ operator is entitled to know before they spend an hour in that session."
           (is (search "OLDER" row) "the older direction is named as older")
           (is (search "closing the socket" row)
               "and says the session can end on the next thing typed"))
-        (is (some (lambda (l) (string= "  protocol    9 · this head speaks 22 — OLDER build" l))
+        (is (some (lambda (l) (string= (format nil "  protocol    9 · this head speaks ~d — OLDER build"
+                                              +protocol-version+)
+                                    l))
                   (lines-text (status-screen-lines h2 120)))
             "and /status names it"))))
   ;; the headers say the number the constant says
@@ -8804,7 +8877,7 @@ written unconditionally instead of appearing when it first moves."
                             (lines-text (item-lines item 100 (head-prefs h))))))
           (is (search "cannot read" row) "the conversation says so where it arrived")
           (is (search "peeked_v2" row) "and names the tag")
-          (is (search "protocol 22" row)
+          (is (search (format nil "protocol ~d" +protocol-version+) row)
               "and names THIS head's version, so the two numbers can be compared")
           (is (search "The line was: {\"frame\":\"event\"" row)
               "and carries the offending line AS IT ARRIVED, not a re-encoding")
@@ -8893,7 +8966,8 @@ on the next frame's TTL, and counted nowhere. One conversation, one counter."
                        (1- (length (session-items (head-session h))))))
            (row (segs-of (item-lines item 120 (head-prefs h)))))
       (is (search "{not json at all" row) "the bytes are kept")
-      (is (search "protocol 22" row) "and the version is named"))
+      (is (search (format nil "protocol ~d" +protocol-version+) row)
+          "and the version is named"))
     ;; a LONG line is truncated rather than pasted as a wall
     (let ((long (make-string 5000 :initial-element #\x)))
       (leticl::%handle-frame h (list :unreadable t :detail "too long" :line long))
