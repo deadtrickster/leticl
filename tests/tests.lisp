@@ -1076,6 +1076,120 @@ the mark is a cap the output is allowed to exceed."
   (is (integerp (lang-for-fence "lisp")) "a known name answers an id")
   (is (integerp (lang-for-fence "rust")) "and so does another"))
 
+;;; ---------------------- §2.6: a fence's first word names the grammar ------------ ;;;
+;;;
+;;; The claim: **a fence info string resolves to a grammar by its FIRST WORD,
+;;; case-insensitively, ignoring trailing attributes.** letibot gets this from
+;;; `rano::syntax::Lang::from_token` (`crates/tui/src/render.rs:217`), so the two
+;;; heads agree only if this one answers the same token the same way — and this
+;;; head's table WAS the extension table, with no comma or whitespace splitting, so
+;;; every fence carrying an option fell through to plain.
+
+(def-test a-fence-resolves-by-its-first-word (:suite leticl)
+  "The claim, in the four shapes an info string actually takes.
+
+`rust,ignore` and `python title="x"` were the two measured misses: the whole
+string was looked up and matched nothing, so the fence rendered plain while letibot
+coloured it. The rule is `from_token`'s own (`rano/src/syntax.rs:98-104`): split on a
+comma, then on whitespace, take what is left, case-insensitively."
+  (is (equal "rust" (fence-token "rust")) "a bare token")
+  (is (equal "rust" (fence-token "RUST")) "case-insensitively")
+  (is (equal "rust" (fence-token " rust ")) "trimmed")
+  (is (equal "rust" (fence-token "rust,ignore")) "a comma and an option")
+  (is (equal "python" (fence-token "python title=\"a b\"")) "a space and a title")
+  (is (equal "python3" (fence-token "python3"))
+      "a version suffix is the TOKEN itself — `python3` is its own name in `from_token`,
+ not a prefix of `python`")
+  (is (equal "" (fence-token "  ")) "and an empty one is empty, not a crash")
+  ;; and every one of them reaches a grammar
+  (dolist (info (list "rust,ignore" "python title=\"x\"" "rust title=\"y\" ignore" "RUST,"))
+    (is (plusp (lang-for-fence info)) (format nil "~s colours" info))))
+
+(def-test every-token-rano-knows-is-a-token-this-head-knows (:suite leticl)
+  "**The painter IS the table**, so this asserts against it rather than restating it.
+
+`rano::syntax::Lang::from_token` is what letibot colours a fence with, and its
+docstring says the property that keeps it honest: *`from_token` answers every
+`Lang::name()`, and vice versa*. So the check here is a list of the tokens that table
+names — every one of them, including the ones the doc listed as missing here (tsx,
+lua, php, make, makefile, dockerfile, ini, cfg, conf, diff, patch, scheme, scm, rkt,
+clojure, clj, edn, golang, python3, mjs, jsx, xml, svg, htm, gfm, psql) — and the
+requirement that each reaches a grammar THIS BUILD HAS.
+
+The tokens that must NOT resolve are as important and are asserted below."
+  (dolist (tk '("rust" "rs" "go" "golang" "sh" "bash" "shell" "zsh"
+                "py" "python" "python2" "python3" "c" "h" "json"
+                "lisp" "cl" "commonlisp" "common-lisp" "elisp" "emacs-lisp" "el"
+                "js" "jsx" "javascript" "mjs" "node" "ts" "typescript" "mts" "cts"
+                "tsx" "md" "markdown" "gfm" "toml" "yaml" "yml"
+                "html" "htm" "xhtml" "xml" "svg" "css" "lua" "rb" "ruby" "php" "java"
+                "make" "makefile" "gnumakefile" "dockerfile" "docker"
+                "ini" "cfg" "conf" "properties" "editorconfig"
+                "diff" "patch" "udiff" "scm" "scheme" "ss" "rkt"
+                "sql" "psql" "mysql" "plpgsql" "clj" "cljs" "cljc" "edn" "clojure"))
+    (is (plusp (lang-for-fence tk)) (format nil "~a resolves to a grammar" tk))
+    (is (stringp (fence-grammar-name tk)) (format nil "and ~a names one" tk))))
+
+(def-test a-token-this-build-cannot-draw-stays-plain (:suite leticl)
+  "**A grammar you do not have is not an alias you can add.** The doc's list includes
+`xml` and `svg`, and there is no XML lexer in the painter's 27 grammars
+(`native/hl/src/lib.rs:32-60`) — so they map to the HTML grammar, which is what
+colours them in letibot too, and `rano::syntax::Lang::from_token` maps them
+identically. A language with *no* grammar at all is simply not in the table: a row
+claiming one the painter cannot draw is worse than an honest miss, because the box
+header would name a grammar that did not run.
+
+`mk` is the case that proves the token table is its own table and not the extension
+one: `mk` IS Make as a path extension (`detect`, `syntax.rs:646`) and is NOTHING as a
+token, which `from_token` says twice — it is absent, and `make`/`makefile` map to
+Make."
+  (is (eq 0 (lang-for-fence "mk")) "`mk` is an extension, not a token")
+  (is (plusp (lang-for-fence "make")) "but `make` is a token, and it colours")
+  (is (plusp (lang-for-fence "makefile")) "so is a makefile")
+  (is (eq 0 (lang-for-fence "text")) "a word with no grammar stays plain")
+  (is (eq 0 (lang-for-fence "txt")) "and so does another")
+  (is (eq 0 (lang-for-fence "")) "and so does nothing at all")
+  (is (null (fence-grammar-name "no-such-thing")) "and names no grammar"))
+
+(def-test console-is-not-a-language-and-stays-plain (:suite leticl)
+  "**The conflict, ruled: letibot is right and this head was wrong.**
+
+Both heads agree on almost the whole table (`from_token` is one function), and
+`console` is where they disagreed — this head coloured it as bash, letibot returns
+`None` deliberately, calling it *the archetypal unknown* (`rano/src/syntax.rs:93-96`).
+
+**Ruled: plain, in both heads.** Four reasons, in the order they weigh:
+
+1. **A console transcript is not a language.** `console` is a convention (Pygments,
+   Chroma) for a terminal SESSION: a prompt, a command, then the command's OUTPUT.
+   What a bash grammar would colour is mostly output, and output is not bash — so
+   the painter invents structure the bytes do not have. That is the rule this file
+   already keeps for an unknown language and for a fence the shim lacks: *a wrong
+   colour is worse than none*, written three lines above `highlight-fence`.
+2. **The invented structure HIDES things.** A `#` that opens a comment (a shebang, a
+   shell glob, a `#` in a path) greys out the rest of the line — and in a console
+   transcript the rest of the line is often THE OUTPUT, which is the one thing the
+   operator is reading the fence for. A quote character in output opens a string that
+   never closes it, and `if` / `do` / `in` appear in output as prose and would take
+   keyword colour.
+3. **The painter owns the vocabulary.** `from_token` is one function in one crate,
+   used by one caller, and it answers `None` — because there is no ShellSession
+   grammar to point at. A head that keeps its own answer here keeps a private dialect
+   of a shared table, which is exactly the drift this task exists to end.
+4. **And the two heads cannot be made to agree any other way.** letibot colours a
+   fence by calling `from_token`; for the two to agree, this head must answer what
+   `from_token` answers. Choosing `bash` here means choosing permanent divergence on
+   a token, or a change in letibot's shared table to satisfy one head.
+
+What would change this ruling is a real ShellSession grammar — one that knows a
+prompt from output. Then `console` is a language and colouring it is honest. That is
+a painter change, not a head change."
+  (is (eq 0 (lang-for-fence "console")) "console resolves to no grammar")
+  (is (null (fence-grammar-name "console")) "and names none")
+  ;; the other side of the same rule: a fence the painter CAN draw still colours
+  (is (plusp (lang-for-fence "bash")) "bash itself is unaffected")
+  (is (plusp (lang-for-fence "sh")) "and so is sh"))
+
 ;;; ------------------------------------------- live state is defvar, not defparameter ;;;
 
 (defun source-of (name)

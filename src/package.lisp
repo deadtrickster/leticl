@@ -116,7 +116,7 @@
    ;; the config pane (P21), editable in place
    #:*head-setting-rows*
    ;; engines a model may want to call directly while restyling
-   #:highlight-fence #:lang-for-fence
+   #:highlight-fence #:lang-for-fence #:fence-token #:fence-grammar-name #:*fence-tokens*
    ;; keys
    #:read-key #:make-composer #:composer-buffer #:composer-cursor
    ;; the editor's windows (S4): the kill ring, undo, the paste ledger
