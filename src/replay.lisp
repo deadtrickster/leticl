@@ -133,6 +133,7 @@ see this file's header."
          (*verbosity* :normal)
          (*filtered-total* 0)
          (*rendered-total* 0)
+         (*unreadable-total* 0)
          (*pane-scroll* 0)
          (*pick-open* nil)
          (*mode-confirm* nil)

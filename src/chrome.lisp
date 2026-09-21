@@ -104,7 +104,15 @@ restart; there is one head per process, so a global costs nothing and pushes."
                    ;; showed no ⚠ at all, so the one counter whose whole point is
                    ;; that the operator learns about it was the one kept quiet.
                    (cons "scrubbed" *scrubbed-total*)
-                   (cons "resync" *resyncs*))))
+                   (cons "resync" *resyncs*)
+                   ;; **A frame this head could not read alarms too**, and it is the
+                   ;; fourth term of the reference's `alarmed()` (app.rs:7929-7931:
+                   ;; `dropped + scrubbed + resyncs + unreadable > 0`). It belongs on
+                   ;; the border for the same reason `scrubbed` does: the head is still
+                   ;; running and the conversation has the sentence, but a counter
+                   ;; that only appears on `/status` is one the operator has to have
+                   ;; already suspected.
+                   (cons "unreadable" *unreadable-total*))))
 
 (defun alarmed-p (head)
   "Is anything wrong enough to spend a row on?

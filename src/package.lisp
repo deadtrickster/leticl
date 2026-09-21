@@ -123,7 +123,8 @@
    #:mode-confirm-lines #:pick-choices #:pick-current
    #:picker-sessions #:config-rows #:config-change #:pane-width #:wrap-text
    #:tilde-path #:short-id #:bytes-human #:split-row
-   #:*rendered-total* #:*scrubbed-total* #:*filtered-total* #:%send-slash
+   #:*rendered-total* #:*scrubbed-total* #:*filtered-total* #:*unreadable-total*
+   #:%send-slash
    #:setting-choices #:setting-value
    #:peek-lines #:config-lines #:status-screen-lines #:help-lines #:picker-lines
    ;; highlight

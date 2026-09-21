@@ -346,6 +346,118 @@ hold is."
          (stringp mine) (plusp (length mine))
          (not (string= id mine)))))
 
+;;; ------------------------------------------------------ unreadable frames ;;;
+;;;
+;;; **A frame this head cannot read is SAID, COUNTED, and SURVIVED.**
+;;;
+;;; The wire is JSON and both ends are internally tagged — `{"frame": "event", …}`,
+;;; `{"event": "delta", …}` — so the first frame two builds do not share is exactly
+;;; what a daemon one version ahead looks like from here. leticl has always
+;;; SURVIVED one: the reader loop catches the decode error and reads on, and an
+;;; unknown tag falls through to the end of the fold. What it never did was SAY so
+;;; — and that silence is the failure this section exists to end, because *"this
+;;; daemon is sending me something I do not understand"* then looks exactly like a
+;;; quiet daemon, which is how an afternoon goes into debugging the wrong half.
+;;;
+;;; There are three ways to meet one, and all three go through `note-unreadable`:
+;;;
+;;;   · **a line that is not JSON at all** — the reader loop's `wire-error`;
+;;;   · **a frame tag this head does not know** — `%handle-frame`'s last arm, which
+;;;     used to answer `:control` and nothing else;
+;;;   · **an event tag this head does not know** — `apply-event`'s last arm, which
+;;;     used to answer `:quiet` and nothing else.
+;;;
+;;; The reference has only the first, because serde fails the whole line on an
+;;; unknown tag where this reader is structural and hands the plist over. Being
+;;; structural and silent is strictly worse: it is why this head could step over a
+;;; frame from a newer daemon and never say a word about it.
+
+(defvar *unreadable-total* 0
+  "Frames that arrived and could not be read, over this head's life.
+
+The bucket the reference's `/status` gained with this requirement, and the one
+number that keeps *the daemon is sending me something I do not understand* apart
+from *the daemon is quiet*. A `defvar` rather than a session slot, and NOT reset
+by a snapshot: it counts this head's lifetime, so a row that reads 0 is a head that
+has never met one — a different statement from a head that does not count them.")
+
+(defparameter *unreadable-line-cols* 200
+  "How much of the offending line the complaint carries.
+
+A `defparameter` and not a `defconstant`: the file pusher SKIPS `defconstant` (it
+changes a definition the image has already copied), so a constant here could never
+be changed on a running head — the one thing every value in this repo must allow.")
+
+(defun unreadable-said (detail line)
+  "The sentence this head says about a frame it cannot read.
+
+ONE function, so the three places that can meet one cannot describe it three
+ways: a head that exits, a head that shrugs and a head that counts have to agree
+about what happened, and the only way to guarantee that is one string.
+
+It names this head's OWN protocol version, because the two numbers are the whole
+comparison — a daemon newer than this head is almost always the cause, and saying
+so is what sends the operator to the right half. The offending line rides along
+TRUNCATED rather than dropped: the line is the evidence, a decoder that reports
+\"bad frame\" without the frame turns a precise complaint into a shrug, and the
+first question anybody asks about a skew is *which frame*."
+  (let* ((width (string-width (or line "")))
+         (shown (and (plusp width) (%truncate-width line *unreadable-line-cols*)))
+         (cut (> width *unreadable-line-cols*)))
+    (format nil "the daemon sent a frame this head cannot read (~a). This head ~
+                 speaks protocol ~d; a daemon built against a newer one will do ~
+                 this on the first frame the two do not share, and it is almost ~
+                 always that rather than a corrupt stream. The connection is ~
+                 still up.~@[ The line was: ~a~a~]"
+            detail +protocol-version+ shown (if cut "…" ""))))
+
+(defun note-unreadable (session detail line)
+  "SAY it, COUNT it, keep going — the one entry point for a frame this head cannot
+read. Returns `:dirty`, so a caller folding an envelope hands it straight back.
+
+**The sentence is filed as a ROW IN THE CONVERSATION, at the point it arrived** —
+not as a status note, which is the head state this repo already has and is the
+wrong shape twice over: a note sits pinned above the composer for a few frames and
+then expires on a TTL, so a frame this head could not read would be gone by the
+time anybody looked for it, and it would be gone silently, which is the failure
+again. An item is anchored where it landed and scrolls away with the rest of the
+conversation, which is what \"where it arrived\" means and why `ts` is 0 rather than
+invented: this happened on the SOCKET, and the session log's clock is not this.
+
+**Nothing is acked and the read mark does not move.** No frame was parsed, so
+there is no seq to report, and inventing one would rewind the mark over frames
+already read — the one thing a mark must never do. `/status`'s `filtered` is \"events
+I chose not to show\" and this is not that either."
+  (incf *unreadable-total*)
+  ;; a unique item id, so nothing the daemon sends can ever be confused for it:
+  ;; the wire's ids are `s.3`, `t1.0` and the like, and this row is the head's own
+  (push-item session
+             (list :item-id (format nil "leticl-unreadable-~d" *unreadable-total*)
+                   :kind "note"
+                   :ts 0
+                   :item (list :type "note" :text (unreadable-said detail line))))
+  :dirty)
+
+(defparameter +events-not-folded-here+
+  '(:explain :screen-requested :secret-requested :secret-settled)
+  "Events this head KNOWS and does not fold into session state.
+
+Two kinds, and both have to be named or the counter cries wolf:
+
+  · **folded by the head LOOP, which owns the last painted frame and the input
+    focus** — `screen_requested` is answered with the rows just drawn,
+    `secret_requested` raises the masked field, `secret_settled` dismisses it.
+    `apply-event` is the session's folder and cannot do any of those; it is handed
+    these only by a caller that skipped the loop (a test, a replay), so without
+    this list a head would report a frame it reads perfectly well;
+  · **`explain`**, which the reference answers `Filtered` (app.rs:3017) and this
+    head has no renderer for.
+
+Named here rather than left to the fallthrough so that *I know this tag and it is
+not mine to fold* stays separable from *I have never heard of this tag* — which is
+the difference between a quiet head and a silent one, and the whole point of
+`*unreadable-total*`.")
+
 (defun apply-event (session env)
   "Fold one envelope into state. Returns :dirty when something visible
 changed, :quiet when not — the head loop paints on :dirty and acks on both."
@@ -687,10 +799,24 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
           (reset-pane-scroll)
           :dirty)
          (t :quiet)))
-      ;; screen_requested / secret_requested are answered by the head loop,
-      ;; which owns the last frame and the input focus; explain is untyped
-      ;; until W14 says what it is (event.rs:698)
-      (t :quiet))))
+      ;; `screen_requested`, `secret_requested` and `secret_settled` are answered by
+      ;; the head loop, which owns the last frame and the input focus. Everything
+      ;; else that reaches here is a tag this head does not know — a daemon one
+      ;; version ahead, by construction — and it is SAID and COUNTED rather than
+      ;; answered `:quiet` under a comment that named the three events it meant.
+      (t
+       (if (member name +events-not-folded-here+)
+           :quiet
+           ;; **The line it ARRIVED as, not a re-encoding of the plist.** The reader
+           ;; attaches `:wire-line` to every frame it decodes; `encode-frame` would
+           ;; produce a line that is not what the daemon sent — and would nest this
+           ;; frame's own `:wire-line` inside it, which the first run of this did and
+           ;; rendered as a line inside a line. `encode-frame` stays as the fallback
+           ;; for the paths that build an envelope themselves: a replay from a
+           ;; fixture, and a test.
+           (note-unreadable session
+                            (format nil "unknown event ~s" (or (getf env :event) "?"))
+                            (or (getf env :wire-line) (encode-frame env))))))))
 
 (defun appendf-text (turn slot text)
   (setf (getf turn slot) (concatenate 'string (getf turn slot) text)))
@@ -742,6 +868,8 @@ arrived renders as a placeholder, honestly (view.rs on SnapshotItem.item)."
            (format nil "~a ~a → ~a" (getf body :name) (getf body :call-id)
                    (outcome-name (getf body :outcome))))
           ((:segment_mark) "")          ; zero-width by design (lib.rs:55)
+          ;; a row this head filed itself — see `note-unreadable`
+          ((:note) (getf body :text))
           (t "")))))
 
 (defun outcome-name (outcome)

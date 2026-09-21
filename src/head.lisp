@@ -110,7 +110,14 @@ globals a frame reads.")
               (head-status-note head) (format nil "send failed: ~a" e))))))
 
 (defun %reader-loop (head)
-  "Socket → frames mailbox. EOF is detach, never abort (§13.2)."
+  "Socket → frames mailbox. EOF is detach, never abort (§13.2).
+
+**Every frame carries the line it arrived as**, under `:wire-line`. Not a copy: it
+is the string `read-frame` just returned, which the frame now keeps alive until it
+is folded and which is therefore free — one cons. It is here because a frame this
+head cannot read is only evidence if the operator can see the bytes, and the two
+places that meet one (an unknown frame tag, an unknown event tag) are downstream of
+the decode that would otherwise have dropped the line on the floor."
   (loop
     (handler-case
         (multiple-value-bind (line eof) (read-frame (head-stream head))
@@ -119,13 +126,22 @@ globals a frame reads.")
                  (return))
                 (t
                  (handler-case
-                     (sb-concurrency:send-message (head-frames head)
-                                                  (decode-frame line))
+                     (sb-concurrency:send-message
+                      (head-frames head)
+                      (list* :wire-line line (decode-frame line)))
+                   ;; **A line this head cannot read is a FRAME, not a socket.** The
+                   ;; reader used to turn this into a `warning` with code
+                   ;; `malformed-frame`, which the head drew as a status note: one
+                   ;; line above the composer, gone on the next frame's TTL, and
+                   ;; counted nowhere. It is handed on as the same head-internal
+                   ;; marker the two unknown-tag sites use, so all three describe
+                   ;; themselves once, in the conversation, and in one counter.
                    (wire-error (e)
                      (sb-concurrency:send-message
                       (head-frames head)
-                      (list :frame "warning" :code "malformed-frame"
-                            :detail (format nil "~a" e))))))))
+                      (list :unreadable t
+                            :detail (format nil "~a" (wire-error-detail e))
+                            :line (wire-error-line e))))))))
       (error (e)
         (sb-concurrency:send-message (head-frames head) '(:disconnected))
         (sb-concurrency:send-message
@@ -241,11 +257,25 @@ first."
              (head-status-note head)
              "read_job_output: the daemon closed the connection — it is older than this frame; reconnecting"))
      :control)
+    ((and (consp frame) (eq (car frame) :unreadable))
+     ;; **A FRAME THIS HEAD CANNOT READ: said, counted, survived.** The marker is
+     ;; head-internal — the reader loop makes one for a line that will not decode —
+     ;; and the two unknown-tag arms below reach the same function directly. It is
+     ;; NOT a status note and NOT `:filtered`: nothing was parsed, so there is no seq
+     ;; to ack, and `filtered` is "events I chose not to show", which the daemon reads
+     ;; back. See `note-unreadable`.
+     (note-unreadable (head-session head)
+                      (or (getf frame :detail) "no detail")
+                      (getf frame :line))
+     (setf (head-dirty head) t)
+     :control)
     ((and (consp frame) (string= (frame-name frame) "warning")
           (getf frame :code) (member (getf frame :code)
-                                     '("malformed-frame" "read-error")
+                                     '("read-error")
                                      :test #'string=))
-     ;; our own transport warnings, not session events
+     ;; our own transport warnings, not session events. **`malformed-frame` is no
+     ;; longer one of them**: a line that would not decode is a frame this head could
+     ;; not read, and it goes through `note-unreadable` with the rest.
      (setf (head-status-note head)
            (format nil "~a: ~a" (getf frame :code) (getf frame :detail))
            (head-dirty head) t)
@@ -345,7 +375,7 @@ first."
          ((:decision-requested)
           ;; **A FRESH QUESTION STARTS AT THE TOP OF ITS LADDER.**
           ;;
-          ;; The reference's own reason (app.rs:2546-2548): *"the highlight must
+          ;; The reference's own reason (app.rs:2597-2600): *"the highlight must
           ;; never be somewhere the operator did not put it when Enter is one key
           ;; away"*. This head never reset it — `endp-open` in `session.lisp` was
           ;; called here and did NOTHING (`(declare (ignore open-decisions))`), and
@@ -368,7 +398,7 @@ first."
           ;; not work" looked like. A redelivery is the SAME question, not a fresh
           ;; one, and the reference only resets unconditionally because its reset
           ;; sits INSIDE the arm that has already dropped the old entry
-          ;; (app.rs:2596-2599: `retain`, then `sel = 0`, then `push`) — and its
+          ;; (app.rs:2596-2601: `retain`, then `sel = 0`, then `push`) — and its
           ;; own comment names the thing that justifies the zero: a *FRESH*
           ;; question. This head's hook runs BEFORE `apply-event` drops the twin,
           ;; so the twin is still here to be asked about.
@@ -514,7 +544,32 @@ first."
            (head-status-note head) (format nil "bye: ~a" (getf frame :reason))
            (head-dirty head) t)
      :control)
-    (t :control)))
+    ;; **A FRAME TAG THIS HEAD DOES NOT KNOW IS A FRAME IT CANNOT READ**, and it used
+    ;; to be neither said nor counted — the arm answered `:control` and the line went
+    ;; past. This is the other half of what a daemon one version ahead looks like from
+    ;; a STRUCTURAL reader: serde fails the whole line on an unknown tag, so the
+    ;; reference only ever meets this case in its decoder, while this head is handed
+    ;; the plist and has to notice for itself.
+    ;;
+    ;; Silent is the worse of the two failures: a head that steps over a frame from a
+    ;; newer daemon in silence makes "this daemon is sending me something I do not
+    ;; understand" look exactly like a quiet daemon.
+    (t
+     ;; **Not a plist at all is also unreadable, and it is reported rather than
+     ;; swallowed.** This file has been bitten by exactly that shape before: the
+     ;; reader pushes `(:disconnected)` — a one-element list — and a `frame-name`
+     ;; call on it is a TYPE-ERROR in the main thread, which under
+     ;; `--disable-debugger` is a head that refuses to start (see `%frame-plist-p`).
+     ;; The old `(t :control)` hid any other such marker in silence; now the one
+     ;; thing that must never happen to an unreadable frame happens to it too.
+     (let ((framep (%frame-plist-p frame)))
+       (note-unreadable (head-session head)
+                        (if framep
+                            (format nil "unknown frame ~s" (or (frame-name frame) "?"))
+                            (format nil "not a frame at all: ~s" frame))
+                        (and framep (getf frame :wire-line))))
+     (setf (head-dirty head) t)
+     :control)))
 
 (defun %poll-resize (head)
   (multiple-value-bind (cols rows) (terminal-size 1)

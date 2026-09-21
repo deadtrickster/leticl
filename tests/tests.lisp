@@ -3449,17 +3449,29 @@ filtered, dropped, scrubbed, resync, verbosity, workspace — each with WHY it i
 there wrapped dim under it, and `/status or esc closes this`. 26 non-blank rows on
 its screen against our 18.
 Ours was ` status ` and a bare list of pairs, three of which the reference does not
-have and one of which printed `NIL`."
+have and one of which printed `NIL`.
+
+**The `unreadable` row is asserted here at ZERO on purpose**, which is R3's rule and
+not an accident of the fixture: a head that has never met a frame it cannot read says
+`0`, and that is a different statement from a head that does not count them at all.
+The counting itself is the subject of
+`an-unreadable-frame-is-said-counted-and-survived`, which moves it."
   (let* ((h (%pane-head))
          (*rendered-total* 23144) (*filtered-total* 46) (*scrubbed-total* 0) (*resyncs* 0)
+         ;; **Bound here, with the other counters, because it is a GLOBAL.** A suite
+         ;; runs two hundred heads in one image, and a counter that survives between
+         ;; them stops being about the thing it names: this test read 3 the first time
+         ;; it ran against the new code, from frames three OTHER tests had handed the
+         ;; fold, and the number it was asserting on was nobody's.
+         (*unreadable-total* 0)
          (*verbosity* :normal))
     (setf (session-seq (head-session h)) 27485
           (session-heads (head-session h)) (list (list :head-id "h3") (list :head-id "h18")))
     (let* ((lines (status-screen-lines h 210))
            (text (lines-text lines)))
       (is (string= "this head" (first text)) "the title")
-      (is (= 21 (count-if (lambda (l) (plusp (length l))) text))
-          "21 non-blank rows — 26 on the reference's screen with the header and the four chrome rows")
+      (is (= 24 (count-if (lambda (l) (plusp (length l))) text))
+          "24 non-blank rows — 26 on the reference's screen with the header and the four chrome rows, and the unreadable row is the two this adds")
       (is (string= "  session     s-1789639478142928813" (third text)) "the key twelve wide, the value plain")
       (is (equal '(:dim t) (cdr (first (third lines)))) "the key dim")
       (is (null (cdr (second (third lines)))) "the value not")
@@ -3469,6 +3481,8 @@ have and one of which printed `NIL`."
       (is (some (lambda (l) (string= "  head        h3 · 2 attached" l)) text) "the head and how many")
       (is (some (lambda (l) (string= "  seq         27485 · 23144 rendered" l)) text) "seq and rendered")
       (is (some (lambda (l) (string= "  filtered    46 (normal)" l)) text) "filtered at the verbosity")
+      (is (some (lambda (l) (string= "  unreadable  0" l)) text)
+          "and the unreadable row is THERE and reads 0 — present and zero, not absent")
       (is (some (lambda (l) (string= "  workspace   ~/Projects/leticl" l)) text) "the workspace, with ~")
       (is (string= "  /status or esc closes this" (car (last text))) "the closer")
       (is (not (some (lambda (l) (search "NIL" l)) text)) "and nothing prints NIL"))))
@@ -4698,7 +4712,7 @@ one more character and cannot grant what was not named."
     (is (search "matches" (head-status-note h)) "and says which options it matched")))
 
 (def-test a-new-decision-starts-with-the-first-row-marked (:suite leticl)
-  "The reference's own reason (app.rs:2546-2548): *\"the highlight must never be
+  "The reference's own reason (app.rs:3582-3590): *\"the highlight must never be
 somewhere the operator did not put it when Enter is one key away\"*.
 
 This head never reset the cursor — `endp-open` in `session.lisp` was called on
@@ -5836,13 +5850,16 @@ composer's edge expanded a different one.
       (is (search "900 ctx" parts) "and the kept usage when no prefill is running"))))
 
 (def-test a-scrubbed-head-shows-the-triangle (:suite leticl)
-  "`alarmed()` is `dropped + scrubbed + resyncs > 0` (app.rs:7619-7620) and
+  "`alarmed()` is `dropped + scrubbed + resyncs > 0` (app.rs:7619-7620 in the old
+tree, `:7929-7931` on the current pin, where R3 added a fourth term) and
 `alarm-counts` carried the first and the third. A head that had had secrets
 stripped out of its rows and nothing else wrong showed **no ⚠ at all** — the one
 counter whose entire purpose is that the operator learns about it was the one
 kept quiet."
   (let ((h (%make-head))
         (leticl::*resyncs* 0)
+        ;; bound with its siblings because `alarmed-p` reads it and it is a global
+        (leticl::*unreadable-total* 0)
         (leticl::*scrubbed-total* 0))
     (setf (head-connected h) t)
     (is (not (alarmed-p h)) "a clean head is clean")
@@ -7167,6 +7184,15 @@ the composer's edge is drawn by a path that has to keep working for the screen t
 exist at all, and `/status` carries the message."
   (let ((h (%make-head))
         (*last-render-error* nil)
+        ;; **Bound, because `alarmed-p` reads it and it is a GLOBAL.** A suite runs
+        ;; this head after two hundred others in one image, and a counter that
+        ;; survives between them stops being about the thing it names: this test
+        ;; failed against the new code because three earlier tests had handed the
+        ;; fold an event it does not know, and "nothing wrong, no alarm" was reading
+        ;; somebody else's number. `*unreadable-total*` is not part of the render
+        ;; error's business at all — it is here so that it cannot be.
+        (*unreadable-total* 0)
+        (*scrubbed-total* 0)
         (*resyncs* 0))
     (setf (head-connected h) t)          ; a fresh head starts disconnected
     (is (not (alarmed-p h)) "nothing wrong, no alarm")
@@ -7188,6 +7214,183 @@ exist at all, and `/status` carries the message."
       (is (search "the message" text) "with the message itself")
       (is (search "is not the fix" text)
           "and it says what to do, because 'clear the flag' is not the fix"))))
+
+;;; ------------------- a frame this head cannot read (R3) ------------------- ;;;
+;;;
+;;; **Said, counted, and survived.** The alternatives are both worse and both are
+;;; what this head had: exiting takes the session with it and says nothing, and
+;;; stepping over the frame in silence makes *"this daemon is sending me something I
+;;; do not understand"* look exactly like a quiet daemon — which is how an afternoon
+;;; goes into debugging the wrong half. Silence is the same failure as exiting, one
+;;; decibel down.
+
+(defun %unknown-event (&optional (seq 9))
+  "One envelope from a daemon build that has one more tag than this one, exactly as
+the reader hands it to the fold — `:wire-line` included, because the reader attaches
+it to every frame it decodes and the sentence about an unreadable one carries it."
+  (let ((line (format nil "{\"frame\":\"event\",\"seq\":~d,\"event\":\"peeked_v2\"}" seq)))
+    (list* :wire-line line
+           (json-decode line))))
+
+(def-test a-frame-this-head-cannot-read-is-said-counted-and-survived (:suite leticl)
+  "The criterion entire, in the operator's terms.
+
+**When the daemon sends a frame this head cannot parse, the operator sees a row in
+the CONVERSATION where it arrived** — not a status note, which expires on a TTL and
+would be gone by the time anybody looked for it, which is the failure again — naming
+this head's protocol version and carrying the offending line; the session carries on,
+the next real frame applies, and `/status` reads 0 before it has ever happened.
+
+**The zero is the point.** A head that has never met one says `0`, which is a
+different statement from a head that does not count them at all — the same
+present-and-zero rule the reference's own counters keep, and the reason the row is
+written unconditionally instead of appearing when it first moves."
+  (let* ((h (%make-head))
+         (*unreadable-total* 0)
+         (*resyncs* 0) (*scrubbed-total* 0) (*filtered-total* 0) (*rendered-total* 0))
+    (let ((s (head-session h)))
+      ;; **Before anything has happened: present, and zero.**
+      (is (some (lambda (l) (string= "  unreadable  0" l))
+                (lines-text (status-screen-lines h 120)))
+          "/status reads 0 on a head that has never met one")
+      (is (null (alarm-counts h)) "and nothing on the border")
+      (let ((before (session-seq s)))
+        ;; a real event first, so there is a transcript for the row to land in
+        (leticl::%handle-frame h (list :frame "event" :seq 1 :event "turn_started" :turn-id "t1"))
+        (is (= 1 (session-seq s)) "the session is folding frames")
+        ;; --- ONE THIS BUILD CANNOT READ ---
+        (leticl::%handle-frame h (%unknown-event 2))
+        (is (= 1 *unreadable-total*) "the count moves")
+        (is (head-dirty h) "and the frame is marked, so the row is drawn")
+        (let* ((item (aref (session-items s) (1- (length (session-items s)))))
+               ;; joined with a SPACE: the sentence wraps, and a wrap can break between
+               ;; any two of its words — the first version of this searched
+               ;; `"The line was:"` in a newline-joined render and read the break
+               ;; between `The` and `line` as a missing sentence.
+               (row (format nil "~{~a~^ ~}"
+                            (lines-text (item-lines item 100 (head-prefs h))))))
+          (is (search "cannot read" row) "the conversation says so where it arrived")
+          (is (search "peeked_v2" row) "and names the tag")
+          (is (search "protocol 22" row)
+              "and names THIS head's version, so the two numbers can be compared")
+          (is (search "The line was: {\"frame\":\"event\"" row)
+              "and carries the offending line AS IT ARRIVED, not a re-encoding")
+          (is (not (search "wire_line" row))
+              "and not the frame's own bookkeeping — the line inside the line")
+          (is (search "connection is still up" row) "and says the head is still here")
+          (is (string= "note" (leticl::item-kind item)) "as a row of this head's own"))
+        ;; --- the session carries on ---
+        (leticl::%handle-frame h (list :frame "event" :seq 3 :event "delta" :turn-id "t1"
+                               :target "text" :text "still here"))
+        (is (= 3 (session-seq s)) "the next real frame still applies")
+        (is (search "still here" (getf (session-turn s) :text))
+            "and its content is in the turn")
+        ;; --- and a second one counts twice ---
+        (leticl::%handle-frame h (%unknown-event 4))
+        (is (= 2 *unreadable-total*) "a second one is two")
+        ;; --- **the read mark.** This is the distinction the requirement turns on,
+        ;; and it is not the one I first wrote down: an unknown EVENT was PARSED — it
+        ;; is an envelope and its `seq` is a fact — so it advances the mark like any
+        ;; other frame and the head acks it. That is what keeps an unknown event from
+        ;; stalling the stream behind it. Only a LINE that would not decode has no seq
+        ;; at all, and that is the one that must move nothing; asserted in
+        ;; `an-undecodable-line-is-the-same-fact-as-an-unknown-tag`.
+        (is (= 4 (session-seq s))
+            "a decoded-but-unknown event advances the read mark so the stream is not stuck")
+        (is (zerop *filtered-total*)
+            "and it is not `filtered`: that is events this head CHOSE not to show")
+        (is (zerop *rendered-total*) "nor rendered, which counts a fold that succeeded")
+        ;; --- /status and the border ---
+        (is (some (lambda (l) (string= "  unreadable  2" l))
+                  (lines-text (status-screen-lines h 120)))
+            "/status carries the true count")
+        (is (search "unreadable 2"
+                    (format nil "~{~a ~a~^ · ~}"
+                            (loop for (k . v) in (alarm-counts h) append (list k v))))
+            "and the border names it once it has moved")
+        ;; --- the head is still running, which is the whole of "survived" ---
+        (is (leticl::head-running h) "the head is still here")
+        (is (> (session-seq s) before) "and it went on reading")))))
+
+(def-test an-unknown-frame-tag-is-unreadable-too (:suite leticl)
+  "Two ways to meet one, and the second is the one this reader has and the
+reference does not.
+
+`ServerFrame` is internally tagged, so a tag serde does not know fails the whole
+LINE there. This reader is structural: it decodes whatever is on the wire and hands
+the plist to `%handle-frame`, whose last arm used to answer `:control` and say
+nothing. A daemon one version ahead is exactly that shape, and being structural and
+silent is strictly worse than being strict and loud."
+  (let* ((h (%make-head))
+         (*unreadable-total* 0) (*resyncs* 0) (*scrubbed-total* 0))
+    (is (= 0 *unreadable-total*) "nothing yet")
+    ;; a frame tag this build has never heard of, with the line it arrived as
+    (leticl::%handle-frame h (list :frame "peeked_v2" :wire-line "{\"frame\":\"peeked_v2\"}"))
+    (is (= 1 *unreadable-total*) "an unknown FRAME tag is counted")
+    (let* ((item (aref (session-items (head-session h))
+                       (1- (length (session-items (head-session h))))))
+           (row (segs-of (item-lines item 100 (head-prefs h)))))
+      (is (search "unknown frame" row) "and named as one")
+      (is (search "peeked_v2" row) "with the tag"))
+    ;; the line it arrived as rides on the frame, so an unknown tag can still show
+    ;; the bytes — the evidence a decoder's complaint would have dropped
+    (leticl::%handle-frame h (list :frame "something_else" :wire-line "{\"frame\":\"something_else\"}"))
+    (let* ((item (aref (session-items (head-session h))
+                       (1- (length (session-items (head-session h))))))
+           (row (segs-of (item-lines item 120 (head-prefs h)))))
+      (is (search "The line was: {\"frame\":\"something_else\"}" row)
+          "and the offending line is carried, not just described"))
+    (is (= 2 *unreadable-total*) "both counted")))
+
+(def-test an-undecodable-line-is-the-same-fact-as-an-unknown-tag (:suite leticl)
+  "A line that is not JSON at all arrives on the READER thread, which used to turn
+it into a `warning` with code `malformed-frame`: one line above the composer, gone
+on the next frame's TTL, and counted nowhere. One conversation, one counter."
+  (let* ((h (%make-head))
+         (*unreadable-total* 0) (*resyncs* 0) (*scrubbed-total* 0))
+    (leticl::%handle-frame h (list :unreadable t :detail "not json: eof" :line "{not json at all"))
+    (is (= 1 *unreadable-total*) "counted")
+    ;; **Nothing is acked and the read mark does not move.** No frame was parsed, so
+    ;; there is no seq to report, and inventing one would rewind this head's mark over
+    ;; frames it has already read — the one thing a mark must never do. This is the
+    ;; half that differs from an unknown EVENT, which was parsed and does have a seq.
+    (is (zerop (session-seq (head-session h)))
+        "a line that would not decode moves no read mark at all")
+    (let* ((item (aref (session-items (head-session h))
+                       (1- (length (session-items (head-session h))))))
+           (row (segs-of (item-lines item 120 (head-prefs h)))))
+      (is (search "{not json at all" row) "the bytes are kept")
+      (is (search "protocol 22" row) "and the version is named"))
+    ;; a LONG line is truncated rather than pasted as a wall
+    (let ((long (make-string 5000 :initial-element #\x)))
+      (leticl::%handle-frame h (list :unreadable t :detail "too long" :line long))
+      (let* ((item (aref (session-items (head-session h))
+                         (1- (length (session-items (head-session h))))))
+             (row (segs-of (item-lines item 200 (head-prefs h)))))
+        (is (search "…" row) "a 5 KB line comes back cut")
+        (is (< (length row) 4000) "and it is not a wall")))
+    (is (= 2 *unreadable-total*) "both counted")))
+
+(def-test an-event-this-head-knows-and-does-not-fold-is-not-unreadable (:suite leticl)
+  "**The counter must not cry wolf.** `screen_requested`, `secret_requested` and
+`secret_settled` are read perfectly well — they are answered by the head LOOP, which
+owns the last painted frame and the input focus, and `apply-event` is the session's
+folder and can do none of those. `explain` is known and has no renderer, which the
+reference answers `Filtered` too (app.rs:3017).
+
+Without this list `an-unreadable-frame-...` and half the suite reported frames the
+head reads fine, which is a counter that stops meaning anything."
+  (let* ((h (%make-head))
+         (*unreadable-total* 0) (*resyncs* 0) (*scrubbed-total* 0))
+    (dolist (env (list (list :frame "event" :seq 1 :event "screen_requested" :req-id "q1")
+                       (list :frame "event" :seq 2 :event "explain" :plan nil)
+                       (list :frame "event" :seq 3 :event "secret_settled"
+                             :req-id "r1" :given t :by "another head")))
+      (leticl::%handle-frame h env))
+    (is (zerop *unreadable-total*)
+        "three events this head reads and does not fold are not three failures")
+    (is (zerop (length (session-items (head-session h))))
+        "and nothing was filed into the conversation")))
 
 ;;; ------------------------------------- a fold flip changes what is DRAWN ;;;
 ;;;

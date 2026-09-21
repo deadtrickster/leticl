@@ -1190,6 +1190,18 @@ a terminal-native palette."
          ((:segment_mark)
           (list (list (cons (format nil "─── ~a ───" (or (getf body :label) ""))
                             +md-faint+))))
+         ;; **A ROW THIS HEAD WROTE ABOUT ITSELF.** No daemon item has this type — the
+         ;; wire's are `user`, `assistant`, `reasoning`, `tool_result`, `system` and
+         ;; `segment_mark` — so this is the head filing a sentence of its own into the
+         ;; conversation at the point it happened. `note-unreadable` is the only writer
+         ;; today, and the contract is the one the reference's `warn_line` keeps: an
+         ;; `!`, the words, and the failure role (app.rs:8425-8427).
+         ((:note)
+          (mapcar (lambda (l)
+                    (mapcar (lambda (seg) (cons (car seg) +role-failure+)) l))
+                  (wrap-segments (list (cons (format nil "! ~a" (or (getf body :text) ""))
+                                             nil))
+                                 cols)))
          (t nil))
         ;; the step: reasoning and tool calls are the model WORKING, under the
         ;; answer. Speech — the operator's message and the model's prose — sits at
