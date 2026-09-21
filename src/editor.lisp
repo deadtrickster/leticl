@@ -358,8 +358,8 @@ SAYS SO rather than deleting what was typed to explain why nothing happened."
                                 (remove-if-not (lambda (c) (uiop:string-prefix-p needle (car c)))
                                                *slash-commands*))))
             (cond (names
-                   (setf *completion* (list names 0)
-                         (head-status-note head) nil)
+                   (setf *completion* (list names 0))
+                   (clear-note head)
                    (%set-composer head (format nil "/~a" (first names))))
                   (t (setf *completion* nil)
                      (say head (format nil "no /command starts with ~s" buf)))))))
@@ -642,15 +642,14 @@ two sides in circles."
               (say head "that subagent is still opening — nothing to read yet"))
              (t (awhen (getf row :session-id)
                   (%send head (make-peek it))
-                  (setf (head-status-note head)
-                        (format nil "peeking ~a…" it)))))))
+                  (say head (format nil "peeking ~a…" it)))))))
     (:peek
      ;; The pane's hint bar says *"enter re-reads"* and it did not: `:peek` was
      ;; not in this case at all. A running subagent has new output, which is the
      ;; whole reason to press it again (app.rs:3272-3277).
      (awhen *peeked-session*
        (%send head (make-peek it))
-       (setf (head-status-note head) (format nil "re-reading ~a…" it))))
+       (say head (format nil "re-reading ~a…" it))))
     (:jobs
      ;; **Enter opens the job's output IN A PANE, not in the conversation.**
      ;;

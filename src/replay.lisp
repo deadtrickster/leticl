@@ -71,8 +71,7 @@ prefs on one side only would differ on every row a fold covers."
   (let ((head (%make-head)))
     (let ((notes (ignore-errors (load-prefs-into head))))
       (dolist (note notes)
-        (setf (head-status-note head)
-              (format nil "~a~@[ · ~a~]" note (head-status-note head)))))
+        (say head (format nil "~a~@[ · ~a~]" note (head-status-note head)))))
     (setf (head-cols head) cols
           (head-rows head) rows
           ;; **CONNECTED, with no socket.** `%send` is `(and (head-stream head)
@@ -127,7 +126,6 @@ see this file's header."
          (*spent-seen* nil)
          (*resyncs* 0)
          (*scrubbed-total* 0)
-         (*notice-ttl* 0)
          (*model-from-settings-at* 0)
          (*model-from-turn-at* 0)
          (*verbosity* :normal)

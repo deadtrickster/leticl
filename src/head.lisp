@@ -69,6 +69,11 @@ globals a frame reads.")
   (subagents nil)
   (prefs (list :show-reasoning nil :show-tools nil :diff "split"))
   (status-note nil)
+  ;; **THE CLOCK BELONGS TO THE NOTE IT AGES.** A wall-clock millisecond after
+  ;; which `status-note` stops being news; 0 means no clock is running. It was a
+  ;; global special counting FRAMES, and it came apart from the note in the field:
+  ;; see `tick-notice`.
+  (notice-until 0 :type integer)
   (queued nil :type list)                ; prompts sent, user row not yet seen
   (connected nil :type boolean)
   (frames (sb-concurrency:make-mailbox :name "leticl frames"))
@@ -106,8 +111,8 @@ globals a frame reads.")
     (handler-case
         (write-frame (encode-frame frame) (head-stream head))
       (error (e)
-        (setf (head-connected head) nil
-              (head-status-note head) (format nil "send failed: ~a" e))))))
+        (setf (head-connected head) nil)
+        (say head (format nil "send failed: ~a" e))))))
 
 (defun %reader-loop (head)
   "Socket → frames mailbox. EOF is detach, never abort (§13.2).
@@ -231,9 +236,8 @@ first."
 (defun %handle-frame (head frame)
   (cond
     ((and (consp frame) (eq (car frame) :disconnected))
-     (setf (head-connected head) nil
-           (head-status-note head) "detached — reconnecting…"
-           (head-dirty head) t)
+     (setf (head-connected head) nil)
+     (say head "detached — reconnecting…")
      ;; **A DAEMON OLDER THAN `read_job_output` DROPS THE SOCKET, and this is the
      ;; only place that can say so.**
      ;;
@@ -262,9 +266,9 @@ first."
                           so the socket goes with it. Reconnecting — until the ~
                           daemon is updated, `/job ~a` in the composer still ~
                           reads this job, into the conversation."
-                     (getf *job-out* :job))
-             (head-status-note head)
-             "read_job_output: the daemon closed the connection — it is older than this frame; reconnecting"))
+                     (getf *job-out* :job)))
+       (say head
+            "read_job_output: the daemon closed the connection — it is older than this frame; reconnecting"))
      :control)
     ((and (consp frame) (eq (car frame) :unreadable))
      ;; **A FRAME THIS HEAD CANNOT READ: said, counted, survived.** The marker is
@@ -285,9 +289,7 @@ first."
      ;; our own transport warnings, not session events. **`malformed-frame` is no
      ;; longer one of them**: a line that would not decode is a frame this head could
      ;; not read, and it goes through `note-unreadable` with the rest.
-     (setf (head-status-note head)
-           (format nil "~a: ~a" (getf frame :code) (getf frame :detail))
-           (head-dirty head) t)
+     (say head (format nil "~a: ~a" (getf frame :code) (getf frame :detail)))
      :control)
     ((string= (frame-name frame) "hello")
      ;; **THE VERSION, BEFORE ANYTHING ELSE — AND THE HEAD STAYS.**
@@ -353,10 +355,11 @@ first."
          (when (member (head-mode head) '(:job-out :slash))
            (setf (head-mode head) :normal))))
      (ingest-hello (head-session head) frame)
-     (setf (head-connected head) t
-           (head-status-note head) nil
-           (head-full-repaint head) t
-           (head-dirty head) t)
+     (progn
+       (setf (head-connected head) t
+             (head-full-repaint head) t
+             (head-dirty head) t)
+       (clear-note head))
      ;; A `Switch` lands as a Hello on the new session, so asking here covers
      ;; attach AND switch with one send (§7.4). Without it the header keeps the
      ;; old session's model, and the rows a picker would read are another
@@ -407,13 +410,12 @@ first."
           (when (and (head-secret-req head)
                      (equal (getf (head-secret-req head) :req-id)
                             (getf env :req-id)))
-            (setf (head-secret-req head) nil
-                  (head-secret-buf head) ""
-                  (head-status-note head)
-                  (if (getf env :given)
-                      (format nil "password given by ~a" (getf env :by))
-                      (format nil "no password given (~a)" (getf env :by)))
-                  (head-dirty head) t)))
+            (progn
+              (setf (head-secret-req head) nil
+                    (head-secret-buf head) "")
+              (say head (if (getf env :given)
+                            (format nil "password given by ~a" (getf env :by))
+                            (format nil "no password given (~a)" (getf env :by)))))))
          ((:decision-requested)
           ;; **A FRESH QUESTION STARTS AT THE TOP OF ITS LADDER.**
           ;;
@@ -510,9 +512,10 @@ first."
      (incf (session-dropped (head-session head)) (or (getf frame :dropped) 0))
      (incf *scrubbed-total* (%scrub-total (getf frame :scrubbed)))
      (ingest-snapshot (head-session head) (getf frame :snapshot))
-     (setf (head-full-repaint head) t
-           (head-dirty head) t
-           (head-status-note head) (format nil "resync: ~a" (getf frame :reason)))
+     (progn
+       (setf (head-full-repaint head) t
+             (head-dirty head) t)
+       (say head (format nil "resync: ~a" (getf frame :reason))))
      :control)
     ((string= (frame-name frame) "accepted")
      ;; Telling the person who just pressed enter that their prompt was
@@ -521,8 +524,7 @@ first."
      ;; still gets said (app.rs:1315, NOTE_PROMPT_QUEUED).
      (let ((note (getf frame :note)))
        (unless (and note (string= note +note-prompt-queued+))
-         (setf (head-status-note head) note
-               (head-dirty head) t)))
+         (say head note)))
      :control)
     ((string= (frame-name frame) "rejected")
      (setf (head-status-note head)
@@ -554,8 +556,7 @@ first."
           (setf (head-want-new head) nil)
           (%send head (make-switch created 0)))
          ;; somebody else's: said, not followed
-         (created (setf (head-status-note head)
-                        (format nil "session ~a created" created)))
+         (created (say head (format nil "session ~a created" created)))
          ;; **Not** an open picker. This frame answers three different questions
          ;; — a list, a rename, and a switch to the session you are in — and only
          ;; the first wants one; the command that asks for a list opens it itself.
@@ -596,13 +597,13 @@ first."
      ;; conversation became a loop, and a version skew became unreadable AND
      ;; unescapable: `bye: protocol version 21, this daemon speaks 22` flashing
      ;; under a head that never attaches and never exits.
-     (setf (head-connected head) nil
-           (head-running head) nil
-           (head-farewell head) (format nil "the daemon said goodbye: ~a"
-                                        (getf frame :reason))
-           (head-status-note head) (format nil "bye: ~a" (getf frame :reason))
-           (head-dirty head) t)
-     :control)
+     (progn
+       (setf (head-connected head) nil
+             (head-running head) nil
+             (head-farewell head) (format nil "the daemon said goodbye: ~a"
+                                          (getf frame :reason)))
+       (say head (format nil "bye: ~a" (getf frame :reason)))
+       :control))
     ;; **A FRAME TAG THIS HEAD DOES NOT KNOW IS A FRAME IT CANNOT READ**, and it used
     ;; to be neither said nor counted — the arm answered `:control` and the line went
     ;; past. This is the other half of what a daemon one version ahead looks like from
@@ -682,7 +683,7 @@ goodbye is how a final refusal became a two-second loop."
                     (sb-thread:make-thread (lambda () (%reader-loop head))
                                            :name "leticl reader"))))
         (error (e)
-          (setf (head-status-note head) (format nil "reconnect: ~a" e)))))))
+          (say head (format nil "reconnect: ~a" e)))))))
 
 ;;; ------------------------------------------------- the loop and its parts ;;;
 ;;;
@@ -760,11 +761,9 @@ Oldest request first."
                          (head-dirty head) t))))
              (dolist (key (%drain (head-keys head)))
                (handler-case (%handle-key head key)
-                 (error (e) (ignore-errors (setf (head-status-note head)
-                                                 (format nil "key error: ~a" e))))))
+                 (error (e) (ignore-errors (say head (format nil "key error: ~a" e))))))
              (handler-case (%poll-resize head)
-               (error (e) (ignore-errors (setf (head-status-note head)
-                                               (format nil "resize error: ~a" e)))))
+               (error (e) (ignore-errors (say head (format nil "resize error: ~a" e)))))
              ;; `*replaying*`: a replay has no socket to come back to, and
              ;; "not connected" there is the normal state rather than a loss
              (unless (or *replaying* (head-connected head))
@@ -810,8 +809,7 @@ through `scripts/leticl-head`, the same two frames `/new` sends from the compose
     ;; diff shape should be what the operator left them, not the defaults, and
     ;; reading here means the very first paint is already right (S5).
     (dolist (note (load-prefs-into head))
-      (setf (head-status-note head)
-            (format nil "~a~@[ · ~a~]" note (head-status-note head))))
+      (say head (format nil "~a~@[ · ~a~]" note (head-status-note head))))
     (setf *head* head
           (head-stream head) stream
           (head-socket-path head) path

@@ -132,7 +132,7 @@ on ClientFrame::Slash)."
        ;; existed and was unreachable — nothing sent the frame that fills it.
        (if (plusp (length rest))
            (%send head (make-peek rest))
-           (setf (head-status-note head) "usage: /peek SESSION-ID" (head-dirty head) t)))
+           (say head "usage: /peek SESSION-ID")))
       ((string= verb "resync")
        ;; Throw this head's state away and take a fresh snapshot. The frame was
        ;; written in T9 and never sent, so the only resync this head ever saw was
@@ -145,7 +145,7 @@ on ClientFrame::Slash)."
        ;; so the picker's switch machinery is what lands it.
        (if (plusp (length rest))
            (%send head (make-resume-session rest))
-           (setf (head-status-note head) "usage: /resume SESSION-ID" (head-dirty head) t)))
+           (say head "usage: /resume SESSION-ID")))
       ((string= verb "compact")
        (%send head (list :frame "compact_session"
                          :client-request-id (next-request-id)
@@ -316,9 +316,7 @@ request id and the expected seq are filled the same way by every caller."
   "The operator pointing: the message, and this screen exactly as drawn —
 ANSI included, delimited so both readers find the edges (app.rs:2977)."
   (if (or (zerop (head-last-cols head)) (zerop (head-last-rows-n head)))
-      (setf (head-status-note head)
-            "nothing has been drawn on this head yet — no cells to send"
-            (head-dirty head) t)
+      (say head "nothing has been drawn on this head yet — no cells to send")
       (let* ((w (head-last-cols head))
              (h (head-last-rows-n head))
              (text (format nil "~a~a~a~dx~d — my terminal exactly as this head drew it, ANSI escape codes included, so what you are reading IS the rendering and not a description of it~a~%~{~a~%~}~a~%"

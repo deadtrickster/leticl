@@ -1640,21 +1640,67 @@ about the clock."
 
 (def-test a-notice-expires-and-an-alarm-does-not (:suite leticl)
   "A notice that never expires becomes furniture — the old head pinned one to the
-status line for the rest of the session."
-  (let ((*notice-ttl* 0) (h (%make-head)))
+status line for the rest of the session.
+
+**And the expiry is TIME, not frames.** The old body took one off a counter per loop
+pass, so the sentence's lifetime was a function of the frame rate — and a note whose
+counter had already reached 0 could never be cleared at all, because the body was
+guarded on `(plusp ttl)`. That is the shape the operator found on their screen: a
+magenta `permission answered` nobody could get rid of, on a head the loop was
+painting the whole time. Time is measurable; frames are a rendering of it."
+  (let ((h (%make-head))
+        (leticl::*fixed-clock-ms* 1000))
     (say h "hello")
     (is (equal "hello" (head-status-note h)) "the note is there")
-    (is (= *notice-ttl-frames* *notice-ttl*) "and its clock started")
-    ;; it survives its TTL and then goes
-    (dotimes (i (1- *notice-ttl-frames*)) (tick-notice h))
-    (is (equal "hello" (head-status-note h)) "still there before the last tick")
+    (is (= (+ 1000 +notice-ttl-ms+) (head-notice-until h))
+        "and its clock started, on the head, at the deadline")
+    ;; it survives its TTL and then goes — elapsed, not counted
+    (setf leticl::*fixed-clock-ms* (+ 1000 +notice-ttl-ms+ -1))
     (tick-notice h)
-    (is (null (head-status-note h)) "and gone on it")
-    ;; a note with no TTL is not aged — an alarm persists
-    (setf (head-status-note h) "detached" *notice-ttl* 0)
-    (dotimes (i 100) (tick-notice h))
+    (is (equal "hello" (head-status-note h)) "still there a millisecond before")
+    (setf leticl::*fixed-clock-ms* (+ 1000 +notice-ttl-ms+))
+    (tick-notice h)
+    (is (null (head-status-note h)) "and gone the millisecond it is due")
+    (is (zerop (head-notice-until h)) "with the clock stopped")
+    ;; **THE FIELD DEFECT, AS AN ASSERTION.** A note set without a clock is the note
+    ;; that could never be cleared; there is now no way to set one without the other,
+    ;; and `clear-note` is the one way to take one down.
+    (setf (head-status-note h) "detached")
+    (is (zerop (head-notice-until h)) "writing the slot directly arms no clock — hence `say`")
+    (dotimes (i 3) (tick-notice h))
     (is (equal "detached" (head-status-note h))
-        "a note nobody started a clock on is not on the TTL")))
+        "and the tick refuses to clear one nobody timed, rather than clearing it at once")
+    (clear-note h)
+    (is (null (head-status-note h)) "clear-note takes it down")
+    (is (zerop (head-notice-until h)) "and stops a clock it never started")))
+
+(def-test a-note-and-its-clock-cannot-come-apart (:suite leticl)
+  "The defect, stated as the invariant that was missing.
+
+MEASURED on the live head, while the operator looked at the line: `head-status-note`
+`\"permission answered\"`, the TTL global `0`, `head-dirty` NIL — and identical two
+seconds later, with the loop painting a running turn underneath it the whole time.
+The note was never going to go, because the tick that ages it was guarded on
+`(plusp ttl)` and the global had already reached 0.
+
+**The clock is now a slot of the head the note lives on**, so there is no binding
+that can be reached by one and not the other, and no `let` anywhere that can shadow
+it into a private copy — the failure mode a global special invites in a tree that
+rebinds its globals for replays. `notice-remaining-ms` reads them together, which is
+the question the operator actually asked."
+  (let ((h (%make-head)))
+    (is (null (notice-remaining-ms h)) "a head with no note has no clock")
+    (say h "something")
+    (is (plusp (notice-remaining-ms h)) "a note says how long it has left, from its own head")
+    ;; a `let` of a global cannot shadow a slot — the exact trap that let the note and
+    ;; its clock be different objects
+    (let ((leticl::*fixed-clock-ms* (internal-real-time-ms)))
+      (declare (ignorable leticl::*fixed-clock-ms*))
+      (is (plusp (notice-remaining-ms h))
+          "and still does inside a dynamic extent that binds a global"))
+    (clear-note h)
+    (is (null (notice-remaining-ms h)) "clearing the note stops the clock with it")
+    (is (null (head-status-note h)) "and takes the note down")))
 
 (def-test the-hint-names-the-keys-that-work-here (:suite leticl)
   "A hint that names the wrong key is worse than no hint: the card's second

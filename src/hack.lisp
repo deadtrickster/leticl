@@ -33,7 +33,7 @@ the TUI works without it; only the live-modification is lost."
                :name "leticl hack listener"))
         path)
     (error (e)
-      (setf (head-status-note head) (format nil "hack socket unavailable: ~a" e))
+      (say head (format nil "hack socket unavailable: ~a" e))
       nil)))
 
 (defun hack-accept-loop (head)

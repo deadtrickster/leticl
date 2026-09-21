@@ -77,8 +77,9 @@
    ;; ONE place sets a preference, and it is the place that invalidates
    ;; the render cache — see prefs.lisp's header
    #:head-pref
-   #:composer-rows-needed #:composer-inner #:*notice-ttl-frames* #:hint-bar
-   #:*notice-ttl* #:*stall-ms* #:*spent-micros* #:*last-event-ms*
+   #:composer-rows-needed #:composer-inner #:+notice-ttl-ms+ #:hint-bar
+   #:notice-remaining-ms #:clear-note #:head-notice-until
+   #:*stall-ms* #:*spent-micros* #:*last-event-ms*
    #:session-seq #:session-expected-seq #:session-session-id #:session-items
    #:session-dropped #:session-title #:session-turn #:session-heads #:session-head-id
    #:session-warnings #:session-denials #:session-subagents #:session-jobs
