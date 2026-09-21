@@ -147,7 +147,40 @@ Index 0 is the default; EQUAL is the identity of a CANONICAL spec — see
             (1- (length *styles*)))))))
 
 (defun %sgr (index)
-  (aref *style-sgrs* index))
+  "The escape for style INDEX. Out of range gives style 0, and that is a RULE.
+
+**A cell can hold a style index the table no longer has, and that must cost one
+cell's colour and never the screen.** `%intern-style` pushes pairs onto `*styles*`
+and `*style-sgrs*`, so the two are parallel BY CONSTRUCTION — and a live push that
+redefines the style vocabulary rebuilds them under cells that were written with the
+OLD numbering. `(aref *style-sgrs* index)` then reads past the end and SIGNALS, from
+inside `paint-diff`'s write loop.
+
+That is not hypothetical: it is the recorded incident at `df9bd3f`, and it is the
+only mechanism that explains the operator's symptom — *\"scroll doesnt work on tool
+and thinking expansions … only switching byobu windows fixes scroll\"*. Here is the
+whole chain, every step of it measured or in the tree:
+
+  1. the index is out of range, so EVERY paint dies at its first style change;
+  2. `%paint-failure` runs, writes `ESC[2J`, and dies in the same place — so the
+     terminal is CLEARED and nothing is redrawn, while the head's record
+     (`head-prev-screen`) is set to the frame it *intended*;
+  3. the head keeps painting and keeps dying, and a diff writes only what CHANGED
+     against a record that is already a lie — **so nothing in the head can repair
+     it**, which is what \"even after collapsing back\" means;
+  4. a byobu window switch resizes the pane, and `screen-resize` allocates a FRESH
+     cell vector (`cells.lisp:176`) — the out-of-range cells are gone, the paints
+     succeed, and `head-full-repaint` redraws everything. **That is why only a
+     window switch fixes it.**
+
+So the bounds check is the fix for the operator's symptom, and it belongs here rather
+than in a caller: a wrong index is a fact about a CELL, and a cell must not be able to
+stop the frame. The cost is one comparison per style change, which is the same trade
+`paint-diff` already makes for the cell vector itself (*\"the vector holds whatever a
+hack put there\"*)."
+  (if (and (integerp index) (< -1 index) (< index (length *style-sgrs*)))
+      (aref *style-sgrs* index)
+      (aref *style-sgrs* 0)))
 
 ;;; ---------------------------------------------------------------- screen ;;;
 
@@ -438,15 +471,23 @@ sequences are on this frame*.
 Used by §3.1's guarantee test, and it is deliberately here rather than in the test
 file: it reads the same bytes `screen-rows-ansi` writes, so the two cannot disagree
 about what a sequence looks like on this head's wire."
+  ;; **The CSI grammar and nothing looser**: `ESC[`, then parameters (digits, `;`,
+  ;; `?`), then exactly ONE final byte. A set of "plausible" letters is a set that
+  ;; swallows the text after the sequence — measured, `ESC[0mhello` came back as
+  ;; `ESC[0mh`, because `h` is also the final byte of `?25h`.
   (loop for i from 0 below (length string)
         when (char= (char string i) #\Esc)
           collect (let ((j (1+ i)))
-                    (loop while (and (< j (length string))
-                                     (or (digit-char-p (char string j))
-                                         (member (char string j)
-                                                 '(#\[ #\; #\? #\m #\l #\h #\K #\J
-                                                   #\A #\B #\C #\D #\H #\q #\s))))
-                          do (incf j))
+                    (when (and (< j (length string)) (char= (char string j) #\[))
+                      (incf j)
+                      (loop while (and (< j (length string))
+                                       (let ((c (char string j)))
+                                         (or (digit-char-p c) (char= c #\;) (char= c #\?))))
+                            do (incf j))
+                      ;; one final byte, 0x40-0x7e, and no more
+                      (when (and (< j (length string))
+                                 (<= #x40 (char-code (char string j)) #x7e))
+                        (incf j)))
                     (subseq string i j))))
 
 (defun screen-rows-ansi (screen)

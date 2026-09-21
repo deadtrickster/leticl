@@ -916,18 +916,42 @@ defect this file's neighbours exist against."
                        (list (cons (format nil "  ~a" condition) '(:dim t))))))
       ;; a minimal frame drawn by hand: the cell buffer cannot be trusted to
       ;; render the failure of rendering itself
-      (ignore-errors
-        (screen-clear (head-screen head))
-        (%place-lines (head-screen head) lines 0
-                      (max 0 (- (head-rows head) 3)) (head-cols head))
-        (paint-full (head-screen head) out))
-      (ignore-errors
-        (setf (head-last-rows head) (screen-rows-ansi (head-screen head))
-              (head-last-cols head) (head-cols head)
-              (head-last-rows-n head) (head-rows head)))
-      (ignore-errors
-        (replace (screen-cells (head-prev-screen head))
-                 (screen-cells (head-screen head)))))))
+      (let ((painted nil))
+        (ignore-errors
+          (screen-clear (head-screen head))
+          (%place-lines (head-screen head) lines 0
+                        (max 0 (- (head-rows head) 3)) (head-cols head))
+          (paint-full (head-screen head) out)
+          (setf painted t))
+        (ignore-errors
+          (setf (head-last-rows head) (screen-rows-ansi (head-screen head))
+                (head-last-cols head) (head-cols head)
+                (head-last-rows-n head) (head-rows head)))
+        ;; **THE RECORD IS ONLY UPDATED FOR A PAINT THAT WENT OUT.**
+        ;;
+        ;; `(replace prev cur)` is an ASSERTION about the terminal — "this is what you
+        ;; are showing" — and every later diff is computed against it: a cell where
+        ;; the record and the new frame agree is a cell NOTHING is ever written to
+        ;; again. So a record written by a paint that did not complete is not a stale
+        ;; record, it is a permanent hole. Measured on a scratch head with the paint
+        ;; injected to die after `ESC[2J`: the head believed it had drawn 30 rows the
+        ;; terminal did not have, and no ordinary paint could repair it.
+        ;;
+        ;; `paint-full` returning normally is the only evidence available here, and it
+        ;; is weak — which is why the failure ALSO asks for a full repaint below.
+        (when painted
+          (ignore-errors
+            (replace (screen-cells (head-prev-screen head))
+                     (screen-cells (head-screen head)))))))
+    ;; **A FAILED PAINT MEANS THIS HEAD NO LONGER KNOWS WHAT IS ON THE TERMINAL.**
+    ;;
+    ;; Unconditional, and outside every guard: the point is that the NEXT paint
+    ;; clears and redraws everything, so nothing the failed paint wrote — or failed to
+    ;; write — can persist. Without it, recovery depends on the next frame happening
+    ;; to differ from a record that is already a lie, which is exactly the coincidence
+    ;; the operator's symptom consists of and which a byobu window switch supplies
+    ;; instead, by resizing.
+    (ignore-errors (setf (head-full-repaint head) t))))
 
 (defun %render-and-paint (head)
   "Render and paint, and do not die of it.

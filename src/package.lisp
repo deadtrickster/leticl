@@ -166,6 +166,7 @@
    #:word-spans #:apply-diff-to-new #:apply-diff-to-old #:diff-ops #:diff-degraded
    ;; head
    #:%make-head #:run #:*head* #:head-session #:head-prefs #:head-dirty #:head-screen
+   #:head-full-repaint #:%render-and-paint
    #:head-prev-screen
    #:head-last-rows #:head-cols #:head-rows #:head-mode #:head-composer
    #:head-farewell #:head-quit-open #:head-secret-req #:head-connected #:head-status-note

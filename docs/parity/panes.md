@@ -762,6 +762,102 @@ After, every case at or under the budget:
     61 emoji                    in 122 cols -> out 119 cols
     60 CJK (exactly 120 cols)   in 120 cols -> out 120 cols, untouched
 
+### §3.2's third candidate — FOUND, and it is not the sync pair
+
+**The record said *we do not know*:** the `unwind-protect` at `6ab9204` was *"incidental
+but defensible. NOT the confirmed fix"*, `ed92b64` explained slowness and not recovery,
+`b12daf5` touched nothing here, and a head died once with no cause established. The
+operator's symptom stayed live on both heads: *"scroll doesnt work on tool and thinking
+expansions … only switching byobu windows fix scroll."*
+
+#### First, the sync pair is RULED OUT — three measurements, not an argument
+
+`6ab9204`'s reasoning was: sync left open suspends every update, so the screen freezes
+and a tmux window switch restores it. Three things say no:
+
+1. **tmux does not advertise `Sync`.** `infocmp -1 tmux-256color` has no `Sync` and no
+   `?2026`; the operator's panes run under it (`default-terminal` is `tmux-256color`).
+2. **The pair is balanced in every frame this head writes.** `tmux pipe-pane -O` gives
+   the exact byte stream: 28 `?2026h` and 28 `?2026l` across a run of real gestures, and
+   6/6 on the deliberately-failing run below.
+3. **The protect works**: driven with a paint that dies at its first style change, the
+   close still lands, exactly once.
+
+And two more mechanisms the operator asked me to chase were ruled out by measurement:
+**copy mode** survives a window switch (`pane_in_mode=1` before and after), and a window
+switch changes **no** terminal mode (`alt`, `mouse_*`, `sgr`, `bracket_paste` identical
+either side). So the switch helps by REDRAWING — which meant asking what a redraw
+repairs that a repaint does not.
+
+#### The instrument, and the divergence it found
+
+`tmux capture-pane` reads tmux's MODEL, and the eval socket's liveness probe **pokes
+`head-dirty`** — so a probe that watches the screen keeps it fresh (HACKING.md). Neither
+can see a divergence, so the hunt used a third thing: **the head's `head-prev-screen`
+against tmux's model**, the belief against the reality, with the belief read as CELLS
+rather than through `screen-rows-ansi` (which calls `%sgr`, the very function a paint can
+die in — a probe that fails from inside itself, measured).
+
+Then a paint was injected to die *after* `ESC[2J`, which is what a failure inside
+`paint-diff` does. The byte stream, captured with `tmux pipe-pane -O`:
+
+```
+ESC[?2026h ESC[0m ESC[28;7H ESC[?25h ESC[?2026l   <- a normal caret-only frame
+ESC[2J                                            <- the FAILURE paint's clear
+ESC[?2026h ESC[1;3H ESC[0m ESC[?2026l             <- and then it died: 8 bytes
+```
+
+and the comparison:
+
+    head believes 30 rows, the terminal shows 0: DIVERGE on 30 row(s)
+      row 1  HEAD | render failed — the head is alive; fix and re-push|
+             TTY  |<none>|
+
+**`ESC[2J` had landed and nothing else had.** `%paint-failure` swallowed the rest with
+`ignore-errors`, and then recorded `head-prev-screen := head-screen` — the frame it
+*intended* — which is an assertion about the terminal it was in no position to make.
+Every later paint is a DIFF against that record, and a cell where the record and the new
+frame AGREE is a cell nothing is ever written to again. **So the record is not stale, it
+is a permanent hole, and nothing in the head can repair it** — which is exactly what
+*"even after collapsing back"* means.
+
+#### Why ONLY a byobu window switch fixes it — the last link
+
+`screen-resize` allocates a **fresh cell vector** (`cells.lisp:176`). A resize is
+therefore the one operation that discards whatever poisoned the frame and re-derives
+both screens — and it sets `head-full-repaint`, so the very next paint clears and redraws
+everything. Nothing else in the head does either: every other path re-uses the cells.
+
+That is also why the failure clears when the trigger is undone and not when the content
+is: the poison is in the CELLS or in the TABLES, not in the transcript.
+
+#### The fix, two halves
+
+1. **`%sgr` is bounds-checked** (`cells.lisp:149`). `*styles*` and `*style-sgrs*` are
+   parallel by construction, and a live push that redefines the style vocabulary rebuilds
+   them under cells written with the OLD numbering — the recorded `df9bd3f` incident,
+   where *"the next paint died on `%sgr`'s `aref`"*. A wrong index is a fact about a
+   CELL, so it now costs that cell's colour and never the frame: the cell draws as style
+   0. Measured, with every cell in the frame poisoned: **the head paints and the terminal
+   agrees.** The old regression test arranged its signal exactly this way, which is why
+   that test now drives a `nil` cell instead — a test that cannot fail guards nothing.
+2. **A failed paint forces the next one to be FULL** (`render.lisp`). `head-prev-screen`
+   is the head's only record of the terminal, so a paint that did not complete must not
+   be allowed to leave a record behind it: the failure path now records only when the
+   failure frame got out, and sets `head-full-repaint` either way. This is the half that
+   covers a poison nobody has thought of — recovery no longer depends on the next frame
+   happening to differ, which is the coincidence the symptom consisted of and which a
+   window switch supplied instead. Measured on the wire after the fix: every paint that
+   follows a failure is a full one (`ESC[2J` + the whole frame), so the moment the
+   painter works again the screen is redrawn from nothing. Ends AGREE.
+
+**What I did NOT establish, said plainly.** I could not construct a NATURAL
+out-of-range style tonight: `rebuild-style-sgrs` keeps the tables parallel (measured:
+4 entries, 4 sgrs, and the frame's highest cell style is 3), so it takes a push that
+shortens the vocabulary — which is what the recorded incident was and what my own old
+test did by hand. And the general defence is deliberately blind to the poison: it does
+not need to know what went wrong, only that a paint did not finish.
+
 ### §3.1 — content this head did not author cannot drive the terminal
 
 **PROVEN, not patched.** The section's claim is *control characters in anything the head

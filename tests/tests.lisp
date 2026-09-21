@@ -9947,6 +9947,20 @@ which is what that table was: three commits, two columns, nothing to call them."
               n)
             text)))
 
+(defun %without-ansi (s)
+  "S with every escape sequence taken out — so an assertion can be about what a frame
+SAYS rather than about the byte order the painter happened to choose. `%esc-sequences`
+is the same reader the §3.1 test uses, so the two cannot disagree about where a
+sequence ends."
+  (let ((out (make-string-output-stream))
+        (seqs (leticl::%esc-sequences s))
+        (i 0))
+    (loop while (< i (length s))
+          do (let ((hit (find-if (lambda (q) (eql (search q s :start2 i) i)) seqs)))
+               (if hit (incf i (length hit))
+                   (progn (write-char (char s i) out) (incf i)))))
+    (get-output-stream-string out)))
+
 (defun %two-screens ()
   "A pair of screens with one cell changed, so the paint has work to do."
   (let ((prev (make-screen 20 3))
@@ -9962,32 +9976,128 @@ cell does. The close must still reach the terminal, exactly once, and the frame
 must not be left mid-style."
   (let ((leticl::*caret* nil))
     (multiple-value-bind (prev cur) (%two-screens)
-      (let ((out (make-string-output-stream))
-            (boom (make-condition 'simple-error :format-control "the stub's signal")))
-        ;; a cell accessor that signals on the third read — inside the loop, after
-        ;; the sync is already enabled
-        (let ((reads 0))
-          (declare (special reads))
-          (flet ((%cell-ch (c) (incf reads) (when (= reads 3) (error boom)) (cell-ch c)))
-            (declare (ignore #'%cell-ch))))
-        ;; the honest way to signal from inside the loop: a style table that is
-        ;; short, so the painter's own `aref` is out of range — a real defect, in
-        ;; the real place
-        (let ((real-sgrs leticl::*style-sgrs*))
-          (unwind-protect
-               (progn
-                 (setf leticl::*style-sgrs* (make-array 1 :adjustable t :fill-pointer 1
-                                                        :initial-element ""))
-                 ;; force a style change so the painter reads the short table
-                 (setf (cell-style (screen-cell cur 0 0)) 7)
-                 (signals error (paint-diff prev cur out :sync t)))
-            (setf leticl::*style-sgrs* real-sgrs)))
+      (let ((out (make-string-output-stream)))
+        ;; **A CELL HOLDING SOMETHING THAT IS NOT A CELL.** This used to arrange the
+        ;; signal by shortening `*style-sgrs*` so the painter's own `aref` was out of
+        ;; range. `%sgr` is bounds-checked now — that check IS the fix for the
+        ;; operator's frozen screen — so the paint no longer dies there at all, and a
+        ;; regression test that cannot fail guards nothing. This is the other real
+        ;; one, named in `paint-diff`'s own docstring: *"the vector holds whatever a
+        ;; hack put there"*, and `(fill (screen-cells s) nil)` is one line off the
+        ;; eval socket.
+        (setf (svref (leticl::screen-cells cur) 7) nil)
+        (signals error (paint-diff prev cur out :sync t))
         (multiple-value-bind (closes text) (%emit-count out (format nil "~C[?2026l" leticl::+esc+))
           (is (= 1 closes)
               "the sync is CLOSED exactly once even though the paint signalled —
 without this the terminal keeps synchronized output ENABLED and stops updating")
           (is (search (format nil "~C[?2026h" leticl::+esc+) text)
               "and it was opened, so the pair is real"))))))
+
+(def-test an-out-of-range-style-costs-a-colour-and-not-the-frame (:suite leticl)
+  "**The fix for the operator's frozen screen, and the one place it belongs.**
+
+`*styles*` and `*style-sgrs*` are parallel by construction, and a live push that
+redefines the style vocabulary rebuilds them under cells written with the OLD
+numbering. `(aref *style-sgrs* index)` then reads past the end and SIGNALS — from
+inside `paint-diff`'s write loop, which is the recorded `df9bd3f` incident and the
+only mechanism that accounts for all of the operator's report.
+
+The chain, each step measured or in the tree: every paint dies at its first style
+change; `%paint-failure` writes `ESC[2J` and dies in the same place, so the terminal
+is CLEARED while `head-prev-screen` records the frame the head *intended*; a diff then
+writes only what CHANGED against a record that is already a lie, so **nothing in the
+head can repair it** (*\"even after collapsing back\"*); and a byobu window switch
+resizes the pane, which allocates a FRESH cell vector (`screen-resize`) — the
+out-of-range cells are gone and the paints succeed again. **That is why only a window
+switch fixes it.**
+
+Measured, on a scratch head with the paint injected to die after `ESC[2J`: the head
+believed it had drawn 30 rows and the terminal had none of them.
+
+A wrong index is a fact about a CELL, so it costs that cell's colour and nothing
+else."
+  (let ((*caret* nil))
+    (multiple-value-bind (prev cur) (%two-screens)
+      (let ((out (make-string-output-stream))
+            (real leticl::*style-sgrs*))
+        (unwind-protect
+             (progn
+               ;; a cell holding an index the table no longer has — exactly what a
+               ;; rebuild under live cells leaves behind. The `hello` in it is the
+               ;; text that must survive the poisoned style.
+               (screen-put-string cur 0 0 "hello")
+               (setf (cell-style (screen-cell cur 0 0)) 9999)
+               (finishes (paint-diff prev cur out :sync t))
+               (let ((text (get-output-stream-string out)))
+                 (is (search "hello" (%without-ansi text))
+                     "the frame is still painted: the text reached the terminal")
+                 (is (search (format nil "~C[?2026l" leticl::+esc+) text)
+                     "and the sync closed, because nothing signalled")
+                 ;; **the fallback is style 0's escape, which is a RESET.** Not
+               ;; nothing — a cell drawn in the PREVIOUS cell's style is a lie about
+               ;; the text — and not a mode sequence either: the only `ESC[?…` forms
+               ;; on this frame are the ones the painter itself writes.
+               (is (string= (aref leticl::*style-sgrs* 0) (leticl::%sgr 9999))
+                   "an out-of-range index answers with style 0's escape")
+               (dolist (esc (leticl::%esc-sequences text))
+                 (is (or (string= esc (format nil "~C[?2026h" leticl::+esc+))
+                         (string= esc (format nil "~C[?2026l" leticl::+esc+))
+                         (string= esc (format nil "~C[?25l" leticl::+esc+))
+                         (string= esc (format nil "~C[?25h" leticl::+esc+))
+                         (string= esc (aref leticl::*style-sgrs* 0))
+                         (search "H" esc))
+                     (format nil "~s is a form the painter itself writes" esc)))))
+          (setf leticl::*style-sgrs* real))))
+    ;; and the fallback is the DEFAULT style, not an empty string: `(aref sgrs 0)` is
+    ;; the reset, so a poisoned cell draws plainly rather than leaving the terminal in
+    ;; whatever style the cell before it set
+    (is (string= (aref leticl::*style-sgrs* 0) (leticl::%sgr 9999))
+        "an out-of-range index answers with style 0's escape")
+    (is (string= (aref leticl::*style-sgrs* 0) (leticl::%sgr -1))
+        "and so does a negative one")))
+
+(def-test a-paint-that-failed-forces-the-next-one-to-be-full (:suite leticl)
+  "**A failed paint means the head no longer knows what is on the terminal.**
+
+`head-prev-screen` is the head's only record of it, and every later diff is computed
+against that record: a cell where the record and the new frame AGREE is a cell nothing
+is ever written to again. So a record written by a paint that did not complete is not
+stale, it is a permanent hole — and measured on a scratch head, an ordinary paint
+could not repair one.
+
+Two halves, and both are needed: the failure path records `head-prev-screen` only for
+a paint that got out, and it asks for a FULL repaint whichever way it went. The second
+is what makes recovery independent of the next frame happening to differ — which is
+the coincidence the operator's symptom consisted of, and which a byobu window switch
+supplied instead, by resizing."
+  (let ((head (leticl::%make-head)))
+    ;; a render that cannot compose: `%render` is entered and dies straight away
+    (flet ((boom (h)
+             (declare (ignore h))
+             (error "hunt: the render is broken")))
+      (declare (ignore #'boom)))
+    ;; drive it through the real entry point with a broken `%render`
+    (let ((real (symbol-function 'leticl::%render))
+          (out (make-string-output-stream))
+          (*stdout* nil))
+      (unwind-protect
+           (progn
+             (setf (symbol-function 'leticl::%render)
+                   (lambda (h) (declare (ignore h)) (error "the render is broken")))
+             (setf (head-prev-screen head) (leticl::make-screen 20 3)
+                   (head-screen head) (leticl::make-screen 20 3)
+                   (head-cols head) 20 (head-rows head) 3
+                   leticl::*caret* nil)
+             ;; the paint runs, dies, and the failure frame is drawn
+             (leticl::%render-and-paint head)
+             (is (not (null leticl::*last-render-error*))
+                 "the failure was recorded, as it always was")
+             (is (head-full-repaint head)
+                 "**and the next paint is a FULL one** — nothing the failed paint wrote
+ (or failed to write) can then persist, which is the half that makes recovery not
+ depend on luck"))
+        (setf (symbol-function 'leticl::%render) real)))))
 
 (def-test synchronized-output-is-closed-on-the-happy-path-too (:suite leticl)
   "Exactly one pair, the close LAST, and the frame's reset inside it.
