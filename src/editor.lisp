@@ -422,15 +422,22 @@ that does not match and no way to see why."
   t)
 
 (defun %quit-card-key (head key type)
-  "The quit card: leave, or leave and stop the daemon (v20)."
+  "The quit card: leave, or leave and stop the daemon (v20).
+
+**The two rows are two different promises, and only one of them is instant.**
+Row 0 leaves and is done — the daemon keeps the session and keeps running. Row 1
+asks the daemon to stop, and *asking is not an outcome*: the head does not leave
+here, it enters the wait `begin-stop-request` records and `tick-stop-request` in
+the loop decides. The operator's report is why — they chose this twice and the
+daemon stayed both times, with the head that asked already gone."
   (flet ((leave (choice)
            (setf (head-quit-open head) nil)
-           (unless (zerop choice)
-             ;; the answer that stops the daemon travels over the protocol,
-             ;; not around it to a pid (protocol.rs, v20)
-             (%send head (make-stop (session-expected-seq (head-session head))
-                                    "leticl")))
-           (setf (head-running head) nil)))
+           (if (zerop choice)
+               (setf (head-running head) nil)
+               ;; the answer that stops the daemon travels over the protocol,
+               ;; not around it to a pid (protocol.rs, v20) — and the head stays
+               ;; until that daemon is GONE, or until it can say it is not
+               (begin-stop-request head))))
     (case type
       ;; two rows: up and down both flip
       ((:up :down) (setf (head-quit-sel head) (- 1 (min 1 (head-quit-sel head)))

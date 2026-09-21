@@ -445,11 +445,34 @@ only on a screen too short for the composer's box (`(and … (not boxed))`, and
 `boxed` is any screen of eight rows or more), so on every real terminal the note,
 the stall and 21 other write sites of `head-status-note` went into silence —
 including `detached — reconnecting…`. The reference puts the notice and the stall
-in the chrome above the box, where the card is (app.rs:5069-5075)."
-  (let ((note (head-status-note head)))
-    (when (and note (plusp (length note)))
-      (list (list (cons (truncate-to-width (format nil "· ~a" note) cols)
-                        '(:fg :magenta)))))))
+in the chrome above the box, where the card is (app.rs:5069-5075).
+
+**One thing outranks the note: a wait for a daemon this head asked to stop.** That
+row is drawn from the pending request rather than from a note, so nothing can
+expire it, and it is the only row that matters while it is up — the head is on its
+way out and the operator is owed the reason it has not gone. See `head.lisp`, \"a
+stop that is an OUTCOME\"."
+  (let ((waiting (stop-wait-row head cols))
+        (note (head-status-note head)))
+    (cond
+      (waiting waiting)
+      ((and note (plusp (length note)))
+       (list (list (cons (truncate-to-width (format nil "· ~a" note) cols)
+                         '(:fg :magenta))))))))
+
+(defun stop-wait-row (head cols)
+  "The row the head waits under while a daemon it asked to stop has not gone.
+NIL when nothing is pending.
+
+**Its own row rather than a status note**, because a note expires on
+`+notice-ttl-ms+` and this fact must not: the whole defect was a request whose
+outcome nobody ever learned, and a sentence that disappears while the wait runs is
+that defect with a sentence attached. Yellow, the stall line's role — this is a
+thing that is taking longer than it should, not a failure."
+  (declare (ignorable head))
+  (let ((text (stop-wait-text)))
+    (when text
+      (list (list (cons (truncate-to-width text cols) '(:fg :yellow)))))))
 
 (defun completions-line (head cols)
   "The live `/command` matches, one dim row above the composer — the reference's

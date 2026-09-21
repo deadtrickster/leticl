@@ -162,6 +162,13 @@ see this file's header."
          (*esc-at* nil)
          (*ctrlc-at* nil)
          (*last-render-error* nil)
+         ;; **a wait for a daemon to stop is about THIS process's socket**, and a
+         ;; replay has none: left set it would draw `the daemon was asked to stop`
+         ;; over every replayed frame, and — because the clock is fixed at 0 while
+         ;; `:asked-at` came from the real one — with a negative elapsed time.
+         ;; Found by the fixture golden the first time it ran after a test that
+         ;; asked a daemon to stop.
+         (*stop-request* nil)
          (*replaying* t))
      ,@body))
 

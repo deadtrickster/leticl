@@ -524,14 +524,16 @@ first."
      ;; still gets said (app.rs:1315, NOTE_PROMPT_QUEUED).
      (let ((note (getf frame :note)))
        (unless (and note (string= note +note-prompt-queued+))
-         (say head note)))
+         (say head note))
+       ;; **AND IF THIS IS THE ACK TO A STOP, IT IS NOT THE OUTCOME** — it is the
+       ;; daemon saying it heard. Recorded and said; `tick-stop-request` decides
+       ;; when the wait is over (`head.lisp`, "a stop that is an OUTCOME").
+       (heard-stop head note))
      :control)
     ((string= (frame-name frame) "rejected")
-     (setf (head-status-note head)
-           (format nil "rejected: ~a (expected seq ~a, daemon at ~a)"
-                   (getf frame :reason) (getf frame :expected-seq)
-                   (getf frame :actual-seq))
-           (head-dirty head) t)
+     (say head (format nil "rejected: ~a (expected seq ~a, daemon at ~a)"
+                     (getf frame :reason) (getf frame :expected-seq)
+                     (getf frame :actual-seq)))
      :control)
     ((string= (frame-name frame) "sessions")
      (setf (session-sessions (head-session head))
@@ -590,20 +592,34 @@ first."
      (reset-pane-scroll)
      :control)
     ((string= (frame-name frame) "bye")
-     ;; **A BYE IS FINAL.** The daemon writes one and returns; the reference's
-     ;; pump stops on it and the head leaves (client.rs:548, app.rs:1886-1889).
-     ;; This head only dropped `connected`, so `%try-reconnect` re-attached two
-     ;; seconds later, forever — a refusal the daemon meant as the end of the
-     ;; conversation became a loop, and a version skew became unreadable AND
-     ;; unescapable: `bye: protocol version 21, this daemon speaks 22` flashing
-     ;; under a head that never attaches and never exits.
-     (progn
-       (setf (head-connected head) nil
-             (head-running head) nil
-             (head-farewell head) (format nil "the daemon said goodbye: ~a"
-                                          (getf frame :reason)))
-       (say head (format nil "bye: ~a" (getf frame :reason)))
-       :control))
+     ;; **A BYE IS FINAL — UNLESS THIS HEAD ASKED FOR IT.** The daemon writes one
+     ;; and returns; the reference's pump stops on it and the head leaves
+     ;; (client.rs:548, app.rs:1886-1889). This head only dropped `connected`, so
+     ;; `%try-reconnect` re-attached two seconds later, forever — a refusal the
+     ;; daemon meant as the end of the conversation became a loop, and a version
+     ;; skew became unreadable AND unescapable: `bye: protocol version 21, this
+     ;; daemon speaks 22` flashing under a head that never attaches and never
+     ;; exits.
+     ;;
+     ;; **When a stop is pending, this Bye is the ANSWER to it**, and the outcome
+     ;; is still the daemon's absence: leaving here would be the same defect one
+     ;; frame later — the operator told nothing while a process that was *asked*
+     ;; to go does whatever it does next. So it is recorded and the wait goes on.
+     (if *stop-request*
+         (progn
+           (heard-stop head (format nil "bye — ~a" (getf frame :reason)))
+           (progn
+             (setf (head-connected head) nil)
+             (say head (format nil "bye: ~a" (getf frame :reason)))
+             :control))
+         (progn
+           (progn
+             (setf (head-connected head) nil
+                   (head-running head) nil
+                   (head-farewell head) (format nil "the daemon said goodbye: ~a"
+                                                (getf frame :reason)))
+             (say head (format nil "bye: ~a" (getf frame :reason)))
+             :control))))
     ;; **A FRAME TAG THIS HEAD DOES NOT KNOW IS A FRAME IT CANNOT READ**, and it used
     ;; to be neither said nor counted — the arm answered `:control` and the line went
     ;; past. This is the other half of what a daemon one version ahead looks like from
@@ -654,7 +670,12 @@ comes at the top of the next pass, which is one attach too late: a `Bye` and a
 `/quit` both arrive mid-pass, and re-attaching to a daemon that just said
 goodbye is how a final refusal became a two-second loop."
   (let ((now (get-universal-time)))
-    (when (and (head-running head) (> now (+ (head-last-reconnect head) 2)))
+    ;; **A HEAD WAITING FOR A STOP DOES NOT MEAN TO RECONNECT.** The daemon it
+    ;; asked to stop is closing this socket on purpose: re-attaching to it would
+    ;; be asking a dying daemon for a session, and the reconnect would then race
+    ;; the very wait this is here to make an outcome of.
+    (when (and (head-running head) (null *stop-request*)
+               (> now (+ (head-last-reconnect head) 2)))
       (setf (head-last-reconnect head) now)
       (handler-case
           (progn
@@ -699,6 +720,198 @@ goodbye is how a final refusal became a two-second loop."
 ;;; filter freely: it acknowledges what it consumed, so nothing is reread and
 ;;; nothing is lost, and a head that renders almost nothing still advances.
 
+;;; ----------------------------------------- a stop that is an OUTCOME ;;;
+;;;
+;;; **A REQUEST IS NOT AN OUTCOME.** The operator chose *leave and stop the
+;;; daemon* — twice — and the daemon stayed. The head that asked was already
+;;; gone, so nothing could tell them, and nothing ever asked again.
+;;;
+;;; MEASURED, because the first fix here was a guess and was wrong. The old code
+;;; sent `Stop` and set `head-running` nil in the same breath, so the socket was
+;;; closed while the daemon was still answering. A scratch daemon, the release
+;;; build, the head's own sequence byte for byte:
+;;;
+;;;     wrote stop, wrote detach, closed the socket — no pause
+;;;     daemon alive: T          socket still on disk: T
+;;;     snapshot warnings: ('daemon_stopping')   <- THE STOP WAS RECEIVED
+;;;     head connection ended: wire io: Broken pipe (os error 32)
+;;;
+;;; and the same `Stop`, sent by a client that stays for the answer:
+;;;
+;;;     <- {"frame":"accepted","note":"stopping"}
+;;;     <- {"frame":"bye","reason":"daemon shutting down"}
+;;;     daemon gone after 232 ms; socket present: F; exit code 0
+;;;
+;;; So the frame is not lost: it arrives, and the daemon publishes its
+;;; `daemon_stopping` warning for it. What is lost is the following write — the
+;;; daemon acks into a socket with no reader, takes `EPIPE`, and
+;;; `registry.close()` sits BEHIND that write
+;;; (`sessionlog/src/server.rs:776-778`), so the stop the daemon *heard* is never
+;;; acted on. A one-millisecond pause before the close is enough to save it:
+;;; close 0 ms after the stop → STUCK; 1 ms → gone in 221 ms. A race, and the
+;;; head always lost it.
+;;;
+;;; **So the head stays and watches — it does not wait on its own frame.** The
+;;; loop keeps draining, keeps painting, keeps SAYING what it is waiting for, and
+;;; the wait has a deadline. Past the deadline the head leaves anyway and says on
+;;; stderr that it did, naming the pid and the way to stop it from outside. *The
+;;; head does not exit until the daemon has actually gone, or until it can say
+;;; that it has not.*
+;;;
+;;; **The fact waited on is the daemon's ABSENCE, not its acknowledgement.** Its
+;;; `Accepted` and its `Bye` say it heard, which is a different and weaker
+;;; statement, and the row says which one is true.
+
+(defparameter +stop-wait-ms+ 5000
+  "How long this head waits for a daemon it asked to stop.
+
+Measured, not guessed: a daemon that takes the stop answers `Accepted`, sends
+`bye`, exits and removes its socket **232 ms** later (scratch daemon, release
+build — `tools/stop-lab/proof.py`). Five seconds is twenty times the measured
+shutdown and still short enough that a daemon which will not go does not hold the
+operator's terminal: the case this exists for is a daemon that never goes at all,
+and no value of this number waits *that* out.
+
+A `defparameter` and not a `defconstant`: the file pusher SKIPS constants, so a
+constant here could never be changed on a running head.")
+
+(defvar *stop-request* nil
+  "`(:asked-at MS :deadline MS :socket PATH :pid N :heard TEXT :shown TENTHS)`
+while this head has asked the daemon to stop and is waiting to see it go, else NIL.
+
+Every key is PRESENT from the start, and that is load-bearing: `tick-stop-request`
+writes `:heard` and `:shown` through `(setf (getf …))`, which mutates the cons in
+the list when the key is there and silently rebinds a local when it is not — the
+trap `%call-put` documents. Keys with nothing in them yet are NIL, not absent.
+
+A `defvar`, so a push can introduce this state on a running head: the wait is
+exactly the kind of thing that gets fixed live.")
+
+(defun %daemon-pid-for (socket-path)
+  "The pid the launcher wrote beside SOCKET-PATH, or NIL.
+
+`~/bin/letibot` leaves a `<socket>.json` in the run dir carrying the daemon's pid
+— the record `discover-daemons` reads — and it is the only place a head can learn
+a pid from. A daemon started by hand has no record: then the pid is unknown and
+`daemon-gone-p` falls back to the socket rather than inventing one."
+  (when (and socket-path (probe-file socket-path))
+    (let ((json (make-pathname :type "json" :defaults (pathname socket-path))))
+      (when (probe-file json)
+        (getf (ignore-errors (json-decode (uiop:read-file-string json))) :pid)))))
+
+(defun daemon-gone-p (socket-path pid)
+  "Has the daemon actually gone?
+
+**The pid first, because that is the fact the operator asked for** — and because a
+socket FILE outlives a daemon that was killed: a `-9` leaves the path on disk, so
+answering \"not gone\" for a process that is not there is the same lie the other way
+round. With no pid (a daemon nobody wrote a record for) the socket is all there is,
+and \"nothing is listening there\" is the honest reading of it."
+  (cond ((and (integerp pid) (plusp pid))
+         (not (probe-file (format nil "/proc/~d" pid))))
+        (t (not (and socket-path (probe-file socket-path))))))
+
+(defun begin-stop-request (head)
+  "Ask the daemon to stop, and REMEMBER that an answer is owed. Returns the request.
+
+**This is where the old code set `head-running` nil, and that is the whole bug**:
+the frame went out and the process left in the same breath, so whether the daemon
+ever saw it was a race against this head's own shutdown. Now the ask is recorded
+and `tick-stop-request`, in the loop, decides when the request has become an
+outcome. `write-frame` is `force-output`, so the stop itself is on the socket
+before this returns — queued-and-dropped is not the failure mode here."
+  (%send head (make-stop (session-expected-seq (head-session head)) "leticl"))
+  (setf *stop-request*
+        (list :asked-at (internal-real-time-ms)
+              :deadline (+ (internal-real-time-ms) +stop-wait-ms+)
+              :socket (head-socket-path head)
+              :pid (%daemon-pid-for (head-socket-path head))
+              :heard nil
+              :shown nil)
+        (head-dirty head) t)
+  *stop-request*)
+
+(defun heard-stop (head text)
+  "Record what the daemon ANSWERED a pending stop with. Returns the request.
+
+Called from the `accepted` and `bye` arms, whose normal job is to end things:
+during a pending stop they are the acknowledgement, not the outcome, and the tick
+is what ends the wait. The first answer wins — a `Bye` after an `Accepted` is the
+same fact twice, and the row reads better naming the one that came first."
+  (when (and *stop-request* (null (getf *stop-request* :heard)))
+    (setf (getf *stop-request* :heard) (or text "acknowledged")
+          (head-dirty head) t))
+  *stop-request*)
+
+(defun stop-wait-text ()
+  "The sentence the head is waiting under, or NIL when nothing is pending.
+
+Two states, because they are two different facts: an ask nobody has answered, and
+an ask the daemon has answered. Neither is \"gone\", which is why the wait
+continues after the second one."
+  (when *stop-request*
+    (let* ((req *stop-request*)
+           (waited (- (internal-real-time-ms) (getf req :asked-at)))
+           (heard (getf req :heard)))
+      (format nil "the daemon was asked to stop~@[ and answered \"~a\"~] · waiting for it to go — ~a of ~a"
+              heard (duration waited) (duration +stop-wait-ms+)))))
+
+(defun %daemon-said (req)
+  "How the two farewells NAME the daemon: the pid and the socket, whichever are known.
+
+**Both, when both are known**, because the failure this exists for is a daemon
+nobody could identify: the pid is what `ps` and `letibot --stop` take, and the
+socket is what a head started by hand has instead of a pid."
+  (let ((pid (getf req :pid)) (socket (getf req :socket)))
+    (cond ((and pid socket) (format nil "pid ~d, socket ~a" pid socket))
+          (pid (format nil "pid ~d" pid))
+          (socket (format nil "socket ~a" socket))
+          (t "no pid and no socket record"))))
+
+(defun %stop-gone-said (req waited)
+  "The farewell when the daemon DID go: the outcome the operator asked for."
+  (format nil "the daemon has stopped (~a), ~a after it was asked."
+          (%daemon-said req) (duration waited)))
+
+(defun %stop-timeout-said (req)
+  "The farewell when it did NOT: the requirement's third clause, said on stderr
+where it survives the alternate screen — how long, which daemon, and the verb that
+stops it from outside."
+  (format nil "the daemon was asked to stop ~a ago and has NOT stopped (~a). `letibot --stop` stops it from outside; this head is leaving it running."
+          (duration (- (internal-real-time-ms) (getf req :asked-at)))
+          (%daemon-said req)))
+
+(defun tick-stop-request (head)
+  "One pass of the wait for a daemon this head asked to stop. T when it is over.
+
+Three endings and no others: it is gone (the ask succeeded), the deadline passed
+(it is not going, and the head leaves anyway **saying so**), or nothing is pending
+and this does nothing.
+
+The row is refreshed on the tenth of a second that CHANGED — so the seconds move
+and the head is visibly alive rather than frozen, and not on every pass, which
+would paint forty-three frames a second to say the same thing."
+  (when *stop-request*
+    (let* ((req *stop-request*)
+           (now (internal-real-time-ms))
+           (waited (- now (getf req :asked-at)))
+           (tenths (floor waited 100)))
+      (cond
+        ((daemon-gone-p (getf req :socket) (getf req :pid))
+         (setf (head-farewell head) (%stop-gone-said req waited)
+               (head-running head) nil)
+         t)
+        ((>= now (getf req :deadline))
+         (setf (head-farewell head) (%stop-timeout-said req)
+               (head-running head) nil)
+         t)
+        (t (unless (eql tenths (getf req :shown))
+             ;; `:shown` is PRESENT, so this writes the cons the list already
+             ;; holds rather than rebinding anything (see `*stop-request*`)
+             (setf (getf req :shown) tenths
+                   (head-dirty head) t))
+           nil)))))
+
 (defun %answer-screen-requests (head)
   "Answer every queued `screen_requested` with the rows this head just PAINTED.
 
@@ -734,6 +947,10 @@ Oldest request first."
              ;; frame to land, on OUR clock and not on the event's own `ts`
              (setf *now-ms* (internal-real-time-ms))
              (tick-notice head)
+             ;; **the wait for a daemon this head asked to stop** — before the
+             ;; drain, so the row it marks dirty is painted in THIS pass, and so
+             ;; the pass that ends the loop is the one that says why
+             (tick-stop-request head)
              ;; 1. drain. An error while FOLDING a frame must not kill the loop
              ;; either: a frame this head cannot handle is one bad frame, not a
              ;; reason to lose the session. The failure is remembered so the

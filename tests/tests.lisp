@@ -8908,21 +8908,41 @@ no summer time) instead of 2026 (CEST). Measured against letibot on the same row
       (is (= 2026 year) "and the instant is in 2026, not 1956")))
   (is (string= "" (leticl::%clock-time nil)) "no timestamp is no time, not midnight"))
 
-(def-test leaving-and-stopping-the-daemon-sends-the-stop-before-the-detach (:suite leticl)
-  "The operator: *\"leticl is unable to properly stop the daemon so when I exited
-and asked to kill the daemon too - it didnt\"*. The order is the whole of it:
-`Stop` has to reach the daemon while this head is still attached, because a
-detach closes the socket the request travels on (driver.rs:202-211). Measured
-end to end against a scratch daemon afterwards: card, `2`, socket gone."
-  (let* ((h (%make-head))
-         (wire (%wire h)))
-    (setf (head-quit-open h) t (leticl::head-quit-sel h) 1)
-    (leticl::%handle-key h (list :type :enter))
-    (let ((sent (%sent wire)))
-      (is (equal "stop" (getf (first sent) :frame)) "the stop goes out")
-      (is (equal "leticl" (getf (first sent) :who)) "under this head's own name")
-      (is (not (leticl::head-running h)) "and the head leaves"))
-    ;; and choosing the first row leaves the daemon alone
+(def-test leaving-and-stopping-the-daemon-asks-and-waits-for-the-outcome (:suite leticl)
+  "The operator, twice: *\"leticl is unable to properly stop the daemon so when I
+exited and asked to kill the daemon too - it didnt\"*.
+
+The first fix got the ORDER right — `Stop` has to reach the daemon while this head
+is still attached, because a detach closes the socket the request travels on
+(driver.rs:202-211) — and the order was never the whole of it. MEASURED against a
+scratch daemon afterwards, with the head's own exit sequence byte for byte: the stop
+arrives (the daemon's `daemon_stopping` warning is in the next snapshot), the daemon
+publishes it, writes `Accepted` into a socket with no reader, takes `EPIPE` — and
+`registry.close()` sits BEHIND that write (`sessionlog/src/server.rs:776-778`), so
+it serves on. One millisecond of pause saves it: close 0 ms after the stop →
+STUCK, 1 ms → gone in 221 ms. A race the head always lost, because it closed the
+socket in the same breath as it asked.
+
+So the frame's ORDER is asserted here, and then the two facts about the OUTCOME:
+the head does not leave on the ask, and it records a wait — the loop's tick is what
+ends it. See `a-stop-is-over-when-the-daemon-is-gone`."
+  (let ((leticl::*stop-request* nil))
+    (let* ((h (%make-head))
+           (wire (%wire h)))
+      (setf (head-quit-open h) t (leticl::head-quit-sel h) 1)
+      (leticl::%handle-key h (list :type :enter))
+      (let ((sent (%sent wire)))
+        (is (equal "stop" (getf (first sent) :frame)) "the stop goes out")
+        (is (equal "leticl" (getf (first sent) :who)) "under this head's own name"))
+      (is (leticl::head-running h) "and the head does NOT leave: an ask is not an outcome")
+      (is (not (null leticl::*stop-request*)) "the wait is recorded")
+      (is (search "waiting for it to go" (leticl::stop-wait-text))
+          "and it says what it is waiting for")))
+  ;; and the first row — leave, keep the daemon — is still instant: there is no
+  ;; outcome to wait for when nothing was asked. Its own binding, because the head
+  ;; above set the one it was given (`setf` of a special inside a `let` writes that
+  ;; binding), and this half is about a head that never asked
+  (let ((leticl::*stop-request* nil))
     (let* ((h2 (%make-head))
            (wire2 (%wire h2)))
       (setf (head-quit-open h2) t (leticl::head-quit-sel h2) 0)
@@ -8930,7 +8950,146 @@ end to end against a scratch daemon afterwards: card, `2`, socket gone."
       (is (null (remove "detach" (%sent wire2)
                         :key (lambda (f) (getf f :frame)) :test #'string=))
           "leaving this head sends no stop")
-      (is (not (leticl::head-running h2)) "but still leaves"))))
+      (is (null leticl::*stop-request*) "records no wait")
+      (is (not (leticl::head-running h2)) "and leaves at once"))))
+
+;;; ------------------------------- a request is not an OUTCOME (a stop) ------- ;;;
+;;;
+;;; The requirement: *"when the operator chooses to stop the daemon, the head does not
+;;; exit until the daemon has actually gone, or until it can say that it has not."*
+;;; Three clauses, and a test each: the wait is entered and SAID; it ends when the
+;;; daemon is gone; and it ends with a farewell that NAMES what is still running.
+
+(defun %live-pid ()
+  "This process's own pid — a pid that is certainly alive. `sb-unix` is in the SBCL
+core, so this needs no `require` the test image does not already do."
+  (sb-unix:unix-getpid))
+
+(defun %dead-pid ()
+  "A pid that cannot exist: `pid_max` is the first number the kernel never hands
+out, so `/proc/<pid_max>` is absent by construction rather than by luck."
+  (or (ignore-errors (parse-integer (uiop:read-file-string "/proc/sys/kernel/pid_max")))
+      999999))
+
+(defun %stop-request-for (&key socket pid (asked-ago 0) (deadline-in 5000))
+  "A request plist shaped exactly as `begin-stop-request` leaves one — every key
+present, including the two the tick writes through."
+  (let ((now (internal-real-time-ms)))
+    (list :asked-at (- now asked-ago)
+          :deadline (+ now deadline-in)
+          :socket socket
+          :pid pid
+          :heard nil
+          :shown nil)))
+
+(def-test the-wait-for-a-stopped-daemon-is-said-on-the-screen (:suite leticl)
+  "**A row, not a status note.** A note expires on `*notice-ttl-frames*` ≈ 0.55 s and
+the whole defect was a request whose outcome nobody ever learned; a sentence that
+disappears while the wait runs is that defect with a sentence attached.
+
+And the daemon's ANSWER is a different sentence from the ask, because it is a
+different fact: `Accepted` is the daemon saying it heard, which is not the same as
+the daemon being gone — and it is the second that the operator asked for."
+  (let* ((leticl::*stop-request* (%stop-request-for :socket nil :pid (%live-pid)))
+         (h (%on-head :cols 100 :rows 24)))
+    (leticl::%render h)
+    (let ((text (%screen-text h)))
+      (is (search "the daemon was asked to stop" text) "the wait is on the screen")
+      (is (search "waiting for it to go" text) "saying what it is waiting for")
+      (is (search "of 5.0s" text) "against the deadline it is waiting on")
+      (is (not (search "answered" text)) "and nothing has answered it yet"))
+    (leticl::heard-stop h "stopping")
+    (leticl::%render h)
+    (is (search "answered \"stopping\"" (%screen-text h))
+        "an answered ask says so — and still waits, because it is not gone")
+    ;; the wait outranks the note: nothing may expire it
+    (setf (head-status-note h) "a note that is not about this at all")
+    (leticl::%render h)
+    (is (not (search "a note that is not about this at all" (%screen-text h)))
+        "the wait displaces the head's note while it is up")
+    (is (search "waiting for it to go" (%screen-text h)) "and stays on the screen"))
+  ;; and no wait, no row: the frame is exactly as it was
+  (let* ((leticl::*stop-request* nil)
+         (h (%on-head :cols 100 :rows 24)))
+    (leticl::%render h)
+    (is (null (leticl::stop-wait-row h 100)) "with nothing pending the row is absent")
+    (is (not (search "asked to stop" (%screen-text h))) "and nothing is drawn for it")))
+
+(def-test a-stop-is-over-when-the-daemon-is-gone (:suite leticl)
+  "**The fact waited on is the daemon's ABSENCE.** It takes its pid and its socket
+with it, and that — not the acknowledgement — is what was asked for. The head leaves
+with the outcome said, naming which daemon went."
+  (let* ((leticl::*stop-request* (%stop-request-for :socket "/tmp/leticl-gone.sock"
+                                                    :pid (%dead-pid)))
+         (h (%make-head)))
+    (is (leticl::tick-stop-request h) "the tick ends the wait")
+    (is (not (leticl::head-running h)) "and the head may leave")
+    (is (search "the daemon has stopped" (head-farewell h)) "with the outcome said")
+    (is (search (format nil "pid ~d" (%dead-pid)) (head-farewell h))
+        "naming which daemon went")
+    ;; a daemon that is still there is NOT gone, however quiet it is — a FRESH head,
+    ;; because the tick above has already ended the first one's wait
+    (let* ((leticl::*stop-request* (%stop-request-for :socket nil :pid (%live-pid)))
+           (h2 (%make-head)))
+      (is (null (leticl::tick-stop-request h2)) "a live daemon keeps the wait open")
+      (is (leticl::head-running h2) "and the head stays"))))
+
+(def-test a-daemon-that-will-not-go-is-named-on-the-way-out (:suite leticl)
+  "The requirement's third clause, and the one the operator's wedged morning needed:
+the head leaves anyway — it must not hold a terminal hostage to a process that is
+not going — and the farewell says which daemon is still running and what stops it
+from outside. That failure was invisible twice over: the head had already exited,
+and its last words were on the alternate screen, which is thrown away one line
+later."
+  (let* ((leticl::*stop-request* (%stop-request-for
+                                  :socket "/run/user/1000/letibot/abc.sock"
+                                  :pid (%live-pid)
+                                  :asked-ago 5000
+                                  :deadline-in -1))
+         (h (%make-head)))
+    (is (leticl::tick-stop-request h) "the deadline ends the wait")
+    (is (not (leticl::head-running h)) "and the head leaves — the deadline is the escape")
+    (let ((said (head-farewell h)))
+      (is (search "and has NOT stopped" said) "saying the daemon did not go")
+      (is (search "5.0s" said) "how long it waited")
+      (is (search (format nil "pid ~d" (%live-pid)) said) "naming the pid")
+      (is (search "letibot --stop" said) "and what stops it from outside"))))
+
+(def-test a-bye-during-a-stop-answers-it-without-ending-it (:suite leticl)
+  "The `bye` arm normally ends the head, and that is right: a refusal the daemon meant
+as final must not become a two-second reconnect loop, and a version skew must not be
+unescapable. **With a stop pending it is the daemon's ANSWER to that stop**, and the
+outcome is still its absence — leaving here would be the same defect one frame later,
+with the operator no better off."
+  (let* ((leticl::*stop-request* (%stop-request-for :socket nil :pid (%live-pid)))
+         (*stdout* (make-string-output-stream))
+         (h (%on-head :cols 90 :rows 20)))
+    (leticl::%handle-frame h (list :frame "bye" :reason "daemon shutting down"))
+    (is (leticl::head-running h) "the head does not leave on the answer")
+    (is (search "bye — daemon shutting down" (getf leticl::*stop-request* :heard))
+        "and what the daemon said is recorded")
+    (is (not (head-connected h)) "with the socket known to be going")
+    ;; and a head with NO stop pending still leaves, which is the skew case
+    (let* ((leticl::*stop-request* nil)
+           (h2 (%on-head :cols 90 :rows 20)))
+      (leticl::%handle-frame h2 (list :frame "bye"
+                                      :reason "protocol version 23, this daemon speaks 22"))
+      (is (not (leticl::head-running h2)) "without a stop pending a bye is still final")
+      (is (search "protocol version 23" (head-farewell h2)) "and names the skew"))))
+
+(def-test a-head-waiting-for-a-stop-does-not-reconnect (:suite leticl)
+  "The daemon it asked to stop is closing this socket ON PURPOSE. Re-attaching would
+be asking a dying daemon for a session — and the reconnect would race the very wait
+that exists to turn the ask into an outcome, which is how a head that gave up on the
+answer would end up quieter than one that did not."
+  (let* ((leticl::*stop-request* (%stop-request-for :socket "/tmp/leticl-nope.sock"
+                                                    :pid (%live-pid)))
+         (h (%make-head)))
+    (setf (leticl::head-socket-path h) "/tmp/leticl-nope.sock"
+          (head-status-note h) nil)
+    (leticl::%try-reconnect h)
+    (is (null (head-status-note h)) "no reconnect was tried, so none failed")
+    (is (zerop (leticl::head-last-reconnect h)) "and the reconnect stamp never moved")))
 
 (def-test a-live-socket-is-a-daemon-even-with-no-record-beside-it (:suite leticl)
   "**My own fix this morning, measured and wrong.** Refusing a folder with no
