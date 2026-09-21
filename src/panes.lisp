@@ -329,14 +329,13 @@ back at save time, so there is one direction of flow and no second copy to keep 
 step. Returns the save's complaint, or NIL when it landed."
   (cond
     ((string= key "diff")
-     (setf (getf (head-prefs head) :diff)
+     (setf (head-pref head :diff)
            (if (string= (%head-setting-value head "diff") "split") "unified" "split")))
     ((string= key "thinking") (%flip-fold head :show-reasoning))
     ((string= key "tools") (%flip-fold head :show-tools))
     ((string= key "raw_calls")
-     (setf (getf (head-prefs head) :raw-calls)
-           (not (getf (head-prefs head) :raw-calls)))))
-  (setf (head-dirty head) t)
+     (setf (head-pref head :raw-calls)
+           (not (head-pref head :raw-calls)))))
   (%save-head-prefs-note head))
 
 (defparameter *daemon-config-files*

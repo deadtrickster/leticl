@@ -440,9 +440,8 @@ Esc was a second thing to remember per pane."
          ;; something the reader knows is there, while this reveals markup the
          ;; default view is required never to show. Off by default and behind a
          ;; chord, both halves of what was asked for.
-         (setf (getf (head-prefs head) :raw-calls)
-               (not (getf (head-prefs head) :raw-calls))
-               (head-dirty head) t)
+         (setf (head-pref head :raw-calls)
+               (not (head-pref head :raw-calls)))
          t)
         (t nil)))))
 

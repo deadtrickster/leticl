@@ -295,9 +295,19 @@ which is the case that matters — scrolling."
                             (not (and (eq class :activity) (eq class-above :activity))))
                    (setf lines (cons nil lines)))
                  (setf class-above class))
-               ;; `revappend`: prepends IL in order in O(len il). `append` copies
-               ;; the whole accumulated list per item, which is O(depth²).
-               (setf lines (revappend il lines)))
+               ;; `append`, NOT `revappend`. `(append il lines)` copies IL — the
+               ;; one item just rendered, a handful of lines — and SHARES the
+               ;; accumulated tail, so it is O(len il) and the walk is linear.
+               ;; `revappend` is `(append (reverse il) lines)`: it reverses the
+               ;; item's own lines as well, so every tool card rendered
+               ;; upside-down. Measured: a six-line payload came back
+               ;; `line 6 … line 1` with the header last.
+               ;;
+               ;; An earlier comment here claimed `append` was O(depth²). It is
+               ;; not, and acting on that claim is what introduced the reversal —
+               ;; the quadratic copy was in `%viewport-lines`' `(append hist …)`,
+               ;; which `%window-of` fixed.
+               (setf lines (append il lines)))
              (decf next-i))
     (setf *hist-cache* (list key lines next-i class-above))
     lines))

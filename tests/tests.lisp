@@ -6878,3 +6878,131 @@ exist at all, and `/status` carries the message."
       (is (search "the message" text) "with the message itself")
       (is (search "is not the fix" text)
           "and it says what to do, because 'clear the flag' is not the fix"))))
+
+;;; ------------------------------------- a fold flip changes what is DRAWN ;;;
+;;;
+;;; The operator: *"thinking and tools are no longer togglable"*. The pref flipped
+;;; and the screen did not, because the render cache — added the same hour — keys
+;;; on a generation counter, the width and the items vector's identity, and a
+;;; PREFERENCE change is invisible to all three. `ctrl-t` set the flag, marked the
+;;; head dirty, repainted, and got the previous lines back from the cache.
+;;;
+;;; These assert the property the cache broke: a preference change changes the
+;;; LINES, not only the pref.
+
+(defun %rows-with-a-tool (prefs)
+  "The lines for one transcript with a tool result in it, under PREFS."
+  (let* ((*hist-cache* nil)
+         (h (%make-head))
+         (s (head-session h)))
+    ;; PREFS is the argument; the head's own plist is what the renderer reads
+    (setf (getf (head-prefs h) :show-tools) (getf prefs :show-tools)
+          (getf (head-prefs h) :show-reasoning) (getf prefs :show-reasoning))
+    (setf (session-items s)
+          (vector (list :item-id "t1" :kind "tool_result" :ts 0
+                        :item (list :type "tool_result" :call-id "c" :name "bash"
+                                    :outcome (list :outcome "ok")
+                                    :payload (format nil "~{~a~^~%~}"
+                                                     (loop for i from 1 to 40
+                                                           collect (format nil "line ~a" i)))))))
+    (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l)))
+            (leticl::%viewport-lines h 120 30))))
+
+(def-test flipping-a-fold-changes-the-drawn-lines (:suite leticl)
+  "The cache must not serve the previous fold's lines back.
+
+`ctrl-t` folds the tool output, `ctrl-r` the thinking. Both change how a row
+RENDERS, so both must reach the screen — and the cache added for scroll speed
+keyed on a generation the preference change did not bump, so neither did.
+
+Folded is not EMPTY: it keeps the first line, which is where a tool puts what it
+did, then `… +N lines · ctrl-t`. So the assertion is how much, and an earlier
+version of this test wrongly asserted `line 1` was absent — the same mistake as
+reading a summary as a loss."
+  (let ((folded (%rows-with-a-tool (list :show-tools nil :show-reasoning nil)))
+        (open (%rows-with-a-tool (list :show-tools t :show-reasoning nil))))
+    (is (not (equal folded open))
+        "folding the tools changes the lines — the whole point of the chord")
+    (is (some (lambda (l) (search "line 1" l)) folded)
+        "folded keeps the FIRST line, which is what the tool did")
+    (is (some (lambda (l) (search "… +" l)) folded)
+        "and says how much it is hiding")
+    (is (some (lambda (l) (search "line 40" l)) open) "open, the whole body is there")
+    (is (notany (lambda (l) (search "line 40" l)) folded) "folded, it is not")
+    (is (< (length folded) (length open)) "and folded is the shorter of the two")))
+
+(def-test a-preference-change-bumps-the-render-generation (:suite leticl)
+  "The property, not the instance: the SETTER is what invalidates, so a fifth
+preference cannot be added without the cache noticing."
+  (let ((*hist-generation* 0)
+        (h (%make-head)))
+    (setf (head-pref h :show-tools) t)
+    (is (= 1 *hist-generation*) "setting a preference bumps the generation")
+    (setf (head-pref h :show-tools) t)
+    (is (= 2 *hist-generation*) "and again, so a same-value set is still safe")
+    (is (head-dirty h) "and the head is marked for a repaint")))
+
+(def-test every-preference-write-goes-through-the-setter (:suite leticl)
+  "Four sites mutated `head-prefs` directly and each of them changed the render —
+`%flip-fold`, ctrl-x, the config pane and `prefs-into-head`. This checks the
+source, because the defect was a site that forgot, and the fifth one will."
+  (dolist (file '("editor" "panes" "commands"))
+    ;; NOT prefs.lisp: that file DEFINES the setter, so it is the one place the
+    ;; direct write belongs
+    (let ((text (source-of file)))
+      (is (not (search "(setf (getf (head-prefs" text))
+          (format nil "src/~a.lisp writes head-prefs directly instead of through ~
+(head-pref head …), so the render cache will serve the old fold back" file)))))
+
+(def-test the-transcript-renders-oldest-first (:suite leticl)
+  "Rows in the order they happened, and a card's body top-down.
+
+This is the test that was MISSING when `%history-until` used `revappend` and every
+tool card rendered upside-down — the header last and its output `line 6 … line 1`.
+1845 checks passed while the transcript was reversed, because every one of them
+asserted CONTENT (`is this text present`) and none asserted ORDER. A screen
+comparison would have caught it in a second; the suite could not.
+
+Three orders, all of them things a reader relies on without noticing:
+  · messages oldest-first;
+  · a card's HEADER above its body;
+  · and the body top-down."
+  (let* ((*hist-cache* nil)
+         (h (%make-head))
+         (s (head-session h)))
+    (setf (getf (head-prefs h) :show-tools) t)
+    (setf (session-items s)
+          (vector (list :item-id "a" :kind "assistant" :ts 0
+                        :item (list :type "assistant" :text "AAA"))
+                  (list :item-id "b" :kind "assistant" :ts 0
+                        :item (list :type "assistant" :text "BBB"))
+                  (list :item-id "c" :kind "assistant" :ts 0
+                        :item (list :type "assistant" :text "CCC"))))
+    (let ((rows (mapcar (lambda (l) (and l (format nil "~{~a~}" (mapcar #'car l))))
+                        (leticl::%viewport-lines h 120 20))))
+      (is (< (position-if (lambda (l) (and l (search "AAA" l))) rows)
+             (position-if (lambda (l) (and l (search "BBB" l))) rows))
+          "the first message is above the second")
+      (is (< (position-if (lambda (l) (and l (search "BBB" l))) rows)
+             (position-if (lambda (l) (and l (search "CCC" l))) rows))
+          "and the second above the third")))
+  ;; a card: header first, then its body in the order the tool wrote it
+  (let* ((*hist-cache* nil)
+         (h (%make-head))
+         (s (head-session h)))
+    (setf (getf (head-prefs h) :show-tools) t)
+    (setf (session-items s)
+          (vector (list :item-id "t" :kind "tool_result" :ts 0
+                        :item (list :type "tool_result" :call-id "c" :name "bash"
+                                    :outcome (list :outcome "ok")
+                                    :payload (format nil "~{~a~^~%~}"
+                                                     (loop for i from 1 to 4
+                                                           collect (format nil "row ~a" i)))))))
+    (let* ((rows (mapcar (lambda (l) (and l (format nil "~{~a~}" (mapcar #'car l))))
+                         (leticl::%viewport-lines h 120 20)))
+           (head-at (position-if (lambda (l) (and l (search "Ran" l))) rows))
+           (one-at (position-if (lambda (l) (and l (search "row 1" l))) rows))
+           (four-at (position-if (lambda (l) (and l (search "row 4" l))) rows)))
+      (is (and head-at one-at four-at) "the header and both ends of the body are drawn")
+      (is (< head-at one-at) "the header is ABOVE the body, not below it")
+      (is (< one-at four-at) "and the body reads top-down, not bottom-up"))))
