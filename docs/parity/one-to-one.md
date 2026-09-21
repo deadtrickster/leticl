@@ -236,6 +236,14 @@ between them and starts the next line with a bare `)`. Every line below it is
 then offset, which is why `reasoning` and `multi-round` lose four rows each to
 one wrap decision. `src/markdown.lisp` / `src/width.lisp`.
 
+**FIXED by the one-rule merge**, and not by touching this file: the wrapper used to
+split each SEGMENT into words, so the inline-code span `--drop-constant` and the
+plain `).` after it were two tokens however they sat in the text. Now the rule sees
+one text and one token, exactly as the reference does, and the rows match its
+(`--drop-constant). The 3x2 rescoring grid …`). The fixture dumps move on four rows
+of `markdown` and four of `prose`, and on nothing else in the eleven — which is the
+measurement that this is the same defect the reference's own comment describes.
+
 ### 5. A folded payload's legend loses the word `pages` — every folded tool card
 
 ```

@@ -585,10 +585,10 @@ which lives in `src/render.lisp`, and two further truncators in
 | `truncate(s, cols)` reserves a column and appends **`…`**, closes open SGR | `width.rs:329-353` | `truncate-to-width` — cluster-aware, **no ellipsis**, no reserve | `src/width.lisp:415-430` | **DIFFERS**: elision is silent |
 | one truncator | — | **three**: `truncate-to-width` (cluster-aware), `%truncate-width` (per-**character**), `%truncate-segs` (segment-aware, built on `%truncate-width`) | `src/width.lisp:415`, `src/progress.lisp:160-170`, `src/markdown.lisp:473-482` | **DIFFERS-duplication**: `%truncate-width` cuts ZWJ sequences and flags in half, and it is on the card-header path (`src/cards.lisp:681,758`) |
 | `fit(s, cols)` truncate-then-pad | `width.rs:356-364` | `fit-to-width` | `src/width.lisp:432-438` | SAME shape |
-| `wrap(s, cols)` — three break rules in priority: space/**tab**, **between two wide clusters**, hard-break an over-wide run; hard-breaks on `\n`; `cols.max(4)` | `width.rs:380-408`, `break_cells` `:420-513` | `wrap-segments` + `%split-words` — space and `\n` end a chunk, a wide cluster is a break opportunity before itself, and an over-wide chunk is cut **by columns over clusters**; **tab is not a break opportunity** | `src/render.lisp:130-235,40-117` | **SAME for (a) (b) (c)** as of `W1`; **DIFFERS still at (d)**: a tab measures zero columns and is dropped by `clusters`/`screen-put-string`, so a tab-separated payload loses its indentation whatever the wrapper does — a separate finding, not a wrapping one |
+| `wrap(s, cols)` — three break rules in priority: space/tab, **between two wide clusters**, hard-break an over-wide run; hard-breaks on `\n`; `cols.max(4)` | `width.rs:380-408`, `break_cells` `:420-513` | `%break-ranges` — all four rules, and `wrap-segments` is a SLICE of the text by those ranges | `src/render.lisp:22-270` | **SAME** (the tab included: `:tab` is a break opportunity of zero columns, as `break_cells` has it) |
 | leading whitespace preserved; trailing space belongs to the row and is then stripped | `width.rs:464-470`, `:399-401` | same contract, documented | `src/render.lisp:36-38,65-71`, `src/markdown.lisp:495-504` | SAME |
-| `wrap_ranges` shares `break_cells` with `wrap` **by construction** — "two functions kept in sync by a comment is a bug with a schedule" | `width.rs:525-542`, `:410-419` | `wrap-ranges` is an independent char-by-char walker with different rules (`\n` breaks here and not in `wrap-segments`; hard-break at a *column* vs a *character count*) | `src/render.lisp:120-154` | **DIFFERS-drift**: exactly the defect the reference's comment names |
-| `wrap_ranges` is cluster- and escape-aware | `width.rs:529` | bare `char-width` per character | `src/render.lisp:141-142` | DIFFERS: a pasted emoji mis-places the composer caret |
+| `wrap_ranges` shares `break_cells` with `wrap` **by construction** — "two functions kept in sync by a comment is a bug with a schedule" | `width.rs:525-542`, `:410-419` | `wrap-ranges` IS `%break-ranges`, the same function `wrap-segments` slices by | `src/render.lisp:270-285` | **SAME** as of the one-rule merge; the drift is measured and pinned in `the-transcript-and-the-caret-break-in-the-same-places` |
+| `wrap_ranges` is cluster- and escape-aware | `width.rs:529` | cluster- and escape-aware, through the same walker | `src/render.lisp:22-270` | **SAME** |
 | `locate(s, byte, cols)` | `width.rs:552-560` | `locate-in-ranges` — measures cluster-wise over char-wise breakpoints | `src/render.lisp:156-162` | SAME shape, internally inconsistent |
 | `offset_at(s, row, col, cols)` — byte offset at a display column, never parked on the break space | `width.rs:567-591` | none; the composer has no up/down movement | `src/editor.lisp:509-515` | **MISSING** |
 
@@ -609,7 +609,7 @@ which lives in `src/render.lisp`, and two further truncators in
 | `wrapping_never_exceeds_the_width_for_any_input` | `width.rs:753-769` | PASS (was FAIL on every CJK input; `W1`) |
 | `fit_pads_to_exactly_the_width` | `width.rs:771-776` | PASS |
 | `a_newline_is_a_row_break_and_never_reaches_the_terminal` | `width.rs:598-617` | PASS (`W1`); the terminal half of it is asserted on the CELLS, because a newline is dropped by the painter's zero-width arm and never reaches the screen either way — which is what made the defect silent |
-| `wrap_ranges_tile_the_input_and_agree_with_wrap` | `width.rs:620-656` | **FAIL** |
+| `wrap_ranges_tile_the_input_and_agree_with_wrap` | `width.rs:620-656` | PASS: `the-breakpoint-ranges-tile-the-input` (tiling, at 12 widths over a 14-text corpus) and `the-transcript-and-the-caret-break-in-the-same-places` (agreement, on the corpus where the two used to differ by four rows) |
 
 ---
 
@@ -730,13 +730,17 @@ Ordered by what a person would notice first.
    own half of the rule — and by the same paragraph drawn through a live head's
    screen, 60 of 60 clusters. **S** (was estimated M; the fix is two functions and
    a helper in `width.lisp`).
-2. **Two divergent breakpoint finders** — `wrap-segments` (`src/render.lisp:130`)
-   vs `wrap-ranges` (`src/render.lisp:240`). The reference routes both through
-   one `break_cells` and says why (`width.rs:410-419`). Composer caret placement
-   and transcript wrapping can disagree. **L.** The row above this one is now
-   closed and the drift is narrower: both finders break at a newline and at a wide
-   cluster, and differ only in where they cut an over-wide run (a column budget vs
-   a character index).
+2. ~~**Two divergent breakpoint finders**~~ — **CLOSED in the one-rule merge.**
+   `wrap-ranges` (`src/render.lisp:270`) is now `%break-ranges`, the same function
+   `wrap-segments` slices by, and the reference's one-line reason is why
+   (`width.rs:410-419`). The drift was MEASURED before it was fixed, on the same
+   eight inputs the merge had to keep: `hello 中文中文中文` at ten columns was two
+   rows to the transcript and three to the caret, with a first row of ten columns
+   against six; an escape sequence measured 2 columns where the painter measures 6;
+   a ZWJ family broke into five rows of one cluster each; a combining mark and a tab
+   each drifted. `the-transcript-and-the-caret-break-in-the-same-places` fails on
+   every one of them against the old pair and passes against the merge. **S** — the
+   merge was two functions and a slicer, not the L the row estimated.
 3. **`shorten_subject` cuts a path at a character, not at a `/`** —
    `src/cards.lisp:501-520` vs `app.rs:9074-9109`. Every long tool-result header
    in a deep tree shows a subject that cannot be pasted back into a shell, and on
@@ -924,11 +928,25 @@ D12. Perf only, invisible at card sizes: `nth`/`elt` over lists in `hunks` and
 
 ### Styles and width
 
-21. **`truncate-to-width` has no `…`** — `src/width.lisp:415-430` vs
-    `width.rs:329-353`. Every elision on the pane and diff paths is silent. **S**
-22. **Three truncators, one cluster-unsafe** — `%truncate-width`
-    (`src/progress.lisp:160-170`) walks characters and is what every card header
-    uses. **S**
+21. ~~**`truncate-to-width` has no `…`**~~ — **CLOSED, and the row was stale when
+    it was written**: `truncate-to-width` (`src/width.lisp:445-458`) reserves the
+    last column and appends the mark, and says so in its docstring. What was still
+    true is the row below.
+22. ~~**Three truncators, one cluster-unsafe**~~ — **CLOSED in the one-rule merge.**
+    `%truncate-width` is deleted; every one of its twelve call sites (`chrome.lisp`
+    393/419/426/453/678/689/719, `panes.lisp` 1877/1884, `progress.lisp` 220/233,
+    `session.lisp` 442) goes through `truncate-to-width`, which is cluster-aware and
+    discloses. Measured on the progress line: six columns used to say `prefil` and
+    now say `prefi…`, which is what the reference's `trim_to` — which IS
+    `width::truncate` (`render.rs:44`) — has always done.
+23. **A row wider than the frame is cut by the PAINTER, silently.** Found while
+    closing 21 and 22 above, and it is the same shape as the W1 defect one level up:
+    `screen-put-string` drops every cell past the right edge (`cells.lisp:200-204`),
+    so a row composed wider than the screen loses its tail with no mark. The hint bar
+    is exactly that row on a 100-column frame — the reference ends it `ctrl…`
+    (`app.rs`'s `trim_to`) and ours ends `ctrl-q ` — and it is why the bottom row
+    differs in EVERY fixture of the 1:1 rig. The fix is a truncate-with-disclosure
+    where the row is composed rather than a wrapper; it is not in this commit. **S**
 23. **`Role::Attention` is collapsed onto `Pending`** — `src/cards.lisp:381,383,386`
     vs `style.rs:180`, `card.rs:186-195`. Abstained, denied and backgrounded read
     as one colour, and §8.2's rule is a rule about exactly this display. **S**

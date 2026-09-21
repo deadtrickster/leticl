@@ -439,7 +439,7 @@ TRUNCATED rather than dropped: the line is the evidence, a decoder that reports
 \"bad frame\" without the frame turns a precise complaint into a shrug, and the
 first question anybody asks about a skew is *which frame*."
   (let* ((width (string-width (or line "")))
-         (shown (and (plusp width) (%truncate-width line *unreadable-line-cols*)))
+         (shown (and (plusp width) (truncate-to-width line *unreadable-line-cols*)))
          (cut (> width *unreadable-line-cols*)))
     (format nil "the daemon sent a frame this head cannot read (~a). This head ~
                  speaks protocol ~d; a daemon built against a newer one will do ~

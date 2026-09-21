@@ -60,12 +60,15 @@ predicate.
 - [~] **cards + markdown + width** — `cards.lisp`, `markdown.lisp`, `width.lisp`,
   `cells.lisp`. Priority one is **escape sanitising**: tool output currently
   reaches the terminal unfiltered, and the reference closed that in `f36d927`
-  ("a tool's output cannot reconfigure the operator's terminal"). **The width half
-  landed in `W1`** — the wrapping rules are letibot's now — and what is left of it
-  in `rendering.md` §6 is the tab (a tab is zero columns and is dropped by
-  `screen-put-string`, so a tab-indented payload loses its indentation), one
-  truncator instead of three, and `wrap-ranges` sharing the breakpoint finder with
-  `wrap-segments` by construction rather than by comment.
+  ("a tool's output cannot reconfigure the operator's terminal"). **The width half is
+  closed**: W1 landed the wrapping rules, and the structural commit after it merged
+  the two breakpoint scanners into one (`%break-ranges`, used by `wrap-segments` AND
+  `wrap-ranges`) and deleted the third truncator, which was per-character and silent.
+  **What is left is the same shape one level up and is NOT closed**: a row composed
+  wider than the frame is cut by the PAINTER — `screen-put-string` drops every cell
+  past the right edge without a word — so the hint bar ends `ctrl-q ` where the
+  reference ends it `ctrl…`. It is why the bottom row differs in every fixture of the
+  1:1 rig, and it is `rendering.md` §6 gap 23.
 - [~] **screens + frame** — `panes.lisp`, `chrome.lisp`, `render.lisp`. The
   picker opening off your own session; the peek pane's dead cursor; the
   permission card drawing one line of the oracle's five; no fit ladder.

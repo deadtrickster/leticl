@@ -202,43 +202,6 @@ work is in `%code-width`."
   (declare (type character ch))
   (<= #x1f1e6 (char-code ch) #x1f1ff))
 
-(declaim (inline %wide-cluster-start-p))
-(defun %wide-cluster-start-p (string i)
-  "Does a TWO-COLUMN cluster BEGIN at index I?
-
-The break opportunity a CJK paragraph needs, and the rule letibot's `break_cells`
-keeps (width.rs:451-454): a space is not what separates one Chinese run from the
-next, so a wrapper that splits on spaces alone returns one 400-column line for a
-paragraph of them.
-
-**The cluster half is why this is not `(= 2 (char-width …))`.** Two code points
-can be ONE cluster — a ZWJ joins what follows it, and two regional indicators are a
-flag — and a break between them splits the glyph: a family emoji is three people
-again. So the question is *does a wide cluster start here*, and there are four ways
-to answer no:
-
-  · the character is not wide at all;
-  · the character before it is a **ZWJ**, which joins it into that cluster;
-  · the character before it is a **regional indicator** it pairs with;
-  · the character before it is an **ESC**, where this character is the second byte of
-    an escape sequence (`%skip-escape`'s two-byte form) and a break inside one would
-    cut a sequence in half. The conservative answer, because the alternative —
-    relying on a wide byte never appearing inside a CSI — is a coincidence rather
-    than a rule.
-
-A zero-width character after a base does not block a break on the NEXT character:
-`clusters` closes the cluster at the first character that occupies a column, so a
-combining mark followed by a wide character is two clusters and the break is real."
-  (declare (type simple-string string) (type fixnum i))
-  (let ((ch (schar string i)))
-    (and (= 2 (%code-width (char-code ch)))
-         (or (zerop i)
-             (let ((prev (schar string (1- i))))
-               (and (char/= prev +esc-zwj+)
-                    (char/= prev +esc+)
-                    (not (and (%regional-indicator-p prev)
-                              (%regional-indicator-p ch)))))))))
-
 (declaim (ftype (function (simple-string fixnum) fixnum) %skip-escape))
 (defun %skip-escape (string i)
   "Index past the escape sequence starting at I.

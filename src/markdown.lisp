@@ -765,10 +765,11 @@ never flattened; the caller lifts it out whole."
 went — `trim_to` over a painted line (`width::truncate`, width.rs:329-353).
 
 Two things changed here together and neither works alone. The cut walked
-CHARACTERS (`%truncate-width`, progress.lisp), which halves a ZWJ sequence and
-turns a flag into a letter — and this is the function every card header goes
-through. And it cut SILENTLY, so a header that had dropped its tail looked
-exactly like one that had not.
+CHARACTERS (a per-character truncator that lived in `progress.lisp` and is now
+DELETED — one truncator, `truncate-to-width`, and this builds on its
+`%truncate-cells`), which halves a ZWJ sequence and turns a flag into a letter —
+and this is the function every card header goes through. And it cut SILENTLY, so a
+header that had dropped its tail looked exactly like one that had not.
 
 The mark is a segment of its own, in the style of whatever was being cut when
 the budget ran out, so an elision inside a bold run stays inside it. One column

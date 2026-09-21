@@ -1874,14 +1874,14 @@ Two differences from what was on the screen before, both measured:
              (left (and (numberp deadline) (plusp deadline) (plusp *now-ms*)
                         (max 0 (floor (- deadline *now-ms*) 1000)))))
         (append
-         (list (list (cons (%truncate-width
+         (list (list (cons (truncate-to-width
                             (format nil "sudo wants a password — ~a"
                                     (string-trim " " (or (getf req :prompt) "")))
                             w)
                            '(:fg :yellow))))
          (mapcar (lambda (l) (list (cons l nil)))
                  (wrap-text (format nil "for: ~a" (or (getf req :command) "")) w))
-         (list (list (cons (%truncate-width
+         (list (list (cons (truncate-to-width
                             (format nil "type it below (shown as dots), Enter sends it once to sudo and nowhere else; Esc refuses~@[ · ~as left~]"
                                     left)
                             w)

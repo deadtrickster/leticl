@@ -174,18 +174,6 @@ colours, so the information survives a terminal with none."
 
 ;;; -------------------------------------------------------------- lines ;;;
 
-(defun %truncate-width (s cols)
-  "S to at most COLS display columns. Counts cells, not characters."
-  (if (<= (string-width s) cols)
-      s
-      (let ((out (make-string-output-stream))
-            (w 0))
-        (loop for ch across s
-              for cw = (char-width ch)
-              while (<= (+ w cw) cols)
-              do (write-char ch out) (incf w cw))
-        (get-output-stream-string out))))
-
 (defun prefill-line (p cols)
   "The whole prefill line: `prefill 61% ▐████▓▓░░░▌ · 2.4k tok/s · ~12s left`.
 
@@ -217,7 +205,7 @@ every frame, and that reads as flicker."
                                    head)
             when (<= (string-width candidate) cols)
               return candidate
-            finally (return (%truncate-width head cols))))))
+            finally (return (truncate-to-width head cols))))))
 
 (defun decode-line (predicted elapsed-ms cols)
   "The decode phase: how fast tokens are coming out.
@@ -230,4 +218,4 @@ work stopped."
                    0.0))
          (s (format nil "generating ~a tok · ~,1f tok/s · ~a"
                     (thousands predicted) rate (duration elapsed-ms))))
-    (%truncate-width s (max 1 (or cols 1)))))
+    (truncate-to-width s (max 1 (or cols 1)))))

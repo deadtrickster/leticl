@@ -693,7 +693,14 @@ segments, and it is the whole proof."
     (is (find (cons "sum" '(:bg 22 :bold t :underline t))
               (second rows) :test #'equal)
         "and so does the added line")
-    (is (find (cons "a " '(:bg 52)) (first rows) :test #'equal)
+    ;; **The run beside the word, not a word-shaped segment of it.** `wrap-segments`
+    ;; merges the pieces a break decision did not separate, so the emphasis is the
+    ;; only segment on the row carrying an attribute: before the merge this asked for
+    ;; `(cons "a " '(:bg 52))`, which was an artifact of the wrapper splitting every
+    ;; word into its own segment.
+    (is (find-if (lambda (seg) (and (equal '(:bg 52) (cdr seg))
+                                    (search "= a + b;" (car seg))))
+                 (first rows))
         "the unchanged run beside it keeps the plain role background"))
   (is (null (find-if (lambda (seg) (getf (cdr seg) :underline))
                      (apply #'append
@@ -1159,8 +1166,12 @@ every frame, and that reads as flicker."
           (format nil "at ~a columns the line fits" cols)))
     (is (equal "prefill 90%" (prefill-line p 12))
         "given room for the head alone, the head is what is left (it is 11 wide)")
-    (is (equal "prefil" (prefill-line p 6))
-        "and narrower than the head itself it truncates rather than wrapping")))
+    ;; **The cut is disclosed** (`trim_to` is `width::truncate` in the reference,
+    ;; render.rs:44): six columns hold five characters and the `…` that says more
+    ;; existed. It used to say `prefil`, which is a silently truncated word — the
+    ;; progress line was the one row on the screen that elided without a mark.
+    (is (equal "prefi…" (prefill-line p 6))
+        "and narrower than the head itself it truncates, saying so, rather than wrapping")))
 
 (def-test decode-line-says-the-word-and-the-rate (:suite leticl)
   (let ((s (decode-line 1200 3000 80)))
@@ -3633,15 +3644,128 @@ after it is untouched."
     (is (char= (%ch #x4e2d) (cell-ch (screen-cell s 0 2))) "the glyph")
     (is (char= leticl::+wide-cont+ (cell-ch (screen-cell s 0 3))) "and the continuation")))
 
-(def-test split-words-keeps-every-space-and-drops-nothing-else (:suite leticl)
-  "`%split-words` went from a string stream to `subseq`; re-joining the words
-must give the text back exactly, and no chunk may be empty."
-  (dolist (text (list "" " " "a" "a b" "a  b" " a" "a " "a b " "  " "one two  three   four "))
-    (let ((words (leticl::%split-words text)))
-      (is (string= text (apply #'concatenate 'string words))
-          (format nil "~s re-joins to itself" text))
-      (is (notany (lambda (w) (zerop (length w))) words)
-          (format nil "~s has no empty chunk" text)))))
+(def-test the-breakpoint-ranges-tile-the-input (:suite leticl)
+  "The invariant the whole surface rests on, and the reference states it in the same
+words (`width.rs:525-542`): `ranges[0].start == 0`, each `end` is the next `start`,
+the last `end` is the length, and no range is empty.
+
+**Everything that wraps is derived from these ranges**, so a range list that does not
+tile the text is not a mis-drawn row — it is a row whose characters are either
+duplicated or gone, which is the class of defect this file exists to prevent.
+
+The corpus is every character class the rule distinguishes: plain prose, CJK, a ZWJ
+family, a flag, a combining mark, an escape sequence, a tab, a newline, a CRLF, and
+an over-wide run — each at several widths, each checked at every width from 1 to 12."
+  (dolist (text (list ""
+                       "the quick brown fox jumps over the lazy dog"
+                       (format nil "~{~C~}" (loop repeat 12 collect (%ch #x4e2d)))
+                       (format nil "hello ~C~C~C~C~C~C" (%ch #x4e2d) (%ch #x597d)
+                               (%ch #x4e16) (%ch #x754c) (%ch #x4e2d) (%ch #x597d))
+                       (format nil "~C~C~C~C~C" (%ch #x1f468) leticl::+esc-zwj+
+                               (%ch #x1f469) leticl::+esc-zwj+ (%ch #x1f467))
+                       (format nil "~C~C" (%ch #x1f1e9) (%ch #x1f1ea))
+                       (format nil "e~Cabcd~Cefgh" (%ch #x0301) (%ch #x0301))
+                       (format nil "~C[31mabcdefgh~C[0m" (%ch 27) (%ch 27))
+                       (format nil "ab~Ccd~Cef" #\tab #\tab)
+                       (format nil "one~%two")
+                       (format nil "one~C~Ctwo" #\return #\newline)
+                       "https://example.com/abcdefghijklmnop"
+                       (format nil "one~%")
+                       (format nil "~%one")))
+    (dotimes (w 12)
+      (let ((cols (1+ w)) (prev 0))
+        (dolist (r (wrap-ranges text cols))
+          (is (= prev (car r))
+              (format nil "~s at ~d: a range starts where the last ended (~s)" text cols r))
+          ;; **At most one empty range, and it is the last one.** Two cases produce
+          ;; it and the reference produces both: the empty text (`break_cells` always
+          ;; emits one row) and a hard break at the very END of the text, which opens
+          ;; the row the newline landed on. An empty range in the MIDDLE would be a
+          ;; row with nothing on it and characters on both sides — which is a row the
+          ;; text did not ask for.
+          (if (= (cdr r) (car r))
+              (is (equal r (car (last (wrap-ranges text cols))))
+                  (format nil "~s at ~d: an empty range must be the last one" text cols))
+              (is (plusp (length text))
+                  (format nil "~s at ~d: only the empty text has a row of no width" text cols)))
+          (setf prev (cdr r)))
+        (is (= (length text) prev)
+            (format nil "~s at ~d: the last range ends at the length" text cols))))))
+
+(def-test the-transcript-and-the-caret-break-in-the-same-places (:suite leticl)
+  "**The measurement that made this a merge, kept as a guard.**
+
+Two scanners used to decide where a line ends: `wrap-segments` for the transcript and
+`wrap-ranges` for the composer's caret. They disagreed on five of the eight inputs
+below — and not subtly: `hello 中文中文中文` at ten columns was TWO rows to the
+transcript and THREE to the caret, whose first row was six columns wide where the
+transcript's was ten. Nothing was dropped; the caret was simply drawn on a row that
+was not where the reader thought it was.
+
+The invariant asserted here is the one the reference states for its own pair
+(`width.rs:525-542`): **the rows and the ranges describe the same lines.** Same count,
+and each row's text is the slice of the text that range covers — with the row-ending
+whitespace and the newline trimmed, which is what a row is allowed to lose.
+
+If a second scanner is ever added back, this fails on the corpus below rather than on
+the operator's screen."
+  (let ((cases (list (list "plain prose" "the quick brown fox jumps over the lazy dog" 12)
+                     (list "an over-wide URL" "https://example.com/abcdefghijklmnop" 10)
+                     (list "CJK with no spaces"
+                           (format nil "~{~C~}" (loop repeat 8 collect (%ch #x4e2d))) 4)
+                     (list "CJK after prose"
+                           (format nil "hello ~C~C~C~C~C~C" (%ch #x4e2d) (%ch #x597d)
+                                   (%ch #x4e16) (%ch #x754c) (%ch #x4e2d) (%ch #x597d)) 10)
+                     (list "a combining mark"
+                           (format nil "e~Cabcd~Cefgh" (%ch #x0301) (%ch #x0301)) 4)
+                     (list "an escape sequence"
+                           (format nil "~C[31mabcdefgh~C[0m" (%ch 27) (%ch 27)) 6)
+                     (list "a ZWJ family"
+                           (format nil "~C~C~C~C~Cx" (%ch #x1f468) leticl::+esc-zwj+
+                                   (%ch #x1f469) leticl::+esc-zwj+ (%ch #x1f467)) 2)
+                     (list "tabs" (format nil "ab~Ccd~Cef" #\tab #\tab) 4)
+                     (list "a newline" (format nil "one~%two") 8)
+                     (list "a trailing newline" (format nil "one~%") 8))))
+    (dolist (c cases)
+      (destructuring-bind (name text cols) c
+        (let* ((lines (wrap-segments (list (cons text nil)) cols))
+               (ranges (wrap-ranges text cols))
+               (rows (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l))) lines)))
+          (is (= (length lines) (length ranges))
+              (format nil "~a: ~d rows but ~d ranges" name (length lines) (length ranges)))
+          ;; compared by VISIBLE text, because a row carries its escapes and an
+          ;; escape measures no columns: the interesting claim is which characters
+          ;; each side puts on the line
+          (loop for row in rows
+                for r in ranges
+                do (is (string= (visible-row row)
+                                (string-right-trim '(#\space #\newline #\return)
+                                                   (visible-row (subseq text (car r) (cdr r)))))
+                       (format nil "~a: row ~s is not what the range ~s covers"
+                               name (visible-row row) r))))))))
+
+(def-test the-two-breakpoint-paths-agree (:suite leticl)
+  "A plain string is walked one character at a time and anything else through
+`clusters`, because the cell walk is a call per character and `wrap-segments` runs on
+every visible row of every frame. **Two paths, one rule** — and this is what makes
+that true rather than intended, the same way `string-width-agrees-with-clusters` holds
+the two width walks together.
+
+The plain path is reached by construction (`plain-columns-p`), so the check is that a
+string it ACCEPTS gives the same answer through both: the corpus is restricted to
+strings with nothing wide, nothing zero-width and no escape, which is exactly what
+`plain-columns-p` promises, and the assertion is on the ranges themselves — the
+boundaries a wrapped row is cut at, not a summary of them."
+  (dolist (text (list "" "a" "ab cd" "  leading" "trailing  " "one  two   three"
+                      "a b c d e f g h i j k" "https://example.com/abcdefghij"
+                      (format nil "~a" (make-string 40 :initial-element #\x))
+                      (format nil "word ~a word" (make-string 30 :initial-element #\y))))
+    (is (leticl::plain-columns-p text) (format nil "~s is a plain-columns string" text))
+    (dotimes (w 14)
+      (let ((cols (1+ w)))
+        (is (equal (leticl::%break-ranges-plain text (length text) cols)
+                   (leticl::%break-ranges-cells text (length text) cols))
+            (format nil "~s at ~d: the plain and cluster paths disagree" text cols))))))
 
 (def-test wrap-measures-the-visible-word-in-place (:suite leticl)
   "The visible width of a word is measured without the trimmed copy; the
@@ -3650,11 +3774,14 @@ break decisions must not move."
     ;; words that fit exactly: the trailing space is not counted against the width
     (is (equal '("abc def" "ghi") (texts (wrap-segments (list (cons "abc def ghi" nil)) 7)))
         "a row whose words fit exactly is not broken early")
-    ;; an over-wide word hard-breaks on its VISIBLE part: the trailing space is
-    ;; not a chunk (the chunks' row shape is the old one and not asserted here)
-    (is (equal "abcdefx" (apply #'concatenate 'string
-                                (texts (wrap-segments (list (cons "abcdef x" nil)) 4))))
-        "every visible character survives the hard break and the space is gone")
+    ;; an over-wide run hard-breaks at the column budget, and the SPACE AFTER it is a
+    ;; real space between two words on the row it lands on (`ef x`), which is the
+    ;; reference's answer: it is not a chunk boundary and it is not thrown away
+    (is (equal "abcdef x" (apply #'concatenate 'string
+                                 (texts (wrap-segments (list (cons "abcdef x" nil)) 4))))
+        "every character survives the hard break, and the word space with it")
+    (is (equal '("abcd" "ef x") (texts (wrap-segments (list (cons "abcdef x" nil)) 4)))
+        "four columns of letters, then the remainder with its space")
     ;; wide characters count two per cell on both measurements
     (let ((cjk (format nil "~C~C ~C~C" (%ch #x4e2d) (%ch #x6587) (%ch #x4e2d) (%ch #x6587))))
       (is (= 2 (length (wrap-segments (list (cons cjk nil)) 5)))
@@ -3770,8 +3897,12 @@ columns — each of which loses its tail at the right edge in silence."
     (is (string= mixed (apply #'concatenate 'string texts))
         "the hard break keeps every cluster")
     (dolist (row texts) (is (<= (string-width row) 4) "and every chunk is at most the budget"))
-    (is (equal (list (format nil "~Cab" (%ch #x4e2d)) "cdef" "gh") texts)
-        "a wide cluster counts two columns wherever it falls in the run")
+    ;; **The reference's rows, which is the point of the merge.** A wide cluster is a
+    ;; break opportunity BEFORE itself and the word it precedes is then cut at the
+    ;; column budget, so `中abcd` cannot share a row: the old wrapper packed it by
+    ;; measured width into `中ab`/`cdef`/`gh`, which no other head agrees with.
+    (is (equal (list (format nil "~C" (%ch #x4e2d)) "abcd" "efgh") texts)
+        "a wide cluster counts two columns, and the run after it is cut at the budget")
     (let ((rows (%paint-lines lines 4 6)))
       (is (string= mixed (apply #'concatenate 'string
                                 (subseq rows 0 (length lines))))
@@ -3785,15 +3916,21 @@ three people at the right width."
   (let ((family (format nil "~C~C~C~C~C" (%ch #x1f468) leticl::+esc-zwj+ (%ch #x1f469)
                         leticl::+esc-zwj+ (%ch #x1f467)))
         (flag (format nil "~C~C" (%ch #x1f1e9) (%ch #x1f1ea))))
-    (is (= 1 (length (leticl::%split-words family)))
-        "a ZWJ family is one chunk, whatever its code points")
-    (is (= 1 (length (leticl::%split-words flag))) "and a flag is one chunk")
-    (is (null (leticl::%wide-cluster-start-p family 2))
-        "the second member of the family is not a break point")
-    (is (null (leticl::%wide-cluster-start-p flag 1))
-        "nor is the second half of the flag")
-    (is (leticl::%wide-cluster-start-p (format nil "ab~C~C" (%ch #x4e2d) (%ch #x6587)) 2)
-        "a wide character after two narrow ones is one")
+    ;; the assertion is on the BOUNDARIES, because that is what a wrapper produces:
+    ;; a break inside the family would put its second code point on the next row, and
+    ;; the terminal would draw two people where the text has one
+    (dotimes (i (length family))
+      (is (not (find-if (lambda (r) (and (< (cdr r) (length family))
+                                         (= (cdr r) (1+ i))))
+                        (wrap-ranges family 2)))
+          (format nil "no row ends inside the family at index ~d" i)))
+    (dotimes (i (length flag))
+      (is (not (find-if (lambda (r) (and (< (cdr r) (length flag))
+                                         (= (cdr r) (1+ i))))
+                        (wrap-ranges flag 2)))
+          (format nil "no row ends inside the flag at index ~d" i)))
+    (is (= 1 (length (wrap-ranges family 2)))
+        "a two-column body takes the whole family as one cluster")
     ;; and the family reaches a two-column body as ONE cluster of two columns, which
     ;; is the cell the painter can hold today: its first code point plus the
     ;; continuation marker. The rest of the sequence needs a cell that holds a
@@ -3875,7 +4012,7 @@ typed entries must keep that, or a missing key becomes a red frame."
   (let ((s (make-screen 10 1)))
     (is (= 3 (screen-put-string s 0 3 nil)) "and places nothing, returning the column it was given")
     (is (char= #\space (cell-ch (screen-cell s 0 3))) "with the cell untouched"))
-  (is (null (leticl::%split-words nil)) "NIL splits to no words")
+  (is (null (wrap-segments nil 10)) "no segments, no rows")
   (is (null (wrap-segments (list (cons nil '(:dim t))) 10)) "and wraps to no rows"))
 
 ;;; ------------------------------ two things the profile's hot loop showed ;;;

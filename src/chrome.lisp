@@ -390,7 +390,7 @@ including `detached — reconnecting…`. The reference puts the notice and the 
 in the chrome above the box, where the card is (app.rs:5069-5075)."
   (let ((note (head-status-note head)))
     (when (and note (plusp (length note)))
-      (list (list (cons (%truncate-width (format nil "· ~a" note) cols)
+      (list (list (cons (truncate-to-width (format nil "· ~a" note) cols)
                         '(:fg :magenta)))))))
 
 (defun completions-line (head cols)
@@ -416,14 +416,14 @@ is a typing aid, not a message."
                           when (alexandria:starts-with-subseq needle name)
                             collect (format nil "/~a ~a" name hint))))
         (when parts
-          (list (list (cons (%truncate-width
+          (list (list (cons (truncate-to-width
                              (format nil "  ~{~a~^  ·  ~}" parts) cols)
                             '(:dim t)))))))))
 
 (defun stall-row (head cols)
   (let ((text (stall-text head)))
     (when text
-      (list (list (cons (%truncate-width text cols) '(:fg :yellow)))))))
+      (list (list (cons (truncate-to-width text cols) '(:fg :yellow)))))))
 
 ;;; --------------------------------------------------------------- status ;;;
 
@@ -450,7 +450,7 @@ ever on a number that is zero."
          (stall (or (stall-text) ""))
          (text (format nil " ~a~a~a~a" note scroll queued stall))
          (style (if (head-connected head) '(:dim t) '(:fg :red :bold t))))
-    (list (cons (%truncate-width text (max 1 (or cols 1)))
+    (list (cons (truncate-to-width text (max 1 (or cols 1)))
                 style)
           (cons (make-string (max 0 (- cols (min cols (string-width text))))
                              :initial-element #\─)
@@ -675,7 +675,7 @@ legend's is its own."
   (let* ((w (max 4 cols))
          (inner (- w 2))
          (left-text (if (and (plusp (length left)) (>= inner 10))
-                        (format nil "─ ~a " (%truncate-width left (max 1 (- inner 4))))
+                        (format nil "─ ~a " (truncate-to-width left (max 1 (- inner 4))))
                         ""))
          (left-cols (string-width left-text))
          (room (max 0 (- inner left-cols 2)))
@@ -686,7 +686,7 @@ legend's is its own."
          ;; scrolls the whole frame by a row every time it is drawn, so the gate
          ;; is the reference's and the truncation is one tighter.
          (shown (if (and (plusp (length right)) (>= inner 10) (>= room 4))
-                    (%truncate-width right (max 0 (- room 1)))
+                    (truncate-to-width right (max 0 (- room 1)))
                     ""))
          (right-cols (if (plusp (length shown)) (+ 3 (string-width shown)) 0))
          (fill (max 0 (- inner left-cols right-cols))))
@@ -716,7 +716,7 @@ already in, and ours painted it bold, which is the header's register."
   (let ((lines (or lines (list ""))))
     (loop for line in lines
           for i from start
-          for shown = (%truncate-width line inner)
+          for shown = (truncate-to-width line inner)
           ;; the wall and the prompt are DIM, and the wall is its own segment with
           ;; a plain space after it — read off the two screens' escapes, which is
           ;; the only place the difference shows: ours was `ESC[2m│ ESC[0;1mESC[96m›`
