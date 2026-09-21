@@ -801,8 +801,8 @@ one thing this head must not need."
                    (t nil))))
           (t nil))))))
 
-(defun %ladder-key (head key type)
-  "The :normal ladder — the decision ask, then the composer.
+(defun %decision-key (head key type)
+  "The keys an OPEN ASK owns, and only those — NIL when this key is not one.
 
 **Up and Down move the ladder whether or not a line is being typed.** The whole
 arm used to be gated on an empty composer, and the cost of that was not visible
@@ -818,37 +818,46 @@ ask is open — PageUp and PageDown still do that.
 
 **Enter and the digits keep the empty-composer guard**, for the opposite reason:
 with a typed line Enter is `%submit-line`'s, which answers the marked row and
-HOLDS the words, and a line being typed keeps its digits (app.rs:3474-3498)."
+HOLDS the words, and a line being typed keeps its digits (app.rs:3474-3498).
+
+**This is a function of its own, not folded into the composer's arm, and the ORDER
+it is called in is the point.** An ask must be asked BEFORE every list on the screen
+— see `%handle-key`, which is where the reference's own order puts it (app.rs:3609,
+ahead of the session picker at :3643, the mode and models pickers at :3736 and the
+subagent, todos and jobs panes at :3795, :3852 and :3917). They used to be asked
+first, so a permission arriving over an open session picker left Up and Down
+moving the PICKER: two cursors on one screen and the ladder out of reach for as
+long as the picker stayed open."
   (let* ((decision (%open-decision head))
          (options (decision-options decision))
          (n (length options))
          (empty (zerop (length (composer-buffer (head-composer head))))))
-    (if (and decision (plusp n))
-        (case type
-          ((:up) (setf (head-decision-sel head) (max 0 (1- (head-decision-sel head)))
+    (when (and decision (plusp n))
+      (case type
+        ((:up) (setf (head-decision-sel head) (max 0 (1- (head-decision-sel head)))
+                     (head-dirty head) t))
+        ((:down) (setf (head-decision-sel head)
+                       (min (1- n) (1+ (head-decision-sel head)))
                        (head-dirty head) t))
-          ((:down) (setf (head-decision-sel head)
-                         (min (1- n) (1+ (head-decision-sel head)))
-                         (head-dirty head) t))
-          ((:enter) (if empty
-                        (%answer-decision head (head-decision-sel head))
-                        (%normal-key head key)))
-          ((:char)
-           (let ((digit (digit-char-p (getf key :ch))))
-             ;; a digit that names no row is the composer's, as is every digit
-             ;; once a line is being typed
-             (if (and empty digit (<= 1 digit n))
-                 (%answer-decision head (1- digit))
-                 (%normal-key head key))))
-          (t (%normal-key head key)))
-        (%normal-key head key))))
+        ((:enter) (when empty (%answer-decision head (head-decision-sel head))))
+        ((:char)
+         (let ((digit (digit-char-p (getf key :ch))))
+           ;; a digit that names no row is the composer's, as is every digit
+           ;; once a line is being typed
+           (when (and empty digit (<= 1 digit n))
+             (%answer-decision head (1- digit)))))
+        (t nil)))))
 
 (defun %handle-key (head key)
   "Who a key belongs to, in the reference's precedence order (`App::key`).
 
 The ladder is one `cond` and the reference's is one `match`, which is what makes
 the ORDER reviewable: the cards that own the keyboard, then the head's own
-chords, then a click, then whatever list is on the screen, then the composer."
+chords, then a click, then the overlays that keep their arrows under an ask, then
+AN OPEN ASK, then every other list, then the composer. The ask's own place in that
+line is the one that moved — see `%decision-key` — and the reference's is the
+same order (app.rs:3384/3417/3481, then :3609 for the ask, then :3643 onward
+for the lists)."
   (let ((type (%key-type key)))
     (cond
       ((eq type :eof) (setf (head-running head) nil))
@@ -879,13 +888,29 @@ chords, then a click, then whatever list is on the screen, then the composer."
              (setf (head-mode head) :normal (head-dirty head) t)))
        t)
       ((and (eq type :mouse) (eq (getf key :kind) :press) (%click head key)))
+      ;; **The three overlays keep the arrows even under an ask.** Each is opened
+      ;; deliberately, and a permission arriving while one is up must not take the
+      ;; arrows out from under the row being read — the reference keeps the
+      ;; subagent-output view, the job-output view and the config pane ahead of the
+      ;; decision ladder (app.rs:3384, 3417 and 3481, all before :3609).
+      ((and (member (head-mode head) '(:peek :job-out :config))
+            (%pane-key head key type)))
+      ;; **An open ask is asked before every LIST on the screen.** The reference's
+      ;; order puts the ladder at app.rs:3609 — ahead of the session picker (:3643),
+      ;; the mode and models pickers (:3736) and the subagent, todos and jobs panes
+      ;; (:3795, :3852, :3917) — and this head used to put them all first, so a
+      ;; permission arriving over an open session picker left Up and Down moving
+      ;; the PICKER and the ladder out of reach until the picker was closed. That
+      ;; is T5, and `%decision-key`'s own `when` is what keeps every key it does
+      ;; not own falling through to the lists below.
+      ((%decision-key head key type))
       ;; a picker's own keys; what it does not take is the composer's, so a name
       ;; can be typed under the card
       ((and *pick-open* (pick-key-event head key)))
       ((and (member (head-mode head)
-                    '(:help :status :config :jobs :subagents :peek :job-out :todos :picker))
+                    '(:help :status :jobs :subagents :todos :picker))
             (%pane-key head key type)))
-      (t (%ladder-key head key type)))))
+      (t (%normal-key head key)))))
 
 (defun %withdraw-queued (head)
   "Take the last queued prompt back into the composer (v19).

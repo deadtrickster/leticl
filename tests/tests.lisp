@@ -4771,6 +4771,76 @@ FRESH question its reset is for."
       (is (= 0 (leticl::head-decision-sel h))
           "and a fresh question still starts at its first row"))))
 
+(def-test an-open-ask-outranks-every-list-on-the-screen (:suite leticl)
+  "T5. The reference asks the decision ladder BEFORE the session picker
+(app.rs:3609 before :3643), the mode and models pickers (:3736) and the subagent,
+todos and jobs panes (:3795, :3852, :3917) — and AFTER the subagent-output view,
+the job-output view and the config pane (:3384, :3417, :3481), each opened
+deliberately and each keeping the arrows it was opened for.
+
+This head asked all of them first, because the ladder was the tail of
+`%ladder-key`: with a permission up over an open session list, Up and Down moved
+the PICKER and the ladder could not be reached at all until the list was closed.
+Two cursors on one screen and one of them unreachable is the whole of the bug.
+
+The cursors are read AND written on purpose, and both start at 1 for every case,
+so each `is` is a measurement rather than a report: `the ladder is at 2` says the
+ask took the key, `still at 1` says it did not. `%decision-key`'s Down does NOT
+wrap, so the starting value has to be set per case."
+  (let ((h (%head-with-settings))
+        (mark 1))
+    (flet ((ladder (v) (setf (leticl::head-decision-sel h) v)))
+      ;; --- the session list, a LIST the ask outranks ---
+      (%sessions h "one" "two" "three")
+      (setf (head-mode h) :picker (head-picker-sel h) mark)
+      (setf (session-open-decisions (head-session h)) (list (%decision-with)))
+      (ladder 1)
+      (leticl::%handle-key h (list :type :down))
+      (is (= 2 (leticl::head-decision-sel h)) "down moves the LADDER over the session list")
+      (is (= mark (head-picker-sel h)) "and the list's cursor has not moved")
+      (ladder 1)
+      (leticl::%handle-key h (list :type :up))
+      (is (= 0 (leticl::head-decision-sel h)) "up moves the ladder back")
+      (is (= mark (head-picker-sel h)) "and the list is still where it was")
+      ;; --- the jobs pane, another one ---
+      (setf (head-mode h) :jobs (head-picker-sel h) mark
+            (head-jobs h) (list (list :id "j1") (list :id "j2") (list :id "j3")))
+      (ladder 1)
+      (leticl::%handle-key h (list :type :down))
+      (is (= 2 (leticl::head-decision-sel h)) "down moves the ladder over the jobs pane")
+      (is (= mark (head-picker-sel h)) "and the jobs cursor has not moved")
+      ;; --- the mode picker's card ---
+      (setf (head-mode h) :normal leticl::*pick-open* :mode (head-picker-sel h) mark)
+      ;; **Non-vacuity first**: with no ask up, the card DOES take the Down. Without
+      ;; this the case below passed for the wrong reason before the fix — the card
+      ;; declined the key and the ladder at the tail of the chain happened to be
+      ;; reached anyway, which is a test of the fixture and not of the order.
+      (setf (session-open-decisions (head-session h)) nil)
+      (leticl::%handle-key h (list :type :down))
+      (is (= (1+ mark) (head-picker-sel h)) "the mode card takes Down when no ask is up")
+      (setf (session-open-decisions (head-session h)) (list (%decision-with))
+            (head-picker-sel h) mark)
+      (ladder 1)
+      (leticl::%handle-key h (list :type :down))
+      (is (= 2 (leticl::head-decision-sel h)) "down moves the ladder over the mode card")
+      (is (= mark (head-picker-sel h)) "and the card's cursor has not moved")
+      ;; --- but the config pane was opened deliberately and keeps the arrows ---
+      (setf leticl::*pick-open* nil (head-mode h) :config (head-picker-sel h) mark)
+      (let ((n (length (config-rows h))))
+        (is (> n 2) "the config pane has rows for its cursor to walk")
+        (ladder 1)
+        (leticl::%handle-key h (list :type :down))
+        (is (= (1+ mark) (head-picker-sel h)) "the config pane keeps down")
+        (is (= 1 (leticl::head-decision-sel h)) "and the ladder does not move"))
+      ;; --- and a key the ask does NOT own falls through to the composer, which
+      ;; is what `%decision-key` answering NIL is for ---
+      (setf (head-mode h) :normal leticl::*pick-open* nil)
+      (ladder 1)
+      (leticl::%handle-key h (list :type :char :ch #\z))
+      (is (string= "z" (composer-buffer (head-composer h)))
+          "a letter the ask does not own is still the composer's")
+      (is (= 1 (leticl::head-decision-sel h)) "and it did not move the ladder"))))
+
 (def-test a-digit-that-names-no-row-is-the-composers (:suite leticl)
   "G21. The ladder's digits take a row; a digit past the last one is a character.
 The old arm answered on any digit, so `7` on a four-option ask answered the
