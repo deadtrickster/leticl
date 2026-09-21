@@ -560,6 +560,70 @@ is the number in the table. **A measurement that takes time starves what it meas
 constant derived from it carries the bias silently.** See `HACKING.md` and
 `scripts/tui-eval`.
 
+### R13 — a running tool call shows a live elapsed time
+
+**DONE** (the commit after `9d08b8d`). The operator, on a `cargo build` that prints
+nothing: *"when a tool call takes time it is frozen at 0ms until it finishes. A live
+coarse timer would be nice, say 1/10th of a second."*
+
+**The diagnosis here is NOT letibot's, and that is why it was measured before it was
+fixed.** In letibot the number beside a running call is written from a `ToolProgress`
+event, so a command that says nothing produces no number. Here the running elapsed was
+**already read from this head's own clock** (`%call-elapsed-ms`, anchored by
+`note-call-started` when `:tool-started` ARRIVED) — and measured on a scratch head, it
+moves:
+
+    value  75637 ms -> 78680 ms            (moves: read from this head's clock)
+    glass  Running · 1m19s · 1m19s · 1m19s (frozen: four seconds, no event)
+
+**R13's defect is one layer above where it was reported: the number was never the
+problem, the ASKING was.** The loop paints when `head-dirty` is set and only a frame or
+a key sets it, so a number computed from `*now-ms*` is computed and never drawn again —
+the frame is a SNAPSHOT of the clock, kept until an event replaces it. Two things
+already animate from that clock (the spinner and the cat) and they were frozen with it.
+
+**And the measurement nearly missed it.** `scripts/tui-eval`'s liveness probe POKES
+`head-dirty` (`:220`) to prove the loop can paint, so an eval-based freshness probe
+**keeps the frame fresh**: a first pass through the socket read the glass *moving*
+(1m15s → 1m18s) and would have concluded there was nothing to fix. The numbers above
+are from `tmux capture-pane` with no eval in between — the operator's own view, touching
+nothing. The general rule is in `HACKING.md`: a measurement that takes time starves what
+it measures; this one REFRESHES it.
+
+**The fix**: a second reason to paint, and it is the clock. `live-frame-p` is true while
+something on the frame is a function of time — a running turn (the spinner, `· {since}`,
+the stall row becoming due), a running call, the carry/filling line — and
+`live-frame-due-p` asks for a frame at most once per `+live-frame-ms+` = **100 ms**,
+which is the operator's tenth rather than a choice of ours. A notice and a pending
+stop-wait are deliberately NOT in the list: they arm their own deadline and set `dirty`
+themselves.
+
+    after:  Running · 50.8s · 52.7s · 54.8s · 56.8s · 58.7s   (two seconds apart)
+            Running · 800ms · 1.1s · 1.6s · 2.0s               (sub-second, in tenths)
+
+**Cost, measured over 30 s on a 24x80 scratch head**: idle 1 tick of CPU (0.03 % of one
+core), live frame 3 ticks (0.10 %) — so ten frames a second costs 0.07 % of a core, and
+an idle head still sleeps.
+
+**The trap, answered rather than avoided.** A start instant that came from the DAEMON is
+on the daemon's clock and `*now-ms*` is ours; subtracting one from the other is a
+duration measured across two clocks, silently wrong by whatever they disagree by, worst
+exactly when a head attaches to a daemon on another box. The anchor here is
+`note-call-started`'s own reading at arrival, so the whole duration is in one clock;
+it is short by the delivery latency of the one frame that started the call, and that is
+the honest cost of answering *how long have I been waiting* in the reader's clock. The
+alternative — have the daemon report an elapsed — needs a progress event, and not
+needing one is the point.
+
+**Not changed**: the settled duration. `note-call-finished` measures it once, exactly,
+and the row shows that (measured: 10047 ms stored, which `%live-elapsed-ms` would have
+flattened to 10000). Only a number that is still moving is rounded down to a tenth.
+
+**A consequence worth naming**: the stall row. It becomes due after `*stall-ms*` of
+silence — itself a function of the clock — so it could not appear until an event did
+either. Measured on the glass after this change, with no event since the attach:
+`nothing received for 2m51s. The turn is still marked running; esc esc interrupts it.`
+
 ### R15 — an edit card's label is the file, with no elided-array placeholder
 
 **DONE** (`0446585`). The operator's rows, and the ruling on them:

@@ -1034,6 +1034,78 @@ reason `\"permission answered\"` was immortal."
         (head-notice-until head) 0
         (head-dirty head) t))
 
+;;; ------------------------------------------- the frame and the clock ;;;
+;;;
+;;; **A number the frame computes from the clock is computed and never drawn again.**
+;;; The frame is rebuilt when `head-dirty` is set, and only a FRAME or a KEY sets it —
+;;; so `*now-ms*`, which the loop sets on every pass, is read by a builder that is not
+;;; asked to run. Measured on a scratch head with a 45-second-old running call, from
+;;; the shell with no eval in between (an eval POKES `head-dirty` to prove the loop
+;;; can paint — `scripts/tui-eval:220` — so a probe that watches freshness keeps the
+;;; frame fresh; see HACKING.md, "a measurement that refreshes what it measures"):
+;;;
+;;;     value  75637 ms -> 78680 ms          (it moves: read from this head's clock)
+;;;     glass  Running · 1m19s · 1m19s · 1m19s   (frozen: nothing asked for a frame)
+;;;
+;;; — the frame is a SNAPSHOT of the clock, kept until an event replaces it. That is
+;;; R13's defect one layer above where it was reported: the number was never the
+;;; problem, the ASKING was.
+;;;
+;;; **The fix is not "repaint always".** A head that paints at the loop's rate burns a
+;;; core and a terminal to say nothing has changed. It is: ask for a frame while the
+;;; frame has a part that is a function of time, and at a rate a person can read.
+
+(defparameter +live-frame-ms+ 100
+  "How often a frame with a part that is a function of TIME is rebuilt.
+
+**Tenths of a second, and that is the operator's number rather than a choice of
+ours**: a live duration answers *is this moving, and roughly how long has it been —
+a live coarse timer would be nice, say 1/10th of a second*, and a figure that churns
+every frame is noise that also makes the row impossible to read.
+
+A `defparameter` and not a `defconstant`: the file pusher SKIPS constants, so a
+constant here could never be changed on a running head.")
+
+(defvar *last-paint-ms* 0
+  "When this head last produced a frame, on the monotonic clock.
+
+**The fact the loop needs and the frame cannot carry**: the loop is what DECIDES to
+paint, so the loop is what has to know how long it has been since it last did. A
+`defvar` rather than a head slot because a struct change is a RESTART in this SBCL,
+and nothing about this fact justifies one. Stamped by `%render-and-paint` on every
+path, including the failure one — a paint that fell back to the failure frame is
+still a frame, and a stamp that did not move would ask for another one immediately,
+which is a head spinning on a broken renderer.")
+
+(defun live-frame-p (head)
+  "Is something on HEAD's frame a function of the CLOCK?
+
+Each part named here is drawn from `*now-ms*` or from `internal-real-time-ms` while
+the frame is built, so a frame built a second from now would differ with NO event in
+between: the composer's spinner and its `· {since}` (`turn-status`), a running call's
+elapsed (`%call-elapsed-ms`), the stall row becoming due (`stall-text`), and the
+carry/filling line's bar and its patience.
+
+**A notice and a pending stop-wait are deliberately NOT here.** They arm their own
+deadline and mark the head dirty when a tenth of it passes (`tick-notice`,
+`tick-stop-request`), so they already ask for the frames they need; naming them again
+would be a second spelling of one rule, and the second spelling is the one that
+rots."
+  (let ((turn (session-turn (head-session head))))
+    (or (and turn (string= (turn-state-name turn) "running"))
+        (some (lambda (c) (string= (getf (getf c :state) :state) "running"))
+              (getf turn :calls))
+        (filling-active-p)
+        (and *carry-last-done* *carry-moved-at*))))
+
+(defun live-frame-due-p (head)
+  "Has the CLOCK asked for a frame — as opposed to an event — and is one due?
+
+False on a head with nothing live in it, which is the state that keeps an idle head
+at `sleep 0.03` and off the operator's CPU."
+  (and (live-frame-p head)
+       (>= (- (internal-real-time-ms) *last-paint-ms*) +live-frame-ms+)))
+
 ;;; ------------------------------------------------------- the attach wait ;;;
 ;;;
 ;;; The `Hello` carries the WHOLE SNAPSHOT, so on a session of thousands of rows

@@ -988,7 +988,13 @@ Oldest request first."
              ;; 2. draw (guarded in %render-and-paint: a render error paints
              ;; itself and the loop carries on, so the operator can see what
              ;; broke and re-push instead of losing the head)
-             (if (head-dirty head)
+             ;;
+             ;; **TWO reasons to paint, and only one of them is an event.** An
+             ;; event sets `head-dirty`; the CLOCK asks for a frame while anything
+             ;; on it is a function of time, because a number computed from
+             ;; `*now-ms*` and never asked for is a number drawn once (R13 — see
+             ;; `live-frame-p`). An idle head has neither, so it still sleeps.
+             (if (or (head-dirty head) (live-frame-due-p head))
                  (%render-and-paint head)
                  (sleep 0.03))
              ;; 2b. answer every screen request with the frame just painted

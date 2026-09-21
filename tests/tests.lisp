@@ -1866,6 +1866,111 @@ the same call id in two rounds cannot collide."
                     (getf (item-facts "r2#1") :ms)))
         "and they are not the same number, which is the whole point")))
 
+;;; -------------------- R13: a running call shows a live elapsed time -------- ;;;
+;;;
+;;; The operator, on a `cargo build` that prints nothing: *"it is frozen at 0ms until
+;;; it finishes. A live coarse timer would be nice, say 1/10th of a second."*
+;;;
+;;; MEASURED FIRST, and the answer here is not the one letibot has: **this head's
+;;; running elapsed was already read from its own clock** (`%call-elapsed-ms`, fed by
+;;; `note-call-started` at `:tool-started` arrival), and it moves. What did not move
+;;; was the FRAME. From the shell, on a scratch head with a 45-second-old running
+;;; call, no eval in between (an eval POKES `head-dirty` to prove the loop can paint,
+;;; `scripts/tui-eval:220`, so a probe that watches freshness keeps the frame fresh):
+;;;
+;;;     value  75637 ms -> 78680 ms            (moves)
+;;;     glass  Running · 1m19s · 1m19s · 1m19s (frozen, four seconds)
+;;;
+;;; so the number was computed correctly and never ASKED FOR. R13's defect is one
+;;; layer above where it was reported.
+
+(def-test a-running-call-counts-on-this-heads-clock-not-the-daemons (:suite leticl)
+  "**The trap, as an assertion.** A start instant that came from the daemon is on the
+daemon's clock and `internal-real-time-ms` is ours; subtracting one from the other is
+a duration measured across two clocks, silently wrong by whatever they disagree by,
+and worst exactly when a head attaches to a daemon on another box.
+
+So the anchored instant is this head's, taken when `:tool-started` ARRIVED
+(`note-call-started`), and an envelope `ts` from the future or the past cannot move
+it: the two are asserted to disagree, and the row is asserted to be unaffected."
+  (let ((*call-started-ms* nil) (*call-facts* nil))
+    (note-call-started "c1")
+    (let ((anchored (cdr (assoc "c1" *call-started-ms* :test #'string=))))
+      (is (numberp anchored) "the start is recorded on arrival")
+      (is (<= (abs (- anchored (internal-real-time-ms))) 50)
+          "and it is THIS clock's now, not a number that arrived on the wire")
+      ;; shift the anchor a known 4.2 s back and the elapsed follows, exactly
+      (setf (cdr (assoc "c1" *call-started-ms* :test #'string=))
+            (- (internal-real-time-ms) 4200))
+      (let ((ms (leticl::%call-elapsed-ms (list :call-id "c1"))))
+        (is (<= 4200 ms (+ 4200 100))
+            "the elapsed is the difference between two readings of ONE clock: ~d" ms))
+      ;; and a call nobody saw start has no elapsed rather than a guess
+      (is (null (leticl::%call-elapsed-ms (list :call-id "never-seen")))
+          "no anchor is no duration, not zero"))))
+
+(def-test a-live-duration-is-coarse-on-purpose (:suite leticl)
+  "Tenths, and the operator's number: what the row answers is *is this moving, and
+roughly how long has it been — a live coarse timer would be nice, say 1/10th of a
+second*. The frame is rebuilt a tenth apart, so a tenth is the finest thing that can
+reach the screen; rounding here makes the number honest about its own resolution
+rather than churning two digits nobody reads."
+  (dolist (case '((0 . 0) (1 . 0) (99 . 0) (100 . 100) (199 . 100) (840 . 800)
+                  (999 . 900) (1000 . 1000) (57821 . 57800)))
+    (is (= (cdr case) (%live-elapsed-ms (car case)))
+        (format nil "~dms reads as ~dms" (car case) (cdr case))))
+  ;; and the ROW says it in tenths, in the running tense
+  (let ((*call-started-ms* (list (cons "c1" (- (internal-real-time-ms) 8400)))))
+    (let ((row (segs-of (call-lines (list :call-id "c1" :name "bash"
+                                          :state (list :state "running"))
+                                    100))))
+      (is (search "Running" row) "the running tense")
+      (is (search "8.4s" row) "and a tenth: ~s" row)))
+  ;; **the SETTLED duration is NOT rounded** — it was measured once, exactly, and the
+  ;; row shows that; only a number that is still moving is coarse
+  (let ((*call-facts* nil) (*call-started-ms* nil) (*item-facts* nil))
+    (note-call-started "c2")
+    (setf (cdr (assoc "c2" *call-started-ms* :test #'string=))
+          (- (internal-real-time-ms) 1843))
+    (note-call-finished "c2")
+    (is (<= 1843 (getf (alexandria:assoc-value *call-facts* "c2" :test #'string=) :ms)
+            (+ 1843 100))
+        "the settled measurement is kept to the millisecond")))
+
+(def-test a-frame-with-a-clock-in-it-is-rebuilt-by-the-clock (:suite leticl)
+  "**R13's fix, at the layer it belongs to.** The loop paints when `head-dirty` is
+set, and only a frame or a key sets it — so a number computed from the clock was
+computed and never drawn again. The second reason to paint is the clock, and it
+applies exactly while something on the frame is a function of time."
+  (let ((leticl::*last-paint-ms* 0)
+        (h (%make-head)))
+    ;; nothing live: an idle head does NOT ask for frames, which is what keeps it off
+    ;; the operator's CPU
+    (is (not (live-frame-p h)) "an idle head has nothing on its frame that is a function of time")
+    (is (not (live-frame-due-p h)) "so the clock asks for no frame")
+    ;; a running turn: the spinner and `· {since}` on the border
+    (setf (session-turn (head-session h)) (list :state (list :state "running") :calls nil))
+    (is (live-frame-p h) "a running turn is a function of time")
+    (setf leticl::*last-paint-ms* (internal-real-time-ms))
+    (is (not (live-frame-due-p h)) "and a tenth has not passed since the last frame")
+    (setf leticl::*last-paint-ms* (- (internal-real-time-ms) +live-frame-ms+))
+    (is (live-frame-due-p h) "so a tenth later the clock asks for one")
+    ;; a running CALL is a reason even with no turn above it — a promoted command,
+    ;; and the row R13 is about
+    (setf (session-turn (head-session h)) nil)
+    (is (not (live-frame-p h)) "no turn, no call: quiet again")
+    (setf (session-turn (head-session h))
+          (list :state (list :state "finished")
+                :calls (list (list :call-id "c1" :state (list :state "running")))))
+    (is (live-frame-p h) "a running call is a function of time on its own")
+    ;; and the loop's own decision, which is the two reasons in one place
+    (setf (session-turn (head-session h)) nil
+          leticl::*last-paint-ms* (internal-real-time-ms)
+          (head-dirty h) nil)
+    (is (not (or (head-dirty h) (live-frame-due-p h))) "nothing to do: the loop sleeps")
+    (setf (head-dirty h) t)
+    (is (or (head-dirty h) (live-frame-due-p h)) "an event is still reason enough")))
+
 ;;; ------------------------------------------------- pane scrolling (P41) ;;;
 
 (def-test pane-scroll-counts-from-the-top-not-the-bottom (:suite leticl)

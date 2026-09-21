@@ -973,6 +973,10 @@ thread, which is a dead head. `--tree` takes the same lock per file."
         ;; remember it (the gate reads this) AND draw it (the operator reads it)
         (setf *last-render-error* e)
         (%paint-failure head e))))
+  ;; ONE place, on every path including the failure one — a paint that fell back to
+  ;; the failure frame is still a frame, and a stamp that did not move would ask for
+  ;; another one immediately, which is a head that spins on a broken renderer.
+  (setf *last-paint-ms* (internal-real-time-ms))
   (setf (head-dirty head) nil))
 
 

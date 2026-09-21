@@ -139,6 +139,10 @@ see this file's header."
          (*skew-said-pending* nil)
          (*skew-last-said* nil)
          (*filed-notes* 0)
+         ;; the clock's own reason to repaint: a replay paints on what the FILE
+         ;; says, and a live-frame rule would put a frame per tenth into a byte
+         ;; comparison that has to answer the same bytes twice
+         (*last-paint-ms* 0)
          ;; the carry line's clock, which is about the SEQUENCE of frames: a replay
          ;; must answer the same bytes twice, so the last-seen count and the time it
          ;; moved start at nothing

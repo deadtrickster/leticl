@@ -1424,9 +1424,40 @@ a terminal-native palette."
           (t 0)))))))
 
 (defun %call-elapsed-ms (call)
-  "How long a running call has been going, from the moment its ToolStarted arrived."
+  "How long a running call has been going, from the moment its ToolStarted arrived.
+
+**On THIS head's clock, anchored when the event ARRIVED** — `note-call-started`
+records `internal-real-time-ms` at `:tool-started`, and nothing here reads the
+envelope's `ts`. That is not an accident to preserve, it is the trap avoided: the
+daemon's `ts` is the daemon's clock and `internal-real-time-ms` is ours, and a
+duration measured across the two is silently wrong by whatever they disagree by —
+worst exactly when a head attaches to a daemon on another box, which is where this
+fleet is going. The question the row answers is *how long have I been waiting*, and
+the reader's clock is the right one for that.
+
+It is short by the delivery latency of the one frame that started the call, and that
+is the honest cost of answering in one clock rather than two. The alternative the
+document offers — have the daemon report an elapsed — needs a progress event, and the
+whole point here is not to need one."
   (let ((start (cdr (assoc (getf call :call-id) *call-started-ms* :test #'string=))))
     (and (numberp start) (max 0 (- (internal-real-time-ms) start)))))
+
+(defun %live-elapsed-ms (ms)
+  "MS rounded DOWN to a tenth, for a duration that is still moving.
+
+**Coarse on purpose, and it is the operator's number**: what the row answers is *is
+this moving, and roughly how long has it been — a live coarse timer would be nice,
+say 1/10th of a second*. A figure that turned over on every millisecond would churn
+two digits nobody reads, and — the reason it is here rather than left to the
+formatter — it would spend a frame saying what the next frame says again. The frame
+is rebuilt a tenth apart (`+live-frame-ms+`), so a tenth is the finest thing that can
+reach the screen anyway; rounding here makes the number honest about its own
+resolution instead of pretending to a precision it cannot deliver.
+
+**The SETTLED duration is not rounded** — `note-call-finished` measures it once,
+exactly, and the row shows that (app.rs:2702-2713 is the reference's arithmetic, and
+it is not changed here). Only a number that is still moving is coarse."
+  (* 100 (floor (max 0 (or ms 0)) 100)))
 
 (defun %verb-kind (name)
   "The `card::Verb` a tool name maps onto, or NIL when nobody knows it."
@@ -1499,7 +1530,8 @@ three colours, none of them the reference's."
                                  :ms)))
          (tail (remove nil
                        (cond
-                         (running (list (duration (or (%call-elapsed-ms call) 0)) note))
+                         (running (list (duration (%live-elapsed-ms (%call-elapsed-ms call)))
+                                        note))
                          (finished (append (and (numberp ms) (list (duration ms)))
                                            (and bad (list (%outcome-word word)))
                                            (and bad (list (%outcome-why outcome)))))

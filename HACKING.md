@@ -156,6 +156,36 @@ follow-up) is a layout change, and this SBCL treats one as a hard error: a `--tr
 of `head.lisp` at a running head is not a soft failure, it is a head that dies mid-push
 with half a tree. When a change is to the struct, say so and take the restart instead.
 
+### The gate REFRESHES what it measures
+
+The third of these, and the one that wasted the most time, because it does not look like
+a measurement problem — it looks like good news.
+
+`scripts/tui-eval` proves the head can still paint by **poking `head-dirty`** and checking
+the loop clears it (`:220`, `POKE_FORM`). So every eval asks for a frame. A probe that
+reads the head twice to see whether something on the screen is *moving* therefore gets a
+screen that moves **because the probe is poking it**:
+
+```sh
+# WRONG — this answers "does the loop paint on an eval", not "is the frame live"
+tui-eval '…'; sleep 2; tui-eval '…'
+```
+
+Measured while chasing R13 (a running call's number frozen on the glass): through the
+socket the number read *moving* — `1m15s` then `1m18s` — and the conclusion would have
+been that there was nothing to fix. The same head, the same two seconds, read from the
+shell with **no eval in between**:
+
+```sh
+tmux capture-pane -p -t <session> | grep 'Running ·'   # x4, two seconds apart
+#   Running · 1m19s   Running · 1m19s   Running · 1m19s   Running · 1m19s
+```
+
+Frozen. So: **to watch a live screen, watch the screen** — `tmux capture-pane`, or
+`--screen` on a head you are not also probing — and keep the eval socket for reading and
+changing state. The two rules are one rule from two sides: an eval that takes time
+starves what it measures, and an eval that pokes dirt REFRESHES it.
+
 ## `--tree`: make the head match disk
 
 **The gate checks that the head can *paint*, not that your change is *loaded*.**

@@ -78,6 +78,7 @@
    ;; the render cache — see prefs.lisp's header
    #:head-pref
    #:composer-rows-needed #:composer-inner #:+notice-ttl-ms+ #:hint-bar
+   #:+live-frame-ms+ #:live-frame-p #:live-frame-due-p #:*last-paint-ms*
    #:notice-remaining-ms #:clear-note #:head-notice-until
    #:*stall-ms* #:*spent-micros* #:*last-event-ms*
    #:session-seq #:session-expected-seq #:session-session-id #:session-items
@@ -96,7 +97,7 @@
    #:item-facts #:note-call-started #:note-call-finished #:note-call-decision
    #:display-target #:verb-label #:call-target-of #:note-call-target
    #:note-assistant-targets #:note-snapshot-targets #:*call-targets*
-   #:call-answered-p #:note-answered-call #:*answered-calls*
+   #:call-answered-p #:note-answered-call #:*answered-calls* #:%live-elapsed-ms
    #:*item-facts* #:*call-facts* #:*call-started-ms*
    ;; pane scrolling (P41): one offset for every pane, counting from the TOP
    #:pane-scroll-by #:pane-scroll-max #:pane-view #:reset-pane-scroll
