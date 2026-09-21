@@ -818,7 +818,7 @@ ask is open — PageUp and PageDown still do that.
 
 **Enter and the digits keep the empty-composer guard**, for the opposite reason:
 with a typed line Enter is `%submit-line`'s, which answers the marked row and
-HOLDS the words, and a line being typed keeps its digits (app.rs:3474-3498).
+HOLDS the words, and a line being typed keeps its digits (app.rs:3604-3608).
 
 **This is a function of its own, not folded into the composer's arm, and the ORDER
 it is called in is the point.** An ask must be asked BEFORE every list on the screen
