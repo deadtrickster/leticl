@@ -104,58 +104,59 @@ predicate.
   Dead intra-line emphasis; SAPs passed unpinned across the FFI; every visible
   fence re-parsed through the shim on every frame.
 
-## §11 of the requirements doc — the five that are MINE
+## §11 of the requirements doc — the five that were MINE, all done
 
-**Filed 2026-09-22 on the operator's instruction, before working them, so they survive a
-compaction.** `~/Projects/head-parity-2026-09-21.md` §11 tracks eight items with an owner
-and a default each; **the default is this head's recommendation** unless the operator says
-otherwise (stated rather than assumed). Five are mine. They are here in the order the
-operator set, and the rulings are quoted because the *reason* is the part that would be
-lost.
+**Filed 2026-09-22 on the operator's instruction, worked the same night.**
+`~/Projects/head-parity-2026-09-21.md` §11 tracks eight items with an owner and a default
+each; **the default is this head's recommendation** unless the operator says otherwise. Five
+were mine and all five are closed. The rulings are kept here with their reasons, because the
+reason is the part that would be lost.
 
-- [ ] **§11.1 · §3.3 — write the criterion PER LAYER.** *Default: rule per layer; change
-  NEITHER head.* A daemon's cap is a **byte** cap and is allowed to be one (`TARGET_MAX_BYTES`,
-  120 bytes, `sessionlog/src/event.rs:288`); a head's cap must be a **column** cap (120
-  columns, `*target-max-cols*`). Both picked 120; only the unit differs, and only off ASCII
-  (120 bytes = 40 CJK = 80 columns). The reason a daemon may not be asked to move: **it has
-  no terminal to count columns with** — the target is cut before any head exists. Criterion
-  edit only; no code in either head. Same edit retires §3.3's entry-level `Drift`, which
-  still says *"A should move"*.
-- [ ] **§11.2 · R10 — the criterion stays at *survives a resync and a reattach*.** *Default:
-  A's persistence to `head.toml` is a superset it may keep; restart-survival becomes its
-  OWN row if it is ever wanted, never a widening of this one.* The criterion's sentence is
-  the one both heads pass. **Say in that row that it is the only item on this list that
-  writes to the operator's config directory** — the reason it must not be widened by
-  accident. Criterion edit only.
-- [ ] **§11.4 · R17 — drop the word "repairs" and keep both behaviours.** *Default: what
-  must not differ is that a gap is SAID and COUNTED — and the two heads already agree on
-  exactly that.* A queues `Action::Resync` itself (`app.rs:2484-2512`); this head files the
-  row, counts it, and names `/resync`. **The criterion must say that who presses the key is
-  the HEAD's choice, and why** (a resync REPLACES the transcript, so an automatic one moves
-  the ground under a reader who did not ask), or the next reader re-opens it. Criterion edit
-  only.
-- [ ] **§11.5 · §2.6/C14 — point the GUARD at `rano`**, and this is the one with code in
-  it. Leave this head's copy (`*fence-tokens*`, `src/markdown.lisp:252`); the defect is that
-  `every-token-rano-knows-is-a-token-this-head-knows` (`tests/tests.lisp:1108`) carries a
-  **third** hand-written copy of the token list in its own body, so **the guard cannot fire
-  for a token nobody wrote down — the drift it exists to catch is exactly the one it cannot
-  see**, which is §2.6's own shape one layer up. `rano` is an absolute path dependency in
-  three `Cargo.toml`s, so the tree is reachable. **The test must keep failing when it should**
-  — falsify by adding a token to `rano` and watching the check fire.
-- [ ] **§11.8 · move `acceptance.md` into the requirements document.** *Default: into
-  `~/Projects/head-parity-2026-09-21.md`.* It describes **both** heads and sits in one tree;
-  leaving it where it is was the default nobody chose. **The concurrency risk is real and is
-  the one edit tonight that already lost work** (the §2.6 stash) — so move it when the other
-  writer is not in the file, and leave a pointer at the old path.
-- [ ] **§11.6 · `NotScoped`, HALF MINE AND SECOND IN LINE.** *Owner: letibot rules the
-  wording (it owns `JobState::word`); both heads render the same string.* **Wait for the
-  string rather than guessing it** — if the two differ it is a new drift rather than a fix.
-  When it arrives: the line says *it never ran* rather than *it wrote nothing at all* under a
-  header that already says `not run (could not join its scope)` (`panes.lisp`'s empty-log
-  branch, letibot `app.rs:8407-8416`).
+**AND THE CRITERIA THEMSELVES HAVE MOVED (§11.8): they are §12 of
+`~/Projects/head-parity-2026-09-21.md` now**, not `docs/parity/acceptance.md` — that path is
+a pointer stub. Anything below that says *"the criterion says …"* means §12.
 
-**Not mine, tracked here so the list is whole:** §11.3 R13 (A moves the notice TTL to wall
-time), §11.6's wording (A), §11.7 R18's card (A).
+- [x] **§11.1 · §3.3 — the criterion is PER LAYER, and neither head moved.** `f6e2658`. A
+  daemon's cap is a **byte** cap and is allowed to be one (`TARGET_MAX_BYTES`, 120 bytes,
+  `sessionlog/src/event.rs:288`); a head's cap must be a **column** cap (120 columns,
+  `*target-max-cols*`); the two are NOT required to be equal. A daemon has no terminal to
+  count columns with, and the target is cut before any head exists — that is why it may not
+  be asked to move. Both alternatives ruled out by name in the criterion.
+- [x] **§11.2 · R10 — the criterion stands at *survives a resync and a reattach*.**
+  `f6e2658`. The reference persists to `head.toml` (key `hash(code|ts|detail)`, cap 512) and
+  that is a **superset it may keep**; restart-survival becomes its **own row** if ever wanted,
+  never a widening of this one — because **this is the only item that writes to the
+  operator's config directory**, and the entry says so.
+- [x] **§11.4 · R17 — *repairs* is dropped; both behaviours stand.** `f6e2658`. A queues the
+  resync itself; this head files the row and names `/resync`. The criterion now says **who
+  presses the key is the head's choice, with the reason** (a resync REPLACES the transcript,
+  so an automatic one moves the ground under a reader who did not ask, and it admits a
+  loop) so the next reader does not re-open it as a defect.
+- [x] **§11.5 · §2.6/C14 — the GUARD reads `rano`.** `e037273`. This was the one with code.
+  The test `every-token-rano-knows-is-a-token-this-head-knows` carried a **third**
+  hand-written copy of the token list, so it could not fire for a token nobody wrote down —
+  §2.6's own shape one layer up. It now EXTRACTS the tokens from
+  `~/Projects/rano/rano/src/syntax.rs`, asserts a plausible count so an extractor that stops
+  matching fails loudly instead of looping over nothing, and **was falsified by adding
+  `falsify-me` to rano and watching it fail** (rano restored byte-identical afterwards).
+- [ ] **§11.6 · `NotScoped` — HALF MINE, AND IT IS WAITING ON A STRING.** **No string has
+  arrived**, checked at letibot `a17be5c` (2026-09-22 07:3x): `JobState::NotScoped.word()` is
+  still `"not run (could not join its scope)"` and no commit mentions it. **This head renders
+  the same sentence letibot does, so nothing is done here until it does** — the two strings
+  differing would be a new drift rather than a fix. What is known about the shape: the pane's
+  empty-log branch (`src/panes.lisp`) tests `state == "running"` and otherwise says *it wrote
+  nothing at all*, so a job that never ran gets a second line contradicting the header. When
+  the ruling arrives, this head follows it; the constant belongs on this side too so the two
+  cannot drift by a typo.
+- [x] **§11.8 · `acceptance.md` moved into the requirements document.** §12 of
+  `~/Projects/head-parity-2026-09-21.md`; the old path is a pointer stub, because a dozen
+  citations point at it and a citation that resolves to *"it moved"* costs one line while a
+  404 costs the trail. **Written the careful way**: the destination's `md5` taken before and
+  re-checked at the moment of the write, nothing written if it had moved — the file has
+  another writer tonight and this night already lost one edit that way.
+
+**Not mine, tracked so the list is whole:** §11.3 R13 (A moves the notice TTL to wall time),
+§11.7 R18's card (A's wording).
 
 ## Open, in the order they would stop the operator
 
