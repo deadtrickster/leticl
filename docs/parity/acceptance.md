@@ -13,6 +13,243 @@ from: the requirements doc is the spec, and this is the suite.
 
 ---
 
+# What needs you — seven rulings, and five rows that no longer need one
+
+**For the operator, first thing. Nothing here is a defect report; every item is a choice
+that neither head may make on its own.**
+
+**Measured 2026-09-22 ~03:45 against letibot's HEAD, which was `38df3f2` at 03:31** — not
+against the `8af671e` the four `docs/parity/*.md` were pinned to. That re-measurement is
+itself the first finding: **five of the drift table's twelve rows have been closed by
+letibot since the pin, and a sixth claim with them** (one carried in an entry rather than
+in the table). A list handed over unchecked would have asked you to rule on settled things
+and on one row that was never a drift. All six are listed at the end of this section, with
+the commit that closed each.
+
+**And it happened again while this was being written**: letibot landed `da4a576` at
+**03:48**, which is ruling 7 below — three of R18's five statements fixed and a fourth
+found. That is the whole argument for dating a measurement, and it is why the number of
+things needing you went *down* on the second look rather than up.
+
+Seven rows remain. Two of them are rows added tonight by this head (`NotScoped`, and
+R18's card — which letibot mostly closed while this was being written, leaving one
+sentence). Each ruling is written as: **what the two heads do**, **what each way costs
+including leaving it**, and **a recommendation with its reason**. They are recommendations,
+not rulings — where the two heads are both defensible I have said so rather than finding a
+middle.
+
+---
+
+## 1. §3.3 — what the cap counts: bytes or columns
+
+**A (letibot):** the DAEMON cuts a call's target at **120 BYTES** — `TARGET_MAX_BYTES`,
+`crates/sessionlog/src/event.rs:288`, on a character boundary with control characters
+replaced first.
+**B (this head):** cuts at **120 COLUMNS** — `*target-max-cols*`, `src/cards.lisp`.
+Measured: `60 CJK` (120 columns) untouched; `61 CJK` (122 columns) → 119.
+
+Both sides picked the number 120. Only the unit differs, and it differs only off ASCII:
+120 bytes is 40 CJK characters (80 columns), where 120 columns is 60 CJK characters (180
+bytes).
+
+**Cost of leaving it.** Two heads on one daemon show different amounts of the same path
+or command, and the case that shows it is CJK — this box's own work. A row the criterion
+already names as *must agree* stays unruled.
+**Cost of B → bytes.** This head would cut text that fits, measured in a unit nobody can
+see. Nothing is gained.
+**Cost of A → columns.** Real, and it is the reason A chose bytes: **a daemon cannot count
+columns for a terminal it cannot see.** The target is cut before any head exists. To move,
+A would have to send the field untrimmed and let the head cut it — a protocol decision,
+not a rounding one.
+
+**Recommend — rule the criterion PER LAYER, and change neither head.** The daemon's cap is
+a byte cap and is allowed to be one; a head's cap must be a column cap. Say that in the
+criterion. *Reason:* both heads are already right about the thing they can measure, and
+the only alternative worth the cost (A handing the field on untrimmed) buys a difference
+nobody has complained about.
+
+## 2. R10 — does a warning you retired stay retired across a RESTART
+
+**A:** the retired set is written to `~/.config/letibot/head.toml` as one comma-separated
+value, keyed `hash(code|ts|detail)`, capped at 512 (`RETIRED_CAP`, `prefs.rs:18-26`).
+Survives a restart of the head.
+**B:** kept in memory on the session — `code|ts|detail`, unhashed — and survives a resync
+and a reattach, which is what the criterion says.
+
+**Cost of leaving it.** Restart the head and the wall you dismissed comes back; `/notes`
+starts at 0 retired. Costs a few keystrokes a session.
+**Cost of B → persist.** A file write on every dismissal; a cap to choose; the hashing A
+does (this head stores whole details, which is why they are not hashed); and it makes this
+head the only one of the two that writes to the operator's config directory for a reason
+that is not a preference.
+**Cost of A → stop persisting.** A loses behaviour somebody asked for (`head.toml`'s own
+comment says the cap is *"far above what any session produces"*), and an operator who
+restarts mid-review gets the wall back.
+
+**Recommend — keep the criterion as written (*survives a resync and a reattach*) and note
+A's persistence as a superset it may keep.** *Reason:* the criterion's sentence is the one
+both heads pass, *restart* is a different requirement with its own cap and its own file,
+and nobody has asked for it. If you want it, make it its own row rather than widening this
+one — it is the only item on this list that touches the operator's files.
+
+## 3. R13 — a notice's TTL counted in TIME or in FRAMES
+
+**A:** `notice_ttl: u32`, set to 60 and decremented once per **frame**
+(`app.rs:6418-6420`). A head that repaints nothing keeps a stale notice up.
+**B:** `+notice-ttl-ms+` 1600 of **wall time** on the head's own clock. Measured ~1.6 s;
+the head asks for a frame once a second while it is counting.
+
+**Cost of leaving it.** This is one defect with two symptoms, and the other symptom is
+R13's own: A's elapsed time froze for the same reason — a head that repaints on events and
+not on time. A quiet screen keeps *"permission answered"* standing for ever.
+**Cost of A → time.** A must paint while a notice is up: one frame a second, not the ten a
+spinner needs, which is the cost R13 already accepted for a running call.
+**Cost of B → frames.** None, honestly. A notice's meaning is a duration.
+
+**Recommend — B's rule, and A should move; this is R13's change, not a second one.**
+*Reason:* both symptoms have one cause, and the fix that closes one closes the other.
+
+## 4. R17 — on a gap in the stream: say it, or say it and repair it
+
+**Criterion as written:** *"says so and repairs it"*.
+**A:** files the row **and queues `Action::Resync` itself** (`app.rs:2484-2512`), at most
+one in flight.
+**B:** files the row, counts it, and names `/resync` for the operator to run.
+
+**Cost of leaving it.** The criterion is unmet by one head as written, so every reader
+after you re-opens it; and on a gap-ridden session the B operator must read the row and
+act, which is exactly when they are least likely to.
+**Cost of B → auto-resync.** A resync REPLACES the transcript. Silently, mid-read, it moves
+the ground under the reader — scroll position, the row they were on — and on a long
+session that is a visible event nobody asked for. It also admits a loop: gap → resync →
+gap → resync, which A guards against with a one-in-flight check.
+**Cost of A → say-only.** A gives up a repair it already has, and its row text would have
+to become the only action.
+
+**Recommend — drop the word *repairs* from the criterion, and keep both behaviours.**
+*Reason:* the real difference between the two heads is who presses the key, and both are
+honest; what must not differ — that a gap is *said* and *counted* — they already agree on.
+**If you would rather keep the criterion whole, then B must move**, and the cost is a
+transcript that moves under the reader without being asked.
+
+## 5. §2.6 — the fence token table: three copies, or one artefact (C14)
+
+**Where it lives:** the operator's own `rano` (`~/Projects/rano/rano/src/syntax.rs`,
+`Lang::from_token`) — that is the table. A draws a fence through it. **B copies it** into
+`*fence-tokens*` (`src/markdown.lisp:252`) — and the test that guards the copy,
+`every-token-rano-knows-is-a-token-this-head-knows` (`tests/tests.lisp:1108`), carries a
+**third** hand-written copy of the token list in its own body.
+
+**Cost of leaving it.** A token added in `rano` reaches B only when somebody edits B's
+table *and* the test's list. The guard cannot fire for a token nobody wrote down, so the
+drift it exists to catch is exactly the one it cannot see — which is the §2.6 incident's
+own shape, one layer up.
+**Cost of a generator.** A build step that reads `rano`'s table (or a `--dump-tokens`),
+a generated file in this repo, and a test that checks the generated file is current.
+Machinery, for ~70 strings that have changed twice.
+**Cost of leaving the third copy.** Unchanged, and the test keeps reading as a guard while
+being a copy.
+
+**Recommend — leave the copy; make the GUARD read `rano` instead of restating it.**
+*Reason:* the cheap half of C14 buys nearly all of it. A generator is real machinery for a
+stable table; what is actually broken is that the check is a copy of the thing it checks.
+Point the test at `rano` (its path is already an absolute dependency in three
+`Cargo.toml`s, so the tree is reachable) and the third copy disappears.
+
+## 6. A job that never ran (this head's finding, 2026-09-22)
+
+**Both heads, identically.** `JobState::NotScoped` — the wrapper could not put the process
+in its cgroup — has `produced == 0`, so the pane draws its *"it wrote nothing at all"* row
+under a header that already says `not run (could not join its scope)`. Measured on the
+empty-log branch tonight: both heads test `state == "running"` and otherwise say *wrote
+nothing*.
+
+**Cost of leaving it.** Rare (a scope-join failure), but it is the R17 rule you named — *a
+row with no output must not look like a row whose output is empty* — and here the second
+line contradicts the first, on the one card an operator reads to find out what happened.
+**Cost of fixing it.** One branch per head. The constraint is that the fix must be the
+same words on both sides or it is a new drift, and A owns the vocabulary: the state word
+comes from `JobState::word`.
+
+**Recommend — A rules the line and both heads render it; the line should say *it never
+ran*.** *Reason:* the phrase belongs where the enum is, fixing one head alone is a
+divergence, and every other state word on that pane is already rendered verbatim.
+
+## 7. R18's card — three of the five fixed at letibot `da4a576`, and one SENTENCE left
+
+**Measured on the operator's live `job_kill` card, and largely closed while this was being
+written.** letibot landed `da4a576` at 03:48 (*"a call with no path is judged on what it
+does, and a fact named workspace comes from the workspace"*):
+
+| the card said | now |
+|---|---|
+| `because: workspace: /` | **fixed** — `root_path()` was answering *is this path inside the boundary* where the card asked *where is this session*. A new `workspace_path()` answers the second, and two other sites with the same accessor were found and fixed with it |
+| ``Allow `<tool>` (this class) …`` | **fixed** — a call with no program now names the class, the wording the other ladder already uses |
+| *(found while fixing)* the brief **asserted** *"the path is inside the session's workspace"* for a call that named no path | **fixed** — suppressed, and replaced by the requirement's own sentence: *this call names no path, so it is judged on what it DOES rather than on where it points* |
+| headline `exec access` beside the tier `auto` | **not a defect, and A says why**: exec is the tool's declared access; `auto` is layer A's reading of the **action**, and a read is never asked about (`mode.rs:606`). A refuses *"a card marked `auto` must not be re-asked"* by name, with a test, because it would make `bash` unaskable for every read command |
+| `<no target argument>` | **kept deliberately** — it names the absence rather than inventing a target |
+
+**What is left is one sentence, and A raised it rather than guessing.** A card that says
+`auto` and then asks has not said *why* it is asking. A's proposal:
+
+    ask — `job_kill` declares exec access, which always asks (auto is about the ACTION)
+
+**Recommend — take A's sentence, possibly rewritten.** *Reason:* it makes the card agree
+with itself without touching the tier ladder, it is true, and the alternative — making
+`auto` mean *do not ask* — is refused with a reason and a test. **This is a one-line ruling
+and it is A's own question, not a drift between heads.**
+
+**And the sixth statement on that card was this head's**: the countdown that read
+`expires in 29833973 min` for a card with 3m49s left. Fixed here (`3a9b183`), and A
+independently checked its own snapshot arm against the finding and confirmed — with a test
+named for the year-scale shape — that its deadline is already one clock.
+
+## 8. Where `acceptance.md` lives — this document's own home
+
+**The situation.** It is filed at `leticl/docs/parity/acceptance.md` and it describes
+**both** heads: its statuses cite hashes in `leticl` and in `letibot`, and five of the
+items above were found by reading it. The alternatives are (a) leave it; (b) move it into
+the requirements document, `/home/dead/Projects/head-parity-2026-09-21.md`, whose §10 is
+the driver's queue; (c) a third, neutral place.
+
+**Cost of leaving it (a).** The document that decides both heads' criteria is filed under
+one head's parity measurements. Tonight's driver was told it existed; a reader coming to
+the requirements doc alone will not find it, and §10's queue and this document's statuses
+can disagree with nothing to catch it.
+**Cost of moving it into the requirements doc (b).** That file is yours and **two agents
+are editing it tonight** — A has been updating §10. A 900-line appendix landed under a
+concurrent writer is the one modification this night has already shown can lose work (the
+§2.6 stash).
+**Cost of a third place (c).** A new home to remember, and it will drift from the
+requirements doc the same way the four measurement documents drifted from their pin.
+
+**Recommend — (b), the requirements document — but made by you, or after A's turn ends,
+rather than concurrently.** *Reason:* it is the spec's test suite and belongs beside the
+spec; and the only real risk is the one already demonstrated tonight. **If you would
+rather keep the trees separate, then (a) plus one line in the requirements doc**: *the
+criteria for every requirement in this file are in
+`leticl/docs/parity/acceptance.md`*. Either way, one pointer, and §10 stops being the only
+place a reader learns what is settled.
+
+---
+
+## Closed since the pin — no ruling needed, a nod and a note
+
+Checked against letibot `38df3f2` (2026-09-22 03:31). Each is still marked in the drift
+table below, with the commit that closed it.
+
+| row | closed by | what both heads now do |
+|---|---|---|
+| §1.1 ambiguous prefix | letibot `385bd10` (09-21 21:04) | both **refuse** an ambiguous prefix and name the candidates. The reference's own comment now records the first-match behaviour as the bug — *"which of three grants the operator gave is the whole content of the answer"* |
+| §1.5 an absent reason | letibot `a8f8083` (09-21 21:26) | both say *no oracle was consulted for this one — the judgement is yours alone* |
+| §1.6 the gate card | letibot `e379dc0` (09-22 01:43) | both draw the deadline ladder and the consequence clause |
+| §3.1 content and the terminal | letibot `e0a99b9` (09-22 02:07) | both sanitise; the criterion is a proof for this head and a fix for that one |
+| §2.7 nested and ordered lists | letibot `05dfa4b` (09-22 02:14) | both count `1. 2. 3.` from the number the model wrote — A's own rendering of a loose list is fixed |
+| R7's blocking | letibot `114e8d7` + the tool text | both hand the model a locator and say *do not wait for it*. **The row had no citation in either document and was never a disagreement between heads** — recommend striking it |
+| R18's card, three of five plus a fourth found | letibot `da4a576` (09-22 **03:48** — landed while this list was being written) | the workspace fact, the `<tool>` label, and an *"the path is inside"* claim about a path nobody named; one wording question remains and is ruling 7 |
+
+---
+
 ## The shape of a criterion
 
 Every entry below is written in the R3 shape, because R3 is the one the document keeps
@@ -80,10 +317,13 @@ half, and one or two are requirements whose *criterion* nobody has settled yet.
 - **Evidence** `an-ambiguous-prefix-is-refused-and-names-the-candidates`,
   `a-prefix-names-an-option-when-it-is-unambiguous`, `a-typed-word-that-names-no-option-sends-nothing`, `deny-and-tell-takes-the-words-that-were-refused`.
 - **Status RUNS.** `c1e02cd` + `an-ambiguous-prefix…`.
-- **Drift** none on the criterion. The reference resolves an ambiguous prefix by list
-  position (first match); leticl refuses. **Deliberate, and it means the two heads
-  answer `allow` differently** — leticl declines, letibot picks. That is a phase-2
-  question about the criterion, not about either implementation.
+- **Drift** ~~none on the criterion. The reference resolves an ambiguous prefix by list
+  position (first match); leticl refuses.~~ **CLOSED — letibot `385bd10`, 2026-09-21 21:04,
+  "an ambiguous option prefix is refused, with the candidates named".** Both heads now
+  send nothing and name the candidates, and the reference's own comment records the old
+  first-match behaviour as the bug: *"which of three grants the operator gave is the whole
+  content of the answer, and where an option sits in a list is not something they said."*
+  The measured row was stale from the pin; see *What needs you*, at the top.
 
 ## §1.2 The ladder cursor must start where the operator put it
 
@@ -125,9 +365,12 @@ half, and one or two are requirements whose *criterion* nobody has settled yet.
   alike.
 - **Evidence** `a-decision-says-what-it-was-grounded-in`.
 - **Status RUNS.**
-- **Drift** this head says `no oracle was consulted` where the reference draws nothing;
-  **deliberate** (an absence is evidence under `/mode supervised`). Phase 2 must decide
-  whether the criterion says a card MUST say it.
+- **Drift** ~~this head says `no oracle was consulted` where the reference draws
+  nothing~~ **CLOSED — letibot `a8f8083`, 2026-09-21 21:26, "the card says why it is
+  asking, and says when nobody was asked".** The reference now draws
+  `no oracle was consulted for this one — the judgement is yours alone` (`app.rs:8918`),
+  the same sentence this head draws, so the criterion *an absent reason is distinct from
+  an absent oracle* holds on both.
 
 ## §1.6 The card must say what happens if nobody answers
 
@@ -144,10 +387,13 @@ half, and one or two are requirements whose *criterion* nobody has settled yet.
   `a-countdown-is-a-reason-to-repaint-but-not-a-tenth-one`.
 - **Status RUNS + LIVE.** `550bc94`; measured on a scratch head at 300 s → `expires in
   5 min`, at 65 s → `1m04s left`, 12 s past → the past-tense sentence.
-- **Drift** **B's criterion is the spec and A has not implemented it** (the document
-  says so). The three rulings worth reading before A does: the ladder (coarse → seconds
-  → past), that a past-deadline card must NOT count into negative seconds, and that an
-  ask with no deadline says NOTHING about time (§13.2b answered in the other direction).
+- **Drift** ~~**B's criterion is the spec and A has not implemented it**~~ **CLOSED —
+  letibot `e379dc0`, 2026-09-22 01:43, "the gate card says how long there is, and what
+  silence will do".** The reference now draws the same ladder and the same consequence
+  clause (`app.rs:8969-8990`), including the *past its deadline by Ns* sentence and the
+  rule that a `null` deadline draws nothing. The three rulings this head's `550bc94`
+  wrote down — coarse to seconds, never negative, `null` says nothing — are the ones A
+  implemented.
 
 ## §1.7 A `question` must be answerable
 
@@ -345,9 +591,13 @@ half, and one or two are requirements whose *criterion* nobody has settled yet.
 - **Drift RULED**: **`console` is NOT a language** — plain in both heads. A console
   transcript's bytes are mostly OUTPUT, and colouring them as bash invents structure
   that hides the output the fence is being read for.
-- **Drift OPEN**: the token table exists in three places (A's `Lang::from_token`, B's
-  `*fence-tokens*`, this doc's list). C14 asks for it to be ONE shared artefact;
-  nothing generates it. B's copy has a test that fails if A's table grows.
+- **Drift OPEN**: the token table exists in three places — A's `Lang::from_token` (which
+  lives in the operator's own `rano`), B's `*fence-tokens*` (`src/markdown.lisp:252`), and
+  **the test that is supposed to guard the copy**
+  (`every-token-rano-knows-is-a-token-this-head-knows`, `tests/tests.lisp:1108`), whose
+  token list is a third hand-written copy. C14 asks for ONE shared artefact. **Ruling 5 at
+  the top of this document recommends leaving the copy and pointing the GUARD at `rano`**
+  — the cheap half of C14, and the half that is actually broken.
 
 ## §2.7 Nested and ordered lists
 
@@ -359,8 +609,12 @@ half, and one or two are requirements whose *criterion* nobody has settled yet.
 - **Evidence** `an-ordered-list-counts-up-from-its-own-start`,
   `indented-code-is-code-and-not-mangled-prose`.
 - **Status RUNS.** Present before this document; measured tonight as already correct.
-- **Drift** the doc records `1. 1. 1.` in A (each item its own block) against
-  `1. 2. 3.` here. **A's gap**, and the ruling is `1. 2. 3.`.
+- **Drift** ~~the doc records `1. 1. 1.` in A (each item its own block) against
+  `1. 2. 3.` here. **A's gap**, and the ruling is `1. 2. 3.`.~~ **CLOSED — letibot
+  `05dfa4b`, 2026-09-22 02:14, "a nested list is indented under the item it belongs to".**
+  A now renders *"the numbers the model wrote"* (`markdown.rs:84-90`), which is also what
+  fixes the loose-list case: an item that runs past a sentence arrives as six one-item
+  lists, and numbering each from its own start is how A drew `1. 1. 1.`
 
 # C. Terminal safety
 
@@ -379,12 +633,14 @@ half, and one or two are requirements whose *criterion* nobody has settled yet.
 - **Status RUNS + LIVE.** `65b63ef`: `ESC[?1049h alt screen` → `alt screen`, `ESC[?1002h
   mouse on` → `mouse on`, `ESC]0;pwned` → nothing, on a frame carrying 103 of the
   head's own escapes.
-- **Drift — and this one changes what each head is asked for.** A **string** painter
-  (`paint_full` writes ANSI verbatim) can emit a content escape; B's **cell-grid**
-  painter cannot, because a control character measures zero columns and has no cell to
-  be written into. So the criterion is *"a control character must not be STORABLE in a
-  cell"*, not *"sanitise seven call sites"* — A has a real exposure, B has a proof, and
-  the document should say which it is asking each for.
+- **Drift — CLOSED, and the per-head shape is the part worth keeping.** letibot
+  `e0a99b9` (2026-09-22 02:07, *"content this head did not write can no longer reconfigure
+  the terminal"*) gave A the sanitising it lacked, so **both heads now sanitise and the
+  criterion is met on both**. What this row measured is still true and still the reason
+  the criterion is written as it is: A's is a **string** painter and had to be fixed; B's
+  **cell grid** cannot store a control character at all, so for B the same criterion is a
+  proof rather than a fix — `a-tool-payload-cannot-reconfigure-the-operators-terminal`
+  fails the day a zero-width cluster gains a cell.
 
 ## §3.2 A paint that fails must leave the terminal usable
 
@@ -418,10 +674,12 @@ half, and one or two are requirements whose *criterion* nobody has settled yet.
 - **Evidence** `a-display-target-is-cut-to-a-column-budget-not-a-byte-count`.
 - **Status RUNS + LIVE.** `a6fa7f5`: measured `121 a → 120 cols`, `61 CJK → 119 cols`,
   `60 CJK (exactly 120) → untouched`.
-- **Drift RULED**: **both heads count columns.** A counts BYTES (117 + mark on ASCII,
-  but 39 + mark for 61 CJK), B counted CHARACTERS (which let 122 columns through).
-  **A should move** — its two-column shortfall on ASCII is the smaller half of the same
-  bug.
+- **Drift** the cap's UNIT, which is the one thing left and is ruling 1 at the top of
+  this document. **A's DAEMON** cuts a target at 120 BYTES (`TARGET_MAX_BYTES`,
+  `sessionlog/src/event.rs:288`); **this head** cuts at 120 COLUMNS. Both picked 120, and
+  both are right about what the layer each one is in can measure — a daemon has no
+  terminal to count columns with. **The recommendation is to rule the criterion per layer
+  and change neither head.** (`console` is not a language, on both heads: ruled.)
 
 # D. Protocol
 
@@ -892,20 +1150,25 @@ the rules this adds are three, and the first two were already this document's:
 These are the phase-2 bugs waiting to happen: both heads agree on the sentence and
 differ on what passing it looks like.
 
+**Re-measured 2026-09-22 ~03:45 against letibot's HEAD (`38df3f2`) — not against the
+`8af671e` this table was written from. Five rows were closed by letibot in between; they
+are struck below with the commit, and the rulings that remain are written out with their
+costs at the top of this document.**
+
 | criterion | the drift | who is right |
 |---|---|---|
-| §1.1 ambiguous prefix | reference takes the first match; this head refuses | **unruled** — it changes whether typing `allow` answers or declines |
-| §1.5 an absent reason | reference draws nothing; this head says `no oracle was consulted` | this head, under `/supervise` (an absence IS evidence) |
-| §1.6 the gate card | reference draws neither deadline nor consequence; this head is the spec | this head (`550bc94`) |
-| §3.1 what is asked | A must sanitise (its painter can emit); B must prove (its painter cannot) | the criterion differs per head — saying so is the fix |
-| §3.3 the cap | reference counts BYTES; this head counts COLUMNS | this head; **A should move** |
-| R10 retired-set key | reference persists a hash to `head.toml`; this head holds it in memory | unruled — the criterion says *survives a resync and a reattach*, not *a restart* |
-| R13 and the notice | reference's `notice_ttl` counts FRAMES; this head counts time | this head — **one defect, two symptoms** |
-| R17 on detection | the criterion says *"says so and repairs it"*; this head files a row and names `/resync` | unruled — automatic resync vs. telling the operator |
-| a job that never ran | `JobState::NotScoped` has `produced == 0`, so both heads draw their *wrote nothing at all* row under a header saying the command never ran | unruled — the honest line is *it never ran*; fixing one head alone is a divergence |
-| R18's card, the daemon's five | the headline says exec access, the baseline says a READ and `auto`, the target is `<no target argument>`, the boundary is `workspace: /`, and the option label names the tool `<tool>` — **identical on both heads**, because every one of them is the daemon's sentence drawn verbatim | letibot's to rule (daemon side, `adjudicate.rs`: `target_of:3544`, `grant_program:1592-1600`, `exec_options:602-625`, `facts:2152`, `baseline:2484`). **The sixth statement on that card — the time left — was this head's and was wrong**; `3a9b183` |
-| §2.6 the token table | three copies; C14 wants one shared artefact | neither yet — nothing generates it |
-| R7's blocking | reference blocks nothing; `Peek`/`FetchRow` share *"a read, not a move"* | both, but B is the one that had to rebuild it |
+| ~~§1.1 ambiguous prefix~~ | ~~reference takes the first match; this head refuses~~ | **CLOSED, letibot `385bd10`** — both refuse now, with the candidates named |
+| ~~§1.5 an absent reason~~ | ~~reference draws nothing; this head says `no oracle was consulted`~~ | **CLOSED, letibot `a8f8083`** — both say it |
+| ~~§1.6 the gate card~~ | ~~reference draws neither deadline nor consequence; this head is the spec~~ | **CLOSED, letibot `e379dc0`** — both draw both |
+| ~~§3.1 what is asked~~ | ~~A must sanitise (its painter can emit); B must prove (its painter cannot)~~ | **CLOSED, letibot `e0a99b9`** — both sanitise |
+| §3.3 the cap | A's DAEMON cuts a target at 120 BYTES; this head cuts at 120 COLUMNS | unruled — **and both are right about what each layer can measure**. See ruling 1 |
+| R10 retired-set key | reference persists a hash to `head.toml` (cap 512); this head holds it in memory | unruled — the criterion says *survives a resync and a reattach*, not *a restart*. See ruling 2 |
+| R13 and the notice | reference's `notice_ttl` counts FRAMES; this head counts time | this head — **one defect, two symptoms**. See ruling 3 |
+| R17 on detection | the criterion says *"says so and repairs it"*; letibot queues the resync itself, this head files a row and names `/resync` | unruled — automatic repair vs. offering it. See ruling 4 |
+| a job that never ran | `JobState::NotScoped` has `produced == 0`, so both heads draw their *wrote nothing at all* row under a header saying the command never ran | unruled — the honest line is *it never ran*; fixing one head alone is a divergence. See ruling 6 |
+| R18's card, the daemon's five | was: the headline says exec access, the baseline says `auto`, the target is `<no target argument>`, the boundary is `workspace: /`, the label names the tool `<tool>` — identical on both heads, because every one is the daemon's sentence drawn verbatim | **mostly CLOSED, letibot `da4a576` (03:48)** — the workspace fact, the label, and an *"the path is inside"* claim about a path nobody named are fixed; `auto` beside `exec` is *true* and A explains why; one wording question is **ruling 7**. **The sixth statement was this head's and was wrong** (`3a9b183`) |
+| §2.6 the token table | the table is `rano`'s; this head copies it, and the test that guards the copy restates it a third time | C14 wants one shared artefact. See ruling 5 |
+| ~~R7's blocking~~ | ~~reference blocks nothing; `Peek`/`FetchRow` share *"a read, not a move"*~~ | **STRUCK, letibot `114e8d7`** — both hand the model a locator and say *do not wait*; the row had no citation in either document and was never a disagreement |
 
 # What is ARGUED and not run — the honest list
 
