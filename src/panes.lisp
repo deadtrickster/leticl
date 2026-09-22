@@ -606,9 +606,12 @@ A row that cannot change says why."
 
 or, with jobs, two lines each in place of the `none` row: `▸ [~] j12 command`
 (the mark yellow while running, green for `exited 0`, red otherwise; the picked
-row reversed) over a dim `         how · running · 1.2 KB out so far` or
-`         how · exited 0 · 1.2 KB out · ran 3.4s`. Every field is the daemon's
-`JobEntry` — `id`, `command`, `how`, `state`, `running`, `produced`, `elapsed_ms`.
+row reversed) over a dim `         how · running · 1.2 KB out so far`,
+`         how · exited 0 · 1.2 KB out · ran 3.4s`, or — for the one state where
+nothing was ever executed — `         how · not run (could not join its scope) ·
+0 B out`, with **no duration clause**: a job that never ran has no run to have
+taken time (§11.6). Every field is the daemon's `JobEntry` — `id`, `command`,
+`how`, `state`, `running`, `never_ran`, `produced`, `elapsed_ms`.
 
 This pane NEVER RENDERED before: its header was `(list LINE (list LINE))` — the
 second element a list containing a line, so a \"line\" whose segment was a line —
@@ -639,10 +642,25 @@ Second value is the cursor's LINE: two lines per job after a two-line header."
                     (picked (= i sel))
                     (produced (or (getf j :produced) 0))
                     (elapsed (or (getf j :elapsed-ms) 0))
-                    (tail (if running
-                              (format nil "running · ~a out so far" (bytes-human produced))
-                              (format nil "~a · ~a out · ran ~d.~ds" state (bytes-human produced)
-                                      (floor elapsed 1000) (floor (mod elapsed 1000) 100)))))
+                    (never-ran (getf j :never-ran))
+                    ;; **A job that never ran has no duration, and this row claimed
+                    ;; one** (§11.6, letibot `e1cd2b0`). It read
+                    ;;
+                    ;;     not run (could not join its scope) · 0 B out · ran 0.0s
+                    ;;
+                    ;; — the state word denying *ran* two fields before the row said
+                    ;; it. **The byte count stays**: `0 B out` is a measurement that
+                    ;; exists (nothing was produced) and the word beside it says why.
+                    ;; R17 again — *a row with nothing behind it must not look like a
+                    ;; row with an empty something behind it* — and here the something
+                    ;; is the run itself.
+                    (tail (cond (running
+                                 (format nil "running · ~a out so far" (bytes-human produced)))
+                                (never-ran
+                                 (format nil "~a · ~a out" state (bytes-human produced)))
+                                (t
+                                 (format nil "~a · ~a out · ran ~d.~ds" state (bytes-human produced)
+                                         (floor elapsed 1000) (floor (mod elapsed 1000) 100))))))
                (push (list (cons (format nil "~a " (if picked "▸" " ")) (and picked '(:reverse t)))
                            (cons mark (if picked (append '(:reverse t) colour) colour))
                            (cons (format nil " ~a ~a" (getf j :id) (getf j :command))
@@ -1395,8 +1413,8 @@ Opened at the KEYPRESS, before any answer: the pane says `reading…` rather tha
 showing nothing, and — the part that matters — `apply-event` takes a `JobOutput`
 window only when an overlay is open for that job, so the overlay has to exist
 before the frame goes out or this head would drop its own answer."
-  (setf *job-out* (list :job job :state "" :from 0 :to 0 :produced 0 :dropped 0
-                        :lines nil :next nil :back nil :loading t :error nil))
+  (setf *job-out* (list :job job :state "" :never-ran nil :from 0 :to 0 :produced 0
+                        :dropped 0 :lines nil :next nil :back nil :loading t :error nil))
   (reset-pane-scroll)
   *job-out*)
 
@@ -1498,15 +1516,33 @@ unwindowed, which is the shape every other pane has."
               (shown
                 (or body
                     (unless (getf view :loading)
-                      ;; A job that has written nothing is a different statement
-                      ;; from a window of nothing, and the STATE says which.
-                      ;; `running` is the daemon's own word (`JobState::word`),
-                      ;; tested literally for the same reason the jobs pane tests
-                      ;; `exited 0` literally: the head renders the daemon's
-                      ;; vocabulary and keeps no second copy of the enum.
-                      (list (if (equal (getf view :state) "running")
-                                "    it is running and has written nothing yet."
-                                "    it wrote nothing at all.")))))
+                      ;; **A job that never ran is not a job that wrote nothing**
+                      ;; (§11.6, letibot `e1cd2b0` — *A rules the words; both heads
+                      ;; render the same string*).
+                      ;;
+                      ;; An empty window is TWO facts and this head had ONE sentence
+                      ;; for them: `it wrote nothing at all.` under a header reading
+                      ;; `not run (could not join its scope)`, which is the operator's
+                      ;; own R17 rule inverted — *a row with no output must not look
+                      ;; like a row whose output is empty*. The case is chosen by the
+                      ;; daemon's `never-ran` FIRST, because the window's emptiness
+                      ;; cannot carry the difference; `running` is still read off the
+                      ;; state word, which is the daemon's own spelling of the state
+                      ;; it holds (`JobState::word`), tested literally for the same
+                      ;; reason the jobs pane tests `exited 0` literally: the head
+                      ;; renders the daemon's vocabulary and keeps no second copy of
+                      ;; the enum. An unfamiliar state word falls to `wrote nothing`,
+                      ;; which is letibot's own choice and is pinned there by a test
+                      ;; that names every variant.
+                      (list (cond ((getf view :never-ran)
+                                   ;; **The one sentence of this fix that is not the
+                                   ;; daemon's**, and it is written in full so the two
+                                   ;; heads cannot hold two sentences about one state.
+                                   "    it never ran, so there is nothing it could have written.")
+                                  ((equal (getf view :state) "running")
+                                   "    it is running and has written nothing yet.")
+                                  (t
+                                   "    it wrote nothing at all."))))))
               (top (append head-rows
                            (list (list (cons meta '(:dim t))) nil)))
               (wrapped (mappend (lambda (l)

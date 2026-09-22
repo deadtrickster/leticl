@@ -1459,15 +1459,25 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
       ((:job-output)
        ;; **The answer to the jobs pane's Enter, folded into the overlay that
        ;; asked and nowhere else.** The whole window is kept — job, from, to,
-       ;; produced, dropped, state, lines, next — because the pane draws its own
-       ;; header out of the OFFSETS rather than parsing `/job`'s footer sentence
-       ;; (app.rs:2169-2205).
+       ;; produced, dropped, state, never-ran, lines, next — because the pane draws
+       ;; its own header out of the OFFSETS rather than parsing `/job`'s footer
+       ;; sentence (app.rs:2169-2205).
        ;;
        ;; Taken only when an overlay is open for THIS job: a head may have closed
        ;; the pane with Esc before the reply landed, and the event is published to
        ;; the session, so a head that never asked sees it too. A window for a job
        ;; nobody is looking at is nothing to keep — and keeping it would be the
        ;; stale window `scrub::is_interactive` exists to prevent.
+       ;;
+       ;; **`never-ran` is folded because an empty window is TWO facts** (§11.6,
+       ;; letibot `e1cd2b0`): a process that ran and wrote nothing, and a command that
+       ;; was never started because the wrapper could not join its cgroup. The window's
+       ;; emptiness is identical in both, and this head had ONE sentence for them —
+       ;; see `job-out-lines`. A daemon older than the field sends nothing, this reads
+       ;; NIL, and the pane draws exactly what it drew before, which is the honest
+       ;; reading of silence: such a daemon had only one answer for an empty window.
+       ;; No version bump — an added, defaulted field on an existing variant, the
+       ;; precedent `ModelAdvice.consulted` set.
        (cond
          ((and *job-out* (equal (getf *job-out* :job) (getf env :job)))
           (setf (getf *job-out* :state) (or (getf env :state) "")
@@ -1477,6 +1487,10 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
                 (getf *job-out* :dropped) (or (getf env :dropped) 0)
                 (getf *job-out* :lines) (getf env :lines)
                 (getf *job-out* :next) (getf env :next)
+                ;; **an empty window is TWO facts, and this is which one** —
+                ;; see `job-out-lines`. NIL from a daemon that does not send
+                ;; the field, which draws exactly what it drew before.
+                (getf *job-out* :never-ran) (and (getf env :never-ran) t)
                 (getf *job-out* :loading) nil
                 (getf *job-out* :error) nil)
           ;; A window lands at its TAIL: a fresh page, or a re-read of a running

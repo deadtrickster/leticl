@@ -8520,6 +8520,127 @@ line advertises that they scroll."
       (is (find-if (lambda (l) (search "arrows scroll · Esc to jobs" l)) text)
           "with a footer naming only the keys that do something here"))))
 
+;;; --------- §11.6: a job that never ran is not a job that wrote nothing -------- ;;;
+;;;
+;;; RULED by letibot `e1cd2b0`, 2026-09-22 07:38, and the operand is *A rules the words;
+;;; both heads render the same string*. Two heads drawing one state two ways is a new
+;;; drift rather than a fix, so the string is asserted LITERALLY here — that is the whole
+;;; of what the two have to agree about.
+;;;
+;;; The shape it replaces, on both heads:
+;;;
+;;;     not run (could not join its scope)      <- the header
+;;;     it wrote nothing at all.                <- and it never started
+;;;
+;;; which is the operator's own R17 rule, read backwards: *a row with no output must not
+;;; look like a row whose output is empty*. The window's emptiness is identical in both
+;;; cases and cannot carry the difference, so the DAEMON's `never_ran` does.
+
+(def-test a-job-that-never-ran-says-so-rather-than-wrote-nothing (:suite leticl)
+  "The overlay's empty-window line, for the two states an empty window has, and the
+literal is letibot's ruling — this is the assertion that makes the two heads agree.
+
+`never_ran` is the daemon's field on the window (`SessionEvent::JobOutput`, defaulted, no
+version bump), set for `JobState::NotScoped` — the wrapper could not join the process's
+cgroup, so **nothing started**. `false` is what an older daemon's silence means, and it
+renders what it rendered before."
+  (let* ((leticl::*job-out* nil)
+         (h (%job-head)))
+    (leticl::%handle-key h (list :type :enter))
+    (%sent (%wire h))
+    ;; (1) NEVER RAN — the case that was wrong
+    (leticl::%handle-frame h (list :frame "event" :seq 1 :event "job_output"
+                                   :job "j12" :from 0 :to 0 :produced 0 :dropped 0
+                                   :state "not run (could not join its scope)"
+                                   :never-ran t :lines nil :next nil))
+    (let ((text (%pane-text (job-out-lines h 100))))
+      (is (find-if (lambda (l) (search "it never ran, so there is nothing it could have written." l))
+                   text)
+          "**THE RULING'S OWN SENTENCE, VERBATIM** — a different wording here is a new drift,
+not a fix: ~s" text)
+      (is (not (find-if (lambda (l) (search "wrote nothing" l)) text))
+          "and NOT `wrote nothing at all`, which is the contradiction this replaces: the
+header above it already says the command did not run"))
+    ;; (2) RAN AND WROTE NOTHING — unchanged, and this is the half that must not move
+    (leticl::%handle-frame h (list :frame "event" :seq 2 :event "job_output"
+                                   :job "j12" :from 0 :to 0 :produced 0 :dropped 0
+                                   :state "exited 0" :never-ran nil :lines nil :next nil))
+    (let ((text (%pane-text (job-out-lines h 100))))
+      (is (find-if (lambda (l) (search "it wrote nothing at all." l)) text)
+          "a job that ran and wrote nothing keeps its own sentence"))
+    ;; (3) RUNNING AND SILENT — the third state, chosen off the state word because that
+    ;; fact has no field of its own on the frame
+    (leticl::%handle-frame h (list :frame "event" :seq 3 :event "job_output"
+                                   :job "j12" :from 0 :to 0 :produced 0 :dropped 0
+                                   :state "running" :never-ran nil :lines nil :next nil))
+    (let ((text (%pane-text (job-out-lines h 100))))
+      (is (find-if (lambda (l) (search "it is running and has written nothing yet." l)) text)
+          "and a running one says it is still going"))))
+
+(def-test a-window-whose-daemon-never-heard-of-never-ran-draws-what-it-always-drew (:suite leticl)
+  "**The old-daemon contract, asserted rather than promised.** `never_ran` is an added,
+defaulted field: a daemon from before letibot `e1cd2b0` does not send it, this head reads
+NIL, and the pane must draw exactly the sentence it drew before — because such a daemon had
+only one answer for an empty window, and `false` is the honest reading of that silence.
+
+Two ways the field can be absent, and both are the same plist: the key is not there at all,
+and the key is there and false. (The decoder elides nothing, so a `false` arrives as `:never-ran
+nil`; the pane asks `(getf view :never-ran)`, which answers NIL for both.)"
+  (let* ((leticl::*job-out* nil)
+         (h (%job-head)))
+    (leticl::%handle-key h (list :type :enter))
+    (%sent (%wire h))
+    (leticl::%handle-frame h (list :frame "event" :seq 1 :event "job_output"
+                                   :job "j12" :from 0 :to 0 :produced 0 :dropped 0
+                                   :state "exited 0" :lines nil :next nil))
+    (let ((text (%pane-text (job-out-lines h 100))))
+      (is (find-if (lambda (l) (search "it wrote nothing at all." l)) text)
+          "no `never-ran` key at all: the pre-e1cd2b0 sentence, unchanged"))
+    (is (null (getf leticl::*job-out* :never-ran))
+        "and the overlay holds NIL rather than a guessed T")))
+
+(def-test a-job-that-never-ran-has-no-duration-on-its-row-either (:suite leticl)
+  "**The second place the same lie was told, and it is the one the wire made easy to miss.**
+
+The jobs pane's row read
+
+    not run (could not join its scope) · 0 B out · ran 0.0s
+
+— the state word denying *ran* two fields before the row said it. **The byte count stays**
+(`0 B out` is a measurement that exists and the word beside it says why) and the duration
+clause goes, because a job that never ran has no run to have taken time. R17 once more: *a
+row with nothing behind it must not look like a row with an empty something behind it*, and
+here the something is the run itself.
+
+The fact rides the ROW too (`JobEntry.never_ran`, defaulted, no version bump) — the pane
+draws `head-jobs`, which is the daemon's listing, so the listing has to carry it."
+  (let ((h (%make-head)))
+    (setf (head-jobs h) (list (list :id "j9" :command "cargo build" :how "bash"
+                                    :state "not run (could not join its scope)"
+                                    :running nil :never-ran t
+                                    :produced 0 :elapsed-ms 0)))
+    (let ((text (segs-of (jobs-lines h 200))))
+      (is (search "not run (could not join its scope) · 0 B out" text)
+          "the state and the byte count, which is a real measurement: ~s" text)
+      (is (not (search "ran 0.0s" text))
+          "**and no duration clause** — the job had no run to measure")
+      (is (not (search "· ran " text))
+          "nor any other duration: nothing on this row may claim elapsed time"))
+    ;; the ordinary case is untouched, which is the half that must not move
+    (setf (head-jobs h) (list (list :id "j4" :command "cargo test" :how "bash"
+                                    :state "exited 0" :running nil :never-ran nil
+                                    :produced 1536 :elapsed-ms 3400)))
+    (let ((text (segs-of (jobs-lines h 200))))
+      (is (search "exited 0 · 1.5 KB out · ran 3.4s" text)
+          "a job that ran keeps its duration and its byte count: ~s" text))
+    ;; and a running one still says so, without a duration it does not have yet
+    (setf (head-jobs h) (list (list :id "j5" :command "cargo build" :how "bash"
+                                    :state "running" :running t :never-ran nil
+                                    :produced 12 :elapsed-ms 0)))
+    (let ((text (segs-of (jobs-lines h 200))))
+      (is (search "running · 12 B out so far" text)
+          "the running row is unchanged: ~s" text))))
+
 (def-test a-refused-job-output-read-lands-in-the-pane (:suite leticl)
   "A job can fall out of the exec host's table between the listing and Enter, and
 the daemon then answers the read with a `job_output_refused` warning instead of a

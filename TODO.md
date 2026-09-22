@@ -104,17 +104,22 @@ predicate.
   Dead intra-line emphasis; SAPs passed unpinned across the FFI; every visible
   fence re-parsed through the shim on every frame.
 
-## §11 of the requirements doc — the five that were MINE, all done
+## §11 of the requirements doc — the six that were MINE, all closed
 
-**Filed 2026-09-22 on the operator's instruction, worked the same night.**
+**Filed 2026-09-22 on the operator's instruction and worked the same night.**
 `~/Projects/head-parity-2026-09-21.md` §11 tracks eight items with an owner and a default
-each; **the default is this head's recommendation** unless the operator says otherwise. Five
-were mine and all five are closed. The rulings are kept here with their reasons, because the
-reason is the part that would be lost.
+each; **the default is this head's recommendation** unless the operator says otherwise. Six
+came to this head (five at once, and §11.6 — which is A's words and B's rendering) and all
+six are closed. The rulings are kept here with their reasons, because the reason is the part
+that would be lost.
 
 **AND THE CRITERIA THEMSELVES HAVE MOVED (§11.8): they are §12 of
 `~/Projects/head-parity-2026-09-21.md` now**, not `docs/parity/acceptance.md` — that path is
 a pointer stub. Anything below that says *"the criterion says …"* means §12.
+
+**One finding came out of this work that is NOT closed, and it is letibot's**: see the end of
+§11.6 below — `never_ran` is derived from the exit code alone, and 125 is a legitimate
+command exit code, so a command that ran is listed as one that never did.
 
 - [x] **§11.1 · §3.3 — the criterion is PER LAYER, and neither head moved.** `f6e2658`. A
   daemon's cap is a **byte** cap and is allowed to be one (`TARGET_MAX_BYTES`, 120 bytes,
@@ -139,15 +144,22 @@ a pointer stub. Anything below that says *"the criterion says …"* means §12.
   `~/Projects/rano/rano/src/syntax.rs`, asserts a plausible count so an extractor that stops
   matching fails loudly instead of looping over nothing, and **was falsified by adding
   `falsify-me` to rano and watching it fail** (rano restored byte-identical afterwards).
-- [ ] **§11.6 · `NotScoped` — HALF MINE, AND IT IS WAITING ON A STRING.** **No string has
-  arrived**, checked at letibot `a17be5c` (2026-09-22 07:3x): `JobState::NotScoped.word()` is
-  still `"not run (could not join its scope)"` and no commit mentions it. **This head renders
-  the same sentence letibot does, so nothing is done here until it does** — the two strings
-  differing would be a new drift rather than a fix. What is known about the shape: the pane's
-  empty-log branch (`src/panes.lisp`) tests `state == "running"` and otherwise says *it wrote
-  nothing at all*, so a job that never ran gets a second line contradicting the header. When
-  the ruling arrives, this head follows it; the constant belongs on this side too so the two
-  cannot drift by a typo.
+- [x] **§11.6 · `NotScoped` — RULED AND LANDED.** The string is letibot's, from
+  `e1cd2b0` (2026-09-22 07:38): **`it never ran, so there is nothing it could have
+  written.`**, rendered verbatim — one wording for both heads, asserted literally in this
+  head's suite because a different wording here is a new drift rather than a fix. Two more
+  places said the same thing on both heads and both are fixed here: the jobs **row** read
+  `not run (could not join its scope) · 0 B out · ran 0.0s`, and a job that never ran has no
+  duration, so the clause goes (the byte count stays — it is a real measurement); and the
+  **refusal** path, which is the daemon's sentence rendered verbatim and so agrees by
+  construction — measured on the glass rather than assumed. The fact rides the wire
+  (`never_ran`, defaulted, no version bump, on `JobOutput` and on `JobEntry`), so a daemon
+  older than it draws exactly what it drew before.
+  **And it turned up something that is NOT closed, on letibot's side:** `never_ran` is
+  derived from the exit code alone (`host.rs:900`), and 125 is a legitimate command exit
+  code — measured on a scratch daemon, `bash -c "exit 125"` is listed and rendered as a job
+  that never ran, with the wrapper's own stderr marker (63 bytes, captured) as the evidence
+  the classification ignores. Raised for a ruling in §11; the head renders what it is told.
 - [x] **§11.8 · `acceptance.md` moved into the requirements document.** §12 of
   `~/Projects/head-parity-2026-09-21.md`; the old path is a pointer stub, because a dozen
   citations point at it and a citation that resolves to *"it moved"* costs one line while a
