@@ -244,7 +244,21 @@ thing that knows whether this is the same conversation (app.rs:1897-1934)."
   (unless attach
     (dolist (w (session-warnings session))
       (unless (equal (getf w :code) "turn_failed")
-        (note-warning session w))))
+        ;; **AND A COMPACTION IS A TOOL CALL ON THIS PATH TOO** (R24). A snapshot's
+        ;; warnings are the daemon's own log, so they carry the compaction codes even
+        ;; though the live path never stores them — and a resync has to land in the
+        ;; same shape as the turn did, or the same fact has two renderings on one
+        ;; screen depending on when it arrived.
+        ;;
+        ;; It is filed as a row and REMOVED from the list, because `session-warnings`
+        ;; is what `/notes` lists and `/status` counts: a compaction that stayed in it
+        ;; would be a row that is also a note, which is the thing this requirement is
+        ;; getting rid of. `compaction-row-p` failing (a detail this head cannot read)
+        ;; leaves it exactly where it was, filed as a note.
+        (if (note-compaction session w)
+            (setf (session-warnings session)
+                  (remove w (session-warnings session)))
+            (note-warning session w)))))
   session)
 
 (defvar *scrubbed-total* 0
@@ -857,6 +871,241 @@ this\"* must not look like *\"nothing happened\"*."
                                 :seam "/notes"))))
     (push-item session row)
     row))
+
+;;; ------------------------------------------- a compaction is a tool call ;;;
+;;;
+;;; **R24 part one.** A compaction announces itself as WARNINGS today — `compacted` and
+;;; `auto_compact` as routine, `context_wall` as failure — so the most information-dense
+;;; event in a long session arrives as the one shape on the screen with NO AFFORDANCES:
+;;; it cannot be folded, `ctrl-t` does nothing to it, its numbers are buried in prose,
+;;; and it competes for the note band with denials.
+;;;
+;;; **A tool call already has every affordance this wants** — a headline carrying the
+;;; stats, `ctrl-t` for the detail, folding, the payload pager you built, and a row that
+;;; scrolls with the conversation instead of stacking above the composer. So a
+;;; compaction that was ATTEMPTED is filed as a tool row whose payload is the daemon's
+;;; own sentence.
+;;;
+;;; **Nothing about compaction's behaviour changes, only what it is rendered as** — which
+;;; is why this is a fold and two optional fields on a body, and not a new frame.
+;;;
+;;; **And it collapses R19's wall rather than dismissing it.** Three of the four notes
+;;; the operator was met by on restart were `compacted` and `auto_compact`; as rows they
+;;; stop being notes at all, and the band goes back to being what R10 says it is — *how a
+;;; head shows a fact once*, for facts with nowhere else to live.
+;;;
+;;; **ATTEMPTED is the line, and it is the whole of the code list.** A code that reports
+;;; a compaction somebody TRIED becomes a row. A code that reports one nobody tried stays
+;;; a note, because there is nothing to report and the absence IS the fact:
+;;; `auto_compact_skipped` (automatic compaction is off for this session) and
+;;; `context_wall` (the wall itself — delivered BEFORE any compaction exists, and in the
+;;; cases where none will). `context_wall` is ruled separately below.
+
+(defparameter +compaction-row-codes+
+  '("compacted" "auto_compact" "auto_compact_no_progress" "auto_compact_failed")
+  "The warning codes this head renders as a TOOL ROW rather than as a note.
+
+Each reports a compaction that was attempted: `compacted` and `auto_compact` their
+reports, `auto_compact_no_progress` one that ran and did not help,
+`auto_compact_failed` one that was tried and did not run.
+
+**`reseated` is deliberately not here.** A re-seat publishes that code AND a
+`compacted` whose detail is the token account, so the note carries the tools the model
+gained and lost and the row carries the numbers — two facts, two shapes.
+
+**`auto_compact` does double duty** — it is the ANNOUNCEMENT (`N of M tokens resident …
+compacting now`) and, after the fork, a second REPORT (`compacted: N tokens resident
+now, was M`). One code, two facts, which is why `compaction-facts` reads the SENTENCE
+and not the code: the same warning code is a row saying *Compacting* and a row saying
+*Compacted*, and only the words tell them apart. Filed as an observation for the
+daemon's side rather than fixed here — the daemon naming one thing twice is its
+business, and inferring a join between them would be this head inventing a fact.")
+
+(defun %digits-at (text start)
+  "TEXT's integer beginning at START, and the index one past it. NIL when none does.
+
+The daemon writes counts with no separators (`format!(\"{}\", u64)`), so a run of digits
+is the whole number and there is no locale to guess at."
+  (when (and (integerp start) (< -1 start (length text)) (digit-char-p (char text start)))
+    (let ((end start))
+      (loop while (and (< end (length text)) (digit-char-p (char text end)))
+            do (incf end))
+      (values (parse-integer text :start start :end end) end))))
+
+(defun %number-after (text marker &optional (from 0))
+  "The integer that follows MARKER's first occurrence at or after FROM, across the space.
+
+**The gap is one space in every sentence the daemon writes** — `compacted from 943000` —
+and skipping it HERE rather than spelling `\"from \"` into the marker keeps each marker
+the phrase a person would quote, and keeps it equal to what stands in the `format!`
+strings that the guard test reads, where the placeholder sits immediately after the word.
+Measured: without this, `no-progress` read its `:was` as NIL."
+  (let ((at (search marker text :start2 (max 0 (or from 0)))))
+    (when at
+      (let ((i (+ at (length marker))))
+        (loop while (and (< i (length text)) (member (char text i) '(#\space #\tab)))
+              do (incf i))
+        (%digits-at text i)))))
+
+;;; ### `context_wall`, ruled separately, because the ruling differs
+;;;
+;;; **It stays a note, and it is the only one of the family that does.** The requirement
+;;; asked which, and there are three reasons:
+;;;
+;;;   · **It is terminal in the cases where nothing follows.** `context_wall` is
+;;;     published when the turn hits the wall — and then a compaction may be skipped
+;;;     (automatic compaction off), may fail, or may never fire at all. A fact that is
+;;;     SOMETIMES the compaction's reason and SOMETIMES the only sentence there is has to
+;;;     be a fact in its own right, or the case where nothing compacted is the case that
+;;;     says nothing. That is R17's rule one more time: a disclosure that is conditional
+;;;     on a later event is a disclosure that does not happen.
+;;;   · **It is a failure** — the turn stopped before it finished — and letibot classifies
+;;;     it that way. The failure register is where a stopped turn belongs.
+;;;   · **Its numbers are already on the row.** The wall and the announcement carry the
+;;;     same pair (`938,669 of 999,999`); folding the wall into the compaction's row would
+;;;     print one measurement twice on one card.
+;;;
+;;; So: `context_wall` and `auto_compact_skipped` are notes — the two codes whose fact is
+;;; *nothing was attempted* — and every code that reports an attempt is a row.
+
+(defun compaction-facts (detail)
+  "WHAT a compaction warning says, as numbers — R24's extraction and its ONE assumption.
+
+**The daemon states these facts in PROSE and a headline needs numbers**, so this reads
+the sentences letibot's `sessions.rs` writes. That is the thing this head refuses
+everywhere else — `JobOutput` carries its offsets *beside* the text precisely so a pane
+need not take a footer sentence apart — so this is a **bridge and not a design**: the
+numbers want to be fields, and the ask is filed. Two things make it safe meanwhile:
+
+  · **the assumption is CHECKED rather than believed** —
+    `every-compaction-sentence-this-head-parses-is-still-the-one-letibot-writes` reads
+    that file and fails if a format string moves, so a reword is a red suite and not a
+    silently wrong row;
+  · **a detail this cannot read returns NIL**, and the caller falls back to a plain note
+    — today's behaviour. The failure mode of a reword is *a note again*, never a row
+    with invented numbers.
+
+Returns a plist whose `:kind` is `:compacted`, `:compacting`, `:no-progress`, `:failed`
+or `:reseat`. NIL means *this head cannot read that sentence*."
+  (let ((d (or detail "")))
+    (cond
+      ;; the failure, which has no numbers to give: "the automatic compaction did not run"
+      ((search "the automatic compaction did not run" d)
+       (list :kind :failed))
+      ;; "compacted from R to A tokens and that is STILL within H of the W window, …"
+      ((search " tokens and that is STILL within " d)
+       (list :kind :no-progress
+             :was (%number-after d "compacted from")
+             :after (%number-after d " to " (search "compacted from" d))
+             :headroom (%number-after d " tokens and that is STILL within ")
+             :window (%number-after d " of the ")))
+      ;; "compacted: W → A tokens, on transcript ID."
+      ((search " tokens, on transcript " d)
+       (let* ((mark " tokens, on transcript ")
+              (at (search mark d))
+              (from (+ at (length mark))))
+         (list :kind :compacted
+               :was (%number-after d "compacted: ")
+               :after (%number-after d " → ")
+               :transcript (subseq d from (or (position #\. d :start from) (length d))))))
+      ;; the re-seat's own account: "re-seated: N tokens of conversation carried …"
+      ((search "re-seated: " d)
+       (list :kind :reseat :tokens (%number-after d "re-seated: ")))
+      ;; the second report after the fork: "compacted: A tokens resident now, was W."
+      ((search " tokens resident now, was " d)
+       (list :kind :compacted
+             :after (%number-after d "compacted: ")
+             :was (%number-after d " tokens resident now, was ")))
+      ;; the announcement: "R of W tokens resident, leaving less than the H …"
+      ((search " tokens resident, leaving less than the " d)
+       (list :kind :compacting
+             :resident (nth-value 0 (%digits-at d 0))
+             :window (%number-after d " of ")
+             :headroom (%number-after d " tokens resident, leaving less than the ")))
+      (t nil))))
+
+(defun compaction-row-p (w)
+  "Is W a compaction this head renders as a TOOL ROW rather than a note?
+
+Both halves, and the second is what makes the fallback honest: the code must be one of
+`+compaction-row-codes+` **and the sentence must be readable**. A compaction warning
+whose words this head cannot parse is a note, which is exactly what it was before R24."
+  (and (member (or (getf w :code) "") +compaction-row-codes+ :test #'string=)
+       (compaction-facts (getf w :detail))
+       t))
+
+(defun %compaction-subject (facts)
+  "The headline's SUBJECT — **the numbers**, in the shape the ruling asked for.
+
+`~:d` is Common Lisp's thousands-separator directive, which is the operator's own
+spelling in the requirement (`939,708 → 8,703 tokens`) and the one number format on
+this screen that is neither `747.5k` nor a raw integer. A count you are deciding about
+is read digit by digit, not scaled."
+  (case (getf facts :kind)
+    (:compacting (format nil "~:d of ~:d tokens"
+                         (or (getf facts :resident) 0) (or (getf facts :window) 0)))
+    (:reseat (format nil "~:d tokens carried" (or (getf facts :tokens) 0)))
+    (:failed "the automatic compaction did not run")
+    (t (format nil "~:d → ~:d tokens"
+               (or (getf facts :was) 0) (or (getf facts :after) 0)))))
+
+(defun %compaction-verb (facts)
+  "The word for the row: a compaction that is happening, one that happened, or a
+re-seat, which is a compaction that lands on a different prompt."
+  (case (getf facts :kind)
+    (:compacting "Compacting")
+    (:reseat "Re-seated")
+    (t "Compacted")))
+
+(defun %compaction-failed-p (facts)
+  "Is FACTS a compaction that was tried and is not a success?
+
+**Two of the five kinds, and they are not the same failure.** `:no-progress` ran and did
+not help — the summary is still near the wall, so automatic compaction switched itself
+off. `:failed` was never run. letibot's severity table calls both failures, and the row
+carries the same red the note did."
+  (member (getf facts :kind) '(:no-progress :failed) :test #'eq))
+
+(defun note-compaction (session w)
+  "FILE W as a TOOL ROW. T when one was filed; NIL when W is not a compaction row.
+
+**The row IS a `tool_result`** — `:name \"compact\"`, an outcome, and the daemon's own
+sentence as its payload — so every affordance comes from machinery that already exists
+and is already tested: `%tool-result-lines` draws the headline and folds the payload,
+`payload-view-seed` gives it `ctrl-t`, the seam and the pager are the payload window's,
+the payload is sanitised by `%without-control` as every other result is, and it scrolls
+with the conversation because it is IN the conversation.
+
+**`:verb` and `:subject` are the ROW's own**, and that is a general capability rather
+than a compaction special case: a tool row derives its verb from the tool's name and its
+subject from the `Assistant` row that proposed the call, and **a compaction has no
+proposing row** — nobody called it, the daemon did — so there is no `call_id` to look a
+target up by, and the numbers are what belongs on the headline. Both fields are optional
+and default to today's derivation, so nothing else changes shape.
+
+**It is not a note**, and that is the point of the filing rather than an accident of it:
+`session-warnings` does not get it, so `/notes` does not list it, `/status` does not
+count it, and the retired set does not apply. The ROW is its record — the whole sentence
+is its payload, which is more than a note ever kept."
+  (when (compaction-row-p w)
+    (let* ((facts (compaction-facts (getf w :detail)))
+           (bad (%compaction-failed-p facts))
+           (id (format nil "leticl-compaction-~d" (incf *filed-notes*)))
+           (row (list :item-id id
+                      :kind "tool_result"
+                      :ts (or (getf w :ts) 0)
+                      ;; the warning is kept on the item, as `:warning` is kept on a
+                      ;; note row: the row is the record, and the sentence is on it.
+                      :compaction w
+                      :item (list :type "tool_result"
+                                  :call-id (format nil "compaction-~a" id)
+                                  :name "compact"
+                                  :verb (%compaction-verb facts)
+                                  :subject (%compaction-subject facts)
+                                  :outcome (list :outcome (if bad "failed" "ok"))
+                                  :payload (or (getf w :detail) "")))))
+      (push-item session row)
+      row)))
 
 (defun warning-order (session)
   "The warnings this head holds, OLDEST first — the order `/notes` numbers them in.
@@ -1556,6 +1805,16 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
            ;;    because the record is what `/notes` lists and a snapshot filters it
            ;;    out of its own notes for the same reason (app.rs:2527-2534).
            ((equal (getf w :code) "turn_failed") :quiet)
+           ;; **AND A COMPACTION IS A TOOL CALL** (R24 part one). Filed as a ROW and
+           ;; deliberately NOT into `session-warnings`: the requirement is that these
+           ;; stop being notes at all, so `/notes` does not list them and `/status`
+           ;; does not count them — the row IS the record, and its payload carries the
+           ;; whole sentence, which is more than a note ever kept.
+           ;;
+           ;; `context_wall` and `auto_compact_skipped` are NOT here and fall through
+           ;; to the note below: theirs is the fact that nothing was attempted, which
+           ;; has nowhere else to live. See the block above for the ruling and why.
+           ((note-compaction session w) :dirty)
            (t
             ;; 2. **A refused job-output read is answered IN THE PANE THAT ASKED**,
             ;;    which is still open — otherwise it sits at `reading…` for ever,

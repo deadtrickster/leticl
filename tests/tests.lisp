@@ -5090,6 +5090,417 @@ SENTENCE is still a note, because a note is all there is."
 ;;; warning the reader has retired STAYS retired across the two events that used to
 ;;; replant it — a resync and a reattach — while never leaving the record.
 
+;;; ---------------- R24: a compaction is a tool call ------------------------------- ;;;
+;;;
+;;; Ruled by the operator, 2026-09-22: *"make compaction a tool call. this will mean that
+;;; i can have stats in the headline and Ct will expand to details as usual."*
+;;;
+;;; A compaction arrives as a WARNING today — the one shape on the screen with no
+;;; affordances. It cannot be folded, `ctrl-t` does nothing to it, its numbers are buried
+;;; in prose, and it competes for the note band with denials. A tool row already has every
+;;; one of those.
+;;;
+;;; **The sentences below are letibot's own**, out of the `format!` calls in
+;;; `crates/harnessd/src/sessions.rs`, and
+;;; `every-compaction-sentence-this-head-parses-is-still-the-one-letibot-writes` reads that
+;;; file and fails if one of them moves.
+
+(defparameter +letibot-compacted+
+  "compacted: 941290 → 9449 tokens, on transcript s-1789639478142928813#t15."
+  "letibot `sessions.rs`, `compaction_said`: the account a compaction leaves behind.")
+
+(defparameter +letibot-compacting+
+  (format nil "938669 of 999999 tokens resident, leaving less than the 62499 the next ~
+               turn needs — compacting now, as one more message so the prefix the ~
+               server already holds is reused. This is the wall, not a judgement about ~
+               the conversation.")
+  "The announcement, published BEFORE the compaction runs, from the same code.")
+
+(defparameter +letibot-no-progress+
+  (format nil "compacted from 943000 to 940000 tokens and that is STILL within 62499 ~
+               of the 999999 window, so automatic compaction is now off for this ~
+               session rather than looping once per turn. The summary itself is near ~
+               the wall: start a fresh session, or raise --context-window if the ~
+               server really has more.")
+  "A compaction that ran and did not help.")
+
+(defparameter +letibot-with-summary+
+  (format nil "compacted: 941290 → 9449 tokens, on transcript s-1#t15. Nothing of the ~
+               summary turn reached this screen — it ran over a scratch transcript — so ~
+               here is what the model now reads in place of everything before it:~%~%~
+               The session built a parity harness. The operator asked for a head that ~
+               draws both sides the same way, and the work went out in stages: first ~
+               the frame, then the cards, then the width rules.~%~%~
+               What is left is the daemon's half of the fetch row.")
+  "The account whose payload is a WHOLE SUMMARY — the case `ctrl-t` exists for.")
+
+(defparameter +letibot-reseated+
+  (format nil "re-seated: 8703 tokens of conversation carried onto the new prompt as ~
+               they are, on transcript s-1#t2. Nothing was summarised and nothing was ~
+               dropped.")
+  "The re-seat branch of the same function: nothing was summarised.")
+
+(defparameter +letibot-compacted-cut+
+  "compacted: 9449 tokens resident now, was 938669. The summary was CUT OFF at the model's length limit — it is incomplete, and the base says so too."
+  "The post-fork re-measure, with the truncation sentence.")
+
+(defun %collapse-rust-continuations (source)
+  "SOURCE with Rust's string continuations collapsed — a `\\` at end of line, the newline,
+and the next line's leading whitespace become nothing.
+
+**This is what the compiler does**, so it is what has to be searched: letibot splits a
+long format string across lines, and a guard searching the raw file would be looking for
+a sentence that is not on any one of them."
+  (let ((out (make-string-output-stream))
+        (i 0))
+    (loop while (< i (length source))
+          do (let ((ch (char source i)))
+               (if (and (char= ch #\\)
+                        (< (1+ i) (length source))
+                        (member (char source (1+ i)) '(#\newline #\return)))
+                   (progn
+                     (incf i 2)
+                     (loop while (and (< i (length source))
+                                      (member (char source i) '(#\space #\tab #\newline #\return)))
+                           do (incf i)))
+                   (progn (write-char ch out) (incf i)))))
+    (get-output-stream-string out)))
+
+(defun %compaction-rows (h)
+  "The compaction rows in HEAD's transcript, oldest first."
+  (loop for i across (session-items (head-session h))
+        when (getf i :compaction) collect i))
+
+(defun %note-rows (h)
+  "The rows still filed as NOTES — head-filed rows carrying `:warning`."
+  (loop for i across (session-items (head-session h))
+        when (getf i :warning) collect i))
+
+(defun %row-headline (h row)
+  "ROW's first drawn line: the headline a person reads."
+  (first (%pane-text (item-lines row 150 (head-prefs h)))))
+
+(defun %row-text (h row)
+  "EVERY line ROW draws, joined — the headline and its payload together."
+  (format nil "~{~a~%~}" (%pane-text (item-lines row 150 (head-prefs h)))))
+
+(defun %compaction-head (h &optional (nth 0))
+  "The headline of the Nth compaction row (0 = the oldest)."
+  (let ((row (nth nth (%compaction-rows h))))
+    (and row (%row-headline h row))))
+
+(def-test a-compaction-says-what-it-did-in-numbers (:suite leticl)
+  "**R24's extraction, one case per sentence the daemon writes.**
+
+The numbers are IN the prose and a headline needs them as numbers, so this reads the
+sentences letibot writes. That is the one assumption in the whole change, and it is made
+by a function whose failure mode is `NIL` — which means *a note again*, never a row with
+invented numbers."
+  (let ((f (compaction-facts +letibot-compacted+)))
+    (is (eq :compacted (getf f :kind)) "the account reads as a compaction")
+    (is (= 941290 (getf f :was)) "with the size it was")
+    (is (= 9449 (getf f :after)) "and the size it left")
+    (is (equal "s-1789639478142928813#t15" (getf f :transcript))
+        "**and the transcript the summary landed on** — the row can name it"))
+  (let ((f (compaction-facts +letibot-compacting+)))
+    (is (eq :compacting (getf f :kind))
+        "**the announcement is not mistaken for the report** — same code, other sentence")
+    (is (= 938669 (getf f :resident)) "it carries what is resident")
+    (is (= 999999 (getf f :window)) "and the window, the number that makes it a wall")
+    (is (= 62499 (getf f :headroom)) "and the headroom the next turn needs"))
+  (let ((f (compaction-facts +letibot-no-progress+)))
+    (is (eq :no-progress (getf f :kind)) "a compaction that did not help is its own kind")
+    (is (= 943000 (getf f :was)) "with both numbers")
+    (is (= 940000 (getf f :after))))
+  (let ((f (compaction-facts +letibot-compacted-cut+)))
+    (is (eq :compacted (getf f :kind)) "the post-fork re-measure is a compaction report")
+    (is (= 938669 (getf f :was))
+        "**and its numbers run the other way in the sentence** (`A resident now, was W`) —
+read correctly rather than assumed")
+    (is (= 9449 (getf f :after)))
+    (is (null (getf f :transcript)) "and it invents no transcript it was not told"))
+  (let ((f (compaction-facts +letibot-reseated+)))
+    (is (eq :reseat (getf f :kind)) "the re-seat branch is its own kind")
+    (is (= 8703 (getf f :tokens)) "carrying its token count"))
+  (is (eq :failed (getf (compaction-facts "the automatic compaction did not run: nope.")
+                        :kind))
+      "and a failure with no numbers in it still classifies")
+  ;; **the fallback, which is the safety property**
+  (is (null (compaction-facts "compacted: a hundred and twelve tokens")) "a reword gives NIL")
+  (is (null (compaction-facts "")) "and so does nothing at all")
+  (is (null (compaction-facts nil)) "and an absent detail"))
+
+(def-test a-compaction-is-a-tool-row-with-the-numbers-in-its-headline (:suite leticl)
+  "**The operator's ask, on the rendered row.** *\"i can have stats in the headline and Ct
+will expand to details as usual\"* — so the headline carries `941,290 → 9,449 tokens`, and
+the daemon's own sentence is the payload.
+
+**And it is a `tool_result` row**, which is what buys the affordances: the fold, the
+payload pager, the `… +N lines` seam, the sanitiser, and a row that scrolls with the
+conversation rather than stacking above the composer."
+  (let ((*slash-out* nil) (*job-out* nil) (h (%on-head :cols 120 :rows 30)))
+    (leticl::%handle-frame h (list :frame "event" :seq 1 :event "warning"
+                                   :code "compacted" :detail +letibot-compacted+ :ts 4))
+    (let ((row (first (%compaction-rows h))))
+      (is (not (null row)) "the compaction was filed as a row")
+      (is (equal "tool_result" (getf (leticl::item-body row) :type))
+          "**as a TOOL ROW**, which is what carries the affordances")
+      (is (equal "compact" (getf (leticl::item-body row) :name)) "named as the tool it is")
+      (is (equal +letibot-compacted+ (getf (leticl::item-body row) :payload))
+          "and the daemon's own sentence is its payload, whole")
+      (is (equal "ok" (getf (getf (leticl::item-body row) :outcome) :outcome)) "reported ok")
+      (is (equal (format nil "~:d → ~:d tokens" 941290 9449)
+                 (getf (leticl::item-body row) :subject))
+          "**the subject is the stats**, the shape the ruling asked for")
+      (is (equal "Compacted" (getf (leticl::item-body row) :verb)) "and the verb says what happened"))
+    (let ((head (%compaction-head h)))
+      (is (search "941,290 → 9,449 tokens" head)
+          "**THE HEADLINE CARRIES THE NUMBERS** — `939,708 → 8,703 tokens` is the shape
+that was asked for, and this is that row with this compaction's numbers: ~s" head)
+      (is (search "Compacted" head) "with the verb in front of them: ~s" head))
+    ;; **a ONE-LINE payload has nothing hidden, so there is no chord and no seam.**
+    ;; That is the same rule every other seam keeps: a `… +N lines · ctrl-t` on a row
+    ;; with nothing behind it names a chord that reveals nothing.
+    (is (null (leticl::payload-view-seed (head-session h)))
+        "one line: nothing to fold, so nothing to open")))
+
+(def-test a-compaction-that-carried-a-summary-is-pageable-by-ctrl-t (:suite leticl)
+  "**The other half of the ask: `Ctrl` expands to details — and there are details.**
+
+A compaction that ran over a scratch transcript carries the WHOLE SUMMARY as its payload,
+because nothing of that summary turn reached the screen. That is the case the affordance
+exists for, and this asserts the three parts of it: the row is *already* the transcript's
+own, the pager finds it, and the fold opens the summary rather than one sentence of it."
+  (let ((*slash-out* nil) (*job-out* nil)
+        ;; **the pager's offset is a global**, so seeding one is state a later test can
+        ;; see. Bound here rather than cleaned up after, because a `let` survives an
+        ;; assertion that fails — and this file has been bitten by exactly that.
+        (*payload-view* nil)
+        (h (%on-head :cols 120 :rows 30)))
+    (leticl::%handle-frame h (list :frame "event" :seq 1 :event "warning"
+                                   :code "compacted" :detail +letibot-with-summary+ :ts 4))
+    (let* ((row (first (%compaction-rows h)))
+           (body (leticl::item-body row)))
+      (is (search "941,290 → 9,449 tokens" (getf body :subject))
+          "the headline is still the numbers")
+      (is (> (length (leticl::%tool-payload-rows body)) leticl::+payload-pageable-lines+)
+          "**and the payload is longer than a fold's worth** — the summary is in there")
+      ;; the pager seeds on THIS row, by its own item id
+      (is (equal (getf row :item-id) (car (leticl::payload-view-seed (head-session h))))
+          "**`ctrl-t` opens this row** and seeds on it by item id")
+      ;; **and `ctrl-t` ON THIS ROW opens it** — the real chord, through the real
+      ;; handler, and not a `setf`: a seam that names a key the composer swallows is
+      ;; the lie this repo keeps finding. The chord does two things and this asserts
+      ;; both, because either alone is a half-measure — it opens the FOLD (which is
+      ;; what decides whether a payload is drawn at all) and it seeds the window on
+      ;; the newest pageable row, which is this one.
+      (leticl::%handle-key h (list :type :ctrl :ch #\t))
+      (let ((text (%row-text h row)))
+        (is (search "parity harness" text)
+            "**`Ctrl` expands to the details, and the details are what the model now
+reads** — the whole summary is drawn on the row: ~s" text)
+        (is (search "941,290 → 9,449 tokens" text)
+            "with the stats still on the headline above it")))))
+
+(def-test a-compaction-is-not-a-note-and-the-band-goes-back-to-its-job (:suite leticl)
+  "**The collapse, which is a better fix for R19's wall than dismissing it.**
+
+Three of the four notes the operator was met by on restart were `compacted` and
+`auto_compact`. As rows they stop being notes AT ALL: not in `session-warnings`, so
+`/notes` does not list them and `/status` does not count them, and the retired set has
+nothing to hold. The band goes back to what R10 says it is — *how a head shows a fact
+once*, for facts with nowhere else to live."
+  (let ((*slash-out* nil) (*job-out* nil) (h (%on-head :cols 120 :rows 30)))
+    (leticl::%handle-frame h (list :frame "event" :seq 1 :event "warning"
+                                   :code "compacted" :detail +letibot-compacted+ :ts 4))
+    (leticl::%handle-frame h (list :frame "event" :seq 2 :event "warning"
+                                   :code "auto_compact" :detail +letibot-compacting+ :ts 5))
+    (is (= 2 (length (%compaction-rows h))) "two compactions, two rows")
+    (is (null (%note-rows h)) "and NOT ONE of them is a note row")
+    (is (null (session-warnings (head-session h)))
+        "**nothing entered the record `/notes` reads**")
+    (is (null (session-retired (head-session h))) "and the retired set has nothing to hold")
+    (multiple-value-bind (held retired) (warning-counts (head-session h))
+      (is (zerop held) "`/status` has no note to count")
+      (is (zerop retired) "and none retired"))
+    ;; **AND A REAL NOTE IN THE SAME HEAD IS UNTOUCHED**
+    (leticl::%handle-frame h (list :frame "event" :seq 3 :event "warning"
+                                   :code "context_wall"
+                                   :detail "stopping this turn after 41 round(s)"
+                                   :ts 6))
+    (is (= 1 (length (session-warnings (head-session h))))
+        "a real note still lands in the record")
+    (is (= 1 (length (%note-rows h))) "and is still a note row")
+    (is (= 2 (length (%compaction-rows h))) "with the two compaction rows beside it")
+    ;; and the row is IN the transcript, which is what "scrolls with the conversation"
+    ;; means — the note band is drawn separately from it
+    (is (eq (first (%compaction-rows h))
+            (loop for i across (session-items (head-session h))
+                  when (getf i :compaction) return i))
+        "the row is an item of the transcript, in arrival order")))
+
+(def-test the-wall-is-a-note-and-the-announcement-is-a-row (:suite leticl)
+  "**`context_wall` ruled separately, as the requirement demanded — and it stays a note.**
+
+Three reasons, and the first decides it. **It is terminal in the cases where nothing
+follows**: it is published when the turn hits the wall, and then a compaction may be
+skipped (automatic compaction off for the session), may fail, or may never fire — so a
+fact that is *sometimes* the compaction's reason and *sometimes* the only sentence there
+is must be a fact in its own right, or the case where nothing compacted is the case that
+says nothing. That is R17's rule again: a disclosure conditional on a later event is a
+disclosure that does not happen.
+
+It is also a **failure** — a turn that stopped before it finished — so the failure
+register is where it belongs; and its numbers are already on the announcement's row, so
+folding it in would print one measurement twice.
+
+**The line is ATTEMPTED.** A code reporting a compaction somebody tried is a row; a code
+reporting one nobody tried is a note."
+  (let ((*slash-out* nil) (*job-out* nil) (h (%on-head :cols 120 :rows 30)))
+    (leticl::%handle-frame h (list :frame "event" :seq 1 :event "warning"
+                                   :code "context_wall"
+                                   :detail (format nil "stopping this turn after 41 ~
+                                                        round(s): 938669 of 999999 ~
+                                                        tokens are resident")
+                                   :ts 1))
+    (is (= 1 (length (%note-rows h))) "**the wall is a NOTE**")
+    (is (null (%compaction-rows h)) "and not a compaction row")
+    (is (equal "context_wall" (getf (first (session-warnings (head-session h))) :code))
+        "in the record, where `/notes` finds it")
+    (is (not (routine-warning-p (list :code "context_wall")))
+        "and in the FAILURE register, which is where a stopped turn belongs")
+    ;; the announcement: a row, because the compaction WAS attempted
+    (leticl::%handle-frame h (list :frame "event" :seq 2 :event "warning"
+                                   :code "auto_compact" :detail +letibot-compacting+ :ts 2))
+    (is (= 1 (length (%compaction-rows h))) "**the announcement is a ROW**")
+    (is (equal "Compacting" (getf (leticl::item-body (first (%compaction-rows h))) :verb))
+        "saying it is happening, not that it happened")
+    (is (search "938,669 of 999,999 tokens" (%compaction-head h))
+        "with the wall's own numbers on the headline: ~s" (%compaction-head h))
+    ;; skipped: nothing was attempted, so there is nothing to report
+    (leticl::%handle-frame h (list :frame "event" :seq 3 :event "warning"
+                                   :code "auto_compact_skipped"
+                                   :detail (format nil "the turn stopped at the context ~
+                                                        wall and nothing was compacted: ~
+                                                        automatic compaction is off for ~
+                                                        this session")
+                                   :ts 3))
+    (is (= 2 (length (%note-rows h)))
+        "**a compaction that was never attempted stays a note** — there is nothing to report")
+    (is (= 1 (length (%compaction-rows h))) "and files no row")
+    ;; failed: an attempt, so a row — and it says failed
+    (leticl::%handle-frame h (list :frame "event" :seq 4 :event "warning"
+                                   :code "auto_compact_failed"
+                                   :detail (format nil "the automatic compaction did ~
+                                                        not run: the store is ~
+                                                        read-only. The turn you asked ~
+                                                        for succeeded")
+                                   :ts 4))
+    (is (= 2 (length (%compaction-rows h))) "an attempted-and-failed compaction IS a row")
+    (let ((row (second (%compaction-rows h))))
+      (is (equal "failed" (getf (getf (leticl::item-body row) :outcome) :outcome))
+          "carrying a failed outcome, so it draws in the failure register")
+      (is (search "FAILED" (string-upcase (%row-headline h row)))
+          "**and the row says so on the glass** — a compaction that did not run is not a
+success: ~s" (%row-headline h row)))))
+
+(def-test a-resync-plants-a-compaction-in-the-same-shape-the-turn-did (:suite leticl)
+  "**The other path, and the one that would have drifted.**
+
+A snapshot's warnings are the daemon's own log, so they carry the compaction codes even
+though the live path never stores them. A resync replaces the transcript, so the rows go
+with it — and they have to come back as ROWS, or the same fact has two renderings
+depending on when it arrived.
+
+**And it comes out of `session-warnings` on the way through**, because that list is what
+`/notes` lists and `/status` counts: a compaction left in it would be a row that is also a
+note, which is the thing R24 is getting rid of."
+  (let ((*slash-out* nil) (*job-out* nil)
+        (*snapshotted-sessions* nil) (h (%on-head :cols 120 :rows 30)))
+    (flet ((snap (seq)
+             (list :frame "resync" :reason "auto-compaction" :dropped 0 :scrubbed nil
+                   :snapshot (list :session-id "s-r24" :seq seq :dropped 0 :items-dropped 0
+                                   :items nil :turn nil :open-decisions nil
+                                   :settled-decisions nil :heads nil
+                                   :warnings (list (list :code "compacted"
+                                                         :detail +letibot-compacted+ :ts 4)
+                                                   (list :code "context_wall"
+                                                         :detail "stopping this turn" :ts 5))))))
+      ;; a HELLO first, so the resync below is a reattach and not an attach
+      (leticl::%handle-frame
+       h (list :frame "hello" :protocol-version 23 :session-id "s-r24" :head-id "h1"
+               :dropped 0 :sessions nil :wiring nil :resumed-from nil :scrubbed nil
+               :snapshot (list :session-id "s-r24" :seq 899 :dropped 0 :items-dropped 0
+                               :items nil :turn nil :open-decisions nil
+                               :settled-decisions nil :heads nil :warnings nil)))
+      (is (null (%compaction-rows h)) "the attach plants nothing (R19)")
+      (leticl::%handle-frame h (snap 901))
+      (is (= 1 (length (%compaction-rows h)))
+          "**a RESYNC replants the compaction as a ROW** (R10's rule, R24's shape)")
+      (is (equal "tool_result" (getf (leticl::item-body (first (%compaction-rows h))) :type))
+          "in the same shape the live path files")
+      (is (search "941,290 → 9,449 tokens" (%compaction-head h))
+          "with the numbers in its headline: ~s" (%compaction-head h))
+      (is (= 1 (length (session-warnings (head-session h))))
+          "**and only the real note is left in the record**")
+      (is (equal "context_wall" (getf (first (session-warnings (head-session h))) :code))
+          "which is the wall, and it is a note")
+      (is (= 1 (length (%note-rows h))) "filed as one"))))
+
+(def-test a-compaction-whose-words-this-head-cannot-read-is-a-note-again (:suite leticl)
+  "**The safety property, and what makes the extraction acceptable.**
+
+The parsing is a bridge — the numbers want to be fields, and the ask is filed. What makes
+a bridge safe is that its failure is BORING: a detail this head cannot read falls through
+to the note it always was, so a reword on the daemon's side costs the affordances and
+never the fact. *A test that cannot fail guards nothing*, and its cousin: a fallback that
+has never been exercised is not a fallback."
+  (let ((*slash-out* nil) (*job-out* nil) (h (%on-head :cols 120 :rows 30)))
+    (is (null (compaction-row-p (list :code "compacted" :detail "compacted: lots"))))
+    (leticl::%handle-frame h (list :frame "event" :seq 1 :event "warning"
+                                   :code "compacted"
+                                   :detail "compacted: a hundred and twelve tokens, roughly"
+                                   :ts 1))
+    (is (null (%compaction-rows h)) "no row: this head cannot read that sentence")
+    (is (= 1 (length (%note-rows h)))
+        "**so it is a note, which is what it was before R24** — the fact is never lost")
+    (is (= 1 (length (session-warnings (head-session h)))) "in the record")
+    (leticl::%render h)
+    (is (search "a hundred and twelve tokens" (%screen-text h))
+        "and it is on the screen, as a note")))
+
+(def-test every-compaction-sentence-this-head-parses-is-still-the-one-letibot-writes (:suite leticl)
+  "**The assumption, CHECKED rather than believed** — §11.5's shape a third time.
+
+`compaction-facts` reads letibot's sentences, and they live in
+`crates/harnessd/src/sessions.rs`. A reword there would silently turn every compaction
+back into a note — quiet, correct-looking, and the headline gone. So this reads that file
+and fails when a format string the parser keys on moves.
+
+**Rust splits a long format string across lines with a `\\` continuation**, which strips
+the newline and the next line's leading whitespace, so the source is collapsed the way the
+compiler does before anything is searched for. A guard that searched the raw file would
+pass on a string that only LOOKS right."
+  (let* ((path "/home/dead/Projects/letibot/letibot/crates/harnessd/src/sessions.rs")
+         (raw (and (probe-file path) (uiop:read-file-string path)))
+         (src (and raw (%collapse-rust-continuations raw))))
+    (if (null src)
+        (skip "letibot's sessions.rs is not on this box")
+        (progn
+          (is (> (length src) 10000)
+              "**a plausible source, so a bad read cannot pass vacuously** — ~d bytes"
+              (length src))
+          (dolist (marker '("compacted: {} → {} tokens, on transcript {}."
+                            "re-seated: {} tokens of conversation carried"
+                            "tokens resident, leaving less than the "
+                            "tokens and that is STILL within "
+                            "compacted: {after} tokens resident now, was {resident}."
+                            "the automatic compaction did not run"))
+            (is (search marker src)
+                (format nil "**letibot still writes `~a`** — the sentence this head reads
+the facts on a compaction row from. If it moved, `compaction-facts` moves with it; until
+then every compaction is a note again." marker)))))))
+
 (defun %warning-frame (code detail &optional (ts 0))
   "The frame the daemon publishes a warning as — a full event envelope."
   (list :frame "event" :seq 1 :event "warning" :code code :detail detail :ts ts))

@@ -94,6 +94,7 @@
    #:session-warnings #:session-denials #:session-subagents #:session-jobs
    #:session-retired #:warning-identity #:session-retired-p #:note-warning
    #:routine-warning-p #:warning-glyph #:+routine-warnings+
+   #:compaction-facts #:compaction-row-p #:note-compaction #:+compaction-row-codes+
    #:session-snapshotted-p #:note-snapshotted #:*snapshotted-sessions*
    #:warning-order #:warning-note-text #:retire-warning #:retire-all-warnings
    #:restore-warnings #:warning-counts #:+note-lines+

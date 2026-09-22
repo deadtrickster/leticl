@@ -562,6 +562,11 @@ wrong about a process that is still working.\"*"
     ("shell" . (:run "Ran" "Running"))
     ("run" . (:run "Ran" "Running"))
     ("exec" . (:run "Ran" "Running"))
+    ;; **A compaction is filed as a tool call** (R24), so it needs a word of its own —
+    ;; and its own role, because the role is what the edit/write branch keys on to draw
+    ;; a DIFF: a compaction has no excerpt, and saying `:write` here would send it
+    ;; looking for one.
+    ("compact" . (:compact "Compacted" "Compacting"))
     ("fetch" . (:fetch "Fetched" "Fetching"))
     ("web_fetch" . (:fetch "Fetched" "Fetching"))
     ("http" . (:fetch "Fetched" "Fetching"))))
@@ -1021,8 +1026,16 @@ header, also printed `· 1 line` — a count for a fold with nothing to fold."
          (word (outcome-name outcome))
          (bad (not (string= word "ok")))
          (mark (if open "▾" "▸"))
-         (verb (verb-label name))
-         (subject (or (call-target-of (getf body :call-id))
+         ;; **A ROW MAY STATE ITS OWN VERB AND SUBJECT** (R24), and it is here rather
+         ;; than in a second renderer because the derivation below is a DEFAULT and not
+         ;; a rule: a tool row's verb comes from the tool's name and its subject from
+         ;; the `Assistant` row that proposed the call — and a call nobody proposed has
+         ;; neither. A compaction is one: the daemon runs it, no row proposed it, and
+         ;; what belongs on the headline is its numbers. Both fields are optional, and
+         ;; every other tool result takes exactly the path it took before.
+         (verb (or (getf body :verb) (verb-label name)))
+         (subject (or (getf body :subject)
+                      (call-target-of (getf body :call-id))
                       (format nil "(~a)" (getf body :call-id))))
          (decision (getf facts :decision))
          ;; Sanitised FIRST and filtered second, the reference's order
