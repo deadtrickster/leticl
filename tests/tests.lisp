@@ -2739,7 +2739,7 @@ operator has to guess. The rows are the reference's own (`help_lines`), so the
 list is what ITS help names — ctrl-g, ctrl-q and ctrl-o are bound in both heads
 and named by neither's help, and the panes they open say so themselves."
   (let* ((text (format nil "~{~a~^~%~}" (lines-text (help-lines 100)))))
-    (dolist (chord '("ctrl-r" "ctrl-t" "ctrl-x" "ctrl-s" "ctrl-p" "ctrl-c"
+    (dolist (chord '("ctrl-r" "ctrl-t" "ctrl-n" "ctrl-x" "ctrl-s" "ctrl-p" "ctrl-c"
                      "ctrl-y" "ctrl-z" "alt+enter" "esc esc" "ctrl-l"))
       (is (search chord text) (format nil "the help names ~a" chord)))))
 
@@ -4418,8 +4418,10 @@ section. The two heads must teach the same keys the same way."
     ;; `/config` row (the operator's running binary predates it, so its screen
     ;; still shows 36 — the source is the reference here, the binary the evidence),
     ;; and R10 added `/notes`, which the reference teaches too (`app.rs:9793-9797`)
-    (is (= 38 (count-if (lambda (l) (plusp (length l))) text))
-        "38 non-blank rows at the capture's width: the reference's 36 plus /config and /notes")
+    (is (= 39 (count-if (lambda (l) (plusp (length l))) text))
+        "39 non-blank rows at the capture's width: the reference's 36 plus /config and
+ /notes and, from R22, the `ctrl-n` row — which letibot lands too, so the two teach the
+ same keys again")
     (is (string= "  enter           send what you typed; while a turn runs it is queued as a follow-up"
                  (third text))
         "the first row, key sixteen wide after two")
@@ -6264,6 +6266,116 @@ to agree about every filter (`bacf495`)."
                            :open-decisions nil :settled-decisions nil :heads nil
                            :warnings (list (list :code "turn_failed" :detail "the model died" :ts 0))))
     (is (null (%warning-rows h)) "and a snapshot does not replant it")))
+
+(def-test ctrl-n-retires-every-note-and-says-what-the-verb-says
+    (:suite leticl :fixture (notes-of-its-own))
+  "**R22, and both trees landed the same three answers: `ctrl-n`, ALL, and the empty
+press says so.**
+
+The chord retires every note this head holds — the same reach `/notes dismiss all` has,
+which is *this screenful and no further*: a note's key carries the log's clock, so a
+warning that happens again arrives with a new `ts` and is a note nobody has retired. It
+cannot mute a KIND of thing, and that is a property of the identity rather than a hope.
+
+What is asserted here is the part that would drift: **one path and one sentence.** A chord
+that retired notes on its own would be a second implementation of a verb, and the second
+one is the one that forgets to write the file."
+  (let ((*slash-out* nil) (*job-out* nil) (*pane-scroll* 0) (*pane-lines* 0) (*pane-room* 0)
+        (h (%on-head :cols 96 :rows 24)))
+    ;; --- the EMPTY press, which is the one amendment and the whole of the difference
+    ;; between the first draft and what landed
+    (leticl::%handle-key h (list :type :ctrl :ch #\n))
+    (is (search "nothing to retire" (head-status-note h))
+        "an empty press ANSWERS rather than falling silent: ~s" (head-status-note h))
+    (is (null (session-retired (head-session h))) "and retires nothing")
+    ;; --- two notes, and the chord takes both
+    (leticl::%handle-frame h (%warning-frame "context_wall" "the context is nearly full" 1))
+    (leticl::%handle-frame h (%warning-frame "gate_timeout" "nobody answered" 7))
+    (leticl::%handle-key h (list :type :ctrl :ch #\n))
+    (is (= 2 (length (session-retired (head-session h))))
+        "every note this head holds is retired")
+    (multiple-value-bind (held retired) (warning-counts (head-session h))
+      (is (= 2 held) "**retired is not deleted** — they are still held, as R10 requires")
+      (is (= 2 retired) "and counted as retired, so `/status` says so too"))
+    (is (search "retired 2 warnings — off the screen" (head-status-note h))
+        "with the verb's own sentence: ~s" (head-status-note h))
+    ;; **THE SAME SENTENCE FROM THE VERB.** Back to the same state — the notes are
+    ;; still in the record, so `/notes restore` is enough — and the two doors are
+    ;; compared on the thing a reader would notice if they differed.
+    (let ((from-the-chord (head-status-note h)))
+      (leticl::%command h "notes restore")
+      (is (null (session-retired (head-session h))) "the restore emptied the set")
+      (leticl::%command h "notes dismiss all")
+      (is (equal from-the-chord (head-status-note h))
+          "`ctrl-n` and `/notes dismiss all` say the same thing: ~s against ~s"
+          from-the-chord (head-status-note h)))
+    ;; --- AND IT WENT WHERE THE VERB WRITES. The retired set is the file every head
+    ;; shares (R24), so a chord that skipped the write would be a dismissal that
+    ;; survives until this process exits.
+    (is (equal (sort (copy-list (session-retired (head-session h))) #'string<)
+               (sort (copy-list (read-retired-keys)) #'string<))
+        "the chord persisted through the same writer the verb uses")
+    (is (= 2 (length (read-retired-keys))) "both keys are on disk")
+    ;; --- and the restore/empty pair reads the same way from the chord
+    (leticl::%command h "notes restore")
+    (leticl::%handle-key h (list :type :ctrl :ch #\n))
+    (is (search "retired 2 warnings" (head-status-note h))
+        "with the notes back, the same press retires them again")))
+
+(def-test ctrl-n-is-in-the-hint-bar-inside-the-columns-an-80-wide-frame-has (:suite leticl)
+  "**The placement is a measurement, and both heads measured the same number.**
+
+This bar is 136 characters. So is letibot's, item for item — the two heads teach the same
+chords in the same order with the same separator — and at the usual 80 columns everything
+past column 80 is off the screen. Appending `ctrl-n notes` at the END would put it at 137
+and invisible; it is placed SECOND, right after `ctrl-s sessions`, where it starts at
+column 18.
+
+That is the whole of *the hint names it*, which is the argument that made ALL the right
+scope: a chord named where it acts can be silent when it has nothing to act on
+(`ctrl-t`), and a chord named unconditionally has to answer unconditionally. Neither half
+survives a hint the operator cannot see."
+  (let* ((h (%on-head :cols 80 :rows 24))
+         (text (format nil "~{~a~}" (mapcar #'car (hint-bar h 80))))
+         (at (search "ctrl-n notes" text)))
+    (is (integerp at) "the normal hint names the chord")
+    (is (< at 80)
+        "**and it is inside the first 80 columns**, where it is on the screen at the
+ usual size — it starts at column ~d" at)
+    (is (< (search "ctrl-s sessions" text) at)
+        "`ctrl-s` keeps first place: opening the session list is what an operator with
+ nothing in front of them reaches for, and `ctrl-n` is a reflex")
+    (is (= 1 (length (hint-bar h 80)))
+        "**one constant string**, so a narrow frame truncates it rather than re-ordering
+ it — the prefix that used to move sideways is not back")))
+
+(def-test ctrl-n-keeps-the-asks-keys-and-the-ladders
+    (:suite leticl :fixture (notes-of-its-own))
+  "The chord is a HEAD chord, so it runs before every view — which is what makes it work
+under a pane, and is also what could make it steal a key a card owns. `n` is not one: no
+card reads a letter or a `ctrl`, and the ask's own keys are the digits, the arrows and
+enter.
+
+**The fixture is load-bearing here and the first version of this test did not have it.**
+Without one, the notes file is the run's own — shared by every test in the run — and
+`/notes` RE-READS it, so *one warning retired* was one warning plus whatever an earlier
+test had dismissed. Measured: `a head chord runs before the pane` failed with the run's
+leftovers in the set."
+  (let ((*slash-out* nil) (*job-out* nil) (*pick-open* nil) (*mode-confirm* nil)
+        (h (%on-head :cols 96 :rows 24)))
+    (leticl::%handle-frame h (%warning-frame "context_wall" "the context is nearly full" 1))
+    (setf (session-open-decisions (head-session h)) (list (%decision-with)))
+    (let ((wire (%wire h)))
+      ;; the digits still answer the ask while an ask is open
+      (leticl::%handle-key h (list :type :char :ch #\1))
+      (is (equal "allow_once" (getf (first (%sent wire)) :option-id))
+          "a digit under an ask still answers the ask"))
+    ;; and the chord still works with the pane arm in front of the composer
+    (setf (head-mode h) :todos)
+    (leticl::%handle-key h (list :type :ctrl :ch #\n))
+    (is (= 1 (length (session-retired (head-session h))))
+        "a head chord runs before the pane, as `ctrl-r` and `ctrl-t` do")
+    (is (eq :todos (head-mode h)) "and it does not close what is on the screen")))
 
 (def-test the-notes-verb-lists-retires-and-restores
     (:suite leticl :fixture (notes-of-its-own))

@@ -682,6 +682,28 @@ Esc was a second thing to remember per pane."
                    (%command head "promote"))
                t)
         ((#\s) (pane :picker "sessions"))             ; the session list
+        ((#\n)
+         ;; **R22: retire every note this head holds.** *n* for notes, and the byte is
+         ;; the one letibot ruled free from the other side: `0x0e` is unbound in its
+         ;; decoder and in this one, `letibot_ui::editor::Key` has no `CtrlN`, and the
+         ;; only other free control bytes are `0x16` (`ctrl-v`, the terminal's
+         ;; literal-next in several emulators) and the five with no mnemonic.
+         ;;
+         ;; **It is the `/notes dismiss all` path and not a second one.** The sentence
+         ;; the operator reads is the same sentence whichever door they came through,
+         ;; and so is the persistence — which is the whole reason this is a `%command`
+         ;; and not a call to `retire-all-warnings`. A chord that did its own retiring
+         ;; would be a second implementation of a verb, and the fifth site is the one
+         ;; that would forget to write the file.
+         ;;
+         ;; **And it answers when there is nothing to retire** — *nothing to retire*,
+         ;; in the routine register, which is the one thing letibot wanted different
+         ;; from the first draft and is now agreed in both trees. A chord the hint bar
+         ;; names unconditionally has to answer unconditionally: silence after a press
+         ;; is indistinguishable from a key that was never received, and the operator
+         ;; presses again to find out.
+         (%command head "notes dismiss all")
+         t)
         ((#\p) (pane :todos "todos"))                 ; the todos pane
         ((#\g) (pane :subagents "subagents"))         ; the subagent tree
         ((#\q) (pane :jobs "jobs"))                   ; the jobs pane

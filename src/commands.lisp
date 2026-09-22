@@ -284,9 +284,24 @@ the sentence would be a head whose warnings cannot be trusted to be complete."
             (let ((hidden (retire-all-warnings s))
                   (miss (persist-retired head)))
               (%refresh-notes-listing head)
-              (say head (format nil "retired ~d warning~a — off the screen, still counted ~
-                                     on /status, and /notes shows them~@[ · ~a~]"
-                                hidden (if (= hidden 1) "" "s") miss))))
+              ;; **THE EMPTY PRESS ANSWERS** (R22's one amendment, agreed in both trees).
+              ;; A chord the hint bar names unconditionally has to answer
+              ;; unconditionally — `ctrl-t` can be silent with nothing to open because
+              ;; its seam names it only on the one row it can open, and a hint bar
+              ;; cannot be conditional. So *nothing to retire* is ONE sentence, shared
+              ;; by `/notes dismiss all` and by `ctrl-n`, rather than a second one for
+              ;; the chord: the path is shared, and so is what it says.
+              ;;
+              ;; The write's own failure is still said in either case. A file that
+              ;; could not be written is the one part of this a reader cannot deduce
+              ;; from the screen — the dismissal holds in this process and not on disk
+              ;; — and it is no less true when there was nothing new to retire.
+              (say head (if (zerop hidden)
+                            (format nil "nothing to retire~@[ · ~a~]" miss)
+                            (format nil "retired ~d warning~a — off the screen, ~
+                                         still counted on /status, and /notes shows ~
+                                         them~@[ · ~a~]"
+                                    hidden (if (= hidden 1) "" "s") miss)))))
            ((every #'digit-char-p tail)
             (let* ((n (parse-integer tail))
                    (ws (warning-order s)))

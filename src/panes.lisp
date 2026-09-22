@@ -177,6 +177,7 @@ Second value is the cursor's LINE: two lines per session, after a two-line heade
     ("ctrl-r" . "fold or unfold the model's thinking")
     ("ctrl-t" . "fold or unfold tool output")
     ("/notes" . "the disclosures this head has shown; /notes dismiss [N|all] retires one or every one, /notes restore brings them back")
+    ("ctrl-n" . "retire every note this head holds — the same as /notes dismiss all. /notes still lists them and /status still counts them")
     ("ctrl-x" . "show the raw <function=…> text of tool calls, as the model wrote it")
     ("ctrl-l" . "repaint the screen")
     ("/status" . "this head's counters — dropped, scrubbed, resync — and what each means")

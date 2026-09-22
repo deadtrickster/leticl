@@ -589,7 +589,15 @@ is worse than no hint at all."
                   "↑↓ scroll · → next page · ← back · enter re-reads · esc back to jobs")
                  ((head-secret-req head) "enter submits · esc refuses the password")
                  ((%open-decision head) "a row number answers · ↑↓ then enter · or type an option · /help")
-                 (t "ctrl-s sessions · ctrl-p todos · ctrl-g subagents · ctrl-r thinking · ctrl-t tool output · ctrl-q jobs · tab completes /commands · /help"))))
+                 ;; **`ctrl-n` IS SECOND, AND THE PLACEMENT IS A MEASUREMENT** (R22).
+                 ;; This bar is 136 characters — the same 136 as letibot's, item for
+                 ;; item — and at the usual 80 columns everything past column 80 is off
+                 ;; the screen. Appending `ctrl-n notes` at the END puts it at 137 and
+                 ;; invisible; second, right after `ctrl-s sessions`, it starts at 18.
+                 ;; `ctrl-s` keeps first place because opening the session list is what
+                 ;; an operator reaches for with no notes in front of them; `ctrl-n` is
+                 ;; a reflex, and a reflex nobody can see is a key nobody presses.
+                 (t "ctrl-s sessions · ctrl-n notes · ctrl-p todos · ctrl-g subagents · ctrl-r thinking · ctrl-t tool output · ctrl-q jobs · tab completes /commands · /help"))))
     (if armed
         (list armed (cons (format nil " · ~a" tail) '(:dim t)))
         (list (cons tail '(:dim t))))))
