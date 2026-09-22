@@ -9,8 +9,23 @@ the wire, not transcript row rendering — those are measured elsewhere.
 Cited as `app.rs:N`, `term.rs:N`, `prefs.rs:N`, `bin/letibot-tui.rs:N`, `driver.rs:N`
 — all under `crates/tui/src/`.
 
-**Subject:** `/home/dead/Projects/leticl` at `dc62ddf` (working tree clean except this
-file). Cited as `src/NAME.lisp:N`.
+**Subject:** `/home/dead/Projects/leticl` at `dc62ddf` (2026-09-20 22:19; the pass
+finished at `7c2c6fc`, 23:37). Cited as `src/NAME.lisp:N`.
+
+**A SNAPSHOT, NOT THE TREE — and on 2026-09-22 that cost a day's work.** Twenty-three
+minutes after this pass closed, `b7a2620` landed (**Enter on a jobs row opens the
+output in a pane**) — and nothing re-measured the three rows that said otherwise:
+**G4** here, `keys.md` **G20**, `wire.md` **W2**. They went on saying MISSING, and on
+2026-09-22 a driver read them and handed that line to the head as work: *"Take T1(3) —
+it is the one B-side defect left"*, on a defect that had been closed for a day and a
+half. **The §2.6 incident, mirrored**: that one was a commit message claiming work
+that was not there, this one is four documents claiming work was MISSING that was
+there. Neither is catchable by a test, and both are catchable by one rule — *a
+criterion names a test, and the test is run from the tree as committed*.
+
+Those rows now carry the measurement and its date. **Every other row here is true of
+`dc62ddf` and says nothing about today; re-measure before acting on one.** Re-measured
+2026-09-22 at `047f9ad`: this file's **G4** and the **job_out** row.
 
 **Method.** Read on both sides; every verdict below carries a line on each. Nothing
 was run, no keys were sent, no head was restarted.
@@ -78,7 +93,7 @@ path.
 | **subagents** | title, `▸ [~] prompt` over dim `id · role · state`, footer naming `o` | `app.rs:6782-6838` | same rows, same footer text | `src/panes.lisp:619-690` | **SAME to draw**; the footer names a key leticl does not bind — see 1.4 |
 | **jobs** | `▸ [~] id command` over dim `how · state · N out · ran Ns` | `app.rs:6996-7046` | same | `src/panes.lisp:532-593` | **SAME** |
 | **sub_out / peek** | tail-first, `scroll` clamped where the height is known, `dropped` note, footer `arrows scroll, Enter re-reads, Esc back — full: {spill}` | `app.rs:6844-6892` | same title, same `dropped` note, footer without the spill | `src/panes.lisp:1061-1085` | **DIFFERS**: no spill file (`spill_sub_out`, `app.rs:8025-8060`, has no counterpart — `grep -rn spill src/*.lisp` finds only the per-call `:spill` field); Esc leaves to `:normal`, not back to the tree (`src/editor.lisp:242`); Enter is not handled for `:peek` (`src/editor.lisp:275-321` has no `:peek` arm) though the footer promises it; Up/Down move a cursor over `pane-row-count … :peek → 0` (`src/editor.lisp:749`), i.e. do nothing |
-| **job_out** | its own overlay: `job output — id`, `state — bytes A..B of N`, `→`/`←` paging on a `back` stack, refusal rendered in the pane that asked | `app.rs:6894-6994`, `app.rs:3277-3300`, `app.rs:2794-2800` | **absent** | — | **MISSING**. leticl's jobs-pane Enter closes the pane and sends `/job ID` as a slash line (`src/editor.lisp:305-313`) — the exact behaviour the reference removed on the operator's report quoted at `app.rs:3830-3838` |
+| **job_out** | its own overlay: `job output — id`, `state — bytes A..B of N`, `→`/`←` paging on a `back` stack, refusal rendered in the pane that asked | `app.rs:6894-6994`, `app.rs:3277-3300`, `app.rs:2794-2800` | same title, same `state — bytes A..B of N` line built from the offsets, the `dropped` note in the header, a `back` stack of offsets the daemon gave, a refusal wrapped in the pane that asked, and `reading…` until the first answer | `src/panes.lisp:1382-1544`, `src/session.lisp:1419-1446` | **SAME — re-measured 2026-09-22**, live: `job output — j74` / `exited 0 — bytes 0..899 of 899`, and on a running job with nothing written `it is running and has written nothing yet.` |
 | **picker (sessions)** | header, two lines per session, facts right, id+workspace under every row, two dim closers | `app.rs:7049-7148` | identical, plus the subagent filter the reference also has (`app.rs:1667-1671`) | `src/panes.lisp:68-158` | **SAME to draw**; the cursor does not open on the current session — see 1.4 |
 | **slash_out** | a slash reply of >3 lines opens a pane: bold echo, blank, wrapped body, `esc closes · up/down scrolls`; owns Esc/Up/Down while up | `app.rs:2785-2790`, `app.rs:5235-5243`, `app.rs:3319-3335` | **absent** — no mode, no `"slash"`-warning split; `%send-slash` just writes the frame (`src/commands.lisp:193-201`) | — | **MISSING** |
 | **attach indicator** | centred cat, pawprints, `asking the daemon for this session`, elapsed, and at ≥2 s `the daemon has not answered. ctrl-c twice, or wait` | `app.rs:6061-6105`, `ATTACH_IMPATIENT` `app.rs:1313` | same seven rows, no impatient row | `src/chrome.lisp:663-682`, drawn `src/render.lisp:374-378` | **DIFFERS** on content **and unreachable at startup** — see 1.5 |
@@ -288,14 +303,31 @@ which makes a 7-wide and an 8-wide frame jitter instead of walk, the exact defec
 *Why it matters:* attaching to a large session shows a blank screen, which is
 indistinguishable from the wrong socket.
 
-**G4 — Enter on a jobs row posts `/job ID` into the conversation. `M`.
-`src/editor.lisp:305-313`, new pane in `src/panes.lisp`.**
+**G4 — Enter on a jobs row posts `/job ID` into the conversation. `M`. CLOSED in
+`b7a2620`, 2026-09-21 00:00 — and this section said MISSING until 2026-09-22.**
+It was measured at `7c2c6fc`, **twenty-three minutes before the fix landed**, and
+nothing re-measured it: this line, `keys.md` G20 and `wire.md` W2 went on saying the
+Enter sent a slash line, and on 2026-09-22 the driver handed that stale line to the
+head as work. **The measurement, live, on a real daemon and a real finished job:
+Enter on `j74` drew `job output — j74` and `exited 0 — bytes 0..899 of 899` over the
+bytes themselves, with the jobs list still standing behind it, and Enter on `j248`
+(a running job that has written nothing) drew `it is running and has written nothing
+yet.`** Five of the six tests below fail with the arm put back the way it was
+(`%send-slash "job jID"` and `:normal`, the parent commit's arm) — 17 of 36
+assertions, two of them erroring outright; the sixth feeds the fold directly rather
+than the key, and passes either way. Evidence:
+`enter-on-a-jobs-row-reads-its-output-into-a-pane`,
+`the-job-output-window-fills-the-overlay-and-it-pages`,
+`the-job-output-overlay-scrolls-and-discloses-what-fell-off`,
+`a-refused-job-output-read-lands-in-the-pane`,
+`a-job-output-window-is-ephemeral-and-never-stored`,
+`the-hint-bar-names-the-job-output-overlays-keys`.
 The reference removed exactly this on the operator's report quoted verbatim at
 `app.rs:3830-3838`; the replacement is the `job_out` overlay (`app.rs:6916-6994`) with
 `→`/`←` paging on a `back` stack (`app.rs:6894-6914`), the daemon's byte offsets in the
 header, and a refusal rendered **in the pane that asked** (`app.rs:2794-2800`).
-*Why it matters:* reading a build log is what the jobs pane is for, and leticl's Enter
-closes the pane and scrolls the log past in chat.
+*Why it mattered:* reading a build log is what the jobs pane is for, and leticl's Enter
+closed the pane and scrolled the log past in chat.
 
 **G5 — the peek pane does not scroll, does not re-read, and does not go back. `S`.
 `src/editor.lisp:242-256,275-321,749`.**

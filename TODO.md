@@ -106,12 +106,15 @@ predicate.
 
 ## Open, in the order they would stop the operator
 
-- [~] **T1 · the payload window** (`keys.md` G13, `wire.md` W2/W13,
-  `panes.md` G4/G10). **Half closed in `f655e7a`**: the OFFSET now exists —
+- [~] **T1 · the payload window** (`keys.md` G13/G20, `wire.md` W2,
+  `panes.md` G4/G10). **Two of its three parts are closed and the third is a BOUND
+  rather than a defect** — so what keeps this row open is a daemon-side half and a
+  design limit, not work here.
+  `f655e7a` gave the fold a real window: the OFFSET exists —
   `ctrl-t` opens a window on the newest pageable row, ↑/↓ page it by ten lines,
   `esc` closes it, and three seams say which key does what and where the reader is
   (`↑ N more lines above · ↑ scrolls up`, `… +N lines · ↓ pages down · esc closes`,
-  `… end of output · esc closes`). **What is NOT there, and why the row stays open:**
+  `… end of output · esc closes`). What is NOT there, part by part:
   (1) **CLOSED here**: a row above the head's window is now disclosed and fetched —
   the seam `… N rows above`, the ask on demand when the reader reaches the top, the
   row prepended, and `… the daemon does not hold them any more` when it answers
@@ -120,12 +123,14 @@ predicate.
   letibot's R19.2: a store read for a trimmed ordinal. `ViewBounds` still trims at
   2000 rows / 8 MB; (2) one window at a time, on the newest row, because the
   transcript has no pointer to aim one with;
-  (3) Enter on a jobs row still posts `/job ID` into the conversation rather than
-  reading it in the overlay — that is `ReadJobOutput`/`JobOutput` on the wire
-  (protocol 22, `make-read-job-output` exists) with no HEAD sending it. **R10 made
-  the reply visible** (a row, or the pane when it is a listing), so the Enter is no
-  longer silent — but it is still the wrong frame. Size M for
-  (3) alone; (1) is its own item.
+  (3) **CLOSED, and this line said otherwise for most of a day — MEASURED
+  2026-09-22**: Enter on a jobs row opens the job's output in a pane. It landed in
+  `b7a2620` (2026-09-21 00:00) with six tests, and this clause was written at
+  `f91f3ae` (22:20) from `panes.md`/`keys.md`/`wire.md`, which were measured at
+  `7c2c6fc` — twenty-three minutes BEFORE the fix. Live, on a real daemon and a real
+  finished job: `job output — j74`, `exited 0 — bytes 0..899 of 899`, the bytes
+  themselves, the jobs list still behind it. One window at a time is (2); (1) is its
+  own item.
 - [ ] **T2 · the launcher** — `~/bin/letibot` needs `exec "$HEAD"` at its four
   remaining TUI exec sites and `~/bin/leticl` replaced by `scripts/leticl`;
   blocked on the operator, since the edit is in their own `~/bin`. Until then

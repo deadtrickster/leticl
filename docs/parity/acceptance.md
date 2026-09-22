@@ -210,6 +210,98 @@ half, and one or two are requirements whose *criterion* nobody has settled yet.
   answer one (`view.items` is both what the snapshot clones and what `row_body_at`
   reads; one view, one bound). The other half is **A's**, its own R19.2(b).
 
+## T1(3) · §6's G4/G20/W2 — Enter on a jobs row opens the job's output in a pane
+
+- **SETUP** a head attached to a live daemon whose session has jobs: one **finished**
+  with bytes in it, and one **running** that has written nothing yet.
+- **STIMULUS** `ctrl-q` (`/jobs`), then Enter on a row; then `→`/`←`; then Esc.
+- **ASSERTION** the Enter sends `read_job_output` — a command, not `/job ID` as a slash
+  line, which is the frame the operator rejected; the overlay is up **at once** saying
+  `reading…`; the answer is a `JobOutput` window folded into the overlay that **asked**
+  and nowhere else; the header is built from the daemon's **offsets**
+  (`state — bytes A..B of N`, and a `dropped` count in the header, not the footer);
+  **a job that has written nothing does not look like a window of nothing** —
+  `reading…`, `it is running and has written nothing yet.`, `it wrote nothing at all.`
+  and `the daemon refused this read:` are four different sentences, and the state word
+  is the daemon's; the jobs list is still standing behind the overlay, so **Esc returns
+  to the row that was chosen**; and the window is **ephemeral** — it never enters the
+  stored projection and never surfaces in a replay.
+- **Evidence** `enter-on-a-jobs-row-reads-its-output-into-a-pane`,
+  `the-job-output-window-fills-the-overlay-and-it-pages`,
+  `the-job-output-overlay-scrolls-and-discloses-what-fell-off`,
+  `a-refused-job-output-read-lands-in-the-pane`,
+  `a-job-output-window-is-ephemeral-and-never-stored`,
+  `the-hint-bar-names-the-job-output-overlays-keys`, `a-settled-job-updates-the-row-the-pane-draws`.
+- **Status RUNS + LIVE.** `b7a2620`, 2026-09-21 00:00 — and **this document is where
+  the record was wrong**: `panes.md` G4, `keys.md` G20, `wire.md` W2/W15 and `TODO.md`'s
+  T1(3) all said this was missing, and on 2026-09-22 the driver handed that line to the
+  head as work. See *A record is not a measurement*, below.
+
+  **The measurement, live**, on a scratch head attached to a real daemon
+  (`42ce9f1aae08`) with two real jobs, keys sent through tmux, screen captured:
+
+      ctrl-q    background jobs
+                ▸ [x] j74  cd … && cargo check --workspace --all-targets 2>&1 | tail -20
+                         … · exited 0 · 899 B out · ran 1.1s
+                  [~] j248 cd … && cargo test -p letibot-harnessd …
+                         … · running · 0 B out so far
+
+      Enter     job output — j74
+                    exited 0 — bytes 0..899 of 899
+                    <the log itself>
+                    arrows scroll · Esc to jobs
+                ↑↓ scroll · → next page · ← back · enter re-reads · esc back to jobs
+
+      Enter on the running one
+                job output — j248
+                    running — bytes 0..0 of 0
+                    it is running and has written nothing yet.
+
+  and the overlay's own state, read back off the live head:
+  `:JOB "j74" :STATE "exited 0" :FROM 0 :TO 899 :PRODUCED 899 :DROPPED 0 :NEXT NIL
+  :LOADING NIL :ERROR NIL` — the daemon's numbers, not a parsed sentence.
+
+  **Falsified**: with the `:jobs` arm put back the way it was (`%send-slash "job jID"`
+  and `:normal`), five of the six tests fail — **17 of 36 assertions**, two erroring
+  outright. The sixth feeds the fold rather than the key and passes either way.
+
+  **Not measured live, and why**: the `→`/`←` paging (neither job's log is longer than
+  one window), the settled-and-empty branch (it needs a job that exits having written
+  nothing, and a job can only be started by a turn), and the refusal (the daemon
+  publishes `job_output_refused` as a `Warning` **on the session's own log**, so
+  provoking it would put an artifact in somebody else's conversation). All three are
+  covered by the tests above, which is what the third status exists to say.
+
+  **R17's fourth instance, checked rather than assumed.** The rule — *a row that has no
+  output yet must not look like a row whose output is empty* — holds here for a reason
+  that is stronger than a case analysis: **the daemon's `lines` is empty exactly when
+  `produced` is 0.** `Capture::slice` clamps to `[dropped, produced]` and the ring only
+  ever drops from the FRONT, so a window past the end can only be empty when the log is
+  empty; and `text().lines()` of a non-empty string is never empty. So the pane's
+  silence has one meaning, and what is left to distinguish is *why* the job is silent
+  (`running`) — which is exactly what the pane draws from the daemon's own word.
+  The three earlier instances: body-less rows (§2.5), `items_dropped` (T1(1)), and a
+  trimmed fetch (`a-row-the-daemon-does-not-hold-is-not-an-empty-row`). **One case is
+  found and NOT fixed, because both heads do it and it is a criterion decision:**
+  `JobState::NotScoped` (`not run (could not join its scope)`) produces
+  `produced == 0`, so the pane adds *it wrote nothing at all* under a header that says
+  the command never ran. Rare, reachable only through a scope-join failure, and letibot
+  says the same thing (`app.rs:8255-8270`) — so it belongs in the drift table, not in a
+  unilateral change.
+- **This is the same shape a second time, not a third hand-rolled pane.** `:peek` was
+  the first overlay whose content is not the session's; `:job-out` is the second and
+  `:slash` the third, and `src/panes.lisp` says so where the third was added. What they
+  share is one shape — a `defvar` holding what arrived, a mode that draws it, a
+  TAIL-origin window clamped where the height is known, a `*-row-count` for the arrows,
+  a footer naming only the keys that do something, `shut-overlays` as the one closer and
+  `pane-escape-target` as the one place Esc's destination is decided. **What is
+  genuinely NOT this shape is the payload pager** (`ctrl-t`): it is a window on a ROW
+  inside the cached history, so paging it has to invalidate the render generation
+  (`%payload-view-set`, `src/cards.lisp:915-930`) — a pane has no such problem because
+  it is not cached. Whether the shared half should become a constructor is a ruling for
+  the operator; the duplication is a handful of lines each, and every one of them is
+  covered by the tests above.
+
 ## §2.4 A slash reply longer than the screen must be readable
 
 - **SETUP** a `warning` with code `slash` and a >3-line body.
@@ -658,6 +750,43 @@ not `peak - pending`. **Constants measured**, above.
 
 ---
 
+# A record is not a measurement — the incident this document keeps finding
+
+**Twice in two days, the tree's record and the tree itself disagreed, and nothing
+noticed either time.**
+
+The first was §2.6: `a6fa7f5` said *fenced code colouring landed*, and named
+`src/markdown.lisp` in its message — while that file sat in a stash it had never
+popped. Five commits went by with the docs, the TODO and the commit message all
+recording it as done, **and the suite green the whole time, because the tests were in
+the stash with the code.** Found while writing this document, by checking that every
+test a criterion named actually existed.
+
+The second is the mirror, and it is the reason T1(3) is in here at all: `b7a2620`
+**landed** Enter-on-a-jobs-row reading the output into a pane, and `panes.md` G4,
+`keys.md` G20, `wire.md` W2 and W15, and `TODO.md`'s T1(3) all went on saying it was
+MISSING — because they were measured at `7c2c6fc`, twenty-three minutes before it
+landed, and a dated measurement is a snapshot rather than a fact about today. On
+2026-09-22 a driver read them and handed that stale line to the head as the night's
+work: *"Take T1(3) — it is the one B-side defect left."*
+
+Both are the same defect with the sign flipped: **a claim about the tree that nothing
+in the tree checks.** A missing feature is found by using it; a present one recorded as
+missing is found only by measuring again, or by a document that says *which test*. So
+the rules this adds are three, and the first two were already this document's:
+
+1. **A criterion names a test, and the test is run from the tree as committed** (the
+   rule §2.6 produced). Every entry above does this; the ARGUED list exists to mark
+   the ones that cannot.
+2. **A measurement names its subject commit and its date, and says that it is a
+   snapshot.** All four `docs/parity/*.md` now carry that line, and the rows corrected
+   here carry the measurement's own date and the test that decides them.
+3. **Correcting a record is work.** It is the mirror of *the record is part of the fix*:
+   a row left saying MISSING after the fix costs the next reader exactly what the
+   false commit message cost this time, and this time it cost a night's assignment.
+
+---
+
 # Where the two heads have drifted on what a criterion MEANS
 
 These are the phase-2 bugs waiting to happen: both heads agree on the sentence and
@@ -673,6 +802,7 @@ differ on what passing it looks like.
 | R10 retired-set key | reference persists a hash to `head.toml`; this head holds it in memory | unruled — the criterion says *survives a resync and a reattach*, not *a restart* |
 | R13 and the notice | reference's `notice_ttl` counts FRAMES; this head counts time | this head — **one defect, two symptoms** |
 | R17 on detection | the criterion says *"says so and repairs it"*; this head files a row and names `/resync` | unruled — automatic resync vs. telling the operator |
+| a job that never ran | `JobState::NotScoped` has `produced == 0`, so both heads draw their *wrote nothing at all* row under a header saying the command never ran | unruled — the honest line is *it never ran*; fixing one head alone is a divergence |
 | §2.6 the token table | three copies; C14 wants one shared artefact | neither yet — nothing generates it |
 | R7's blocking | reference blocks nothing; `Peek`/`FetchRow` share *"a read, not a move"* | both, but B is the one that had to rebuild it |
 

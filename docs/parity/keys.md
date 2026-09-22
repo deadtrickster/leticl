@@ -1,11 +1,28 @@
 # keys.md — the operator's input
 
-**Reference: letibot `8af671e`.** Subject: leticl at this working tree. Every row
-below cites a file and a line on both sides. Nothing here was run: the reference
+**Reference: letibot `8af671e`.** Subject: leticl at `dc62ddf` (2026-09-20 22:19; the
+pass finished at `7c2c6fc`, 23:37). Every row below cites a file and a line on both
+sides. Nothing here was run: the reference
 was read at `crates/tui/src/term.rs` (the decoder), `crates/tui/src/app.rs`
 (`enum Key`, `App::key`, `command`, `SLASH_COMMANDS`) and
 `crates/ui/src/editor.rs` (the composer); leticl at `src/keys.lisp`,
 `src/editor.lisp`, `src/commands.lisp` and the picker arms in `src/panes.lisp`.
+
+**A SNAPSHOT, NOT THE TREE — and on 2026-09-22 that cost a day's work.** Twenty-three
+minutes after this pass closed, `b7a2620` landed (**Enter on a jobs row opens the
+output in a pane**) — and nothing re-measured the rows that said otherwise: **G20**
+here, `panes.md` **G4**, `wire.md` **W2**, and `TODO.md`'s T1(3). They went on saying
+MISSING, and on 2026-09-22 a driver read them and handed that line to the head as
+work: *"Take T1(3) — it is the one B-side defect left"*, on a defect that had been
+closed for a day and a half. **The §2.6 incident, mirrored**: that one was a commit
+message claiming work that was not there, this one is four files claiming work was
+MISSING that was there. Neither is catchable by a test, and both are catchable by one
+rule — *a criterion names a test, and the test is run from the tree as committed*.
+
+Those rows now carry the measurement and its date. **Every other row here is true of
+`dc62ddf` and says nothing about today; re-measure before acting on one.** Re-measured
+2026-09-22 at `047f9ad`: this file's **G20** and the **§3 rows 5 and 16**; `panes.md`
+**G4** names the evidence for all of them.
 
 ---
 
@@ -125,7 +142,7 @@ Contexts are the reference's precedence order. "composer" means it reaches
 | 2 | **secret card** owns every key: Char/Paste append (paste trimmed of trailing newlines), Backspace pops, `ctrl-u`/`ctrl-k` clear, Enter sends, Esc/Ctrl+C refuse | app.rs:2985-3016 | Char/Paste append (paste **untrimmed**), Backspace pops, Enter sends, Esc refuses. No clear, no Ctrl+C | editor.lisp:149-168 | DIFFERS — see G11 |
 | 3 | global chords (`ctrl-r t x l s p g q o`, page, wheel) run before any view | app.rs:3017-3245 | run **last**, inside `%normal-key`, so a pane swallows them | editor.lisp:232-325, 420-475 | DIFFERS — **gap G18**: `ctrl-r`/`ctrl-t`/`ctrl-l`/`ctrl-o` do nothing while any pane is open |
 | 4 | **subagent output view**: ↑↓ scroll, Enter re-reads, Esc back to the tree | app.rs:3255-3280 | `:peek` mode is in the generic pane list; `pane-row-count` returns 0 for it, so ↑↓ move nothing and Enter is not in the `case` | editor.lisp:232-325, 735-750 | DIFFERS — **gap G19**: the hint bar advertises both (chrome.lisp:369) |
-| 5 | **job output view**: ↑↓ scroll, →/Enter next page, ← back, Esc to the jobs list | app.rs:3287-3313, 6894 | does not exist; Enter on a job sends `/job ID` and closes the pane — the behaviour the reference's operator rejected | editor.lisp:292-300, app.rs:3806-3815 | MISSING — **gap G20** |
+| 5 | **job output view**: ↑↓ scroll, →/Enter next page, ← back, Esc to the jobs list | app.rs:3287-3313, 6894 | the whole ladder, in one sign-aware place (the pane's origin is its TAIL); `→`/Enter take the offset the daemon NAMED and `←` pops a stack of offsets it was GIVEN | editor.lisp:767-798, 987-994 | SAME — **re-measured 2026-09-22** (gap G20, closed in `b7a2620`) |
 | 6 | **slash listing overlay**: Esc closes, ↑↓ scroll | app.rs:3319-3339 | does not exist | — | MISSING (rendering's surface; noted for the keys it would own) |
 | 7 | **config pane**: ↑↓ wrap, Enter changes the row | app.rs:3346-3369 | ↑↓ **clamp**, Enter → `config-change` | editor.lisp:234-251, panes.lisp:487-528 | DIFFERS — clamp vs wrap |
 | 8 | Esc/Ctrl+C close help, picker, mode picker, models picker, stats, todos, subagents, jobs, config | app.rs:3370-3394 | Esc closes them; Ctrl+C does not | editor.lisp:242 | DIFFERS — G11 |
@@ -136,7 +153,7 @@ Contexts are the reference's precedence order. "composer" means it reaches
 | 13 | **mode / models picker**: ↑↓ wrap, Enter on empty, digits, click; typed text reaches the composer and `pick_mode` | app.rs:3601-3653, 4120-4163 | ↑↓ wrap, Enter on empty, digits, typed text via `pick-by-text`; **no click** | panes.lisp:1246-1302, editor.lisp:231 | DIFFERS — G17 |
 | 14 | **subagent pane**: ↑↓ wrap, Enter peeks (refusing `opening`), **`o` switches into it** | app.rs:3660-3709 | ↑↓ clamp, Enter peeks with no `opening` guard, no `o` | editor.lisp:283-291 | DIFFERS — **gap G22** |
 | 15 | **todos pane**: cursor stops on items, wraps, folds on move; Enter/Tab unfold and scroll the body into view | app.rs:3717-3772 | identical stops and wrap; the body is not scrolled into view | editor.lisp:301-315, 752-769 | SAME (minus the scroll-to-body) |
-| 16 | **jobs pane**: ↑↓ wrap, Enter opens the output **in a pane** | app.rs:3782-3835 | ↑↓ clamp, Enter sends `/job ID` and closes the pane | editor.lisp:292-300 | DIFFERS — G20 |
+| 16 | **jobs pane**: ↑↓ wrap, Enter opens the output **in a pane** | app.rs:3782-3835 | ↑↓ wrap, Enter opens the `:job-out` overlay on the row under the cursor and the jobs list stays behind it | editor.lisp:848-854 | SAME on Enter (**re-measured 2026-09-22**); ↑↓ clamp where the reference wraps |
 | 17 | Up recalls the queued prompt with `WithdrawPrompts` | app.rs:3851-3861 | on `ctrl-u` | editor.lisp:436-447 | DIFFERS — G6 |
 | 18 | Tab completes | app.rs:3868-3872 | Tab completes | editor.lisp:378 | DIFFERS — G15 |
 | 19 | the composer | app.rs:3876-3928 | `%normal-key` | editor.lisp:350-478 | see §2 |
@@ -314,14 +331,17 @@ parameter; map `alt+b/f/z` and `alt+backspace`), `src/editor.lisp`.
 the wheel do scroll it, so the feature is one arm away.
 **Reference:** app.rs:3255-3280. **Change:** `src/editor.lisp`.
 
-### G20 — Enter on the jobs pane posts `/job ID` into the conversation · **M**
-**What.** editor.lisp:292-300 sends a slash line and closes the pane. That is
+### G20 — Enter on the jobs pane posts `/job ID` into the conversation · **M** · CLOSED in `b7a2620`
+**What.** `editor.lisp:848-854` opens the `:job-out` overlay and sends
+`ClientFrame::ReadJobOutput`; the answer arrives as `SessionEvent::JobOutput` and
+`apply-event` folds it into the overlay that asked (`session.lisp:1419-1446`). That is
 precisely what the reference's operator rejected on 2026-09-20 (*"im not shown the
-job output im brought back to the main conversation with /job <id> posted"*), and
-the reference replaced it with a `ReadJobOutput` overlay with paging.
-**Why it matters.** A build log scrolling past in the chat, with the jobs list gone.
-**Reference:** app.rs:3782-3835 and the view at 3287-3313, 6894. **Change:**
-`src/editor.lisp` plus a `:job-out` mode (protocol work belongs to `wire.md`).
+job output im brought back to the main conversation with /job <id> posted"*).
+**This row said MISSING from 2026-09-20 23:37 until 2026-09-22**: it was measured at
+`7c2c6fc` and the fix landed in `b7a2620` twenty-three minutes later, and nothing
+re-measured it. The measurement is in `panes.md` G4 — a live daemon, a real finished
+job, and the pane. **Change:** none. *(`↑↓` clamp here where the reference wraps — see
+the table above; that is G2's shape, not this row's.)*
 
 ### G13 — `ctrl-t` does not open a payload view · **M**
 **What.** The fold flips (editor.lisp:462) but no row gets an offset, so a payload

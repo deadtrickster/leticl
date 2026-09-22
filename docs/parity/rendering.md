@@ -6,12 +6,29 @@
 copies in the reference tree are stale and were not read.
 
 **Subject**: `~/Projects/leticl` @ `dc62ddf` — the tree as it stood when this pass
-started. **It moved underneath the pass**: `4e32354` landed while this was being
-written and touched `src/chrome.lisp`, `src/render.lisp` and `src/panes.lisp`.
+started (2026-09-20 22:19; the pass finished at `7c2c6fc`, 23:37). **It moved
+underneath the pass**: `4e32354` landed while this was being written and touched
+`src/chrome.lisp`, `src/render.lisp` and `src/panes.lisp`.
 Everything below was read at `dc62ddf`, and the two findings `4e32354` already
 changes are marked inline (§4's stall row, and gap 19). Re-read the function
 before trusting a `src/` line number — a citation is a pointer, not a
 specification.
+
+**A SNAPSHOT, NOT THE TREE — and on 2026-09-22 that cost a day's work.** This is the
+most explicit of the four measurements about moving underneath itself, and the other
+three were not: twenty-three minutes after the pass closed, `b7a2620` landed (**Enter
+on a jobs row opens the output in a pane**) and nothing re-measured the rows that said
+otherwise — `panes.md` **G4**, `keys.md` **G20**, `wire.md` **W2** and **W15**, and
+`TODO.md`'s T1(3). On 2026-09-22 a driver read them and handed that line to the head as
+work: *"Take T1(3) — it is the one B-side defect left"*, on a defect closed a day and a
+half earlier. **The §2.6 incident, mirrored**: a commit message claiming work that was
+not there, and four files claiming work was MISSING that was. Neither is catchable by a
+test; both are catchable by one rule — *a criterion names a test, and the test is run
+from the tree as committed*.
+
+**Every row in all four of these documents is true of `dc62ddf` unless it says
+otherwise; re-measure before acting on one.** Nothing in *this* file has been
+re-measured — the 2026-09-22 corrections are all in the three beside it.
 
 **Scope**: the transcript row, markdown, diff/highlight, the frame, styles and
 width. Keys, commands, the wire and the panes are covered elsewhere.

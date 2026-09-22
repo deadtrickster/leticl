@@ -2,7 +2,25 @@
 
 **Reference** `/home/dead/Projects/letibot/letibot` at `8af671e3467ce0a139ba25d99a18378ba39c910b`
 (verified with `git -C … rev-parse HEAD`).
-**Subject** `/home/dead/Projects/leticl` at `dc62ddf`.
+**Subject** `/home/dead/Projects/leticl` at `dc62ddf` (2026-09-20 22:19; the pass
+finished at `7c2c6fc`, 23:37).
+
+**A SNAPSHOT, NOT THE TREE — and on 2026-09-22 that cost a day's work.** Twenty-three
+minutes after this pass closed, `b7a2620` landed (**Enter on a jobs row opens the
+output in a pane**) — and nothing re-measured the rows that said otherwise: **W2** and
+**W15** here, `panes.md` **G4**, `keys.md` **G20**, and `TODO.md`'s T1(3). They went on
+saying MISSING and OPEN, and on 2026-09-22 a driver read them and handed that line to
+the head as work: *"Take T1(3) — it is the one B-side defect left"*, on a defect that
+had been closed for a day and a half. **The §2.6 incident, mirrored**: that one was a
+commit message claiming work that was not there, this one is four files claiming work
+was MISSING that was there. Neither is catchable by a test, and both are catchable by
+one rule — *a criterion names a test, and the test is run from the tree as committed*.
+
+Those rows now carry the measurement and its date. **Every other row here is true of
+`dc62ddf` and says nothing about today; re-measure before acting on one.** Re-measured
+2026-09-22 at `047f9ad`: this file's **W2**, **W15**, the **`ReadJobOutput`** row, the
+**`JobOutput`** row, §4f's retire half (part of **W16**), and §4i's jobs bullet;
+`panes.md` **G4** names the evidence.
 
 Surface: the frames, the events, the session fold, the exchange. Not keys, not
 commands, not rendering, not panes — those are measured elsewhere.
@@ -48,7 +66,7 @@ close to complete, and four classes of defect sit underneath that —
   a proposed call to running (**W9**); `turn.appended` is initialised and never
   written (**W20**); `turn.progress` outlives its turn (**W18**).
 - **(c) four session slots that the fold fills and nothing reads** — notices,
-  settled decisions, denials, job settlements (**W13**, **W12**, **W15**).
+  settled decisions, denials, job settlements (**W13**, **W12**, **V15 — closed**).
   Every daemon-side `Slash` reply lands in one of them. `warnings` was the
   fifth and left this list with R10: it is drawn as a row where it arrived,
   retired by `/notes`, and counted as `notes  N of M retired`.
@@ -93,7 +111,7 @@ See §5 for what a mismatch does.
 | `Peek{session_id}` | `protocol.rs:660` | `make-peek` | `protocol.lisp:182`, `commands.lisp:126`, `editor.lisp:289` | SAME |
 | `FetchRow{session_id,row,at,len}` | `protocol.rs:680` | — | — | MISSING on both sides. The reference documents its own absence at `app.rs:1794-1807` and files it as `TODO.md` R19.2 |
 | `Settings` | `protocol.rs:697` | `make-settings` | `protocol.lisp:185`, `head.lisp:178` | SAME — asked once, from the `hello` arm, which covers attach, switch and reconnect |
-| `ReadJobOutput{client_request_id,job,offset}` | `protocol.rs:704` | — | — | **MISSING.** leticl's jobs-pane Enter sends `/job ID` as a `Slash` (`editor.lisp:300`), which is exactly the behaviour `event.rs:896-900` records the operator rejecting. See gap **W2** |
+| `ReadJobOutput{client_request_id,job,offset}` | `protocol.rs:704` | `make-read-job-output` | `protocol.lisp:293`, `editor.lisp:854` (Enter on a jobs row), `editor.lisp:797` (paging) | **SAME — re-measured 2026-09-22.** Field for field; the answer comes back as `SessionEvent::JobOutput` and the head's `:job-output` arm folds it into the overlay that asked (`session.lisp:1419-1446`). This row said MISSING from 2026-09-20 23:37 until 2026-09-22 — the fix landed in `b7a2620`, 23 minutes after this table was measured. See gap **W2** |
 | `Detach` | `protocol.rs:711` | `make-detach` | `protocol.lisp:188`, `head.lisp:455` | SAME |
 
 **Dead code check.** Every `make-*` in `protocol.lisp` has at least one `%send`
@@ -162,8 +180,8 @@ where it changes what the ack reports.
 | `CommandIssued{head_id,identity,command,client_request_id,note}` | `event.rs:726` | pushes to `session-notices`, always `:dirty` | `session.lisp:385-390` | DIFFERS twice. (i) `session-notices` has no reader — see **W13**. (ii) The reference says it out loud **only when `head_id` is not its own** (`app.rs:2815`), because your own routine acceptances are already covered by `Accepted`; and it is `Filtered` below loud. leticl counts every one as rendered |
 | `DenialRaised{request_id,turn_id,call_id,tool,summary,baseline,by,basis,tier,outcome,repeat_count,breaker_open,grant}` | `event.rs:801-832` | pushes ten of thirteen to `session-denials` | `session.lisp:355-364` | **DIFFERS — and this is the one with a requirement behind it.** `breaker_open` and `grant` are dropped, and `session-denials` has no reader. `event.rs:772-791` and the reference's own arm (`app.rs:2841-2909`) turn on exactly the two dropped fields: the breaker line, and *"what the operator can do about it right now"*. `docs/boundary-and-adjudication.md` §4b, quoted at `event.rs:773`: *"a denial the operator cannot see manufactures the workaround"*. leticl renders none of them, at any verbosity. See gap **W12** |
 | `Subagent{subagent_id,state,prompt,role}` | `event.rs:840` | pushes the whole envelope | `session.lisp:391-393` | SAME by effect — `probe:` two events for one id leave two entries, but `subagent-rows` (`panes.lisp:595-617`) folds by `subagent_id` at draw time and says so. The reference folds at apply (`app.rs:2145-2168`). Both are `Filtered`-equivalent; leticl returns `:dirty`, so it counts as rendered where the reference counts it filtered |
-| `JobSettled{job,state,produced,elapsed_ms}` | `event.rs:884` | pushes the envelope to `session-jobs` | `session.lisp:394-396` | **DIFFERS.** `session-jobs` has no reader: the jobs pane draws `head-jobs`, which is only ever the `Jobs` reply (`head.lisp:236`, `panes.lisp:555`, `editor.lisp:297`). The reference folds the settlement **into the row the daemon gave it** — `state`, `running = false`, `produced`, `elapsed_ms` (`app.rs:2187-2192`) — so an open pane updates. leticl's pane freezes at `running` until `/jobs` is re-run, which is the exact lie `event.rs:857-864` says the event exists to prevent. See gap **W15** |
-| `JobOutput{job,from,to,produced,dropped,state,lines,next}` | `event.rs:916-938` | — | `(t :quiet)` | **MISSING**, at both ends of the round trip (see `ReadJobOutput` in §1a). See gap **W2** |
+| `JobSettled{job,state,produced,elapsed_ms}` | `event.rs:884` | folded into the row the daemon gave us, by id | `head.lisp:541-557` | **CLOSED** (`e013465`) — and this row said DIFFERS until 2026-09-22, from the same un-re-measured table as **W2**. The envelope is still pushed to `session-jobs` (`session.lisp:1405`, cleared with the session at `session.lisp:103`), and the pane draws the fold: `head-jobs`' own row takes `state`, `running = false`, `produced` and `elapsed_ms` (`app.rs:2187-2192`). A settlement for a job this head was never told about invents no row — it arrives with the next `ListJobs`. Evidence: `a-settled-job-updates-the-row-the-pane-draws` |
+| `JobOutput{job,from,to,produced,dropped,state,lines,next}` | `event.rs:916-938` | the `:job-output` arm folds all eight fields into `*job-out*`, and only when an overlay is open for THAT job | `session.lisp:1419-1446` | **SAME — re-measured 2026-09-22** (**W2**, closed in `b7a2620`). Taken only for the job being looked at: the event is published to the session, so a head that never asked sees it too, and a window for a job nobody is looking at is nothing to keep |
 
 ---
 
@@ -301,14 +319,16 @@ way, so the effect matches.
 | | reference | leticl |
 |---|---|---|
 | queue is pushed | `app.rs:4435` on send | `commands.lisp:47`, newest first |
-| an entry is retired | on `TranscriptContent` / `record_item`, **by matching the row's text**, one row per entry, with a prefix rule for the daemon's coalescing (`app.rs:4685-4703`, `4744-4751`) | on `TranscriptAppended` with `kind == "user"`, by `pop` — i.e. the **newest** entry, for the row that is almost certainly the **oldest** prompt (`head.lisp:194-199`) |
+| an entry is retired | on `TranscriptContent` / `record_item`, **by matching the row's text**, one row per entry, with a prefix rule for the daemon's coalescing (`app.rs:4685-4703`, `4744-4751`) | **by matching the row's text, and the same rule on both paths** — `%resolve-queued` is the one place it lives, `%retire-pending` is the live `transcript_content` caller (`head.lisp:560-568`) and `%re-resolve-queued` the snapshot one (`head.lisp:441`, `607`); the prefix rule comes off as the front piece of a coalesced echo (`head.lisp:214-247`) |
 | ctrl-u / Up recall | joins **all** pending, clears **all**, puts them in the composer, then sends `WithdrawPrompts` (`app.rs:3851-3860`) | takes `(first (last …))` — the oldest — into the composer, `butlast`s that one, sends `WithdrawPrompts` (`editor.lisp:436-445`) |
 
 The frame is identical and the daemon drops **every** unconsumed prompt from
 this head (`protocol.rs:348-357`). leticl removes one from its own list, so
 after a withdraw with two queued the head goes on announcing a prompt the daemon
-has already dropped. And the retire-by-`pop` means that with two queued prompts
-of different lengths the wrong one is retired first. See gap **W16**.
+has already dropped — the withdraw half of **W16**, still open. **The retire half
+is closed**: the row's TEXT decides, on the live path and on a snapshot alike
+(`%resolve-queued`), so two queued prompts of different lengths retire in the
+order their rows land.
 
 ### 4g. The decision answer path
 
@@ -403,10 +423,11 @@ to the helper, not here.
   back since R10**: the reply is a `Warning` on the log, a listing over three body
   lines opens the slash pane (`app.rs:3266-3275`) and anything shorter is filed as a
   row, so `/tools`, `/models`, `/supervise` and `/job` are no longer sent into
-  silence. What is still missing on this half is **W2**'s other end — there is no
-  `ReadJobOutput`/`JobOutput` fold — and **W15**'s settlement fold.
-- **Jobs** — the `ListJobs`/`Jobs` half is SAME; `JobSettled` folds nowhere
-  useful (**W15**) and `ReadJobOutput`/`JobOutput` do not exist (**W2**).
+  silence. The `ReadJobOutput`/`JobOutput` half is **closed too** (`b7a2620`); what
+  this bullet got wrong until 2026-09-22 was reading **W2** as open.
+- **Jobs** — SAME throughout: `ListJobs`/`Jobs` fills `head-jobs`, `JobSettled` folds
+  into that row by id (`e013465`), and `ReadJobOutput`/`JobOutput` read a window into
+  the overlay that asked (`b7a2620`).
 - **Subagents** — SAME by effect (fold at draw rather than at apply), with the
   switch-carryover noted in §3.
 
@@ -443,7 +464,7 @@ frame, a new pane, or a fold that changes shape).
 |---|---|---|---|---|---|
 | **W25** | a `Hello` with `snapshot: null` raises `TYPE-ERROR` | this is the **reconnect** answer and the resume answer — every `since_seq > 0` attach whose gap is in the daemon's ring (`hub.rs:636-643`). The head is left half-attached with its session id wiped, no settings asked, and the attach indicator walking forever. Measured: `probe2:` `RESUME-ERROR: TYPE-ERROR` against `SNAPSHOT-OK` for the same Hello with a snapshot | `protocol.rs:752-753`, `app.rs:1680-1685`, `hub.rs:628-652` | `session.lisp:56-75`, `session.lisp:88` | **S** |
 | **W1** | `Mode` sends `"consented":null` | `consented: bool` does not accept a present `null`; the daemon's read loop breaks with `Err` and **the connection closes** (`server.rs:897-898`). Every `/mode NAME` that is not `allow-all` — which is every mode an operator normally picks — takes the head down. Measured: `probe:` `{"frame":"mode",…,"consented":null}` | `protocol.rs:438-453` | `panes.lisp:1218-1223`, `json.lisp:84-86` | **S** |
-| **W2** | no `ReadJobOutput`, no `job_output` fold, no window | jobs-pane Enter sends `/job ID` as a slash, whose reply is a `Warning` on the log — precisely the complaint that created the frame: *"im brought back to the main conversation with /job <id> posted - this is not what i want"*. **R10 made that reply visible** (it is a row, or the pane when long), so the Enter is no longer silent — but it is still the wrong frame, and the window it should open does not exist | `protocol.rs:704-708`, `event.rs:894-938`, `app.rs:2200-2233`, `driver.rs:167-169` | `editor.lisp:300`, `session.lisp:1061-1111` | **L** |
+| ~~**W2**~~ | no `ReadJobOutput`, no `job_output` fold, no window | **CLOSED in `b7a2620`, 2026-09-21 00:00 — and this row said OPEN until 2026-09-22, because it was measured at `7c2c6fc` and never re-measured.** All three halves exist: `make-read-job-output` (`protocol.lisp:293`), the `:job-output` fold into `*job-out*` and nowhere else (`session.lisp:1419-1446`), and the window (`panes.lisp:1423-1544`). Measured live: Enter on a finished job drew `job output — j74` / `exited 0 — bytes 0..899 of 899` over the bytes; a running job with nothing written says so in words (`panes.md` G4) | `protocol.rs:704-708`, `event.rs:894-938`, `app.rs:2200-2233`, `driver.rs:167-169` | `tests: enter-on-a-jobs-row-reads-its-output-into-a-pane`, `the-job-output-window-fills-the-overlay-and-it-pages`, `the-job-output-overlay-scrolls-and-discloses-what-fell-off`, `a-refused-job-output-read-lands-in-the-pane`, `the-hint-bar-names-the-job-output-overlays-keys` | **done** |
 | **W3** | `NewSession.workspace` always `""` | the new session's read-only tools get seated at the daemon's cwd, *"and every path in it resolved, so the only symptom was answers about the wrong tree"* | `protocol.rs:599-607`, `driver.rs:147-150` | `protocol.lisp:160-164` | **S** |
 | **W4** | `Sessions.created` and `.current` dropped | `/new` and `--new TITLE` create a session and leave you in the old one — a command whose effect is invisible | `app.rs:1736-1744` | `head.lisp:230-234` | **S** |
 | **W5** | `Bye` is not terminal | a refusal the daemon meant as final becomes a 2 s reconnect loop; a version skew is then unreadable and unescapable | `app.rs:1886-1889`, `client.rs:548` | `head.lisp:262-266`, `head.lisp:283-316` | **S** |
@@ -456,8 +477,8 @@ frame, a new pane, or a fold that changes shape).
 | **W12** | a denial reaches no screen; `breaker_open` and `grant` are not even folded | `docs/boundary-and-adjudication.md` §4b is a requirement: *"a denial the operator cannot see manufactures the workaround"*. The two dropped fields are the two the reference's arm turns on — the breaker sentence and *"what the operator can do about it right now"* | `event.rs:772-832`, `app.rs:2841-2909` | `session.lisp:355-364`, and no reader | **M** (fold) / **L** (with the render) |
 | **W13** | `notices`, `settled-decisions`, `items-dropped`, `jobs` are write-only (**`warnings` left this list with R10**) | every post-flight assertion, every `secret_late`, every `job_output_refused` and every settled question with no call is folded and then never drawn. `warnings` was the loudest of them and is now the counter-example: a row where it arrived, a `/notes` verb to retire one, and `notes  N of M retired` on `/status` | `app.rs:2766-2803`, `app.rs:2002-2016` | `session.lisp:33-35`, `385-390`; no reader in `render.lisp`/`cards.lisp`/`chrome.lisp`/`panes.lisp` for the four that remain | **L** |
 | **W14** | `SecretSettled` unhandled | the password card stays up after another head has answered, over a `sudo` that is already through. Measured: `probe:` `:QUIET` | `app.rs:2750-2765` | `session.lisp:400` | **S** |
-| **W15** | `JobSettled` folded into a list nobody draws | an open jobs pane shows `running` for a job that exited — *"a panel built from the tool events alone would still show a build as running an hour after it exited"* | `app.rs:2176-2195` | `session.lisp:394-396`, `panes.lisp:555` | **S** |
-| **W16** | withdraw removes one entry; retire pops the wrong end | after `WithdrawPrompts` the daemon has dropped every queued prompt and leticl still announces the rest; and the first user row to land retires the newest entry instead of the oldest | `app.rs:3851-3860`, `4685-4703`, `4744-4751` | `editor.lisp:436-445`, `head.lisp:194-199` | **M** |
+| **W15** | ~~`JobSettled` folded into a list nobody draws~~ | **CLOSED (`e013465`)** — the pane showed `running` for a job that exited, which is *"a panel built from the tool events alone would still show a build as running an hour after it exited"*. The fold is on the row the daemon gave, by id, and invents no row (`head.lisp:541-557`) | `app.rs:2176-2195` | `tests: a-settled-job-updates-the-row-the-pane-draws` | **done** |
+| **W16** | ~~withdraw removes one entry~~; ~~retire pops the wrong end~~ | **the retire half is CLOSED (R2, then R16)**: `%retire-pending` matches the row's TEXT, one row per entry, with the coalesced front-piece rule, and both the live and the snapshot path go through `%resolve-queued` (`head.lisp:214-247`, `560-568`) — *evidence `a-landed-row-retires-the-prompt-it-echoes`, `a-snapshot-retires-the-echoes-whose-rows-it-carries`*. **The withdraw half stands**: `WithdrawPrompts` drops every unconsumed prompt at the daemon and leticl takes one out of its own row (`editor.lisp:436-445`) | `app.rs:3851-3860`, `4685-4703`, `4744-4751` | `editor.lisp:436-445` | **M** |
 | **W17** | no `turn_id` on `Delta`, `PromptProgress`, `TokensGenerated`, `TurnFinished`, `TurnInterrupted` | a frame from a turn this head is no longer watching is folded into the one it is. Measured: `probe:` a delta for turn `OTHER` appends to the current turn's text and reports `:dirty`. Benign today, load-bearing the moment §8.4's concurrent subagents publish on one hub | `app.rs:2278-2297`, `view.rs:406-419` | `session.lisp:203-224`, `262-288` | **S** |
 | **W18** | `turn.progress` survives the turn | *"a progress frame is true only while it is happening"*. Measured: `probe:` `PROGRESS-AFTER-TURN-FINISH = (:TOTAL 10 …)` | `app.rs:2565`,`2596`,`2619`; `view.rs:572`,`588`,`608` | `session.lisp:262-288` | **S** |
 | **W19** | `TokensGenerated` is `setf`, not `max` | a reordered or duplicated frame walks the counter backwards. Measured: `probe:` `50` then `10` ⇒ `10` | `app.rs:2281`, `view.rs:419` | `session.lisp:195-202` | **S** |
