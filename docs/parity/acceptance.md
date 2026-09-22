@@ -749,6 +749,105 @@ not `peak - pending`. **Constants measured**, above.
   clients raised no accept error. **And measured while looking**: `socket-accept` on a
   listener closed UNDERNEATH it neither errors nor returns — it blocks for ever.
 
+## R18 The gate card — four disagreeing statements on one card, and the one of them that was the head's
+
+- **SETUP** a permission whose call has no path argument and no command, on a session
+  where the boundary resolves to the filesystem root (the operator's live `job_kill`
+  card, 2026-09-22).
+- **STIMULUS** the card is drawn — on either head, from the same daemon.
+- **ASSERTION** — and this is the whole of R18 as it was handed over: **the card's
+  statements must agree with each other**, or the head must not draw the ones it cannot
+  support. Five disagree, and they are five different layers' facts about one call:
+
+  | the card says | what it is | whose |
+  |---|---|---|
+  | `\`job_kill\` wants exec access [permission]` | the **headline** — exec access | the daemon's (`summary`) |
+  | `<no target argument>` | the **target** — a placeholder for an absence | the daemon's (`target_of`, `adjudicate.rs:3544`) |
+  | `ask — intents [read_file] — auto (a read inside the boundary)` | the **baseline** — a READ, and a tier that already decided | the daemon's (`request.baseline`, `adjudicate.rs:2484`) |
+  | `because: workspace: /` | the **boundary** — the root of the filesystem | the daemon's (`adjudicate.rs:2152`) |
+  | `Allow \`<tool>\` (this class) …` | the **option label** — the tool name, as a template | the daemon's (`grant_program`, `adjudicate.rs:1592-1600`) |
+  | `expires in 29833973 min` | the **time left** — 56 years | **this head's**, and the only one of the six that is |
+
+  So one card asserted exec access, a read intent, an automatic tier, no target, a
+  boundary at `/`, a tool named `<tool>`, and fifty-six years — **on the one surface
+  where the operator is being asked to decide**, which is the same argument
+  `docs/boundary-and-adjudication.md` §4b makes about a denial nobody can see.
+- **Evidence** `a-decision-that-arrives-in-a-snapshot-counts-down-on-this-heads-clock`,
+  `the-clock-in-a-snapshot-is-the-same-rule-as-the-clock-on-the-wire`,
+  `the-option-label-is-drawn-as-the-daemon-wrote-it`.
+- **Status — the head half is RUNS + LIVE; the daemon half is A's.** `3a9b183`.
+
+  **The head half: the countdown, and it was WRONG.** Measured on the live card before
+  the fix, read off a live head rather than inferred:
+
+      :DEADLINE 1790038382308      ; a Unix instant, unconverted
+      :DEADLINE-WIRE NIL           ; the key that marks a converted one was absent
+      :UNIX-NOW 1790038153000      ; the real remaining time: 229308 ms = 3m49s
+      the card:  expires in 29833973 min · if nobody answers, nothing runs
+
+  The wire's deadline is Unix millis and `internal-real-time-ms` is a counter since
+  this process started, so a deadline that reaches the RENDERER unconverted is an
+  instant tens of thousands of years away. **The live `decision_requested` arm converted
+  and the snapshot's `open_decisions` did not** — so a head that ATTACHED to a session
+  with an ask already open drew a countdown to 2083 while a head that watched the ask
+  arrive drew the right one. This is the **fourth instance of the two-clocks trap** in
+  one night (the secret card was the first, found the same way and fixed the same way;
+  the operator predicted a fourth for letibot and it landed here instead), and it is
+  **R16's shape a second time**: two folds of one fact, one of them converted, nothing
+  that compared them.
+
+  The fix is one rule in one function — `%decision-clock-rule`, called from both folds —
+  with `%decisions-in-head-time` for the snapshot's list, and `:deadline-wire` kept
+  beside the converted value so the conversion is inspectable rather than merely right.
+  The live falsification, on the same input one line apart:
+
+      :WIRE 1790038842756   :UNIX-NOW 1790038542756   :MONO-NOW 427461
+      snapshot path left it:  expires in 29833974 min
+      through the rule:       expires in 5 min
+
+  and after the fix, on the glass, on that same input: the card reads
+  `expires in 5 min · if nobody answers, the guard model decides`. **Falsified** by
+  reverting the snapshot path alone: 4 assertions fail, two of them erroring outright,
+  and the failure message is the operator's own number — `"expires in 29816672 min"`.
+  Suite 4520 → 4532 checks.
+
+  **The label is NOT this head's, and it is not a drift either — it is measured, both
+  ways.** The operator's question was whether a head draws the NAME or a placeholder.
+  Both heads draw **the daemon's label, verbatim, and neither composes one**: this head
+  is `(getf o :label)` at `src/panes.lisp:2020` and `src/cards.lisp:1967`, and letibot is
+  the same. So on one daemon, 2026-09-22:
+
+      bash card (last stage `| head -30`):  Allow `head` (this class) for the rest of the session
+      job_kill card:                        Allow `<tool>` (this class) for the rest of the session
+
+  — identical on both heads, because the string is the daemon's. `grant_program`
+  (`adjudicate.rs:1592-1600`) falls back to the literal `"<tool>"` when the call has no
+  command to take a program name from, and `exec_options` (`:602-625`) writes it into the
+  label the operator reads. **A head that rewrote it would be guessing which part of a
+  sentence is a name**, and would leave the daemon writing templates at the flowy, ACP
+  and Android heads — §3.1's per-head ruling, one string over. The daemon already has
+  the right wording for this case: `permission_options` says *"Allow this class for the
+  rest of the session"* with no name at all (`adjudicate.rs:564-590`, the label at
+  `:573`) — which is exactly the sentence a head that "fixed" the label would be
+  reinventing, one layer down from where it belongs.
+
+  What the head owes is that its half be a **measurement rather than an opinion**, which
+  is `the-option-label-is-drawn-as-the-daemon-wrote-it`: both labels drawn verbatim, and
+  the absence drawn as the daemon wrote it, so the day somebody applies R15's
+  placeholder rule (*drop what has no subject*) to a label whose subject is the daemon's
+  to state, the decision is made rather than drifted into.
+- **Drift — and R18 is a different animal from the rows above.** The five daemon
+  statements are the same on both heads; nothing here is a disagreement about a
+  criterion, it is **one daemon writing five things about one call** and two heads
+  faithfully reproducing them. The drift row below records it as such.
+- **Found while measuring, named and NOT touched**: `decision-card-lines`
+  (`src/cards.lisp:1938`) is a **second renderer of this same card**, superseded by
+  `permission-card-lines` (`src/panes.lisp:1955`), still exported and still pinned by one
+  test (`tests/tests.lisp:435`) — and it draws no deadline at all. Two renderers for one
+  control is the hazard `src/cards.lisp:1925` writes out in its own words (*"two
+  renderers would have drifted into two different-looking blocks for one control"*), and
+  this one already did.
+
 ---
 
 # A record is not a measurement — the incident this document keeps finding
@@ -804,6 +903,7 @@ differ on what passing it looks like.
 | R13 and the notice | reference's `notice_ttl` counts FRAMES; this head counts time | this head — **one defect, two symptoms** |
 | R17 on detection | the criterion says *"says so and repairs it"*; this head files a row and names `/resync` | unruled — automatic resync vs. telling the operator |
 | a job that never ran | `JobState::NotScoped` has `produced == 0`, so both heads draw their *wrote nothing at all* row under a header saying the command never ran | unruled — the honest line is *it never ran*; fixing one head alone is a divergence |
+| R18's card, the daemon's five | the headline says exec access, the baseline says a READ and `auto`, the target is `<no target argument>`, the boundary is `workspace: /`, and the option label names the tool `<tool>` — **identical on both heads**, because every one of them is the daemon's sentence drawn verbatim | letibot's to rule (daemon side, `adjudicate.rs`: `target_of:3544`, `grant_program:1592-1600`, `exec_options:602-625`, `facts:2152`, `baseline:2484`). **The sixth statement on that card — the time left — was this head's and was wrong**; `3a9b183` |
 | §2.6 the token table | three copies; C14 wants one shared artefact | neither yet — nothing generates it |
 | R7's blocking | reference blocks nothing; `Peek`/`FetchRow` share *"a read, not a move"* | both, but B is the one that had to rebuild it |
 

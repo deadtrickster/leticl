@@ -104,7 +104,7 @@ path.
 
 | card | reference | citation | leticl | citation | verdict |
 |---|---|---|---|---|---|
-| **decision / permission** | `? {headline} [{kind}]` in yellow with the target *stripped out of the summary*; target alone, bold, 4 in; detail dim; **the oracle's verdict** (`model says X: basis`, cites, `by · N ms`); one option per line as `▸ {label}  ({option_id})`; hint `↑↓ to choose · Enter to answer · or type the id`, **plus a glob line only when `allow_always` is offered**; plus `deny_and_tell <why>` when `reject_always` is | `app.rs:7329-7466`; `ask_without_target` `app.rs:7865-7874` | yellow ` permission ` badge + bold summary **unstripped**; target bright-white 1 in; detail dim; `:because` (not the oracle); options as `❯ 1. {label}` with **no option id**; hint `enter answers · up/down moves · esc does nothing`; no glob line; `type: {id} <the words…>` for reject_always | `src/cards.lisp:1138-1193` | **DIFFERS** — four ways, listed as G6 below |
+| **decision / permission** | `? {headline} [{kind}]` in yellow with the target *stripped out of the summary*; target alone, bold, 4 in; detail dim; **the oracle's verdict** (`model says X: basis`, cites, `by · N ms`); one option per line as `▸ {label}  ({option_id})`; hint `↑↓ to choose · Enter to answer · or type the id`, **plus a glob line only when `allow_always` is offered**; plus `deny_and_tell <why>` when `reject_always` is | `app.rs:7329-7466`; `ask_without_target` `app.rs:7865-7874` | the headline (target stripped by `ask-without-target`), the target, the detail, `because:` (the deterministic half the reference has no home for), the verdict **or an explicit *no oracle was consulted* under a permission**, the options with their ids, the glob line only when `allow_always` is on offer, the `deny_and_tell` hint, **and §1.6's `expires in … · if nobody answers, …`** | `src/panes.lisp:1955-2072` | **SAME, plus two** — the §1.6 line is this head's and the reference draws neither half (`550bc94`); the `because` line is the daemon's and is drawn verbatim. **R18 measured the card whole on 2026-09-22**: five of its statements are the daemon's (`3a9b183`, `acceptance.md` R18) and the sixth — the time left — was this head's and was 56 years wrong until that commit |
 | **question** | not a separate shape; `d.options` throughout | `app.rs:7329` | `kind == "question"` reads `:choices` and relabels the badge | `src/cards.lisp:1143-1150` | **DIFFERS (extra)** — harmless |
 | **secret / password** | `sudo wants a password — {prompt}`, `for: {command}` wrapped, faint `type it below (shown as dots), Enter sends it once to sudo and nowhere else; Esc refuses · {N}s left`; **the dots are rendered in the composer box** and the text never even measured | `app.rs:7305-7327`; composer `app.rs:5343-5348`; `SecretAsk.deadline` `app.rs:10060` | 4 rows, ` password: ****` **inside the card**; footer `enter submits · esc refuses`; the composer keeps painting the ordinary buffer | `src/cards.lisp:1224-1238`; `src/chrome.lisp:503-537` has no secret branch | **DIFFERS** — no countdown, and the composer under the card still shows whatever was typed before the ask |
 | **quit** | bold title, `▸ 1 leave this head` / `2 leave and stop the daemon`, consequence wrapped dim 8 in, the second naming how many other heads will be told | `app.rs:7175-7226` | identical text, identical shape | `src/cards.lisp:1194-1222` | **SAME** |
@@ -339,17 +339,23 @@ writes the whole view under the head's runtime dir and names it in the footer.
 *Why it matters:* the pane's own last line advertises three keys, two of which do
 nothing.
 
-**G6 — the permission card is missing four things. `M`. `src/cards.lisp:1138-1193`.**
-(a) The **oracle's verdict** — `model says {would}: {basis}`, its citations, `by · N ms`
-(`app.rs:7377-7409`). leticl already receives it (`:advice`, `src/session.lisp:324`) and
-never draws it; under `/mode supervised` the question is *do you agree with the model*
-and the model's answer is off-screen.
-(b) The **option ids** — the reference prints `▸ {label}  ({option_id})`
-(`app.rs:7419-7424`) so the typed path and the ladder show the same choice; leticl
-prints `❯ 1. {label}` only.
-(c) The **glob hint**, shown only when `allow_always` is on offer (`app.rs:7434-7448`).
-(d) `ask_without_target` (`app.rs:7865-7874`) — leticl prints the summary unstripped and
-then the target again, so the command appears twice.
+**G6 — the permission card was missing four things. `M`. CLOSED — and the row had gone stale.**
+The reference's citations still hold; this head now draws all four:
+(a) the **oracle's verdict** — `model says {would}: {basis}`, its citations and `by · N ms`
+(`app.rs:7377-7409`), with an explicit *no oracle was consulted for this one* when there is
+none, because under `/mode supervised` an absence is evidence too;
+(b) the **option ids** — `▸ {label}  ({option_id})`, so the typed path and the ladder name
+the same choice;
+(c) the **glob hint**, shown only when `allow_always` is on offer;
+(d) `ask_without_target` (`app.rs:7865-7874`) — this head trims the target off the summary
+and draws it once.
+The live card is `permission-card-lines` (`src/panes.lisp:1955-2072`), **not**
+`cards.lisp:1138-1193`, which is where this row's citation pointed. **R18, 2026-09-22**:
+that same measurement found the card's §1.6 countdown reading 56 years on a session
+already holding an ask (`3a9b183`), and found `decision-card-lines` still sitting in
+`src/cards.lisp` as a superseded second renderer of this one card — exported, pinned by a
+test, and drawing no deadline at all. **Finding, not fixed**: two renderers for one
+control is the hazard `src/cards.lisp:1925` names in its own words.
 
 **G7 — the decision ladder is gated on an empty composer. `S`. `src/editor.lisp:326-346`.**
 The reference made Up/Down unconditional on the operator's report quoted at
