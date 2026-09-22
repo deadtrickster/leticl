@@ -200,6 +200,31 @@ so out loud in the same message, and clean it up in the same breath: the fixture
 radius is the operator's attention, and the least a probe can do is take its card down.
 That is not a licence to keep doing it; it is what to do if you find you already have.
 
+**A scratch head needs an IDENTITY, not a heuristic — and the heuristic is how the damage
+above happened a second time.** A run that started its own head and then looked for it with
+`tui-eval --list | sort -n | tail -1` did not find its own: it found the largest pid, which
+is one of the operator's, pushed the fixture and then **two source files** into that head,
+and knocked it over. The head it hit was in the `rano` window, mid-session.
+
+So: **take the list BEFORE you start your head and diff it after.** The pid that was not
+there before is yours, and nothing else is.
+
+```sh
+PRE=$(tui-eval --list | sort -n)
+tmux new-session -d -s probe -x 80 -y 24
+# … start the head …
+for p in $(tui-eval --list | sort -n); do
+  echo "$PRE" | grep -qx "$p" || PID=$p
+done
+```
+
+**And a pid is not a head.** A scratch head you started is not the same process a minute
+later if it died and something restarted it, and the operator's heads come and go all day.
+Two guards, both cheap: the list is taken inside the same script that starts the head, and
+the first thing done with the pid is a `--where` or a read of its screen to check it is the
+session you think it is. **A push is not a read** — `--file` at the wrong pid writes code
+into somebody else's running conversation, and a head cannot tell you it was the wrong one.
+
 ### The gate REFRESHES what it measures
 
 The third of these, and the one that wasted the most time, because it does not look like

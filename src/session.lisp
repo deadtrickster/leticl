@@ -769,19 +769,36 @@ of its members are housekeeping that did *not* happen (`auto_compact_skipped`,
 `auto_compact_no_progress`: the session is at the wall with automatic compaction off, and
 the operator has to read that). The rule is about the FACT, not the name.
 
-Two differences were letibot's to win, and did: `model_endpoint_retry` (the retry IS the
-handling, and the failure has its own code, `turn_failed`) and `daemon_stopping` (the
-session is on disk and `--continue` reopens it). The second is worth the sentence: I had
-argued *words for the head that asked are news for the head that did not*, which is a fact
-about the AUDIENCE, and the rule is about the fact.
+The third, `model_endpoint_retry`, is letibot's: **the retry IS the handling** — the round
+is taken again and the operator can watch it happen — and the failure arrives under its own
+code, `turn_failed`, when the retries are spent. Red on the retry is red on a turn that is
+still trying.
 
-**One difference is not settled and is filed as a question rather than decided here**:
-`frame_capture_disabled` — a frame was refused and no capture directory is configured, so
-the evidence that would identify it was not kept. letibot reads it as *a disclosure of
-configuration*; on the rule as letibot itself wrote it — *a caveat that a check did not
-happen is a failure*, the sentence that makes `reseat_unchecked` and `monitor_wake_not_armed`
-failures — it is a failure. **This head renders letibot's register, so the two screens
-agree while the question is open**, and the argument is recorded in the criteria.
+**The nine gaps are all letibot's too**, and every one of them drew RED here while letibot
+drew it dim, for the same fact: `daemon_stopping`, `imported`, `import_scrap`,
+`imported_summary`, `mode_session_only`, `mode_set_next_session_only`, `open_note`,
+`cache_reuse_shortfall`, `steering_urgent`. Each satisfies the rule's *something that
+worked, something you asked for, or by design* — and two are the rule's boundary case: a
+*write that did not happen* because the operator asked for it not to, which reads like a
+failure and is not. The tenth routine-side gap, `test`, is letibot's testing helper with no
+production fact behind it.
+
+**The fourth difference needed a refinement rather than a row, and that is why it is the
+interesting one.** `frame_capture_disabled` — a frame was refused and no capture directory was
+configured, so the evidence that would identify it was not kept — reads like letibot's own
+*"a caveat that a check did not happen is a failure"*, the sentence that makes
+`reseat_unchecked` and `prefix_check_skipped` failures. It is not that shape, and the clause
+that separates them is now part of the rule:
+
+> **A caveat about a check that DID NOT HAPPEN is a failure. A note that a diagnostic was
+> switched off — after the check happened and its result is known — is routine.**
+
+Measured rather than argued: `report_capture` returns early unless `capture.is_armed()`
+(letibot `engine.rs:1602`), and `arm` is called from exactly three places, all of them
+turn-defect paths (`:1363`, `:1386`, `:1407`) — so this warning never fires on a healthy
+turn, and the *check* did happen: a frame was refused and the refusal is reported by the
+turn's own code. What is absent is the RECORD, and its absence is by configuration.
+**letibot's row stands and the rule gains the clause.**
 
 A `defparameter` and not a `defconstant`: the file pusher SKIPS constants, so a constant
 here could never be corrected on a running head — and a severity list is exactly the kind
