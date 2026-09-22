@@ -121,6 +121,35 @@ a pointer stub. Anything below that says *"the criterion says …"* means §12.
 §11.6 below — `never_ran` is derived from the exit code alone, and 125 is a legitimate
 command exit code, so a command that ran is listed as one that never did.
 
+## R19 — a fresh attach does not open with old news — DONE
+
+**Ruled by the operator on restarting a head and being met by twelve red lines.** Three
+faults, all three closed here, all three with a live measurement on the operator's own
+session (`s-1789639478142928813`, which carries exactly the warnings they saw):
+
+- **history arrives as news** — an ATTACH plants nothing: the snapshot's warnings are in
+  the record (`/notes` lists them, `/status` counts them) and **not rows**. `0` warning
+  rows on a fresh head where the old code drew `6`, and `/resync` still replants them
+  (all retired) exactly as R10 requires. `*snapshotted-sessions*` decides, and the frame
+  that carried the snapshot decides it — a `Hello` is an attach, a `Resync` is not.
+- **routine is painted as failure** — `+routine-warnings+`, twelve codes, drawn faint with
+  `·`; everything else stays red with `!`, **including `daemon_stopping`**. Reported to the
+  operator as asked, with the twelve named and the unclassified default stated.
+- **a dismissal survives a restart** — `retired` in this head's own `head.toml`, identities
+  escaped (a detail is arbitrary text and the file is one comma-separated value on one
+  line), cap 512. Live: dismiss all, restart, `/status` reads `7 of 7 retired`, no rows.
+
+**This supersedes §11.2's "restart is a different requirement and nobody has asked for
+it"** — correct when written, overtaken by the operator asking by hitting it. §11.2's row
+and R10's criterion are both updated in the document.
+
+**And it cost the operator a line in their own `head.toml`**, which is worth recording:
+my first version of the restart test bound `*write-prefs*` T while the save path still
+resolved to the default, so a dismissal from a temp directory was written into
+`~/.config/leticl/head.toml`. Repaired by hand, fixed structurally (the test sets
+`*prefs*` with its own path before it writes), and verified by md5 across a full suite run.
+Found on the way: `save-prefs` ignored the path the preferences were loaded from.
+
 - [x] **§11.1 · §3.3 — the criterion is PER LAYER, and neither head moved.** `f6e2658`. A
   daemon's cap is a **byte** cap and is allowed to be one (`TARGET_MAX_BYTES`, 120 bytes,
   `sessionlog/src/event.rs:288`); a head's cap must be a **column** cap (120 columns,

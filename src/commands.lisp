@@ -242,13 +242,16 @@ the sentence would be a head whose warnings cannot be trusted to be complete."
        (setf (head-mode head) :slash
              (head-dirty head) t))
       ((member arg '("restore" "back" "undismiss") :test #'string=)
-       (let ((back (restore-warnings s)))
+       (let ((back (restore-warnings s))
+             (miss (persist-retired head)))
          (%refresh-notes-listing head)
-         (say head (if (zerop back)
-                       "nothing was retired, so nothing came back"
-                       (format nil "~d retired warning~a back on the screen — the log ~
-                                    was never the thing they were hidden from"
-                               back (if (= back 1) "" "s"))))))
+         (say head (format nil "~a~@[ · ~a~]"
+                           (if (zerop back)
+                               "nothing was retired, so nothing came back"
+                               (format nil "~d retired warning~a back on the screen — the ~
+                                            log was never the thing they were hidden from"
+                                       back (if (= back 1) "" "s")))
+                           miss))))
       (t
        ;; `dismiss` is the word itself: `/notes dismiss` and `/dismiss all` land here
        (let* ((tail (if (and (>= (length arg) 7) (string-equal arg "dismiss" :end1 7))
@@ -256,20 +259,23 @@ the sentence would be a head whose warnings cannot be trusted to be complete."
                         arg)))
          (cond
            ((or (string= tail "") (string= tail "all"))
-            (let ((hidden (retire-all-warnings s)))
+            (let ((hidden (retire-all-warnings s))
+                  (miss (persist-retired head)))
               (%refresh-notes-listing head)
               (say head (format nil "retired ~d warning~a — off the screen, still counted ~
-                                     on /status, and /notes shows them"
-                                hidden (if (= hidden 1) "" "s")))))
+                                     on /status, and /notes shows them~@[ · ~a~]"
+                                hidden (if (= hidden 1) "" "s") miss))))
            ((every #'digit-char-p tail)
             (let* ((n (parse-integer tail))
                    (ws (warning-order s)))
               (if (and (>= n 1) (<= n (length ws)))
                   (progn
                     (retire-warning s (nth (1- n) ws))
-                    (%refresh-notes-listing head)
-                    (say head (format nil "retired warning ~d — off the screen, still ~
-                                           counted on /status, and /notes shows it" n)))
+                    (let ((miss (persist-retired head)))
+                      (%refresh-notes-listing head)
+                      (say head (format nil "retired warning ~d — off the screen, still ~
+                                             counted on /status, and /notes shows it~@[ · ~a~]"
+                                        n miss))))
                   (say head (format nil "there is no warning ~d — /notes lists the ~d ~
                                          this head holds" n (length ws))))))
            (t

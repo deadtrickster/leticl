@@ -18,9 +18,14 @@
 (in-package #:leticl)
 
 (defparameter *prefs-keys*
-  '("diff" "thinking" "tools" "raw_calls")
+  '("diff" "thinking" "tools" "raw_calls" "retired")
   "The keys THIS build owns. Anything else in the file is somebody else's — a
-newer build's, or the operator's — and is preserved verbatim.")
+newer build's, or the operator's — and is preserved verbatim.
+
+`retired` is R19 part 3 and the odd one of the five: the other four are choices about
+how the head DRAWS, and this is a memory of what the reader has already read. It belongs
+in the same file because it has the same lifetime — it has to outlive the process — and
+because a second file for one key is a second thing to find, back up and lose.")
 
 ;;; A PLIST, not a struct, and this is a live-update decision rather than a
 ;;; stylistic one. `defstruct` is SKIPPED by `tui-eval --file` because a changed
@@ -41,10 +46,11 @@ newer build's, or the operator's — and is preserved verbatim.")
         :thinking "folded"   ; `open` or `folded`
         :tools "folded"
         :raw-calls nil       ; show the model's `<function=…>` markup under a call
+        :retired nil         ; warning identities the reader has retired (R19 part 3)
         :path nil)           ; where it came from, so a save goes back there; NIL
                              ; for a head with nowhere to write, which SAYS SO
                              ; rather than writing into the working directory
-  "The defaults: split diff, folds closed, raw calls hidden.")
+  "The defaults: split diff, folds closed, raw calls hidden, nothing retired.")
 
 (defun make-prefs ()
   "The defaults, as a fresh plist."
@@ -56,12 +62,14 @@ newer build's, or the operator's — and is preserved verbatim.")
 (defun prefs-thinking (p) (getf p :thinking))
 (defun prefs-tools (p)    (getf p :tools))
 (defun prefs-raw-calls (p)(getf p :raw-calls))
+(defun prefs-retired (p)  (getf p :retired))
 (defun prefs-path (p)     (getf p :path))
 
 (defun (setf prefs-diff) (v p)     (setf (getf p :diff) v))
 (defun (setf prefs-thinking) (v p) (setf (getf p :thinking) v))
 (defun (setf prefs-tools) (v p)    (setf (getf p :tools) v))
 (defun (setf prefs-raw-calls) (v p)(setf (getf p :raw-calls) v))
+(defun (setf prefs-retired) (v p)  (setf (getf p :retired) v))
 (defun (setf prefs-path) (v p)     (setf (getf p :path) v))
 
 ;;; ------------------------------------------- the bridge to a running head ;;;
@@ -90,11 +98,18 @@ default struct.")
 
 Through the setter, so loading a file invalidates the render cache exactly as
 flipping a chord does — a head whose `head.toml` says `tools = \"open\"` must draw
-the tool output on the first frame, not on the second."
+the tool output on the first frame, not on the second.
+
+**And the retired set, which is the one thing here that is not a preference** (R19 part
+3). It goes onto the SESSION because that is where the membership test reads it, and it
+has to be in place BEFORE the first snapshot lands: a warning retired on a previous run
+must be replanted retired, not drawn and then hidden a frame later. `run` calls this
+before it attaches, and `ingest-snapshot` is only reached through the attach."
   (setf (head-pref head :show-reasoning) (fold-on-p (prefs-thinking p))
         (head-pref head :show-tools) (fold-on-p (prefs-tools p))
         (head-pref head :raw-calls) (prefs-raw-calls p)
         (head-pref head :diff) (prefs-diff p))
+  (setf (session-retired (head-session head)) (copy-list (prefs-retired p)))
   (setf *prefs* p)
   head)
 
@@ -104,7 +119,9 @@ the tool output on the first frame, not on the second."
     (setf (prefs-thinking p) (fold-name (getf (head-prefs head) :show-reasoning))
           (prefs-tools p) (fold-name (getf (head-prefs head) :show-tools))
           (prefs-raw-calls p) (and (getf (head-prefs head) :raw-calls) t)
-          (prefs-diff p) (or (getf (head-prefs head) :diff) "split"))
+          (prefs-diff p) (or (getf (head-prefs head) :diff) "split")
+          ;; the session's own set, which the head did not choose and cannot lose
+          (prefs-retired p) (copy-list (session-retired (head-session head))))
     p))
 
 (defun load-prefs-into (head &optional path)
@@ -137,6 +154,22 @@ would forget*.")
   "Write HEAD's live choices, unless this image is a test. Returns the path, or NIL."
   (when *write-prefs*
     (save-prefs (head-into-prefs head) path)))
+
+(defun persist-retired (head)
+  "Write the session's retired set, and swallow a failure into a NIL.
+
+**The ONE place a retirement is persisted**, called by the one place one is made
+(`%notes`) — for the reason the preference setter gives, that *the fifth site is the one
+that would forget*, and here forgetting means a dismissal the operator believes in and
+the file does not.
+
+**A failure is not fatal and is not silent either.** A read-only `head.toml`, a full
+disk or a missing `$XDG_CONFIG_HOME` leaves the retirement live in this process and
+absent from the file; the caller says so, and the operator can see why their dismissal
+did not survive the last restart. The alternative — signalling out of a `/notes` — would
+make a cosmetic failure into a lost command."
+  (handler-case (progn (save-head-prefs head) nil)
+    (error (e) (format nil "not saved: ~a" e))))
 
 ;;; ------------------------------------------------------- the fold setter ;;;
 ;;;
@@ -195,6 +228,23 @@ NIL when neither variable is set — a head with nowhere to write."
 
 ;;; ------------------------------------------------------------ the format ;;;
 
+(defun %quote-value (v)
+  "V as a `key = \"value\"` line's value, wrapped in quotes and escaped by NOTHING.
+
+**Not `~s`, which is what the four preference keys use, and the difference is a real
+one found by R19 part 3's round-trip test.** `~s` escapes a `\"` as `\"` and a `\\` as
+`\\\\`, and `%unquote` — which reads the file — strips the outer pair and unescapes
+neither. That is harmless for `diff`, `thinking`, `tools` and `raw_calls`, whose values
+come from fixed sets; it is wrong for an identity, which carries a warning's DETAIL, and
+the operator's own detail was `nearly full, and \"quoted\" — see a|b`. Measured: the
+identity read back was `nearly full%2C and \\\"quoted\\\" — see a%7Cb`, one backslash
+away from the one in memory, so the membership test missed and the dismissal did not
+survive the restart — silently, which is the failure this whole part is about.
+
+What the file gets instead is the TOML spelling a person would write by hand: a quoted
+value with the quotes only at the ends, which `%unquote` reads back exactly."
+  (format nil "~c~a~c" #\" v #\"))
+
 (defun %unquote (v)
   "Strip the quotes a value may carry, from either kind of quote."
   (let ((s (string-trim " " v)))
@@ -235,6 +285,42 @@ same defect as duplicating a key, one line at a time."
   (cond ((member v '("true" "yes" "on") :test #'string=) t)
         ((member v '("false" "no" "off") :test #'string=) nil)
         (t :unknown)))
+
+(defparameter +retired-cap+ 512
+  "How many retired notes one head remembers, on disk and in memory.
+
+**The reference's own number** (`RETIRED_CAP`, `prefs.rs:18-26`) and the reference's own
+reason: it is *a cap on this reader's memory, not on the log* — the notes themselves are
+in the session log whatever is here, and `/notes` lists every one the head still holds.
+What falls off the end is a dismissal, so a note that fell off would come back on the
+next snapshot. Far above what any session produces, deliberately, rather than tuned to
+it.
+
+A `defparameter` and not a `defconstant`: the file pusher SKIPS constants.")
+
+(defun retired->string (identities)
+  "IDENTITIES as the ONE value `head.toml` holds: comma-separated, newest LAST.
+
+Newest last because that is the end the cap drops from — an old dismissal is the one
+worth forgetting, and a reader who dismisses something today wants it to survive the
+restart tomorrow. The identities are already escaped by `warning-identity`, so a comma
+here is a separator and nothing else."
+  (format nil "~{~a~^,~}"
+          (last identities (min (length identities) +retired-cap+))))
+
+(defun string->retired (value)
+  "The inverse of `retired->string`. NIL for an empty value, and for a value that is not
+a string at all — a hand-edited `head.toml` is the operator's file and a line they mangled
+should cost a dismissal, not a start.
+
+Each entry is TRIMMED and an all-whitespace one is dropped, so `retired = \"\"` and
+`retired = \" , \"` both read as *nothing retired* rather than as one identity that can
+never match. An identity never carries surrounding space — it is `code|ts|detail` with the
+detail escaped — so trimming cannot lose one."
+  (when (and (stringp value) (plusp (length value)))
+    (remove "" (mapcar (lambda (e) (string-trim '(#\space #\tab #\return) e))
+                       (uiop:split-string value :separator '(#\,)))
+            :test #'string=)))
 
 (defun load-prefs (&optional path)
   "Read the file at PATH (default `prefs-path`) into a `prefs`.
@@ -286,6 +372,14 @@ than the bad line. Returns `(values prefs notes)`."
                      (push (format nil "head.toml: raw_calls = ~s is not true or false"
                                    value) notes)
                      (setf (prefs-raw-calls p) b))))
+              ((string= key "retired")
+               ;; **Read, and it is the one key whose value came from elsewhere.** The
+               ;; four above are choices the operator made in a pane; this is a list of
+               ;; identities the head wrote down itself, keyed per incident, so two
+               ;; sessions do not share a dismissal. Nothing to validate beyond the
+               ;; shape: an identity is opaque here, and a wrong one costs a dismissal
+               ;; (a note comes back), never a start.
+               (setf (prefs-retired p) (string->retired value)))
               (t (push (format nil "head.toml: `~a` is not a key this head knows"
                                key) notes)))))))
     (values p (nreverse notes))))
@@ -297,11 +391,21 @@ A comment, a `[section]`, a key from a newer build — all preserved in place, a
 a key of ours that is already in the file is REPLACED rather than appended, so
 the file does not grow a second `diff =` on every change. Creates the directory.
 Returns the path written, or NIL for a head with nowhere to write."
-  (let* ((path (or path (default-prefs-path)))
+  (let* (;; **THE PATH THE PREFERENCES CAME FROM, before the default.** `:path` is
+         ;; documented as *"where it came from, so a save goes back there"* and it was
+         ;; not honoured: `save-prefs` took the argument or fell through to
+         ;; `default-prefs-path`, so a head that loaded `--prefs FILE` (or, in the
+         ;; suite, a temp file) wrote its next change to `$HOME` instead. Found by
+         ;; writing R19 part 3's test, which has to point a head at a file it owns.
+         (path (or path (prefs-path p) (default-prefs-path)))
          (ours (list (cons "diff" (format nil "~s" (prefs-diff p)))
                      (cons "thinking" (format nil "~s" (prefs-thinking p)))
                      (cons "tools" (format nil "~s" (prefs-tools p)))
-                     (cons "raw_calls" (if (prefs-raw-calls p) "true" "false")))))
+                     (cons "raw_calls" (if (prefs-raw-calls p) "true" "false"))
+                     ;; quoted, and by the ONE function that can quote a value
+                     ;; containing a quote — see `%quote-value` for the measurement
+                     (cons "retired" (%quote-value (retired->string
+                                                    (prefs-retired p)))))))
     (unless path
       ;; say so rather than writing into the working directory, where a file
       ;; nobody asked for would appear

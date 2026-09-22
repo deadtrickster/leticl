@@ -59,6 +59,8 @@
    #:make-prefs #:default-prefs-path #:load-prefs #:save-prefs
    #:prefs-diff #:prefs-thinking #:prefs-tools #:prefs-raw-calls #:prefs-path
    #:load-prefs-into #:save-head-prefs #:head-into-prefs #:prefs-into-head
+   #:persist-retired #:+retired-cap+
+   #:retired->string #:string->retired #:prefs-retired #:warning-glyph #:%quote-value
    #:*write-prefs*
    ;; chrome (S8) — the alarm, the stall, the money meter, the boxed composer
    #:composer-line #:hint-bar #:alarm-line #:alarm-counts #:alarmed-p
@@ -91,11 +93,15 @@
    #:session-items-dropped
    #:session-warnings #:session-denials #:session-subagents #:session-jobs
    #:session-retired #:warning-identity #:session-retired-p #:note-warning
+   #:routine-warning-p #:warning-glyph #:+routine-warnings+
+   #:session-snapshotted-p #:note-snapshotted #:*snapshotted-sessions*
    #:warning-order #:warning-note-text #:retire-warning #:retire-all-warnings
    #:restore-warnings #:warning-counts #:+note-lines+
    #:warning-listing-lines #:open-notes-listing #:notes-listing-open-p
    #:session-todos #:session-wiring #:session-open-decisions #:session-sessions
-   #:item-lines #:turn-lines #:outcome-name #:edit-lines #:call-lines
+   #:item-lines
+   #:+role-faint+ #:+role-failure+
+   #:turn-lines #:outcome-name #:edit-lines #:call-lines
    #:turn-footer-lines #:queued-lines #:render-split #:edit-split-lines
    ;; the step: the model's WORKING sits in, under what it SAYS
    #:activity-indent #:step-in-lines #:+activity-indent-cols+

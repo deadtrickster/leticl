@@ -471,6 +471,15 @@ between the two markers, which is why neither delimiter line is counted."
 ;;; The three of `crates/ui/src/style.rs` this file spells more than once, named
 ;;; so they cannot drift apart again. The pair that matters is the last two.
 
+(defparameter +role-faint+ '(:dim t)
+  "Role::Faint — `ESC[2m`, style.rs:157. *A fact a reader may skip.*
+
+The fourth role this file needs, added for R19 part 2 and not borrowed from the
+markdown file's own `+md-faint+` for the reason the pair below is pinned apart on
+purpose: `+md-faint+` means *structure inside a rendered document* — hashes, bullets,
+rails — and a housekeeping note is not markdown. Two constants with one spelling each
+would drift the day one of them wants a colour.")
+
 (defparameter +role-success+ '(:fg :green) "Role::Success — style.rs:173.")
 
 (defparameter +role-pending+ '(:fg :yellow)
@@ -1482,14 +1491,42 @@ a terminal-native palette."
          ;; The whole text is still what `/notes` prints, so this folds a disclosure
          ;; and never the record.
          ((:note)
-          (let* ((rows (wrap-segments
-                        (list (cons (format nil "! ~a" (or (getf body :text) "")) nil))
+          ;; **TWO REGISTERS, and R19 part 2 is why** (letibot `1a0d1f2`-era ruling).
+          ;; `! …` in the failure role is the reference's `warn_line` and it is right
+          ;; for a refusal, a gate timeout or a context wall. It was WRONG for
+          ;; `compacted` and `auto_compact` — the session doing exactly what it should,
+          ;; arriving in the same red as a denial — and the operator's words are the
+          ;; requirement: *"a housekeeping notice and a refused call must not look
+          ;; alike."*
+          ;;
+          ;; The register is read off the warning the ROW carries, through the one
+          ;; table (`routine-warning-p`) and the one glyph (`warning-glyph`), so this
+          ;; cannot disagree with the `/notes` listing about the same note. A routine
+          ;; note is faint with a `·` instead of loud with a `!`, and the two are
+          ;; distinguishable at a glance, which is the whole test — an operator who
+          ;; learns to skip the red block is an operator who will skip the denial that
+          ;; lives in it.
+          ;;
+          ;; A row this head files about ITSELF — `note-unreadable`, a protocol skew —
+          ;; carries no `:warning`, so `routine-warning-p` answers NIL and it stays in
+          ;; the failure register, which is right: those are the head saying it could
+          ;; not do its job.
+          ;;
+          ;; **The failure register is unchanged**, deliberately: this moves codes OUT
+          ;; of it only where the fact is *nothing is wrong*, and a code nobody has
+          ;; classified stays red.
+          (let* ((w (getf item :warning))
+                 (routine (routine-warning-p w))
+                 (glyph (warning-glyph w))
+                 (role (if routine +role-faint+ +role-failure+))
+                 (rows (wrap-segments
+                        (list (cons (format nil "~a ~a" glyph (or (getf body :text) "")) nil))
                         cols))
                  (cap (getf body :cap))
                  (seam (getf body :seam))
                  (hidden (and cap seam (> (length rows) cap) (- (length rows) cap)))
                  (out (mapcar (lambda (l)
-                                (mapcar (lambda (seg) (cons (car seg) +role-failure+)) l))
+                                (mapcar (lambda (seg) (cons (car seg) role)) l))
                               (if hidden (subseq rows 0 cap) rows))))
             (if hidden
                 (append out

@@ -1374,7 +1374,7 @@ fact and this head shows it once"
           do (push (format nil "~3d  ~a" i
                            (if (session-retired-p session w) "[retired]" ""))
                    out)
-             (push (format nil "! ~a" (warning-note-text w)) out))
+             (push (format nil "~a ~a" (warning-glyph w) (warning-note-text w)) out))
     (when (plusp held)
       (push "" out)
       (push "/notes dismiss [N|all] retires one, or every one · /notes restore brings them all back"

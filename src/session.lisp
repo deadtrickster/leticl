@@ -144,9 +144,47 @@ walking under the new session's composer."
   ;; the staged call facts are keyed by a call id that only existed over there
   (%round-boundary))
 
-(defun ingest-snapshot (session snapshot)
+(defvar *snapshotted-sessions* nil
+  "The session ids this head has ingested a snapshot for, this process.
+
+**R19 part 1 hangs on this list and nothing else.** A snapshot is the ATTACH of a
+session the head has not seen yet, and the RESYNC of one it has — and the difference is
+the whole of *\"history arrives as news\"*. Four notes — `daemon_stopping`, `compacted`,
+two `auto_compact` — folded correctly to three red lines each, at the top of a session
+that had just started, over a conversation they did not precede: a fresh head planted
+its snapshot's warnings at position 0 because everything in a snapshot is history and
+none of it is anchored.
+
+A `defvar` and not a head slot, and **not cleared by anything**: it is a fact about this
+process, so a `/switch` away and back, or a reconnect, keeps its meaning. Bound by
+`with-replay-globals`, because a replay must answer the same bytes twice.")
+
+(defun session-snapshotted-p (id)
+  "Has this head ingested a snapshot for ID in this process?"
+  (and (member id *snapshotted-sessions* :test #'string=) t))
+
+(defun note-snapshotted (id)
+  "Record that ID has had a snapshot. Returns T when it was NEW — an attach."
+  (if (session-snapshotted-p id)
+      nil
+      (progn (push id *snapshotted-sessions*) t)))
+
+(defun ingest-snapshot (session snapshot &key attach)
   "Replace state with SNAPSHOT's. Resync is a normal outcome, never an error
 — this is also the Resync-frame path.
+
+**ATTACH says this snapshot is how the head MET the session**, and the caller knows
+because `ingest-hello` asks `note-snapshotted` before calling this (R19 part 1). On an
+attach a snapshot's warnings are HISTORY: they are stored, listed by `/notes` and
+counted by `/status`, and **not filed as rows**. A head that has just attached has shown
+nothing, so filing them replays hours of announcements as though they had just happened,
+above a conversation they did not precede.
+
+**Default NIL, and that is load-bearing.** A resync replaces a transcript this head was
+already showing, so R10's rule stands there unchanged: the rows come back, and the
+retired set decides which of them are visible. A caller that does not know whether this
+is an attach must pass NIL — the conservative reading is *the head has been here*, and
+the other one silently loses a wall somebody was meant to read.
 
 The id is compared BEFORE it is assigned, because that comparison is the only
 thing that knows whether this is the same conversation (app.rs:1897-1934)."
@@ -183,22 +221,30 @@ thing that knows whether this is the same conversation (app.rs:1897-1934)."
   (note-snapshot-answered (getf snapshot :items))
   ;; and the carry, which is what a snapshot with bodiless rows IS: see `note-carry`
   (note-carry (getf snapshot :items))
-  ;; **A snapshot's warnings are history this head has not shown, so it shows it.**
-  ;; The rows went with the transcript the snapshot replaced, and the retired set —
-  ;; which a snapshot does NOT carry and must not — decides which of them come back
-  ;; visible. This is the path that made the reference's wall come back at position 0
-  ;; above the whole conversation, and keying the set outside the transcript is the
-  ;; answer: a retired warning is filed HIDDEN here, so a resync and a reattach
+  ;; **A snapshot's warnings: planted on a RESYNC, not on an ATTACH (R19 part 1).**
+  ;;
+  ;; On a resync the rows went with the transcript the snapshot replaced, and the
+  ;; retired set — which a snapshot does NOT carry and must not — decides which of them
+  ;; come back visible. This is the path that made the reference's wall come back at
+  ;; position 0 above the whole conversation, and keying the set outside the transcript
+  ;; is the answer: a retired warning is filed HIDDEN here, so a resync and a reattach
   ;; replant the wall retired.
   ;;
-  ;; `turn_failed` is filtered here as well as on the live path, which the reference
-  ;; needs too and for the same reason: a snapshot that put it back would replant the
-  ;; one sentence the screen already says in the turn's own footer
-  ;; (app.rs:2527-2534), and the two paths have to agree about every filter
-  ;; (`bacf495`).
-  (dolist (w (session-warnings session))
-    (unless (equal (getf w :code) "turn_failed")
-      (note-warning session w)))
+  ;; **On an attach none of that is asked.** The head has just started, or has just
+  ;; switched to a conversation it has never shown: every warning in this snapshot
+  ;; happened before it arrived, so there is nothing for a row to be anchored TO and no
+  ;; reader who is owed the news. They stay in `session-warnings`, which is what `/notes`
+  ;; lists and `/status` counts — *the log keeps them; the head does not have to open
+  ;; with them* — and the first LIVE warning after the attach is filed normally.
+  ;;
+  ;; `turn_failed` is filtered on both paths, which the reference needs too and for the
+  ;; same reason: a snapshot that put it back would replant the one sentence the screen
+  ;; already says in the turn's own footer (app.rs:2527-2534), and the two paths have to
+  ;; agree about every filter (`bacf495`).
+  (unless attach
+    (dolist (w (session-warnings session))
+      (unless (equal (getf w :code) "turn_failed")
+        (note-warning session w))))
   session)
 
 (defvar *scrubbed-total* 0
@@ -250,7 +296,13 @@ assigns the id explicitly on that path and keeps the state it already has
         (remove-if (lambda (b) (getf b :parent-session-id)) (getf hello :sessions))
         (session-wiring session) (getf hello :wiring))
   (if (getf hello :snapshot)
-      (ingest-snapshot session (getf hello :snapshot))
+      ;; **A `Hello` is the ATTACH frame, so the first one for a session is the
+      ;; head meeting it** (R19 part 1). Ask BEFORE ingesting, because the ingest is
+      ;; what records the id. Everything after the first is a reattach — a reconnect,
+      ;; or a `/switch` back — where R10's replant applies.
+      (ingest-snapshot session (getf hello :snapshot)
+                       :attach (note-snapshotted
+                                (or (getf (getf hello :snapshot) :session-id) "")))
       (let ((id (or (getf hello :session-id) "")))
         ;; the resumed-from path: what is already here IS this session's state,
         ;; unless the Hello names a different session — then none of it is
@@ -598,21 +650,77 @@ disclosure decision and NEVER a cap on the record.
 A `defparameter` and not a `defconstant`: the file pusher SKIPS constants, so a
 constant here could never be changed on a running head.")
 
+(defparameter +identity-escapes+
+  '((#\% . "%25") (#\, . "%2C") (#\| . "%7C")
+    (#\Newline . "%0A") (#\Return . "%0D"))
+  "The characters an identity may not carry literally, and what each becomes.
+
+**Four of them, and every one is a parsing hazard rather than a taste.** The set is
+written into `head.toml` as ONE comma-separated value on ONE line, so a comma inside a
+detail would split an identity in two, a newline would split the line (the file is
+`key = value` per line), and `|` is the separator inside an identity. A malformed row in
+the file is a dismissal that silently does not survive a restart — the exact defect R19
+part 3 exists to fix — so the escaping is what makes the claim true rather than likely.
+
+A `defparameter` and not a `defconstant`: the file pusher SKIPS constants.")
+
+(defun %escape-identity (text)
+  "TEXT with every character `+identity-escapes+` names replaced, `%` first.
+
+A character-at-a-time rebuild rather than four substitutions over the whole string:
+the replacements differ in LENGTH (`%` becomes three characters), so a chain of
+in-place substitutions would rewrite the `%` it had just written. Left to right, each
+input character is consumed exactly once and no replacement is ever re-read."
+  (with-output-to-string (out)
+    (loop for ch across (or text "")
+          do (let ((hit (assoc ch +identity-escapes+)))
+               (if hit
+                   (write-string (cdr hit) out)
+                   (write-char ch out))))))
+
+(defun %unescape-identity (text)
+  "The inverse of `%escape-identity`, for a value read back off disk.
+
+ONE pass over the string rather than the substitution table in reverse, and the
+difference is not stylistic: unescaping `%2C` by substitution would also rewrite a
+literal `%2C` that the escaping had produced as `%252C`, so a detail containing `%2C`
+would read back as a comma. Scanning left to right consumes each escape once."
+  (let ((out (make-string-output-stream)))
+    (loop with i = 0
+          while (< i (length text))
+          do (let ((ch (char text i)))
+               (if (and (char= ch #\%)
+                        (< (+ i 2) (length text)))
+                   (let* ((hex (subseq text (1+ i) (+ i 3)))
+                          (hit (find hex +identity-escapes+ :key #'cdr :test #'string=)))
+                     (if hit
+                         (progn (write-char (car hit) out) (incf i 3))
+                         (progn (write-char ch out) (incf i))))
+                   (progn (write-char ch out) (incf i)))))
+    (get-output-stream-string out)))
+
 (defun warning-identity (w)
-  "The name a warning keeps across a resync and a reattach.
+  "The name a warning keeps across a resync, a reattach and a RESTART.
 
 Built from the warning's OWN facts and nothing about where it is on the screen: its
 `code`, the log's `ts` for the envelope that carried it, and its `detail`. `ts` is
 what tells one announcement from a redelivery of it, which is the same reason the
 reference's `note` dedupes on the triple (`app.rs:5689-5697`).
 
-The detail is NOT hashed, where the reference hashes it: its key is written into
-`head.toml` as one comma-separated value and a paragraph there would be a file
-nobody can read, while this set lives in memory for the life of the process. If it
-ever has to be written down, it has to be hashed — and that is a change to make
-when it is asked for, not a cost to pay now."
+**The detail is escaped, not hashed, and that changed with R19.** The first version of
+this said the set lived in memory for the life of the process, so writing it down was a
+change to make when it was asked for — *"and now it is asked for": the operator asked
+by restarting a head and being met by twelve red lines.* The reference hashes the detail
+because its key must fit one comma-separated value with no punctuation in it; escaping
+buys the same safety and keeps the file readable, so a person looking at `head.toml`
+sees which announcements they dismissed.
+
+**One definition, so the memory key and the file key cannot disagree** — which they
+would if the escaping happened at write time and the unescaping at read time, on either
+side of the membership test that uses this string."
   (format nil "~a|~a|~a"
-          (or (getf w :code) "") (or (getf w :ts) 0) (or (getf w :detail) "")))
+          (or (getf w :code) "") (or (getf w :ts) 0)
+          (%escape-identity (getf w :detail))))
 
 (defun session-retired-p (session w)
   "Has the reader already retired W?"
@@ -628,6 +736,77 @@ from it rather than the other way round."
         when (getf item :warning)
           do (setf (getf item :retired)
                    (and (session-retired-p session (getf item :warning)) t))))
+
+(defparameter +routine-warnings+
+  '("auto_compact" "compacted" "auto_compact_skipped" "auto_compact_no_progress"
+    "reseated" "reattached" "resume_note" "mode_set"
+    "interrupt_idle" "promote_idle" "frame_capture_written" "slash")
+  "The warning codes whose fact is ROUTINE — the session doing its job, or the
+settled outcome of an act the reader took.
+
+**R19 part 2, and the split is a judgement written down rather than a guess.** The
+operator: *\"routine is painted as failure — `compacted` and `auto_compact` are the
+session doing exactly what it should, and they arrive in the same red as a denial or a
+gate timeout. The colour asserts a severity the fact does not have.\"* So the codes
+where the fact is *nothing is wrong* are drawn in the faint register instead of the
+failure one, and the four that made them look at this are the first four here.
+
+Three rules, and each one is why a code is on this list:
+
+  · **housekeeping the daemon does to itself** — a compaction firing, being skipped, or
+    helping less than its window: `auto_compact`, `compacted`, `auto_compact_skipped`,
+    `auto_compact_no_progress`. The session managing its context is the feature working.
+  · **the settled outcome of the reader's own act** — `/reseat` succeeded (`reseated`),
+    the mode is now the one you chose (`mode_set`), you pressed interrupt with nothing
+    running (`interrupt_idle`), you asked to promote with nothing to move
+    (`promote_idle`), the frame you asked to capture was written
+    (`frame_capture_written`). A red block for *\"your command worked\"* is the exact
+    inversion R19 names.
+  · **the transport itself** — `slash` is a reply (a listing or a sentence), `reattached`
+    and `resume_note` are the log being re-read successfully. None of these is a
+    warning at all; they arrive in this envelope because it is the one the daemon has.
+
+**What is deliberately NOT here, and the rule that decides it.** A code that says
+*something did not happen* stays in the failure register even when it is not the
+operator's fault: `auto_compact_failed`, `context_wall`, `gate`, `gate_timeout`,
+`turn_failed`, `job_output_refused`, `session_unavailable`, `resume_failed`,
+`reseat_refused`, `mode_unknown`, `mode_set_refused`, `mode_unpersisted`,
+`length_batch_refused`, `length_empty_turn`, `ledger_chain_mismatch`,
+`row_coverage_gap`, `reasoning_stall`, `repetition_collapse`, `ended_in_reasoning`,
+`model_endpoint_retry`, `monitor_wake_not_armed`, `fabric_refresh_failed`,
+`flowy_not_seated`, `frame_capture_disabled`, `frame_capture_failed`,
+`transcript_store`, `decision_corpus`, `title_not_stored`, `record_item_pairing`,
+`orphan_body`, `log_gap`, `protocol_skew`, `unreadable_frame`, `secret_late`, `sudo`,
+and the schema advisories (`absolute_path`, `endpoint`, `dated`, `data_claim`).
+`secret_late` and `sudo` are the two where a reader could argue — both report an
+interaction with a credential, and half of `sudo`'s cases are the ordinary one — so they
+stay loud until somebody rules otherwise. **Loud is the status quo and the conservative
+default**: a code nobody has classified is drawn as it always was, on the argument that
+a mistake in the direction of *too quiet* hides a real denial and this list is not
+complete.
+
+A `defparameter` and not a `defconstant`: the file pusher SKIPS constants, so a constant
+here could never be corrected on a running head — and a severity list is exactly the
+kind of thing that gets corrected.")
+
+(defun routine-warning-p (w)
+  "Is W's fact routine — housekeeping, or the outcome of the reader's own act?
+
+By code alone. The wire carries `code`, `detail` and `ts` and no severity
+(`view.rs:306-310`), so the head is the only layer that can answer this, and it answers
+it for the whole code rather than by reading the detail: a sentence-parsing severity
+would be a second, silent protocol."
+  (and (member (or (getf w :code) "") +routine-warnings+ :test #'string=) t))
+
+(defun warning-glyph (w)
+  "The mark a warning is written under: `!` for the failure register, `·` for routine.
+
+**ONE definition, two surfaces** — the row in the conversation and the `/notes` listing
+must not spell the same severity two ways, which is what they would do if each picked its
+own mark. R19 part 2's whole point is that the register be readable at a glance, and a
+listing that said `!` about a note the conversation had just drawn faint would put the
+argument back where it started."
+  (if (routine-warning-p w) "·" "!"))
 
 (defun warning-note-text (w)
   "What a warning SAYS, without the register.

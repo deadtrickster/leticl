@@ -147,6 +147,14 @@ see this file's header."
          ;; wants its own `ts` values and the fixed clock to be the same clock,
          ;; and this is the line that says so.
          (*unix-offset-ms* 0)
+         ;; **R19's two, and they are here for the golden's sake as much as
+         ;; anything's.** `*snapshotted-sessions*` decides whether a snapshot's
+         ;; warnings are planted or held back, so two replays in one image would
+         ;; otherwise disagree about the SECOND one: the first would call it an
+         ;; attach and the second a resync. `*queued-unconfirmed*` is the same shape
+         ;; one requirement earlier.
+         (*snapshotted-sessions* nil)
+         (*queued-unconfirmed* nil)
          ;; the clock's own reason to repaint: a replay paints on what the FILE
          ;; says, and a live-frame rule would put a frame per tenth into a byte
          ;; comparison that has to answer the same bytes twice

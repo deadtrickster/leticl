@@ -5080,28 +5080,318 @@ SENTENCE is still a note, because a note is all there is."
   "A listing's strings joined, for asserting on."
   (format nil "~{~a~^~%~}" lines))
 
+;;; -------------------- R19: a fresh attach does not open with old news ------------- ;;;
+;;;
+;;; RULED by the operator, 2026-09-22, on restarting a head and being met by twelve red
+;;; lines: *"i dont want to see that on restart."*
+;;;
+;;;     daemon_stopping · compacted · auto_compact · auto_compact
+;;;
+;;; four notes, folded correctly to three lines each, in the failure colour, at the top
+;;; of a session that had just started. NONE had been dismissed, so persisting a retired
+;;; set would not have helped on its own: a fresh head planted its snapshot's warnings at
+;;; position 0 because everything in a snapshot is history and none of it is anchored.
+;;;
+;;; Three faults, and only the first is what was asked about. Each has its test here.
+
+(defun %snapshot-with-warnings (warnings &key (session-id "s-r19") (seq 900))
+  "A snapshot carrying WARNINGS, in the shape `ingest-snapshot` reads."
+  (list :session-id session-id :seq seq :dropped 0 :items-dropped 0 :items nil
+        :turn nil :open-decisions nil :settled-decisions nil :heads nil
+        :warnings warnings))
+
+(def-test an-attach-does-not-open-with-the-snapshots-warnings (:suite leticl)
+  "**R19 part 1, and it is the fault that was actually reported.**
+
+A warning is how a head shows a fact ONCE. A head that has just attached has shown
+nothing — so filing the snapshot's warnings replays hours of announcements as though they
+had just happened, above a conversation they did not precede. The four the operator saw
+were `daemon_stopping`, `compacted` and two `auto_compact`.
+
+They are not lost, and that is the half that makes this a fix rather than a silence: they
+stay in `session-warnings`, so `/notes` lists them with their whole text and `/status`
+counts them. **The log keeps them; the head does not have to open with them.**"
+  (let ((*slash-out* nil) (*job-out* nil)
+        (*snapshotted-sessions* nil)
+        (h (%on-head :cols 96 :rows 24)))
+    (leticl::%handle-frame
+     h (list :frame "hello" :protocol-version 23 :session-id "s-r19" :head-id "h1"
+             :dropped 0 :sessions nil :wiring nil :resumed-from nil :scrubbed nil
+             :snapshot (%snapshot-with-warnings
+                        (list (list :code "daemon_stopping" :detail "someone asked me to stop" :ts 1)
+                              (list :code "compacted" :detail "12 rows folded" :ts 2)
+                              (list :code "auto_compact" :detail "240 rows folded" :ts 3)
+                              (list :code "auto_compact" :detail "260 rows folded" :ts 4)))))
+    (is (= 4 (length (session-warnings (head-session h))))
+        "all four are in the record — the log keeps them")
+    (is (null (%warning-rows h))
+        "**AND NOT ONE IS A ROW** — this is the twelve red lines: ~s"
+        (mapcar (lambda (i) (getf (leticl::item-body i) :text)) (%warning-rows h)))
+    (leticl::%render h)
+    (is (not (search "240 rows folded" (%screen-text h)))
+        "nothing from before the attach is on the screen")
+    ;; reachable, which is the other half of the requirement
+    (let ((text (%list-text (warning-listing-lines (head-session h)))))
+      (is (search "4 warnings, 0 retired" text) "`/notes` lists them: ~s" text)
+      (is (search "240 rows folded" text) "with their whole text"))
+    ;; and the FIRST LIVE warning after the attach IS a row: it is news
+    (leticl::%handle-frame h (%warning-frame "context_wall" "the context is nearly full" 9))
+    (is (= 1 (length (%warning-rows h)))
+        "a warning that arrives after the attach is filed — it IS news")
+    (leticl::%render h)
+    (is (search "the context is nearly full" (%screen-text h)) "and it is on the screen")))
+
+(def-test a-resync-still-replants-the-wall-it-always-did (:suite leticl)
+  "**The other side of part 1, and the one that must NOT move.**
+
+R10's rule is unchanged for a resync and a reattach: the transcript was replaced, the
+rows went with it, and the retired set — which a snapshot does not carry and must not —
+decides which of them come back visible. That is what `a-retired-warning-stays-retired-
+across-a-resync-and-a-reattach` pins, and this test pins the half it does not: a warning
+that is NOT retired comes back VISIBLE on a resync.
+
+An `attach` that was inferred too eagerly would take this away silently, which is why the
+flag is a keyword the frame's own caller passes and not a property of the payload."
+  (let ((*slash-out* nil) (*job-out* nil)
+        (*snapshotted-sessions* nil)
+        (h (%on-head :cols 96 :rows 24))
+        (w (list :code "context_wall" :detail "the context is nearly full" :ts 5)))
+    ;; the head meets the session: an attach, nothing planted
+    (leticl::%handle-frame
+     h (list :frame "hello" :protocol-version 23 :session-id "s-r19b" :head-id "h1"
+             :dropped 0 :sessions nil :wiring nil :resumed-from nil :scrubbed nil
+             :snapshot (%snapshot-with-warnings (list w) :session-id "s-r19b")))
+    (is (null (%warning-rows h)) "the attach plants nothing")
+    ;; then a RESYNC for the same session: the row comes back, visible
+    (leticl::%handle-frame
+     h (list :frame "resync" :reason "auto-compaction" :dropped 0 :scrubbed nil
+             :snapshot (%snapshot-with-warnings (list w) :session-id "s-r19b")))
+    (is (= 1 (length (%warning-rows h))) "a resync replants it, as R10 requires")
+    (is (not (getf (first (%warning-rows h)) :retired)) "and visible, because it was never retired")))
+
+(def-test a-second-attach-to-the-same-session-is-a-reattach (:suite leticl)
+  "**What `*snapshotted-sessions*` decides, stated as its own test.**
+
+The distinction is per PROCESS and per SESSION: the first snapshot for an id is the head
+meeting that conversation, and every later one — a reconnect, a resync, a `/switch` back
+— is a replacement of a transcript this head has already shown. A `/switch` to a session
+it has never seen is an attach and opens clean, which is the same principle one
+conversation over."
+  (let ((*snapshotted-sessions* nil))
+    (is (not (session-snapshotted-p "s-1")) "nothing is known before the first frame")
+    (is (note-snapshotted "s-1") "the first sighting is an attach")
+    (is (session-snapshotted-p "s-1") "and it is remembered")
+    (is (not (note-snapshotted "s-1")) "the second is not")
+    (is (note-snapshotted "s-2") "and a DIFFERENT session is an attach of its own")))
+
+(def-test a-routine-notice-is-not-drawn-in-the-failure-register (:suite leticl)
+  "**R19 part 2.** `compacted` and `auto_compact` are the session doing exactly what it
+should, and they arrived in the same red as a denial or a gate timeout — *the colour
+asserts a severity the fact does not have*, in the one place the operator cannot help but
+look. A housekeeping notice and a refused call must not look alike.
+
+**The failing case is the one to keep:** an operator met by a red block on every restart
+learns to skip it, and the block is where a real denial lives. Making routine
+announcements loud is how the loud ones stop being read.
+
+Both surfaces, because a listing that said `!` about a note the conversation had drawn
+faint would put the argument back where it started."
+  (let ((*slash-out* nil) (*pane-scroll* 0) (*pane-lines* 0) (*pane-room* 0)
+        (*job-out* nil)
+        (h (%on-head :cols 96 :rows 24)))
+    ;; a routine one: faint, `·`, and NOT the failure role
+    (leticl::%handle-frame h (%warning-frame "auto_compact" "240 rows folded"))
+    (let ((line (first (item-lines (first (%warning-rows h)) 96 (head-prefs h)))))
+      (is (equal "· auto_compact — 240 rows folded" (segs-of (list line)))
+          "the mark is `·` and not `!`")
+      (is (equal '(:dim t) (cdr (first line)))
+          "drawn faint, which is the register the head uses for instruments")
+      (is (not (equal +role-failure+ (cdr (first line))))
+          "**and NOT the failure role** — this is the whole of part 2"))
+    ;; a not-routine one in the same head: unchanged
+    (leticl::%handle-frame h (%warning-frame "gate_timeout" "nobody answered" 3))
+    (let* ((rows (%warning-rows h))
+           (line (first (item-lines (second rows) 96 (head-prefs h)))))
+      (is (equal "! gate_timeout — nobody answered" (segs-of (list line)))
+          "a gate timeout keeps the `!`")
+      (is (equal +role-failure+ (cdr (first line))) "and the failure role"))
+    (leticl::%render h)
+    (let ((text (%screen-text h)))
+      (is (search "· auto_compact — 240 rows folded" text) "both are on the screen")
+      (is (search "! gate_timeout — nobody answered" text)
+          "and the two registers are visibly different in one frame"))
+    ;; the listing agrees about the register, which is the one thing that could drift
+    (let ((text (%list-text (warning-listing-lines (head-session h)))))
+      (is (search "· auto_compact" text) "`/notes` marks the routine one the same way: ~s" text)
+      (is (search "! gate_timeout" text) "and the other one the other way"))))
+
+(def-test the-severity-split-is-a-table-and-what-is-not-in-it-stays-loud (:suite leticl)
+  "**The default direction, asserted**, because it is the half somebody would get wrong.
+
+The wire carries `code`, `detail` and `ts` and **no severity** (`view.rs:306-310`), so
+this head is the only layer that can answer the question — which makes the answer a table
+in the head, and makes its DEFAULT load-bearing. A code nobody has classified is drawn
+exactly as it always was: loud. A mistake in the direction of too-quiet hides a real
+denial; a mistake in the direction of too-loud is what R19 was filed about, and it is the
+one that gets fixed by adding a name to this list.
+
+Two codes were deliberately kept loud and a reader may argue with both — `secret_late`
+(a password that went unused) and `sudo` (half of whose cases are the ordinary one) — so
+they are pinned here rather than left to memory."
+  ;; the dozen that ARE routine, one assertion each so a removal is visible
+  (dolist (code '("auto_compact" "compacted" "auto_compact_skipped"
+                  "auto_compact_no_progress" "reseated" "reattached" "resume_note"
+                  "mode_set" "interrupt_idle" "promote_idle" "frame_capture_written"
+                  "slash"))
+    (is (routine-warning-p (list :code code :detail "x"))
+        (format nil "~a is routine" code)))
+  ;; and the ones that are not, including every one a reader could mistake for routine
+  (dolist (code '("auto_compact_failed" "context_wall" "gate" "gate_timeout"
+                  "turn_failed" "job_output_refused" "session_unavailable"
+                  "resume_failed" "reseat_refused" "mode_unknown" "mode_set_refused"
+                  "mode_unpersisted" "length_batch_refused" "length_empty_turn"
+                  "ledger_chain_mismatch" "row_coverage_gap" "reasoning_stall"
+                  "repetition_collapse" "ended_in_reasoning" "model_endpoint_retry"
+                  "monitor_wake_not_armed" "fabric_refresh_failed" "flowy_not_seated"
+                  "frame_capture_disabled" "frame_capture_failed" "transcript_store"
+                  "decision_corpus" "title_not_stored" "record_item_pairing"
+                  "orphan_body" "log_gap" "protocol_skew" "unreadable_frame"
+                  "secret_late" "sudo" "absolute_path" "endpoint" "dated" "data_claim"
+                  ;; and the one that does not exist yet: the fail-safe direction
+                  "a_code_from_a_daemon_this_build_has_never_met"))
+    (is (not (routine-warning-p (list :code code :detail "x")))
+        (format nil "~a stays in the failure register" code)))
+  ;; a warning with no code at all, which is what a malformed frame leaves
+  (is (not (routine-warning-p (list :detail "no code"))) "a codeless warning is not routine")
+  (is (equal "!" (warning-glyph (list :code "context_wall"))) "the failure glyph")
+  (is (equal "·" (warning-glyph (list :code "compacted"))) "and the routine one"))
+
+(def-test a-dismissal-survives-a-restart (:suite leticl)
+  "**R19 part 3, and it supersedes §11.2's ruling** — *restart is a different requirement
+and nobody had asked for it*, correct when written and overtaken by the operator asking
+by hitting it.
+
+The round trip is what matters, so this test writes a file and reads it back into a
+FRESH head: a dismissal recorded by one process and honoured by the next. Two details are
+load-bearing and both are asserted here rather than trusted:
+
+  · **the identity is escaped**, because it is written as one comma-separated value on one
+    line of a `key = value` file. A warning whose detail carries a comma, a newline or a
+    `|` would otherwise split into two entries — or two lines — and the dismissal would
+    silently not survive, which is the exact defect this part exists to fix;
+  · **`*write-prefs*` is bound T**, because the suite must not edit the operator's
+    `head.toml`; the file lives in the test's own temp directory."
+  (let* ((dir (uiop:ensure-directory-pathname
+               (format nil "/tmp/leticl-r19-~a/" (get-universal-time))))
+         (file (merge-pathnames "head.toml" dir))
+         (*write-prefs* t)
+         (*slash-out* nil) (*job-out* nil)
+         (h (%on-head :cols 96 :rows 24))
+         (s (head-session h)))
+    ;; **SAY WHERE THE HEAD WRITES, BEFORE IT WRITES ANYTHING**, and this line is
+    ;; here because its absence cost the operator a line in their real
+    ;; `~/.config/leticl/head.toml`. The first version of this test bound
+    ;; `*write-prefs*` T and then let a dismissal save — and `save-prefs` fell through
+    ;; to `default-prefs-path`, so a test about a RESTART wrote an identity from a
+    ;; temp directory into the operator's own file. Measured, and repaired by hand;
+    ;; this is the fix. `*prefs*` carries the path, so setting it here is what makes
+    ;; `persist-retired` land in the test's directory, and doing it BEFORE the first
+    ;; write is what makes that a property of the test rather than of the order its
+    ;; lines happen to run in.
+    (setf leticl::*prefs* (let ((p (make-prefs))) (setf (prefs-path p) file) p))
+    (unwind-protect
+         (progn
+           (prefs-into-head h (load-prefs file))
+           ;; a detail with every character that could break the file
+           (leticl::%handle-frame
+            h (%warning-frame "context_wall" "nearly full, and \"quoted\" — see a|b" 7))
+           (leticl::%notes h "notes" "dismiss 1")
+           (is (= 1 (length (session-retired s))) "one dismissal in memory")
+           (is (probe-file file) "and the file was written")
+           ;; **AND A FRESH HEAD READS IT BACK.** Not the same head re-reading its own
+           ;; set: the next start is the case that was broken.
+           (let ((fresh (%on-head :cols 96 :rows 24)))
+             (is (null (session-retired (head-session fresh)))
+                 "a head that has read nothing has retired nothing")
+             (prefs-into-head fresh (load-prefs file))
+             (is (equal (prefs-retired (load-prefs file)) (session-retired (head-session fresh)))
+                 "and the READER sees it too, so a later save cannot drop it")
+             (is (equal (session-retired s) (session-retired (head-session fresh)))
+                 "**the dismissal came back with the file** — ~s against ~s"
+                 (session-retired (head-session fresh)) (session-retired s)))
+           ;; and the identity survived the trip, which is what makes the membership
+           ;; test work on the other side
+           (let ((w (list :code "context_wall" :detail "nearly full, and \"quoted\" — see a|b"
+                          :ts 7)))
+             (is (equal (warning-identity w) (first (session-retired s)))
+                 "the identity on disk is the identity in memory"))
+           ;; a warning retired in the LAST run is replanted retired by this one
+           (leticl::%handle-frame
+            (%on-head :cols 96 :rows 24) (%warning-frame "auto_compact" "x")))
+      (ignore-errors (delete-file file))
+      (ignore-errors (uiop:delete-directory-tree dir :validate t)))))
+
+(def-test an-identity-with-punctuation-round-trips-through-the-file (:suite leticl)
+  "The escaping, on its own, because it is the part that fails SILENTLY.
+
+An identity is `code|ts|detail` and the set is one comma-separated value on one line. So
+a detail carrying `,` would split one identity into two — both of them matching nothing —
+and a detail carrying a newline would put half an identity on the next LINE of the file,
+where the parser reads it as a key it does not know. Neither failure is visible: the
+operator's note simply comes back next restart."
+  (flet ((round-trip (detail)
+           (let* ((w (list :code "gate" :detail detail :ts 3))
+                  (back (string->retired (retired->string (list (warning-identity w))))))
+             (equal (list (warning-identity w)) back))))
+    (is (round-trip "plain") "nothing to escape")
+    (is (round-trip "a, b") "a comma is not a separator when it is escaped")
+    (is (round-trip (format nil "two~%lines")) "a newline does not split the line")
+    (is (round-trip "a|b") "`|` does not split the identity")
+    (is (round-trip "100% done") "and `%` escapes as `%25` so `%2C` in a detail is not a comma")
+    ;; the literal-escape case, which is the one a substitution-based unescape gets
+    ;; wrong: `%2C` in a detail must come back as `%2C` and NOT as `,`
+    (is (round-trip "already %2C here") "**a detail that looks escaped stays literal**")
+    (is (round-trip (format nil "tab~Cand~Ccontrol" #\Tab #\Return)) "tabs and returns too")
+    ;; the cap, which is the only thing that may lose one
+    (let ((many (loop for i from 0 below 600 collect (format nil "c|~d|d" i))))
+      (is (= +retired-cap+ (length (string->retired (retired->string many))))
+          "the file holds at most the cap")
+      (is (equal (car (last many)) (car (last (string->retired (retired->string many)))))
+          "and it drops the OLDEST, because the newest dismissal is the one being made")))
+  ;; a hand-mangled value costs a dismissal, never a start
+  (is (null (string->retired "")) "an empty value is nothing retired")
+  (is (null (string->retired nil)) "and neither is an absent one")
+  (is (null (string->retired "  ")) "and a value of spaces is not an identity"))
+
 (def-test a-warning-the-daemon-sends-is-drawn-where-it-arrived (:suite leticl)
   "R10's DRAW half. A warning is filed as a row ANCHORED WHERE THE ENVELOPE ARRIVED —
 the `note-unreadable` shape — and not as a status note, which expires on a TTL and takes
-the fact with it by the time anybody looks."
+the fact with it by the time anybody looks.
+
+**The code here is `context_wall`, and that changed with R19 part 2.** This test used
+`auto_compact`, which R19 moved OUT of the failure register — a compaction firing is the
+session doing exactly what it should. The failure register is still a real register and
+this is the code that belongs in it: the turn was stopped because the context is nearly
+full. The routine half is `a-routine-notice-is-not-drawn-in-the-failure-register`."
   (let ((*slash-out* nil) (*pane-scroll* 0) (*pane-lines* 0) (*pane-room* 0)
         (*job-out* nil)
         (h (%on-head :cols 96 :rows 24)))
     (is (eq :rendered (leticl::%handle-frame
-                       h (%warning-frame "auto_compact" "240 rows folded")))
+                       h (%warning-frame "context_wall" "the context is nearly full")))
         "the frame renders rather than being silently consumed")
     (is (= 1 (length (session-warnings (head-session h)))) "it is in the record")
-    (is (equal "auto_compact" (getf (first (session-warnings (head-session h))) :code))
+    (is (equal "context_wall" (getf (first (session-warnings (head-session h))) :code))
         "with the daemon's own code, which is what /status counts")
     (let ((row (first (%warning-rows h))))
       (is (equal "note" (getf row :kind)) "filed as a row of this head's own")
-      (is (equal "auto_compact — 240 rows folded" (getf (leticl::item-body row) :text))
+      (is (equal "context_wall — the context is nearly full"
+                 (getf (leticl::item-body row) :text))
           "saying exactly what the daemon said")
-      (is (equal "! auto_compact — 240 rows folded"
+      (is (equal "! context_wall — the context is nearly full"
                  (segs-of (item-lines row 96 (head-prefs h))))
           "drawn in the failure role, the reference's warn_line"))
     (leticl::%render h)
-    (is (search "! auto_compact — 240 rows folded" (%screen-text h))
+    (is (search "! context_wall — the context is nearly full" (%screen-text h))
         "and it is ON THE SCREEN, which is the whole point")))
 
 (def-test a-long-warning-folds-to-three-lines-and-names-the-verb (:suite leticl)
@@ -5132,22 +5422,27 @@ DISCLOSURE and never the record."
 warning stays in `session-warnings`, `/notes` lists it with its whole text, and `/status`
 counts it — the same rule `/status`'s `filtered` counter keeps, where *\"I chose not to
 show this\"* must not look like *\"nothing happened\"*."
+  ;; **`context_wall`, not `mode_set`, and R19 part 2 is why**: `mode_set` is a
+  ;; routine notice now and draws faint with a `·`, while this test is about
+  ;; retirement. Same for the `/notes` test below. The register has its own tests.
   (let ((*slash-out* nil) (*pane-scroll* 0) (*pane-lines* 0) (*pane-room* 0)
         (*job-out* nil)
         (h (%on-head :cols 96 :rows 24)))
-    (leticl::%handle-frame h (%warning-frame "mode_set" "mode → allow-all"))
+    (leticl::%handle-frame h (%warning-frame "context_wall" "the context is nearly full"))
     (leticl::%render h)
-    (is (search "! mode_set — mode → allow-all" (%screen-text h)) "the row is up")
+    (is (search "! context_wall — the context is nearly full" (%screen-text h))
+        "the row is up")
     (leticl::%notes h "notes" "dismiss 1")
     (leticl::%render h)
-    (is (not (search "mode → allow-all" (%screen-text h))) "and gone from the screen")
+    (is (not (search "the context is nearly full" (%screen-text h)))
+        "and gone from the screen")
     (is (= 1 (length (session-warnings (head-session h)))) "but not from the record")
     (multiple-value-bind (held retired) (warning-counts (head-session h))
       (is (= 1 held) "the warning is still held")
       (is (= 1 retired) "and counted as retired, so a dismissal is counted and not a disappearance"))
     (is (search "[retired]" (%list-text (warning-listing-lines (head-session h))))
         "/notes still lists it, marked")
-    (is (search "mode → allow-all" (%list-text (warning-listing-lines (head-session h))))
+    (is (search "the context is nearly full" (%list-text (warning-listing-lines (head-session h))))
         "with its whole text, which is the part that must not be droppable")))
 
 (def-test a-retired-warning-stays-retired-across-a-resync-and-a-reattach (:suite leticl)
@@ -5228,21 +5523,22 @@ listing is a SLASH listing, which is the pane this head already has for a verb's
   (let ((*slash-out* nil) (*pane-scroll* 0) (*pane-lines* 0) (*pane-room* 0)
         (*job-out* nil)
         (h (%on-head :cols 96 :rows 24)))
-    (leticl::%handle-frame h (%warning-frame "compacted" "12 rows folded" 1))
-    (leticl::%handle-frame h (%warning-frame "mode_set" "mode → plan" 7))
+    (leticl::%handle-frame h (%warning-frame "context_wall" "the context is nearly full" 1))
+    (leticl::%handle-frame h (%warning-frame "gate_timeout" "nobody answered" 7))
     ;; `/notes` shows them, numbered in the conversation's order
     (leticl::%command h "notes")
     (is (eq :slash (head-mode h)) "the listing takes the screen")
     (is (equal "/notes" (car *slash-out*)) "as the notes listing")
     (let ((text (%list-text (warning-listing-lines (head-session h)))))
       (is (search "2 warnings, 0 retired" text) "with the count and how many are retired")
-      (is (search "! compacted — 12 rows folded" text) "the first, oldest first")
-      (is (search "! mode_set — mode → plan" text) "and the second")
+      (is (search "! context_wall — the context is nearly full" text)
+          "the first, oldest first")
+      (is (search "! gate_timeout — nobody answered" text) "and the second")
       (is (search "/notes dismiss" text) "and the verb that retires one"))
     ;; `/notes dismiss 2` retires the SECOND, which is the newest
     (leticl::%command h "notes dismiss 2")
     (is (= 1 (length (session-retired (head-session h)))) "one went")
-    (is (equal "mode_set" (getf (first (session-warnings (head-session h))) :code))
+    (is (equal "gate_timeout" (getf (first (session-warnings (head-session h))) :code))
         "and it is the second-listed one that is now hidden")
     (is (search "[retired]" (%list-text (warning-listing-lines (head-session h))))
         "the listing redrew with the mark, because it was open")
