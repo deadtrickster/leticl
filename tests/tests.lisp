@@ -1708,6 +1708,23 @@ either send it, or name it in answers-only with the reason" ctor)))))
   (merge-pathnames (format nil "leticl-test-~a-~a/head.toml" tag (random 1000000))
                    (uiop:temporary-directory)))
 
+(defun forget-prefs-file (p)
+  "Delete P and the directory `temp-prefs-path` made for it. Always NIL.
+
+**The four preference tests deleted only the FILE**, and `with-open-file` had already
+created the directory around it, so every suite run left one empty `leticl-test-…`
+directory in the temp dir for ever. Measured 2026-09-22: **144 of them** — one per test
+per run since the first of these landed — while the notes tests beside them cleaned up
+after themselves properly, which is why it went unnoticed for two days.
+
+A suite that leaves a mark on the machine is the same defect as a test that changes the
+answer to the question it is asking. It only takes longer to notice, which is the whole
+of the difference."
+  (ignore-errors (delete-file p))
+  (ignore-errors (uiop:delete-directory-tree
+                  (uiop:pathname-directory-pathname p) :validate t))
+  nil)
+
 (def-test prefs-a-missing-file-is-the-defaults-not-an-error (:suite leticl)
   "The first run of a head is not a failure."
   (let* ((p (temp-prefs-path "missing"))
@@ -1732,7 +1749,7 @@ either send it, or name it in answers-only with the reason" ctor)))))
              (is (string= "open" (prefs-thinking back)))
              (is (string= "open" (prefs-tools back)))
              (is (eq t (prefs-raw-calls back)))))
-      (ignore-errors (delete-file p)))))
+      (forget-prefs-file p))))
 
 (def-test prefs-keeps-what-it-does-not-own (:suite leticl)
   "A comment, a section, and a key from a NEWER build all survive a save.
@@ -1770,7 +1787,7 @@ than a set of settings."
              (is (search "diff = \"split\"" text) "our key is rewritten")
              (is (= 1 (count-substring "diff =" text))
                  "and NOT duplicated — one key, not one per save")))
-      (ignore-errors (delete-file p)))))
+      (forget-prefs-file p))))
 
 (def-test prefs-a-bad-bool-is-named-and-defaulted (:suite leticl)
   (let ((p (temp-prefs-path "bool")))
@@ -1782,7 +1799,7 @@ than a set of settings."
            (multiple-value-bind (prefs notes) (load-prefs p)
              (is (null (prefs-raw-calls prefs)) "the default is kept")
              (is (some (lambda (n) (search "maybe" n)) notes) "and it is named")))
-      (ignore-errors (delete-file p)))))
+      (forget-prefs-file p))))
 
 (def-test head-prefs-plist-and-the-file-agree (:suite leticl)
   "The bridge both ways: a loaded file reaches the live plist, and the live plist
@@ -1823,7 +1840,7 @@ settings, and it is the operator's file."
                    "a second save is byte-identical to the first")
                (is (= 1 (count-substring "diff =" second))
                    "and still has exactly one diff key"))))
-      (ignore-errors (delete-file p)))))
+      (forget-prefs-file p))))
 
 ;;; ------------------------------------------------- editor (S4) ;;;
 
