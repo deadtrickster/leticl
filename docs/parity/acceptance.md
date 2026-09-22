@@ -13,36 +13,26 @@ from: the requirements doc is the spec, and this is the suite.
 
 ---
 
-# What needs you — seven rulings, and six rows that no longer need one
+# The eight — RULED in §11, and what each one landed on
 
-**For the operator, first thing. Nothing here is a defect report; every item is a choice
-that neither head may make on its own.** Items 1–7 are the drift rows still standing;
-**item 8 is where this document itself should live**, which is a question rather than a
-defect.
+**This began as a list of questions for the operator. It is now a record of eight rulings.**
+`~/Projects/head-parity-2026-09-21.md` **§11** tracks all eight with an owner and a default,
+and **the default is this head's recommendation** — stated rather than assumed, because
+waiting on eight separate rulings would have stopped both heads, and every one is reversible.
+Each item below keeps the argument it was decided on (what each head does, what each way
+costs including leaving it, and the reason), with its ruling and where it landed at the top.
 
-**Measured 2026-09-22 ~03:45 against letibot's HEAD, which was `38df3f2` at 03:31** — not
-against the `8af671e` the four `docs/parity/*.md` were pinned to. That re-measurement is
-itself the first finding: **five of the drift table's twelve rows have been closed by
-letibot since the pin, and a sixth claim with them** (one carried in an entry rather than
-in the table). A list handed over unchecked would have asked you to rule on settled things
-and on one row that was never a drift. All six are listed at the end of this section, with
-the commit that closed each.
-
-**And it happened again while this was being written**: letibot landed `da4a576` at
-**03:48**, which is ruling 7 below — three of R18's five statements fixed and a fourth
-found. That is the whole argument for dating a measurement, and it is why the number of
-things needing you went *down* on the second look rather than up.
-
-Seven rulings remain (items 1–7 below), and the eighth item is the document's own home.
-Two of the seven are rows added tonight by this head (`NotScoped`, and R18's card — which
-letibot mostly closed while this was being written, leaving one sentence). Each ruling is
-written as: **what the two heads do**, **what each way costs including leaving it**, and **a
-recommendation with its reason**. They are recommendations, not rulings — where the two
-heads are both defensible I have said so rather than finding a middle.
+**Status at a glance:** 1, 2, 4, 5, 8 are **this head's and are LANDED** — 5 with code, the
+rest as criterion edits in this document. 3, 6, 7 are **letibot's** (3 and 7 code; 6 is the
+wording, where both heads must render the same string and this head is second in line).
 
 ---
 
 ## 1. §3.3 — what the cap counts: bytes or columns
+
+**RULED §11.1: per layer, and NEITHER HEAD MOVES. LANDED** — the criterion at §3.3 below is
+rewritten to say it, with the two alternatives ruled out by name so a reader does not reach
+for them.
 
 **A (letibot):** the DAEMON cuts a call's target at **120 BYTES** — `TARGET_MAX_BYTES`,
 `crates/sessionlog/src/event.rs:288`, on a character boundary with control characters
@@ -72,6 +62,11 @@ nobody has complained about.
 
 ## 2. R10 — does a warning you retired stay retired across a RESTART
 
+**RULED §11.2: the criterion STANDS at resync+reattach, A's persistence is a superset it may
+keep, and restart is its own row if ever wanted. LANDED** — written into R10 below, including
+the sentence that it is the only item on this list that writes to the operator's config
+directory.
+
 **A:** the retired set is written to `~/.config/letibot/head.toml` as one comma-separated
 value, keyed `hash(code|ts|detail)`, capped at 512 (`RETIRED_CAP`, `prefs.rs:18-26`).
 Survives a restart of the head.
@@ -96,6 +91,9 @@ one — it is the only item on this list that touches the operator's files.
 
 ## 3. R13 — a notice's TTL counted in TIME or in FRAMES
 
+**RULED §11.3: A MOVES to wall time — this head's rule. IT IS LETIBOT'S, and it is the same
+change as R13's frozen elapsed, not a second one.**
+
 **A:** `notice_ttl: u32`, set to 60 and decremented once per **frame**
 (`app.rs:6418-6420`). A head that repaints nothing keeps a stale notice up.
 **B:** `+notice-ttl-ms+` 1600 of **wall time** on the head's own clock. Measured ~1.6 s;
@@ -112,6 +110,10 @@ spinner needs, which is the cost R13 already accepted for a running call.
 *Reason:* both symptoms have one cause, and the fix that closes one closes the other.
 
 ## 4. R17 — on a gap in the stream: say it, or say it and repair it
+
+**RULED §11.4: drop the word *repairs*; both behaviours stand; the criterion says who presses
+the key is the head's choice and why. LANDED** — written into R17 below, with the reason kept
+so the next reader does not re-open it as a defect.
 
 **Criterion as written:** *"says so and repairs it"*.
 **A:** files the row **and queues `Action::Resync` itself** (`app.rs:2484-2512`), at most
@@ -135,6 +137,10 @@ honest; what must not differ — that a gap is *said* and *counted* — they alr
 transcript that moves under the reader without being asked.
 
 ## 5. §2.6 — the fence token table: three copies, or one artefact (C14)
+
+**RULED §11.5: leave the copy, point the GUARD at `rano`. LANDED in `e037273`** — the test now
+reads `rano`'s own source, and it was falsified by adding a token to `rano` and watching it
+fail. See the commit for the extractor's two vacuity guards.
 
 **Where it lives:** the operator's own `rano` (`~/Projects/rano/rano/src/syntax.rs`,
 `Lang::from_token`) — that is the table. A draws a fence through it. **B copies it** into
@@ -160,6 +166,10 @@ Point the test at `rano` (its path is already an absolute dependency in three
 
 ## 6. A job that never ran (this head's finding, 2026-09-22)
 
+**RULED §11.6: letibot rules the wording — `JobState::word` owns the vocabulary — and both
+heads render the SAME string. THIS HEAD IS SECOND IN LINE**: waiting for the string rather
+than guessing it, because a guess that differs is a new drift rather than a fix.
+
 **Both heads, identically.** `JobState::NotScoped` — the wrapper could not put the process
 in its cgroup — has `produced == 0`, so the pane draws its *"it wrote nothing at all"* row
 under a header that already says `not run (could not join its scope)`. Measured on the
@@ -178,6 +188,8 @@ ran*.** *Reason:* the phrase belongs where the enum is, fixing one head alone is
 divergence, and every other state word on that pane is already rendered verbatim.
 
 ## 7. R18's card — three of the five fixed at letibot `da4a576`, and one SENTENCE left
+
+**RULED §11.7: A's, and A's own wording, possibly reworded. IT IS LETIBOT'S.**
 
 **Measured on the operator's live `job_kill` card, and largely closed while this was being
 written.** letibot landed `da4a576` at 03:48 (*"a call with no path is judged on what it
@@ -207,6 +219,10 @@ independently checked its own snapshot arm against the finding and confirmed —
 named for the year-scale shape — that its deadline is already one clock.
 
 ## 8. Where `acceptance.md` lives — this document's own home
+
+**RULED §11.8: into the requirements document.** It describes **both** heads and sits in one
+tree, and leaving it where it is was the default nobody chose. **LANDED** — see the note at
+the foot of this file for where it now lives and what points at what.
 
 **The situation.** It is filed at `leticl/docs/parity/acceptance.md` and it describes
 **both** heads: its statuses cite hashes in `leticl` and in `letibot`, and five of the
@@ -596,13 +612,15 @@ half, and one or two are requirements whose *criterion* nobody has settled yet.
 - **Drift RULED**: **`console` is NOT a language** — plain in both heads. A console
   transcript's bytes are mostly OUTPUT, and colouring them as bash invents structure
   that hides the output the fence is being read for.
-- **Drift OPEN**: the token table exists in three places — A's `Lang::from_token` (which
-  lives in the operator's own `rano`), B's `*fence-tokens*` (`src/markdown.lisp:252`), and
-  **the test that is supposed to guard the copy**
-  (`every-token-rano-knows-is-a-token-this-head-knows`, `tests/tests.lisp:1108`), whose
-  token list is a third hand-written copy. C14 asks for ONE shared artefact. **Ruling 5 at
-  the top of this document recommends leaving the copy and pointing the GUARD at `rano`**
-  — the cheap half of C14, and the half that is actually broken.
+- **Drift — RULED §11.5, and LANDED in `e037273`.** The token table exists in three
+  places — A's `Lang::from_token` (which lives in the operator's own `rano`), B's
+  `*fence-tokens*` (`src/markdown.lisp:252`), and **the test that was supposed to guard the
+  copy** (`tests/tests.lisp`), whose token list was a third hand-written copy. C14 asks for
+  ONE shared artefact; the ruling is the cheap half of it: **leave the copy and point the
+  GUARD at `rano`**, because the thing that was actually broken is that the check was a copy
+  of the thing it checked. The test now EXTRACTS the tokens from `rano`'s source, asserts a
+  plausible count so an extractor that stops matching fails loudly rather than looping over
+  nothing, and was falsified by adding a token to `rano` and watching it fire.
 
 ## §2.7 Nested and ordered lists
 
@@ -669,22 +687,35 @@ half, and one or two are requirements whose *criterion* nobody has settled yet.
 - **Not established**: a NATURAL out-of-range style. `rebuild-style-sgrs` keeps the
   tables parallel (4/4 measured), so it takes a push that shortens the vocabulary.
 
-## §3.3 `truncate-target` must agree
+## §3.3 `truncate-target` must agree — **and the cap is PER LAYER, §11.1**
 
 - **SETUP** a target of 121 ASCII characters; 61 CJK (122 columns); 61 emoji; one
   carrying `0x9B`.
 - **STIMULUS** truncate.
-- **ASSERTION** the cap is **120 COLUMNS**, the ellipsis counts, and **C1 is stripped**
-  with C0 and DEL.
-- **Evidence** `a-display-target-is-cut-to-a-column-budget-not-a-byte-count`.
+- **ASSERTION**, and the ruling is the two halves of it:
+  1. **A DAEMON'S cap is a BYTE cap and is allowed to be one.** `TARGET_MAX_BYTES` = 120
+     bytes (`sessionlog/src/event.rs:288`), cut on a character boundary with control
+     characters replaced first. The criterion asks nothing else of it: **a daemon has no
+     terminal to count columns with**, and the target is cut before any head exists.
+  2. **A HEAD'S cap must be a COLUMN cap:** `*target-max-cols*` = 120 columns, the
+     ellipsis counts, and **C1 is stripped** with C0 and DEL.
+  3. **And the two are NOT required to be equal.** Both picked 120, which is why this read
+     as a drift for a day; they differ only off ASCII (120 bytes = 40 CJK = 80 columns,
+     where 120 columns = 60 CJK = 180 bytes), and that difference is the two layers
+     answering their own question rather than disagreeing.
+- **Evidence** `a-display-target-is-cut-to-a-column-budget-not-a-byte-count`,
+  `no-client-frame-this-head-can-build-carries-a-null`.
 - **Status RUNS + LIVE.** `a6fa7f5`: measured `121 a → 120 cols`, `61 CJK → 119 cols`,
   `60 CJK (exactly 120) → untouched`.
-- **Drift** the cap's UNIT, which is the one thing left and is ruling 1 at the top of
-  this document. **A's DAEMON** cuts a target at 120 BYTES (`TARGET_MAX_BYTES`,
-  `sessionlog/src/event.rs:288`); **this head** cuts at 120 COLUMNS. Both picked 120, and
-  both are right about what the layer each one is in can measure — a daemon has no
-  terminal to count columns with. **The recommendation is to rule the criterion per layer
-  and change neither head.** (`console` is not a language, on both heads: ruled.)
+- **Drift — RULED, §11.1: per layer, and NEITHER HEAD MOVES.** What made this a drift was
+  a criterion that said *must agree* about a number two layers each measure with a different
+  unit. The rule above replaces it, so the criterion is met by both heads as they stand.
+  Ruling out the alternatives, because a reader will reach for them:
+  **this head moving to bytes** would cut text that fits, in a unit nobody can see, and gain
+  nothing; **the daemon moving to columns** is not a rounding change — a headless daemon must
+  hand the field to a head untrimmed, which is a protocol decision, and it buys a difference
+  nobody has reported. (The other half of this entry's history — `console` is not a language,
+  on both heads — is ruled and unchanged.)
 
 # D. Protocol
 
@@ -839,7 +870,8 @@ not `peak - pending`. **Constants measured**, above.
 - **ASSERTION** the warning is **drawn as a row where it arrived**; a long one folds to
   three lines and a `… +N lines · /notes` seam; retiring it takes the row off the screen
   and **leaves it in the record**; a resync and a reattach **replant it retired**;
-  `/status` reads `N of M retired`.
+  `/status` reads `N of M retired`. **A RESTART is not part of this and is not asked
+  for** — see the drift, ruled.
 - **Evidence** `a-warning-the-daemon-sends-is-drawn-where-it-arrived`,
   `a-long-warning-folds-to-three-lines-and-names-the-verb`,
   `a-retired-warning-leaves-the-screen-and-stays-counted`,
@@ -850,10 +882,22 @@ not `peak - pending`. **Constants measured**, above.
 - **Status RUNS + LIVE.** `55ad98b`/`486ed6e`; the measurement that opened the item was
   `warnings 9 → 10, note NIL, on-screen NIL, alarmed-p → only the three counters it
   already had`.
-- **Drift** the retirement KEY: reference `w|{code}|{ts}|{fnv1a(detail)}` persisted in
-  `head.toml` with a cap; this head `{code}|{ts}|{detail}` in memory. **The criterion
-  says the retirement survives a resync and a reattach, not a RESTART** — the reference
-  does more, and that is a criterion decision for phase 2.
+- **Drift — RULED, §11.2: the criterion STANDS as written (*survives a resync and a
+  reattach*), and A's persistence is a SUPERSET it may keep.** Two facts, so neither head
+  changes:
+  · the reference writes the retired set to `head.toml` — key `w|{code}|{ts}|{fnv1a(detail)}`,
+    cap `RETIRED_CAP` 512 — so its retirement also survives a **restart of the head**;
+  · this head keeps `{code}|{ts}|{detail}` on the session, in memory, which is what the
+    criterion asks for and all it asks for. The cost of the difference is that a wall
+    dismissed before a restart comes back; a few keystrokes a session.
+
+  **Restart-survival does not widen this row.** If it is ever wanted it becomes its OWN
+  row with its own cap and its own file, because **this is the only item on this list that
+  writes to the operator's config directory** — the reference's file-write is a decision
+  about the operator's box, not a detail of a dismissal, and it should be taken as one.
+  This head storing whole `detail`s rather than a hash is why it does not write at all:
+  a paragraph in `head.toml` is a file nobody can read, and the set lives for the life of
+  the process.
 
 ## R11 What was asked of the oracle, and what it answered, must be readable
 
@@ -947,16 +991,29 @@ not `peak - pending`. **Constants measured**, above.
 - **SETUP** a live head.
 - **STIMULUS** a batch that jumps (40 → 52); then a contiguous frame; then a
   redelivery that steps BACKWARDS.
-- **ASSERTION** the jump is **filed as a row** (`jumped from 40 to 52 — 11 events never
-  arrived`), **counted**, and the following frame is folded normally; a step of one is
-  NOT reported; a step backwards is NOT reported (that is the redelivery §13.2b
-  promises); a mark of zero is not a gap.
+- **ASSERTION** the jump is **SAID** — filed as a row (`jumped from 40 to 52 — 11 events
+  never arrived`) — and **COUNTED**, and the following frame is folded normally; a step of
+  one is NOT reported; a step backwards is NOT reported (that is the redelivery §13.2b
+  promises); a mark of zero is not a gap. **And what the head does about it is the head's
+  own choice** — see below, where the criterion used to say *repairs* and no longer does.
 - **Evidence** `a-gap-in-the-event-stream-is-said-counted-and-filed`.
 - **Status RUNS.** `65b63ef`.
-- **Drift** both heads were missing this; the criterion as written (*"says so and
-  repairs it"*) asks for a RESYNC on detection, which this head does not do
-  automatically — it files the row and tells the operator `/resync`. **That difference
-  is worth ruling before phase 2.**
+- **Drift — RULED, §11.4: the criterion says SAID and COUNTED; it no longer says
+  "repairs".** The word was the drift, and the two heads are both honest without it:
+  · **the reference queues `Action::Resync` itself** on detection, at most one in flight
+    (`app.rs:2484-2512`);
+  · **this head** files the row, counts it, and names `/resync` so the operator presses it.
+
+  **Who presses the key is the head's choice, and the reason is worth keeping in the
+  criterion so the next reader does not re-open this as a defect:** a resync **REPLACES the
+  transcript**. Done automatically, it moves the ground under somebody who is reading —
+  scroll position, the row they were on — in the middle of a session that just told them a
+  gap exists, and on a long transcript that is a visible event nobody asked for. It also
+  admits a loop (gap → resync → gap → resync) that the reference answers with a
+  one-in-flight check. Filing the row and naming the verb puts the same fact in front of the
+  same person with the repair one keystroke away, and neither head may claim the other is
+  wrong: **what must not differ is that a gap is SAID and COUNTED, which is exactly what
+  both do.**
 
 # F. The head's own state, and the two defects found while hunting
 
@@ -1166,13 +1223,13 @@ costs at the top of this document.**
 | ~~§1.5 an absent reason~~ | ~~reference draws nothing; this head says `no oracle was consulted`~~ | **CLOSED, letibot `a8f8083`** — both say it |
 | ~~§1.6 the gate card~~ | ~~reference draws neither deadline nor consequence; this head is the spec~~ | **CLOSED, letibot `e379dc0`** — both draw both |
 | ~~§3.1 what is asked~~ | ~~A must sanitise (its painter can emit); B must prove (its painter cannot)~~ | **CLOSED, letibot `e0a99b9`** — both sanitise |
-| §3.3 the cap | A's DAEMON cuts a target at 120 BYTES; this head cuts at 120 COLUMNS | unruled — **and both are right about what each layer can measure**. See ruling 1 |
-| R10 retired-set key | reference persists a hash to `head.toml` (cap 512); this head holds it in memory | unruled — the criterion says *survives a resync and a reattach*, not *a restart*. See ruling 2 |
-| R13 and the notice | reference's `notice_ttl` counts FRAMES; this head counts time | this head — **one defect, two symptoms**. See ruling 3 |
-| R17 on detection | the criterion says *"says so and repairs it"*; letibot queues the resync itself, this head files a row and names `/resync` | unruled — automatic repair vs. offering it. See ruling 4 |
-| a job that never ran | `JobState::NotScoped` has `produced == 0`, so both heads draw their *wrote nothing at all* row under a header saying the command never ran | unruled — the honest line is *it never ran*; fixing one head alone is a divergence. See ruling 6 |
-| R18's card, the daemon's five | was: the headline says exec access, the baseline says `auto`, the target is `<no target argument>`, the boundary is `workspace: /`, the label names the tool `<tool>` — identical on both heads, because every one is the daemon's sentence drawn verbatim | **mostly CLOSED, letibot `da4a576` (03:48)** — the workspace fact, the label, and an *"the path is inside"* claim about a path nobody named are fixed; `auto` beside `exec` is *true* and A explains why; one wording question is **ruling 7**. **The sixth statement was this head's and was wrong** (`3a9b183`) |
-| §2.6 the token table | the table is `rano`'s; this head copies it, and the test that guards the copy restates it a third time | C14 wants one shared artefact. See ruling 5 |
+| §3.3 the cap | A's DAEMON cuts a target at 120 BYTES; this head cuts at 120 COLUMNS | **RULED §11.1 — per layer, neither head moves.** Landed in §3.3 below |
+| R10 retired-set key | reference persists a hash to `head.toml` (cap 512); this head holds it in memory | **RULED §11.2 — the criterion stands at resync+reattach; A's persistence is a superset it may keep.** Landed in R10 below |
+| R13 and the notice | reference's `notice_ttl` counts FRAMES; this head counts time | this head — **one defect, two symptoms**. RULED §11.3: **A moves**, and it is R13's change |
+| R17 on detection | the criterion says *"says so and repairs it"*; letibot queues the resync itself, this head files a row and names `/resync` | **RULED §11.4 — the criterion says SAID and COUNTED; "repairs" is dropped and both behaviours stand.** Landed in R17 below |
+| a job that never ran | `JobState::NotScoped` has `produced == 0`, so both heads draw their *wrote nothing at all* row under a header saying the command never ran | **RULED §11.6 — letibot rules the wording, both heads render the same string.** This head is second in line and is waiting for it rather than guessing |
+| R18's card, the daemon's five | was: the headline says exec access, the baseline says `auto`, the target is `<no target argument>`, the boundary is `workspace: /`, the label names the tool `<tool>` — identical on both heads, because every one is the daemon's sentence drawn verbatim | **mostly CLOSED, letibot `da4a576` (03:48)** — the workspace fact, the label, and an *"the path is inside"* claim about a path nobody named are fixed; `auto` beside `exec` is *true* and A explains why; the last wording question is **RULED §11.7 — A's, and A's own words**. **The sixth statement was this head's and was wrong** (`3a9b183`) |
+| §2.6 the token table | the table is `rano`'s; this head copies it, and the test that guarded the copy restated it a third time | **RULED §11.5 — leave the copy, point the GUARD at `rano`. LANDED `e037273`** |
 | ~~R7's blocking~~ | ~~reference blocks nothing; `Peek`/`FetchRow` share *"a read, not a move"*~~ | **STRUCK, letibot `114e8d7`** — both hand the model a locator and say *do not wait*; the row had no citation in either document and was never a disagreement |
 
 # What is ARGUED and not run — the honest list
