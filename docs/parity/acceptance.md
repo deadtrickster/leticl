@@ -287,7 +287,7 @@ half, and one or two are requirements whose *criterion* nobody has settled yet.
   `JobState::NotScoped` (`not run (could not join its scope)`) produces
   `produced == 0`, so the pane adds *it wrote nothing at all* under a header that says
   the command never ran. Rare, reachable only through a scope-join failure, and letibot
-  says the same thing (`app.rs:8255-8270`) — so it belongs in the drift table, not in a
+  says the same thing (`app.rs:8407-8416`) — so it belongs in the drift table, not in a
   unilateral change.
 - **This is the same shape a second time, not a third hand-rolled pane.** `:peek` was
   the first overlay whose content is not the session's; `:job-out` is the second and
