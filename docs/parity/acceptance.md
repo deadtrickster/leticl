@@ -13,10 +13,12 @@ from: the requirements doc is the spec, and this is the suite.
 
 ---
 
-# What needs you — seven rulings, and five rows that no longer need one
+# What needs you — seven rulings, and six rows that no longer need one
 
 **For the operator, first thing. Nothing here is a defect report; every item is a choice
-that neither head may make on its own.**
+that neither head may make on its own.** Items 1–7 are the drift rows still standing;
+**item 8 is where this document itself should live**, which is a question rather than a
+defect.
 
 **Measured 2026-09-22 ~03:45 against letibot's HEAD, which was `38df3f2` at 03:31** — not
 against the `8af671e` the four `docs/parity/*.md` were pinned to. That re-measurement is
@@ -31,12 +33,12 @@ the commit that closed each.
 found. That is the whole argument for dating a measurement, and it is why the number of
 things needing you went *down* on the second look rather than up.
 
-Seven rows remain. Two of them are rows added tonight by this head (`NotScoped`, and
-R18's card — which letibot mostly closed while this was being written, leaving one
-sentence). Each ruling is written as: **what the two heads do**, **what each way costs
-including leaving it**, and **a recommendation with its reason**. They are recommendations,
-not rulings — where the two heads are both defensible I have said so rather than finding a
-middle.
+Seven rulings remain (items 1–7 below), and the eighth item is the document's own home.
+Two of the seven are rows added tonight by this head (`NotScoped`, and R18's card — which
+letibot mostly closed while this was being written, leaving one sentence). Each ruling is
+written as: **what the two heads do**, **what each way costs including leaving it**, and **a
+recommendation with its reason**. They are recommendations, not rulings — where the two
+heads are both defensible I have said so rather than finding a middle.
 
 ---
 
@@ -246,7 +248,10 @@ table below, with the commit that closed it.
 | §3.1 content and the terminal | letibot `e0a99b9` (09-22 02:07) | both sanitise; the criterion is a proof for this head and a fix for that one |
 | §2.7 nested and ordered lists | letibot `05dfa4b` (09-22 02:14) | both count `1. 2. 3.` from the number the model wrote — A's own rendering of a loose list is fixed |
 | R7's blocking | letibot `114e8d7` + the tool text | both hand the model a locator and say *do not wait for it*. **The row had no citation in either document and was never a disagreement between heads** — recommend striking it |
-| R18's card, three of five plus a fourth found | letibot `da4a576` (09-22 **03:48** — landed while this list was being written) | the workspace fact, the `<tool>` label, and an *"the path is inside"* claim about a path nobody named; one wording question remains and is ruling 7 |
+
+And one more, which is ruling 7 rather than a closed row: **R18's card**, three of whose
+five statements letibot fixed at `da4a576` (03:48, landed while this was being written) with
+a fourth found and fixed in the same commit — leaving one wording question.
 
 ---
 
