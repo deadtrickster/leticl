@@ -137,6 +137,8 @@
    #:markdown-lines #:inline-spans #:reasoning-header #:reasoning-lines
    #:wrap-segments #:top-border #:status-line
    #:decision-card-lines #:picker-lines #:help-lines *slash-commands*
+   #:permission-card-lines #:card-content-window #:card-scroll-by #:reset-card-scroll
+   #:*card-scroll* #:*card-page*
    #:quit-card-lines #:secret-card-lines
    #:todos-lines #:repo-todo-lines #:repo-todo-rows #:repo-todo-rows-cached
    #:read-todo-md #:strip-todo-markup

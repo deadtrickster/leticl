@@ -2033,6 +2033,29 @@ segment, and `(car (car line))` is the text."
           (mapcar (lambda (line) (format nil "~{~a~}" (mapcar #'car line)))
                   lines)))
 
+(defun %card-lines (head cols)
+  "Both halves of the card — CONTENT and LADDER — as a list of two lists.
+
+**R20 split the return value in two**, and a caller that takes only the first value gets
+a card with no options: the exact defect the split exists to fix, made by the test that
+is supposed to catch it. Every test that wants *what is on the card* goes through here;
+the render path is the one place that treats the halves differently, because it is the
+one place that knows there are two."
+  (multiple-value-list (leticl::permission-card-lines head cols)))
+
+(defun %card-lines-all (head cols)
+  "The whole card as ONE list of lines — both halves, in the order they are drawn."
+  (let ((all nil))
+    (dolist (half (%card-lines head cols))
+      (setf all (append all half)))
+    all))
+
+(defun %card-text (head cols)
+  "The whole card as readable text, one row per line."
+  (format nil "~{~a~^~%~}"
+          (mapcar (lambda (line) (format nil "~{~a~}" (mapcar #'car line)))
+                  (%card-lines-all head cols))))
+
 (defun lines-text (lines)
   "One string per line, for asserting on a pane's rows."
   (mapcar (lambda (line) (format nil "~{~a~}" (mapcar #'car line))) lines))
@@ -4043,7 +4066,7 @@ check that would have caught the bug on the day it landed."
                                            :kind "reject_always")))))
     (setf (head-secret-req h) (list :req-id "s1" :prompt "password:" :command "sudo ls"
                                     :deadline 0))
-    (dolist (pair (list (cons "permission card" (leticl::permission-card-lines h 210))
+    (dolist (pair (list (cons "permission card" (%card-lines-all h 210))
                         (cons "password card" (leticl::secret-ask-lines h 210))))
       (is (plusp (length (cdr pair))) (format nil "the ~a has rows" (car pair)))
       (is (%well-formed-lines-p (cdr pair))
@@ -9395,7 +9418,7 @@ summary sentence and once on its own line under it."
                            :basis "it is the project's own test command"
                            :cites (list "trail entry 4" "trail entry 9")
                            :latency-ms 310)))
-         (text (format nil "~{~a~^~%~}" (lines-text (leticl::permission-card-lines h 120)))))
+         (text (%card-text h 120)))
     (is (search "? `bash` wants exec access [exec]" text)
         "the ask, in the reference's shape, with the target taken off it")
     (is (= 1 (count-substring "cargo test --workspace" text))
@@ -9430,7 +9453,7 @@ summary sentence and once on its own line under it."
   ;; no always-allow on offer, no glob hint: a hint for an option this request
   ;; does not have teaches the operator to stop reading the hints
   (let* ((h (%decision-head :options :short))
-         (text (format nil "~{~a~^~%~}" (lines-text (leticl::permission-card-lines h 120)))))
+         (text (%card-text h 120)))
     (is (not (search "`allow_always <glob>`" text)) "no always-allow, no glob line")
     (is (not (search "`deny_and_tell" text)) "no reject-always, no words line")
     (is (search "no oracle was consulted for this one" text)
@@ -9523,7 +9546,7 @@ the golden renders."
     (setf (session-open-decisions (head-session h))
           (list (list :req-id "d" :kind "permission" :summary "`bash` wants exec access"
                       :options (list (list :option-id "allow_once" :label "Allow once")))))
-    (let ((text (format nil "~{~a~^~%~}" (lines-text (leticl::permission-card-lines h 90)))))
+    (let ((text (%card-text h 90)))
       (is (search "Allow once" text) "the card is there")
       (is (not (search "left" text)) "and nothing counts down")
       (is (not (search "expires" text)) "and nothing expires"))))
@@ -9596,7 +9619,7 @@ monotonic one, ~s"
         (is (= wire (getf d :deadline-wire))
             "with the wire's value kept, as the live path keeps it")
         ;; the card itself, which is what the operator read
-        (let ((text (segs-of (leticl::permission-card-lines h 90))))
+        (let ((text (segs-of (%card-lines-all h 90))))
           (is (search "expires in 5 min" text) "and the card says so: ~s" text)
           (is (not (search "29833973" text)) "not the year 2083"))))))
 
@@ -9665,7 +9688,7 @@ to a label whose subject is the daemon's to state."
                                               (list :option-id "allow_session"
                                                     :label label))
                                :on-timeout "ask")))
-             (segs-of (leticl::permission-card-lines h 120)))))
+             (segs-of (%card-lines-all h 120)))))
     ;; (1) the name is PRESENT — the daemon named the program
     (let ((text (card-for "Allow `head` (this class) for the rest of the session")))
       (is (search "Allow `head` (this class) for the rest of the session  (allow_session)"
@@ -9681,6 +9704,248 @@ to a label whose subject is the daemon's to state."
     (let ((text (card-for "Allow this class for the rest of the session")))
       (is (search "<no target argument>" text)
           "the target placeholder is the daemon's as well, and is drawn as sent"))))
+
+;;; -------------------- R20: the options are pinned, the content shrinks ------------ ;;;
+;;;
+;;; Ruled by the operator, 2026-09-22, on a permission card carrying a giant `replace`
+;;; or a commit message: *"I'm shown a permission prompt and I just can't see the
+;;; selector."* And the shape, in their words:
+;;;
+;;; > those selectors are staying pinned to bottom and not scrollable — the scrollable
+;;; > viewport shrinks vertically tho.
+;;;
+;;; **MEASURED BEFORE THE FIX, and it is the reason this file has five tests rather than
+;;; one.** A 40-line diff on a 30-row screen: not one option, not the hint, not the
+;;; deadline — `card-rows` shrank from the end of one list and the end is where the
+;;; choices are. At EVERY size from 8 rows to 30. Same defect as letibot's
+;;; `dec_rows -= 1` (`app.rs:6641`), which is what the ruling points at.
+
+(defun %r20-card (head &key (diff-lines 40) (req-id "adj-r20") (deadline nil))
+  "The card the operator was looking at: unbounded content above the ladder."
+  (setf (session-open-decisions (head-session head))
+        (list (list :req-id req-id :kind "permission"
+                    :summary "`edit` wants write access to `src/panes.lisp`"
+                    :target "src/panes.lisp"
+                    :detail (format nil "the patch:~%~{~a~%~}"
+                                    (loop for i from 1 to diff-lines
+                                          collect (format nil "-old ~d~%+new ~d" i i)))
+                    :because "workspace: /tmp"
+                    :advice (list :would "ask" :basis "it touches the render loop"
+                                  :by "oracle-local" :latency-ms 310)
+                    :options (list (list :option-id "allow_once" :label "Allow this one"
+                                         :kind "allow_once")
+                                   (list :option-id "allow_session"
+                                         :label "Allow `edit` (this class) for the rest of the session"
+                                         :kind "allow_session")
+                                   (list :option-id "deny" :label "Deny" :kind "deny")
+                                   (list :option-id "deny_and_tell"
+                                         :label "Deny, and tell the model why"
+                                         :kind "reject_and_tell"))
+                    :deadline deadline
+                    :on-timeout "deny")))
+  head)
+
+(defun %r20-screen (rows &optional (cols 100))
+  "The rendered frame at ROWS x COLS, as plain strings.
+
+**The clocks are bound around the RENDER and not around `%on-head`** — measured: bound
+around the constructor alone, the render that draws the card reads the real wall clock,
+the deadline `(+ 10000000 300000)` is read as an instant in 1970, and the card says
+`expires in 172 min` where this asserts `expires in 5 min`. The binding has to cover the
+thing being measured."
+  (let* ((leticl::*fixed-clock-ms* 10000000)
+         (leticl::*unix-offset-ms* 0)
+         (h (%on-head :cols cols :rows rows)))
+    (%r20-card h :deadline (+ 10000000 300000))
+    (leticl::%render h)
+    (loop for y from 0 below rows
+          collect (let ((out (make-string-output-stream)))
+                    (loop for x from 0 below cols
+                          for cell = (screen-cell (head-screen h) y x)
+                          do (write-char (if cell (cell-ch cell) #\space) out))
+                    (string-right-trim " " (get-output-stream-string out))))))
+
+(defun %r20-text (rows &optional (cols 100))
+  (format nil "~{~a~%~}" (%r20-screen rows cols)))
+
+(def-test the-ladder-survives-a-card-too-big-for-the-screen (:suite leticl)
+  "**R20, and this is the operator's own measurement turned into an assertion.**
+
+Before the fix, at every size from 8 rows to 30, with a 40-line diff: no
+`allow_once`, no `deny`, no `deny_and_tell`, no hint, no deadline. The fit loop
+shrank the card from the END of one list and the end is where the ladder is.
+
+The rule: **the ladder is pinned to the bottom and is never trimmed**, the content
+above it shrinks into a viewport, and that viewport scrolls. So this asserts the
+ladder at six sizes — and asserts that the CONTENT is what got small, which is the
+other half: a fix that kept everything by drawing the card over the frame would pass
+a ladder-only check."
+  (dolist (rows '(40 30 24 16 12 10))
+    (let* ((leticl::*unix-offset-ms* 0)
+           (text (%r20-text rows)))
+      (is (search "Allow this one  (allow_once)" text)
+          (format nil "~d rows: the first option is on the screen" rows))
+      (is (search "Deny  (deny)" text)
+          (format nil "~d rows: and so is Deny" rows))
+      (is (search "Deny, and tell the model why" text)
+          (format nil "~d rows: and the last one" rows))
+      (is (search "↑↓ to choose" text)
+          (format nil "~d rows: with the keys that answer it" rows))
+      (is (search "expires in 5 min" text)
+          (format nil "~d rows: **and what silence does** — it is part of the ladder, \
+because the consequence of not answering is about the answer" rows))
+      ;; and the content is NOT all there: the card cannot be claiming to show a diff it
+      ;; has no rows for
+      (is (not (search "+new 40" text))
+          (format nil "~d rows: the content is windowed, not drawn in full" rows)))))
+
+(def-test the-content-viewport-says-how-much-is-out-of-view (:suite leticl)
+  "**The seam counts, and it does not say *more*.**
+
+The operator's own correction: *\"it says how much is out of view, not that there is
+more.\"* A count is a fact the reader can act on; *\"there is more\"* is a shrug. So the
+seam carries the number, and the number is the arithmetic — total rows minus what the
+window shows.
+
+It also names the key, and the key has to work: a seam that advertises `PgDn` and is
+swallowed by the composer is the lie this repo keeps refusing to ship."
+  (let* ((text (%r20-text 16))
+         (seam (find-if (lambda (l) (search "out of view" l)) (%r20-screen 16))))
+    (is (not (null seam)) "a windowed card says so: ~s" text)
+    (is (search "below" seam) "below, because it opens at the top: ~s" seam)
+    (is (search "PgDn scrolls" seam) "and names the key that moves it: ~s" seam)
+    ;; the count is the real one: 40 diff lines are 81 rows, plus the headline and the
+    ;; target and `the patch:` — the window shows a few, the seam accounts for the rest
+    (let* ((mark (search "… " seam))
+           (digits (subseq seam (+ mark 2)))
+           (n (parse-integer (subseq digits 0 (position #\space digits)))))
+      (is (> n 60) "the count is the whole of what is not shown, not a sample: ~d" n))
+    ;; a card that FITS has no seam: a seam on a card with nothing to scroll is a
+    ;; promise of content that is not there
+    (let* ((leticl::*fixed-clock-ms* 10000000)
+           (leticl::*unix-offset-ms* 0)
+           (h (%on-head :cols 100 :rows 40)))
+      (%r20-card h :diff-lines 0 :deadline (+ 10000000 300000))
+      (leticl::%render h)
+      (let ((small (format nil "~{~a~}"
+                           (loop for y from 0 below 40
+                                 collect (let ((o (make-string-output-stream)))
+                                           (loop for x from 0 below 100
+                                                 for c = (screen-cell (head-screen h) y x)
+                                                 do (write-char (if c (cell-ch c) #\space) o))
+                                           (get-output-stream-string o))))))
+        (is (not (search "out of view" small))
+            "everything fits, so there is nothing to disclose and no seam: ~s" small)
+        (is (search "Deny  (deny)" small) "and the ladder is still there")))))
+
+(def-test the-card-viewport-scrolls-and-the-ladder-does-not-move (:suite leticl)
+  "**The second half of the ruling: *the scrollable viewport shrinks vertically tho***
+— and it still scrolls, so the whole diff is readable without the choices leaving the
+screen.
+
+Driven through `%handle-key`, so this is a test of the BINDING and not of a `setf`: the
+seam names `PgDn`, and a seam that names a key the composer swallows is exactly the
+class of lie this head keeps finding."
+  (let* ((leticl::*fixed-clock-ms* 10000000)
+         (leticl::*unix-offset-ms* 0)
+         (leticl::*card-scroll* 0)
+         (leticl::*card-scroll-for* nil)
+         (h (%on-head :cols 100 :rows 16)))
+    (%r20-card h :deadline (+ 10000000 300000))
+    (flet ((frame ()
+             (leticl::%render h)
+             (format nil "~{~a~%~}"
+                     (loop for y from 0 below 16
+                           collect (let ((o (make-string-output-stream)))
+                                     (loop for x from 0 below 100
+                                           for c = (screen-cell (head-screen h) y x)
+                                           do (write-char (if c (cell-ch c) #\space) o))
+                                     (string-right-trim " " (get-output-stream-string o)))))))
+      (let ((top (frame)))
+        (is (search "-old 1" top) "the viewport starts at the head of the content")
+        (is (search "out of view below" top) "with the seam below it")
+        ;; PgDn through the real key handler
+        (leticl::%handle-key h (list :type :page-down))
+        (is (= *card-page* leticl::*card-scroll*) "PgDn pages by the page unit")
+        (let ((paged (frame)))
+          (is (not (search "-old 1" paged)) "the content moved: the head is gone")
+          ;; **the seam names BOTH sides at once, which is the honest shape** — measured,
+          ;; it reads `… 30 rows above, 53 below out of view · PgUp/PgDn scrolls`
+          (is (search "above" paged) "**and the seam counts what is behind the window**")
+          (is (search "below" paged) "as well as what is ahead of it")
+          (is (search "PgUp/PgDn scrolls" paged) "naming both keys, because both work")
+          (is (search "Allow this one  (allow_once)" paged)
+              "**AND THE LADDER DID NOT MOVE** — the whole point of the ruling")
+          (is (search "expires in 5 min" paged) "nor did what silence does"))
+        ;; End goes to the bottom, and the seam says only `above`
+        (leticl::%handle-key h (list :type :end))
+        (let ((end (frame)))
+          (is (search "+new 40" end) "the last row of the content is readable")
+          (is (search "out of view above" end) "with everything behind it counted")
+          (is (not (search "out of view below" end)) "and nothing ahead")
+          (is (search "Deny, and tell the model why" end) "and the ladder is still there"))
+        ;; Home comes back, and the wheel and PgUp walk the same axis
+        (leticl::%handle-key h (list :type :home))
+        (is (= 0 leticl::*card-scroll*) "Home is the top")
+        (leticl::%handle-key h (list :type :mouse :kind :wheel-down))
+        (is (= *card-page* leticl::*card-scroll*) "the wheel pages it too")
+        (leticl::%handle-key h (list :type :page-up))
+        (is (= 0 leticl::*card-scroll*) "and PgUp comes back, clamped at the top")))))
+
+(def-test a-card-that-does-not-fit-never-loses-its-choices-to-the-fit-loop (:suite leticl)
+  "**The fit ladder, at the level the defect happened.**
+
+The old floor was `(> dec 1)` — the card could shrink to a single row, and because the
+card is drawn from the front of one list every row it gave up came off the end. The floor
+is now the ladder plus one row of content, and everything else on the screen is still
+given up first, in the same order: completions, hint, notice, composer rows, stall, box.
+
+This is the test that fails if somebody 'simplifies' the floor back, so it asserts the
+floor itself rather than a screen: `%fit-ladder` is asked for a card of 100 content rows
+and 9 ladder rows on a 20-row screen, and must not return less than 10."
+  (let* ((leticl::*fixed-clock-ms* 10000000)
+         (leticl::*unix-offset-ms* 0)
+         (h (%on-head :cols 100 :rows 20)))
+    (%r20-card h)
+    ;; **PARAMETERISED OVER THE SIZES THAT DISCRIMINATE, and the first version of this
+    ;; test did not.** At 20 rows the old floor `(> dec 1)` still left the card 18 rows —
+    ;; more than a 9-row ladder — so the assertion held with the defect restored and
+    ;; proved nothing. Measured: it takes a frame small enough that the old floor would
+    ;; take the card BELOW its ladder. Falsified by restoring `(> dec 1)`, which fails
+    ;; this at 10 and 8 rows.
+    (dolist (rows '(20 16 12 10 8))
+      (multiple-value-bind (card-rows)
+          (leticl::%fit-ladder h 100 rows 100 9 nil nil nil)
+        (is (>= card-rows 10)
+            (format nil "~d rows: **THE CARD KEEPS ITS LADDER AND A ROW OF CONTENT** — \
+~d rows for 100 rows of content and 9 of choices" rows card-rows))
+        (is (< card-rows 100)
+            (format nil "~d rows: and it is still a window, not the whole card" rows))))
+    ;; a card with NO ladder is ordinary content and may shrink the old way
+    (multiple-value-bind (card-rows)
+        (leticl::%fit-ladder h 100 20 100 0 nil nil nil)
+      (is (>= card-rows 1) "a card with no choices still gets a row: ~d" card-rows))))
+
+(def-test a-new-ask-opens-at-its-own-top (:suite leticl)
+  "A scroll offset is an offset into ONE diff. Carried to the next ask it would open a
+card already scrolled past its own headline — the same defect `*payload-view*` avoids by
+keying its window to the row's item id, and this keys to the decision's `req-id`."
+  (let ((leticl::*fixed-clock-ms* 10000000)
+        (leticl::*card-scroll* 0)
+        (leticl::*card-scroll-for* nil)
+        (h (%on-head :cols 100 :rows 16)))
+    (%r20-card h :diff-lines 40 :req-id "ask-1" :deadline (+ 10000000 300000))
+    (leticl::%render h)
+    (leticl::%handle-key h (list :type :end))
+    (is (plusp leticl::*card-scroll*) "the reader scrolled to the bottom")
+    ;; THE SAME ASK: the offset is the reader's and it stays
+    (leticl::%render h)
+    (is (plusp leticl::*card-scroll*) "redrawing the same card does not move it")
+    ;; A NEW ASK: it opens at its own top
+    (%r20-card h :diff-lines 40 :req-id "ask-2" :deadline (+ 10000000 300000))
+    (leticl::%render h)
+    (is (zerop leticl::*card-scroll*)
+        "**a new ask starts at its own top**, not at the previous diff's offset")))
 
 (def-test the-card-says-what-silence-will-do (:suite leticl)
   "The fact that does not change, and the one an operator who walked away needs.
@@ -9707,7 +9972,7 @@ rule the unreadable-frame path keeps: a wrong consequence is worse than an absen
                       :options (list (list :option-id "allow_once" :label "Allow once"))
                       :deadline (+ 10000000 47000)
                       :on-timeout "deny")))
-    (let* ((lines (leticl::permission-card-lines h 90))
+    (let* ((lines (%card-lines-all h 90))
            (text (lines-text lines))
            (clause (find-if (lambda (l) (search "47s left" (format nil "~{~a~}" (mapcar #'car l))))
                             lines)))

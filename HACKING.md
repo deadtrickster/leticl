@@ -156,6 +156,50 @@ follow-up) is a layout change, and this SBCL treats one as a hard error: a `--tr
 of `head.lisp` at a running head is not a soft failure, it is a head that dies mid-push
 with half a tree. When a change is to the struct, say so and take the restart instead.
 
+### A fixture poked into a live head is indistinguishable from the thing it imitates
+
+**The fourth of these, and the worst of the four, because the first three cost a wrong
+number and this one costs the operator a decision.**
+
+A synthetic card is a *fixture*, and a fixture on the operator's screen is not on a
+screen at all — it is in front of somebody who has to act on it. There is no way for them
+to tell a decision this head was handed from one the daemon actually raised: same card,
+same words, same keys, same consequence if they press one. **Two identical things, one of
+which is a test, is the one shape a fixture must never have.**
+
+Measured, and it is why this entry exists: a probe for R20 built a decision in memory —
+`edit` wants write access with a sixty-line patch — pushed it into `*head*`, and read the
+result off the glass. The comment said *"poked into MY head only: a decision is per-head
+state, so nothing here reaches the operator's head or the daemon."* **The first half is
+true and the conclusion is false: `*head*` IS the operator's head.** They were looking at
+that window, saw a permission card with no selector in it, and had to ask a third party
+what was asking them for permission. Nothing was.
+
+So the rule is the file's oldest one with a sharper edge, and it extends the keystroke
+rule above rather than repeating it: **a keystroke you send is the operator typing; a
+CARD you inject is the operator being asked.** A card is worse, because they cannot even
+tell it happened — a keystroke at least produces a visible result they caused.
+
+```sh
+# WRONG — this is a decision on their screen, and it is indistinguishable from a real one
+tui-eval '(setf (session-open-decisions (head-session *head*)) (list <synthetic>))'
+```
+
+**How to do it instead.** A scratch head, always, with its own daemon or a session of its
+own — the three measurements this session already did that way, and the pattern is in this
+file:
+
+* a job-pane measurement on the operator's daemon: attach a head of its OWN to that
+  daemon's session and read *that* head's screen. The daemon state is shared; the head's
+  screen is not, and the screen is what a fixture changes.
+* `--replay FILE --no-tty` for anything on the render path, which needs no daemon at all.
+* a scratch daemon (`--workspace /tmp/…`) when the fixture has to be a real session.
+
+**And when a fixture genuinely cannot be avoided on a live head** — it can't always — say
+so out loud in the same message, and clean it up in the same breath: the fixture's blast
+radius is the operator's attention, and the least a probe can do is take its card down.
+That is not a licence to keep doing it; it is what to do if you find you already have.
+
 ### The gate REFRESHES what it measures
 
 The third of these, and the one that wasted the most time, because it does not look like

@@ -1061,6 +1061,31 @@ long as the picker stayed open."
            ;; once a line is being typed
            (when (and empty digit (<= 1 digit n))
              (%answer-decision head (1- digit)))))
+        ;; **PAGE, THE WHEEL AND HOME/END SCROLL THE CONTENT VIEWPORT, AND THAT IS
+        ;; R20.** The ladder is pinned and never scrolls, so the content above it needs
+        ;; keys of its own — and they cannot be ↑/↓, which are the ladder's (the
+        ;; reference's own split: `app.rs:3410-3466` gives the arrows to the options).
+        ;;
+        ;; The four are claimed HERE rather than in the composer's arms because a card
+        ;; that owns the keyboard has to own what the card advertises: the seam on the
+        ;; viewport says `PgUp/PgDn scrolls`, and a seam that names a key the composer
+        ;; swallows is the lie this repo keeps refusing to ship. Gated on `empty` for
+        ;; the same reason Enter is: a line being typed is the composer's, and its
+        ;; history walk is on ↑/↓ anyway.
+        ((:page-up) (when empty (card-scroll-by (- *card-page*)) (setf (head-dirty head) t)))
+        ((:page-down) (when empty (card-scroll-by *card-page*) (setf (head-dirty head) t)))
+        ((:home) (when empty (setf *card-scroll* 0 (head-dirty head) t)))
+        ;; Home/End are the two ends. End is a big number rather than a computed
+        ;; maximum: how far the viewport goes is a function of the frame, and the
+        ;; render CLAMPS it there — the same rule as every other window in this head,
+        ;; where the key handler asks and the draw decides.
+        ((:end) (when empty (setf *card-scroll* most-positive-fixnum (head-dirty head) t)))
+        ;; **the wheel dispatches on its KIND, not on `:mouse`** — `%key-type` is the
+        ;; one place that knows, and it exists because the ladders' `:wheel-*` arms never
+        ;; matched and a wheel did nothing anywhere. A wheel is `:wheel-up`/`:wheel-down`
+        ;; by the time it reaches here.
+        ((:wheel-up) (when empty (card-scroll-by (- *card-page*)) (setf (head-dirty head) t)))
+        ((:wheel-down) (when empty (card-scroll-by *card-page*) (setf (head-dirty head) t)))
         (t nil)))))
 
 (defun %payload-key (head key type)

@@ -2010,7 +2010,25 @@ thing rather than as *this one*.
 
 **Nothing here preselects an option.** `head-decision-sel` is untouched by the
 advice: the verdict informs the answer and must never supply it, or the corpus
-fills with rows recording a keystroke rather than a judgement."
+fills with rows recording a keystroke rather than a judgement.
+
+**AND THIS RETURNS TWO VALUES, WHICH IS R20** (letibot `3a9b183`-era; the operator,
+seeing a card with a giant `replace` in it: *"I'm shown a permission prompt and I just
+can't see the selector"*). The card is **content** — headline, target, detail, `because`,
+the oracle's advice — and a **ladder**: the options, the hints that say how to answer, and
+what silence does. The content is unbounded (a diff, a commit message) and the ladder is
+bounded and is *the reason the card exists*.
+
+They used to be ONE list, drawn as `(subseq card-lines 0 card-rows)` while the fit loop
+shrank `card-rows` from the end — so a long diff ate the hint, then the options bottom-up,
+and kept the content. **Measured before the fix, at every size from 8 rows to 30, with a
+40-line diff**: not one option, not the hint, not the deadline on the screen. A card that
+has dropped its choices is a question with no way to answer it, and it is the same defect
+letibot found in its own `dec_rows -= 1` (`app.rs:6641`).
+
+So the ladder is returned separately and `%render` **pins it**: it is never trimmed and
+never scrolled. The content becomes a viewport that SHRINKS to whatever room is left and
+**scrolls**, with a seam saying how much is out of view."
   (let ((d (first (session-open-decisions (head-session head)))))
     (when d
       (let* ((w (max 20 cols))
@@ -2022,10 +2040,19 @@ fills with rows recording a keystroke rather than a judgement."
              (target (or (getf d :target) ""))
              (summary (or (getf d :summary) ""))
              (headline (or (ask-without-target summary target) summary))
-             (out nil))
+             ;; **TWO ACCUMULATORS, AND THAT IS R20.** `out` is the CONTENT — the
+             ;; unbounded part — and `lad` is the LADDER: the options, the hints that
+             ;; say how to answer, and what silence does. Only the content is
+             ;; windowed and trimmed; see this function's docstring.
+             (out nil)
+             (lad nil))
         (flet ((wrapped (text style)
                  (dolist (l (wrap-text text w))
-                   (push (list (cons l style)) out))))
+                   (push (list (cons l style)) out)))
+               (ladder (text style)
+                 "A line of the LADDER: pinned to the bottom, never trimmed."
+                 (dolist (l (wrap-text text w))
+                   (push (list (cons l style)) lad))))
           (wrapped (format nil "? ~a [~a]" headline kind) '(:fg :yellow))
           (when (plusp (length target))
             ;; bold rather than yellow: the question is yellow, and the thing
@@ -2061,27 +2088,27 @@ fills with rows recording a keystroke rather than a judgement."
                                     (format nil "~a ~a" (if picked "▸" " ") label))))
                      (dolist (l (wrap-text (format nil "  ~a" body) w))
                        (push (list (cons l (if picked '(:reverse t) '(:fg :yellow))))
-                             out))))
+                             lad))))
           (cond
             (question
-             (wrapped "  ↑↓ to choose · Enter to answer · or type the id · esc leaves it open"
-                      '(:fg :yellow)))
+             (ladder "  ↑↓ to choose · Enter to answer · or type the id · esc leaves it open"
+                     '(:fg :yellow)))
             ((%option-kind-p options "allow_always")
              ;; the rule an *always allow* will write is in the option's own
              ;; label, so the hint points at EDITING it rather than at inventing
              ;; one: the offer that never said which tool and verb it would
              ;; permit was a pattern the operator could not see and so could not
              ;; adjust
-             (wrapped "  ↑↓ to choose · Enter to answer · or type the id ·              `allow_always <glob>` to widen or narrow the rule shown above"
-                      '(:fg :yellow)))
-            (t (wrapped "  ↑↓ to choose · Enter to answer · or type the id"
-                        '(:fg :yellow))))
+             (ladder "  ↑↓ to choose · Enter to answer · or type the id ·              `allow_always <glob>` to widen or narrow the rule shown above"
+                     '(:fg :yellow)))
+            (t (ladder "  ↑↓ to choose · Enter to answer · or type the id"
+                       '(:fg :yellow))))
           ;; **the option that asks for words says where to type them.** Its label
           ;; promised "tell the model why" and the card never said how, so the why
           ;; was typed into the composer and left sitting there unanswered.
           (when (and (not question) (%option-kind-p options "reject_always"))
-            (wrapped "  `deny_and_tell <why>` denies and sends those words to the model"
-                     '(:fg :yellow)))
+            (ladder "  `deny_and_tell <why>` denies and sends those words to the model"
+                    '(:fg :yellow)))
           ;; **§1.6: WHAT SILENCE DOES, AND HOW LONG THERE IS.** Both facts ride on
           ;; the frame (`deadline`, `on_timeout`, event.rs:569-574) and neither was
           ;; drawn, so two cards sailed past their own 300-second budget and the
@@ -2096,16 +2123,22 @@ fills with rows recording a keystroke rather than a judgement."
           ;; Each half is OMITTED rather than improvised when the daemon did not say
           ;; it — see `deadline-said` and `on-timeout-said` for why each silence is
           ;; right, and why the two silences are not the same silence.
+          ;;
+          ;; **PART OF THE LADDER, and the ruling is why**: the consequence of not
+          ;; answering is about the ANSWER, so it is pinned with the choices. A card
+          ;; that kept its options and dropped `if nobody answers, nothing runs`
+          ;; would be a card the operator can answer without knowing what their
+          ;; silence does.
           (let ((time (deadline-said (getf d :deadline)))
                 (silence (on-timeout-said (getf d :on-timeout))))
             ;; ` · ` between the clauses, and neither is improvised: a conditional
             ;; consequence and a deadline past are two facts about the same card, and
             ;; the operator reads one line rather than two
             (when (or time silence)
-              (wrapped (format nil "  ~{~a~^ · ~}"
-                               (remove nil (list time silence)))
-                       '(:dim t)))))
-        (nreverse out)))))
+              (ladder (format nil "  ~{~a~^ · ~}"
+                              (remove nil (list time silence)))
+                      '(:dim t)))))
+        (values (nreverse out) (nreverse lad))))))
 
 ;;; ----------------------------------------------------- the secret card ;;;
 

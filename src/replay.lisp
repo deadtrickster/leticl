@@ -155,6 +155,11 @@ see this file's header."
          ;; one requirement earlier.
          (*snapshotted-sessions* nil)
          (*queued-unconfirmed* nil)
+         ;; **R20's viewport offset**, and it is here for the same reason the payload
+         ;; window is: it changes what the frame DRAWS, so two replays in one image
+         ;; would otherwise disagree about the second one.
+         (*card-scroll* 0)
+         (*card-scroll-for* nil)
          ;; the clock's own reason to repaint: a replay paints on what the FILE
          ;; says, and a live-frame rule would put a frame per tenth into a byte
          ;; comparison that has to answer the same bytes twice

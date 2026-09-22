@@ -643,7 +643,7 @@ so on a 30-column terminal the reference wrapped the body at 30 and this head
 wrapped it at 26 — four columns of a narrow screen spent on margin."
   (if (>= term-cols 40) +gutter+ 0))
 
-(defun %fit-ladder (head cols rows card-rows stall-p notice-p comp-p)
+(defun %fit-ladder (head cols rows card-rows pinned-rows stall-p notice-p comp-p)
   "Which chrome survives on a terminal of ROWS rows — the reference's fit loop
 (app.rs:5094-5126), which this head did not have at all.
 
@@ -652,7 +652,10 @@ BOXED)`. The ladder **drops the most expendable row first and stops as soon as
 the whole thing fits with a line of transcript left over**, in this order:
 
     completions → the hint bar → the notice → a composer row (down to one)
-                → the stall sentence → the box → a decision row
+                → the stall sentence → the box → the card's CONTENT (down to one row)
+
+and the card's LADDER is never given up at all (R20): the floor is the pinned rows plus
+one row of content, because the choices are why the card exists.
 
 Every position in that order is an argument. The completions row is a typing aid
 and goes first; the hint bar is learnable and goes next; the notice has a TTL and
@@ -690,9 +693,130 @@ transcript."
               ((> body-rows 1) (decf body-rows))
               (stall-p (setf stall-p nil))
               (boxed (setf boxed nil))
-              ((> dec 1) (decf dec))
-              (t (return)))))
+        ;; **THE CARD'S FLOOR IS THE LADDER, AND THAT IS R20.** This arm used to
+        ;; read `((> dec 1) (decf dec))` — the card shrank to one row like
+        ;; everything else — and because the card is drawn from the FRONT of one
+        ;; list, every row it gave up came off the END, which is where the OPTIONS
+        ;; are. Measured with a 40-line diff on a 30-row screen: not one option, not
+        ;; the hint, not the deadline. The operator, on a card carrying a giant
+        ;; `replace`: *"I'm shown a permission prompt and I just can't see the
+        ;; selector."*
+        ;;
+        ;; So the ladder is not part of what the ladder gives up. The floor is the
+        ;; pinned rows PLUS one content row when there is content, because a card
+        ;; that shows its choices and no question is the same defect with the sign
+        ;; flipped. Everything else on the screen is still given up first, and if
+        ;; even the floor does not fit, the loop returns and the frame clips — the
+        ;; composer and the ladder are what the operator must see, and a transcript
+        ;; row is what they lose.
+        ((> dec (if (plusp pinned-rows) (1+ pinned-rows) 1)) (decf dec))
+        (t (return)))))
     (values dec hint notice-p stall-p comp-p body-rows boxed)))
+
+(defparameter *card-page* 10
+  "How many rows one press pages a card's content viewport.
+
+**The payload window's own number** (`*payload-page*`, `src/cards.lisp`), and reused
+rather than chosen a second time for the reason that one gives: the window's height is a
+function of the frame and the content, and the key handler knows neither, so the unit is
+a constant and the CLAMP is where the height is known. Two windows in one head that paged
+by different amounts would be two conventions for one idea.
+
+A `defparameter` and not a `defconstant`: the file pusher SKIPS constants.")
+
+(defvar *card-scroll* 0
+  "How far the CARD's content viewport has been scrolled, in rows.
+
+**R20's second half, and it is a `defvar` for the reason the payload window is**: it
+changes what the frame DRAWS and every frame reads it, so a head slot would be a struct
+change and a struct change is a restart. Bound by `with-replay-globals`, because a replay
+must answer the same bytes twice.
+
+**Reset whenever the card is not the same card**: a scroll offset is an offset into one
+diff, and carrying it to the next ask would open a card already scrolled past its own
+headline. `%render` does that by keying on the `req_id` it last drew for, the same shape
+`*payload-view*` uses for the row it is open on.")
+
+(defvar *card-scroll-for* nil
+  "The `req_id` `*card-scroll*` belongs to, so a new ask starts at the top.")
+
+(defun reset-card-scroll ()
+  "The next card starts at its own top."
+  (setf *card-scroll* 0
+        *card-scroll-for* nil))
+
+(defun card-scroll-by (n)
+  "Page the card's content viewport by N rows. The clamp is the render's.
+
+**Here is where the SIGN lives, one place for every key that scrolls this viewport**, by
+the same argument `editor.lisp` makes for the panes: the offset counts rows hidden ABOVE,
+so moving toward the beginning DECREASES it, and a second sign convention written at a
+second key would be the bug the panes already had once."
+  (setf *card-scroll* (max 0 (+ *card-scroll* n))))
+
+(defun card-content-window (content room rows-that-matter)
+  "CONTENT as a viewport of ROOM rows, with the seam R20 asks for.
+
+Returns the lines to draw, at most ROOM of them. **The seam is a row of the viewport and
+not a line of the card**, so it is counted here; whatever is left after it is content.
+
+**The seam says how much is OUT OF VIEW, not that there is more** — the operator's own
+correction, and it is the difference between a count and a shrug. Three shapes, because
+there are three places the reader can be:
+
+    … 34 rows out of view below · PgDn scrolls
+    … 12 rows out of view above · PgUp scrolls
+    … 12 rows above, 34 below out of view · PgUp/PgDn scrolls
+
+and NOTHING when the whole thing is visible: a seam on a card that fits is a promise of
+content that is not there.
+
+**The clamp is here because this is where the height is known**, the rule the payload
+window and every pane keep: `*card-scroll*` is set by a key handler that cannot see the
+frame, so the offset it wrote is clamped to what this room can actually show, and the
+clamped value is written BACK — otherwise `PgDn` at the bottom would keep raising an
+offset nobody reads and the next `PgUp` would appear to do nothing.
+
+ROWS-THAT-MATTER is the count of content rows a caller wants visible at minimum, used
+only to decide whether a seam may be afforded at all; it is 0 for every caller today and
+exists so a future one can say *I would rather cut the content than the seam*."
+  (declare (ignorable rows-that-matter))
+  (let* ((total (length content))
+         (room (max 0 room)))
+    (cond
+      ;; nothing to show, or no room to show it in
+      ((zerop room) nil)
+      ((<= total room)   (subseq content 0 (min total room)))
+      (t
+       ;; **ONE ROW OF THE ROOM IS THE SEAM, AND THE WINDOW IS NEVER TALLER THAN ITS
+       ;; ROOM.** Measured, and this is the off-by-one that put a card eleven rows tall
+       ;; into ten: the floor here used to be `(max 1 (1- room))`, so a room of ONE gave
+       ;; one content row PLUS the seam — two lines — and the card drew over the alarm row
+       ;; below it, which came out on the glass as `⚠ detached — retryingf nobody answers,
+       ;; nothing runs`. A room of one can afford the seam or a line of content, and the
+       ;; seam is the honest one: one line of a diff says nothing about the eighty-five
+       ;; below it.
+       (let* ((visible (max 0 (1- room)))
+              (max-scroll (max 0 (- total visible)))
+              (start (max 0 (min max-scroll *card-scroll*)))
+              (hidden-above start)
+              (hidden-below (max 0 (- total (+ start visible)))))
+         (setf *card-scroll* start)
+         (when (and (zerop hidden-above) (zerop hidden-below))
+           (return-from card-content-window (subseq content 0 room)))
+         (let* ((plural (if (= 1 (max hidden-above hidden-below)) "" "s"))
+                (window (subseq content start (min total (+ start visible))))
+                (where (cond ((and (plusp hidden-above) (plusp hidden-below))
+                              (format nil "~d row~a above, ~d below out of view · PgUp/PgDn scrolls"
+                                      hidden-above plural hidden-below))
+                             ((plusp hidden-above)
+                              (format nil "~d row~a out of view above · PgUp scrolls"
+                                      hidden-above plural))
+                             (t
+                              (format nil "~d row~a out of view below · PgDn scrolls"
+                                      hidden-below plural)))))
+           (append window
+                   (list (list (cons (format nil "    … ~a" where) '(:dim t)))))))))))
 
 (defun %render (head)
   "State to the cell buffer.
@@ -714,7 +838,10 @@ scrolls the transcript by a row every keystroke.
          (stall (stall-row head cols))
          (notice (notice-line head cols))
          (completions (completions-line head cols))
-         (card-lines nil))
+         (card-lines nil)
+         ;; **R20: the ladder is a SECOND list, and it is the pinned one.** NIL for
+         ;; every card that does not have one, which is all of them but the decision.
+         (card-ladder nil))
     (screen-clear s)
     ;; The card that owns the keyboard, in the reference's own order
     ;; (app.rs:5053-5066): a password, then a decision, then the way out, then a
@@ -724,14 +851,31 @@ scrolls the transcript by a row every keystroke.
     (cond ((head-secret-req head)
            (setf card-lines (secret-ask-lines head cols)))
           ((%open-decision head)
-           (setf card-lines (permission-card-lines head cols)))
+           ;; **TWO VALUES, and the second is the LADDER** (R20). The scroll offset
+           ;; is keyed to THIS ask, so a new card opens at its own top rather than
+           ;; inheriting an offset into somebody else's diff — the shape
+           ;; `*payload-view*` keeps for the row its window is open on.
+           (let ((id (getf (%open-decision head) :req-id)))
+             (unless (equal id *card-scroll-for*)
+               (setf *card-scroll* 0
+                     *card-scroll-for* id))
+             (multiple-value-setq (card-lines card-ladder)
+               (permission-card-lines head cols))))
           ((head-quit-open head)
            (setf card-lines (quit-card-lines head cols)))
           (*pick-open*
            (setf card-lines (pick-card-lines head cols))))
+    ;; a card with no ladder is all content, and the mode-confirm question rides
+    ;; ABOVE whatever it is (it owns the keyboard while it is up)
     (setf card-lines (append (mode-confirm-lines cols) card-lines))
     (multiple-value-bind (card-rows hint-p notice-p stall-p comp-p body-rows boxed)
-        (%fit-ladder head cols rows (length card-lines)
+        ;; **THE CARD'S TOTAL IS CONTENT PLUS LADDER**, and passing only the content
+        ;; here was a real bug the tests caught: the loop decremented a `dec` that
+        ;; counted the content, so a card whose content exactly filled the room came out
+        ;; with a one-row viewport and a seam, on a screen with thirty rows to spare.
+        ;; The total is what has to fit, and the ladder is what the floor is made of.
+        (%fit-ladder head cols rows (+ (length card-lines) (length card-ladder))
+                     (length card-ladder)
                      (and stall t) (and notice t) (and completions t))
       (let* ((composer (composer-line head cols :boxed boxed :max-rows body-rows))
              (composer-rows (length composer))
@@ -823,10 +967,32 @@ scrolls the transcript by a row every keystroke.
                   (lines (%viewport-lines head cols want)))
              (%place-lines s lines body-top (+ body-top (length lines) -1) cols gutter))))
         ;; the chrome, top to bottom, exactly the order the ladder counted it in
-        (let ((r chrome-top))
+        (let* ((room-for-card card-rows)
+               ;; **R20: THE LADDER KEEPS ITS ROWS AND THE CONTENT GETS THE REST.**
+               ;; Measured before this existed, with a 40-line diff at every size from
+               ;; 8 rows to 30: not one option, not the hint, not the deadline on the
+               ;; screen — the card was drawn as `(subseq card-lines 0 card-rows)` and the
+               ;; fit loop took its rows off the END. The ladder is now a list of its own,
+               ;; drawn LAST inside the card and never trimmed; what shrinks is the
+               ;; content, in a viewport with a seam that says how much is out of view,
+               ;; and that viewport SCROLLS, so the whole diff is still readable.
+               ;;
+               ;; The room is the card's fitted rows minus the ladder, floored at one, so
+               ;; a card always has something of its question above its choices —
+               ;; `%fit-ladder` guarantees at least that by refusing to go below
+               ;; `(1+ pinned)`.
+               (content-room (max 1 (- room-for-card (length card-ladder))))
+               (content (card-content-window card-lines content-room 0))
+               ;; the card's ACTUAL height: the windowed content plus the pinned ladder.
+               ;; It can be LESS than the room it was offered, when the content fits.
+               (card-total (+ (length content) (length card-ladder)))
+               ;; `chrome-top` was computed from the FITTED rows, so the difference
+               ;; between what the card was offered and what it took is handed back to
+               ;; the transcript rather than left as a gap above it.
+               (r (- chrome-top (- room-for-card card-total))))
           (flet ((row (line) (put-segments s r gutter line) (incf r)))
-            (dolist (line (subseq card-lines 0 (min (max 0 card-rows) (length card-lines))))
-              (row line))
+            (dolist (line content) (row line))
+            (dolist (line card-ladder) (row line))
             (when stall-p (row (first stall)))
             (when notice-p (row (first notice)))
             (when comp-p (row (first completions)))
