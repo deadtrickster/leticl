@@ -419,10 +419,10 @@ half, and one or two are requirements whose *criterion* nobody has settled yet.
 - **Status RUNS.**
 - **Drift** A's R2 and B's must keep the TEXT match — the reference's comment records
   that any other match took the wrong prompt off first.
-- **Related, and NOT implemented here — R16**: an echo retires across a COMPACTION.
-  **ARGUED for B**: R16 says *"measure it rather than assuming, by queueing a prompt
-  and forcing a compaction under it"* and **B is not known to pass it.** That is a
-  phase-2 test to write, not a claim to make.
+- **Related — R16**: an echo retires across a COMPACTION. **Implemented, measured and
+  running**: see R16 below (`047f9ad`). It could not be claimed here until it was run,
+  because the live path retires on a `transcript_content` frame and a snapshot is not
+  one — which is exactly what the measurement found.
 
 ## R3 A frame the head cannot parse is said, counted, survived
 
@@ -551,11 +551,40 @@ not `peak - pending`. **Constants measured**, above.
 
 ## R16 A queued prompt's echo retires when the prompt lands, including across a compaction
 
-- **Criterion** — the echo is retired because the prompt is demonstrably in the ledger,
-  or marked as something other than `queued`.
-- **Status ARGUED.** R16 is A's finding and the doc's own instruction is *"measure it
-  rather than assuming, by queueing a prompt and forcing a compaction under it."*
-  **For B that measurement has not been made and the criterion is not claimed.**
+- **SETUP** prompts queued while a turn runs; then a transcript REPLACED under them by a
+  snapshot — via a `resync` and via a `hello`, and both with the prompts' rows carried
+  and without.
+- **STIMULUS** the snapshot arrives; then, for the unresolved ones, a later live row.
+- **ASSERTION** every echo whose row the snapshot carries is **retired**; an echo the
+  snapshot cannot resolve **stops saying `queued`** and says `unconfirmed` instead; the
+  coalesced front-piece case resolves on the snapshot path exactly as on the live one;
+  and a row that lands later retires it out of both sets.
+- **Evidence** `a-snapshot-retires-the-echoes-whose-rows-it-carries`,
+  `an-echo-a-snapshot-cannot-resolve-stops-saying-queued`,
+  `the-coalesced-echo-is-resolved-the-same-way-on-both-paths`.
+- **Status RUNS + LIVE.** `047f9ad`. **This head FAILED the requirement, and the
+  measurement is the item.** The requirement's own instruction — *"measure it rather
+  than assuming, by queueing a prompt and forcing a compaction under it"* — run
+  against a scratch head:
+
+      queued before the compaction      ("third thing" "second thing" "first thing")
+      the snapshot LANDED (seq/items)   (900 4)
+      the rows the echoes wait for       ("first thing" "second thing" "third thing")
+      queued AFTER                      ("third thing" "second thing" "first thing")
+
+  All three prompts were in the transcript the snapshot carried and all three echoes
+  still read `queued`. `%retire-pending` is reached from the live `transcript_content`
+  arm and **nowhere else**, so a row arriving inside a snapshot retired nothing, for the
+  life of the session — letibot's exact defect, and this head was not immune after all.
+  The three tests above **fail without the fix** (nine assertions; verified by removing
+  the wiring).
+
+  The second clause is a **third mark**, argued rather than borrowed: `queued` is a
+  claim about the daemon's queue made on the strength of a transcript the snapshot has
+  just replaced, so an unresolved echo can support neither `queued` nor a silent drop.
+  It is `unconfirmed`, and it retires the ordinary way the moment its row lands.
+- **Drift** A landed R16 at `572d9f8`; the two heads' criteria are the same sentence and
+  the marks are the heads' own business.
 
 ## R17 A head can tell when its view has diverged from the ledger — `seq` continuity
 
@@ -649,21 +678,19 @@ differ on what passing it looks like.
 
 # What is ARGUED and not run — the honest list
 
-Everything above marked **ARGUED**, in one place, because this is the list that matters
-for phase 2:
+Everything above marked **ARGUED**, in one place, and with it the three criteria whose
+entry is **RUNS** on one path and unrun on another — the list that matters for phase 2:
 
 1. **R11** — the brief and the raw reply (a protocol change; a locator keyed
    `(kind . id)` proposed, nothing built).
 2. **R12** — an oracle out of budget (A's).
 3. **R14** — the read-before-overwrite refusal (A's; B has nothing to remove).
-4. **R16** — the queued echo across a compaction (**B is not known to pass it**; the
-   test is one compaction away and has not been written).
-5. **R6** — the opencode import (A's).
-6. **T1(1)'s `Some` path** — the daemon cannot currently answer a `FetchRow`; the head
+4. **R6** — the opencode import (A's).
+5. **T1(1)'s `Some` path** — the daemon cannot currently answer a `FetchRow`; the head
    half is built and the daemon half is A's R19.2(b).
-7. **§3.2's natural trigger** — the out-of-range style is defended against and was
+6. **§3.2's natural trigger** — the out-of-range style is defended against and was
    never reproduced naturally.
-8. **R17's repair** — detection is run and counted; automatic resync is not.
+7. **R17's repair** — detection is run and counted; automatic resync is not.
 
 ---
 
