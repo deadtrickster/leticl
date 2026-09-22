@@ -738,56 +738,58 @@ from it rather than the other way round."
                    (and (session-retired-p session (getf item :warning)) t))))
 
 (defparameter +routine-warnings+
-  '("auto_compact" "compacted" "auto_compact_skipped" "auto_compact_no_progress"
-    "reseated" "reattached" "resume_note" "mode_set"
-    "interrupt_idle" "promote_idle" "frame_capture_written" "slash")
-  "The warning codes whose fact is ROUTINE — the session doing its job, or the
-settled outcome of an act the reader took.
+  '("auto_compact" "compacted"
+    "reseated" "frame_capture_written" "frame_capture_disabled"
+    "mode_set" "mode_set_next_session_only" "mode_session_only"
+    "model_endpoint_retry" "interrupt_idle" "promote_idle"
+    "daemon_stopping" "resume_note" "open_note"
+    "reattached" "slash"
+    "imported" "import_scrap" "imported_summary"
+    "steering_urgent" "cache_reuse_shortfall" "test")
+  "The warning codes whose fact is ROUTINE — drawn faint with a middot, not red with a bang.
 
-**R19 part 2, and the split is a judgement written down rather than a guess.** The
-operator: *\"routine is painted as failure — `compacted` and `auto_compact` are the
-session doing exactly what it should, and they arrive in the same red as a denial or a
-gate timeout. The colour asserts a severity the fact does not have.\"* So the codes
-where the fact is *nothing is wrong* are drawn in the faint register instead of the
-failure one, and the four that made them look at this are the first four here.
+**R19 part 2, and this list is now letibot's rather than mine.** Both heads render these
+codes, so a register either head can decide alone is a register the two disagree about on
+screen. letibot put its whole table in the crate the codes are defined in
+(`crates/sessionlog/src/warning.rs`, `TABLE`), with a reason per row and a guard that
+fails until every `code: …` literal in its tree has one — and its own module doc makes the
+argument §11.6 makes about `JobState::word`: *the codes are the log's vocabulary … so a
+split that only one head knew would have to be copied by the other and the two copies
+would drift.*
 
-Three rules, and each one is why a code is on this list:
+**And it drifted, which is why this is a measurement rather than an agreement in
+principle.** Measured 2026-09-22 by extracting letibot's `TABLE` and diffing it against
+this list: **both heads called ten codes routine; four codes were classified differently;
+and twenty codes one head had classified had no row in the other's list at all** — nine of
+those reachable from this head, so an orderly `daemon_stopping` or a compaction's cache
+note would have been drawn RED here while letibot drew it dim. Two of the four differences
+were mine and were wrong for one reason worth writing down: **I classified the
+`auto_compact_*` family by its PREFIX** — housekeeping the daemon does to itself — and two
+of its members are housekeeping that did *not* happen (`auto_compact_skipped`,
+`auto_compact_no_progress`: the session is at the wall with automatic compaction off, and
+the operator has to read that). The rule is about the FACT, not the name.
 
-  · **housekeeping the daemon does to itself** — a compaction firing, being skipped, or
-    helping less than its window: `auto_compact`, `compacted`, `auto_compact_skipped`,
-    `auto_compact_no_progress`. The session managing its context is the feature working.
-  · **the settled outcome of the reader's own act** — `/reseat` succeeded (`reseated`),
-    the mode is now the one you chose (`mode_set`), you pressed interrupt with nothing
-    running (`interrupt_idle`), you asked to promote with nothing to move
-    (`promote_idle`), the frame you asked to capture was written
-    (`frame_capture_written`). A red block for *\"your command worked\"* is the exact
-    inversion R19 names.
-  · **the transport itself** — `slash` is a reply (a listing or a sentence), `reattached`
-    and `resume_note` are the log being re-read successfully. None of these is a
-    warning at all; they arrive in this envelope because it is the one the daemon has.
+Two differences were letibot's to win, and did: `model_endpoint_retry` (the retry IS the
+handling, and the failure has its own code, `turn_failed`) and `daemon_stopping` (the
+session is on disk and `--continue` reopens it). The second is worth the sentence: I had
+argued *words for the head that asked are news for the head that did not*, which is a fact
+about the AUDIENCE, and the rule is about the fact.
 
-**What is deliberately NOT here, and the rule that decides it.** A code that says
-*something did not happen* stays in the failure register even when it is not the
-operator's fault: `auto_compact_failed`, `context_wall`, `gate`, `gate_timeout`,
-`turn_failed`, `job_output_refused`, `session_unavailable`, `resume_failed`,
-`reseat_refused`, `mode_unknown`, `mode_set_refused`, `mode_unpersisted`,
-`length_batch_refused`, `length_empty_turn`, `ledger_chain_mismatch`,
-`row_coverage_gap`, `reasoning_stall`, `repetition_collapse`, `ended_in_reasoning`,
-`model_endpoint_retry`, `monitor_wake_not_armed`, `fabric_refresh_failed`,
-`flowy_not_seated`, `frame_capture_disabled`, `frame_capture_failed`,
-`transcript_store`, `decision_corpus`, `title_not_stored`, `record_item_pairing`,
-`orphan_body`, `log_gap`, `protocol_skew`, `unreadable_frame`, `secret_late`, `sudo`,
-and the schema advisories (`absolute_path`, `endpoint`, `dated`, `data_claim`).
-`secret_late` and `sudo` are the two where a reader could argue — both report an
-interaction with a credential, and half of `sudo`'s cases are the ordinary one — so they
-stay loud until somebody rules otherwise. **Loud is the status quo and the conservative
-default**: a code nobody has classified is drawn as it always was, on the argument that
-a mistake in the direction of *too quiet* hides a real denial and this list is not
-complete.
+**One difference is not settled and is filed as a question rather than decided here**:
+`frame_capture_disabled` — a frame was refused and no capture directory is configured, so
+the evidence that would identify it was not kept. letibot reads it as *a disclosure of
+configuration*; on the rule as letibot itself wrote it — *a caveat that a check did not
+happen is a failure*, the sentence that makes `reseat_unchecked` and `monitor_wake_not_armed`
+failures — it is a failure. **This head renders letibot's register, so the two screens
+agree while the question is open**, and the argument is recorded in the criteria.
 
 A `defparameter` and not a `defconstant`: the file pusher SKIPS constants, so a constant
-here could never be corrected on a running head — and a severity list is exactly the
-kind of thing that gets corrected.")
+here could never be corrected on a running head — and a severity list is exactly the kind
+of thing that gets corrected.
+
+**`a-routine-warning-code-is-one-letibot-calls-routine` reads letibot's own table and fails
+if this list moves**, which is the §11.5 shape: the copy stays, because a head must render
+without the reference tree present, and the GUARD points at the source.")
 
 (defun routine-warning-p (w)
   "Is W's fact routine — housekeeping, or the outcome of the reader's own act?

@@ -5225,6 +5225,95 @@ faint would put the argument back where it started."
       (is (search "· auto_compact" text) "`/notes` marks the routine one the same way: ~s" text)
       (is (search "! gate_timeout" text) "and the other one the other way"))))
 
+;;; --------- §11.5's shape, applied to the warning table: the GUARD reads letibot's ------ ;;;
+;;;
+;;; Measured 2026-09-22, comparing the two tables code by code, and both heads had
+;;; written one down independently from the same requirement:
+;;;
+;;;     both routine                    10 codes
+;;;     classified differently           4 codes
+;;;     in one table and not the other  20 codes — 9 of them reachable from this head,
+;;;                                     so letibot drew them dim and this head drew RED
+;;;
+;;; **A code one head renders and the other classifies, with no row in the second's
+;;; table, is not agreement — it is a gap wearing agreement's clothes.** Both tables had
+;;; a fail-safe default (unknown = failure) and both were well reasoned, and the two
+;;; still disagreed about twenty codes, because each was written from its own head's view
+;;; of what it emits.
+;;;
+;;; The fix is the one §11.5 ruled for the fence token table: **the copy stays, because a
+;;; head must render with the reference tree absent, and the GUARD points at the source.**
+;;; letibot's `TABLE` is where the codes are defined, so that table is what this reads.
+
+(defparameter +letibot-warning-rs+
+  "/home/dead/Projects/letibot/letibot/crates/sessionlog/src/warning.rs"
+  "Where letibot's severity `TABLE` is — the crate every `Warning` code is defined in.
+
+The same absolute path the `Cargo.toml`s of that tree already carry for `rano`, so a box
+that can build either head can read it. A `defparameter` and not a `defconstant`: the file
+pusher SKIPS constants.")
+
+(defun %letibot-routine-codes ()
+  "letibot's `Class::Routine` codes, read out of its source. NIL when it cannot be read.
+
+NIL rather than an empty list, and the difference is the whole of what makes the guard
+honest: an empty list would let the comparison below pass over nothing. The caller skips —
+visibly, because the suite counts skips — and asserts a plausible count when it does not."
+  (when (probe-file +letibot-warning-rs+)
+    (let* ((src (uiop:read-file-string +letibot-warning-rs+))
+           (at (search "pub const TABLE" src)))
+      (when at
+        ;; `search`'s haystack is the SECOND sequence, so the offset is `:start2` —
+        ;; measured, because `:start` is not a keyword it knows and the compiler said so
+        (let ((body (subseq src at (or (search "];" src :start2 at) (length src)))))
+          (let ((out nil) (i 0))
+            (loop while (< i (length body))
+                  for open = (position #\( body :start i)
+                  while open
+                  do (let* ((close (or (position #\) body :start open) (length body)))
+                            (row (subseq body open close))
+                            (code (and (search "Class::Routine" row)
+                                       (let ((q1 (position #\" row))
+                                             (q2 (position #\" row :start (1+ (or (position #\" row) 0)))))
+                                         (and q1 q2 (subseq row (1+ q1) q2))))))
+                       (when code (push code out))
+                       (setf i (1+ close))))
+            (nreverse (remove-duplicates out :test #'string=))))))))
+
+(def-test a-routine-warning-code-is-one-letibot-calls-routine (:suite leticl)
+  "**The two severity tables agree, and a guard keeps them that way.**
+
+Both heads emit these codes, so a register either head decides alone is a register the two
+disagree about on screen — which is exactly what they did until this was measured. The
+point of the comparison is not that one table is right: it is that **there is one answer**,
+and a head that quietly holds a different one is a head showing a different screen.
+
+This is §11.5's shape for the second table: the copy stays (a head renders without the
+reference tree), and a test reads the source and fails when they part. It has to be
+falsified by moving a code and watching it fail.
+
+Both directions are asserted, because they fail differently:
+  · **a code letibot calls routine that this head does not** draws RED here where letibot
+    draws dim — the operator sees an alarm for housekeeping, which is R19 itself;
+  · **a code this head calls routine and letibot does not** draws dim here where letibot
+    draws red — the direction that HIDES something, and the one the rule's fail-safe is
+    written against."
+  (let ((theirs (%letibot-routine-codes)))
+    (if (null theirs)
+        (skip "letibot's warning.rs is not on this box")
+        (progn
+          (is (> (length theirs) 15)
+              "**a plausible table, so a regex that stopped matching cannot pass** — ~d
+ codes read out of ~a" (length theirs) +letibot-warning-rs+)
+          (let ((mine (sort (copy-list +routine-warnings+) #'string<))
+                (his (sort (copy-list theirs) #'string<)))
+            (is (equal mine his)
+                "**THE SAME SET**, so neither head can move a code's register alone.
+~%  letibot calls routine and this head does not: ~s~%  this head calls routine and \
+letibot does not: ~s"
+                (set-difference his mine :test #'string=)
+                (set-difference mine his :test #'string=)))))))
+
 (def-test the-severity-split-is-a-table-and-what-is-not-in-it-stays-loud (:suite leticl)
   "**The default direction, asserted**, because it is the half somebody would get wrong.
 
@@ -5238,25 +5327,29 @@ one that gets fixed by adding a name to this list.
 Two codes were deliberately kept loud and a reader may argue with both — `secret_late`
 (a password that went unused) and `sudo` (half of whose cases are the ordinary one) — so
 they are pinned here rather than left to memory."
-  ;; the dozen that ARE routine, one assertion each so a removal is visible
-  (dolist (code '("auto_compact" "compacted" "auto_compact_skipped"
-                  "auto_compact_no_progress" "reseated" "reattached" "resume_note"
-                  "mode_set" "interrupt_idle" "promote_idle" "frame_capture_written"
-                  "slash"))
+  ;; the ones that ARE routine, one assertion each so a removal is visible
+  (dolist (code '("auto_compact" "compacted" "reseated" "frame_capture_written"
+                  "frame_capture_disabled" "mode_set" "mode_set_next_session_only"
+                  "mode_session_only" "model_endpoint_retry" "interrupt_idle"
+                  "promote_idle" "daemon_stopping" "resume_note" "open_note"
+                  "reattached" "slash" "imported" "import_scrap" "imported_summary"
+                  "steering_urgent" "cache_reuse_shortfall" "test"))
     (is (routine-warning-p (list :code code :detail "x"))
         (format nil "~a is routine" code)))
   ;; and the ones that are not, including every one a reader could mistake for routine
-  (dolist (code '("auto_compact_failed" "context_wall" "gate" "gate_timeout"
-                  "turn_failed" "job_output_refused" "session_unavailable"
-                  "resume_failed" "reseat_refused" "mode_unknown" "mode_set_refused"
+  (dolist (code '("auto_compact_failed" "auto_compact_skipped" "auto_compact_no_progress"
+                  "context_wall" "gate" "gate_timeout" "turn_failed"
+                  "job_output_refused" "session_unavailable" "resume_failed"
+                  "reseat_refused" "reseat_unchecked" "mode_unknown" "mode_set_refused"
                   "mode_unpersisted" "length_batch_refused" "length_empty_turn"
                   "ledger_chain_mismatch" "row_coverage_gap" "reasoning_stall"
-                  "repetition_collapse" "ended_in_reasoning" "model_endpoint_retry"
-                  "monitor_wake_not_armed" "fabric_refresh_failed" "flowy_not_seated"
-                  "frame_capture_disabled" "frame_capture_failed" "transcript_store"
-                  "decision_corpus" "title_not_stored" "record_item_pairing"
-                  "orphan_body" "log_gap" "protocol_skew" "unreadable_frame"
-                  "secret_late" "sudo" "absolute_path" "endpoint" "dated" "data_claim"
+                  "repetition_collapse" "ended_in_reasoning" "monitor_wake_not_armed"
+                  "fabric_refresh_failed" "flowy_not_seated" "frame_capture_failed"
+                  "transcript_store" "decision_corpus" "title_not_stored"
+                  "record_item_pairing" "orphan_body" "log_gap" "protocol_skew"
+                  "unreadable_frame" "slash_refused" "answer_unclaimed"
+                  "prefix_divergence" "prefix_check_skipped" "secret_late" "sudo"
+                  "absolute_path" "endpoint" "dated" "data_claim"
                   ;; and the one that does not exist yet: the fail-safe direction
                   "a_code_from_a_daemon_this_build_has_never_met"))
     (is (not (routine-warning-p (list :code code :detail "x")))
