@@ -235,6 +235,24 @@ the sentence would be a head whose warnings cannot be trusted to be complete."
   (let* ((s (head-session head))
          ;; `/dismiss` with nothing after it means `all` (app.rs:5775-5779)
          (arg (if (and (string-equal verb "dismiss") (string= rest "")) "all" rest)))
+    ;; **THE FILE IS RE-READ HERE, and it is the moment that matters.** The notes file is
+    ;; one file for every head on the box (see `save-retired-keys`), and this head read it
+    ;; once — at startup. Without this, a head that has been up for hours shows a note
+    ;; another head retired as live on the screen, which is the operator's own report
+    ;; (`"i dismissed letibot notes but they stay"`) read from the other side.
+    ;;
+    ;; The LISTING and the ACT are the two places the operator is looking, so they are the
+    ;; two places that re-read — not a timer. Nothing here needs to notice a change nobody
+    ;; asked about, and a read on a keypress is free while a poll loop is a poll loop.
+    ;;
+    ;; **The re-read never writes.** It cannot: it only sets the session's set from what the
+    ;; file says, and a save is a separate call from the two verbs that mean to change it.
+    ;; A file this head cannot read leaves the set exactly as it is — see
+    ;; `read-retired-keys`, whose second value is the whole of that rule.
+    (let ((on-disk (read-retired-keys)))
+      (when on-disk
+        (setf (session-retired s) (copy-list on-disk))
+        (leticl::%reflag-warning-rows s)))
     (cond
       ;; nothing after the verb: SHOW them
       ((string= arg "")
@@ -243,7 +261,11 @@ the sentence would be a head whose warnings cannot be trusted to be complete."
              (head-dirty head) t))
       ((member arg '("restore" "back" "undismiss") :test #'string=)
        (let ((back (restore-warnings s))
-             (miss (persist-retired head)))
+             ;; **A RESTORE IS CONTRARY EVIDENCE, so it REPLACES and does not union.**
+             ;; `restore-warnings` empties this head's set and this writes the emptied
+             ;; list over the file's — otherwise the union would put every one of them
+             ;; back on the next re-read, which is a restore that does not restore.
+             (miss (save-retired-keys (session-retired s) :replace t)))
          (%refresh-notes-listing head)
          (say head (format nil "~a~@[ · ~a~]"
                            (if (zerop back)

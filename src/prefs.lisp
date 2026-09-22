@@ -18,14 +18,17 @@
 (in-package #:leticl)
 
 (defparameter *prefs-keys*
-  '("diff" "thinking" "tools" "raw_calls" "retired")
-  "The keys THIS build owns. Anything else in the file is somebody else's — a
+  '("diff" "thinking" "tools" "raw_calls")
+  "The keys THIS build owns, in THIS head's own file. Anything else is somebody else's — a
 newer build's, or the operator's — and is preserved verbatim.
 
-`retired` is R19 part 3 and the odd one of the five: the other four are choices about
-how the head DRAWS, and this is a memory of what the reader has already read. It belongs
-in the same file because it has the same lifetime — it has to outlive the process — and
-because a second file for one key is a second thing to find, back up and lose.")
+**Four, and `retired` is no longer one of them (R24).** It was the fifth and the odd one:
+the other four are choices about how the head DRAWS, and that one was a memory of what the
+reader has already read. R19 part 3 put it here because this file has the right lifetime —
+it has to outlive the process. The requirement then moved it to the file EVERY head writes
+(`~/.config/letibot/head.toml`), so that a dismissal made in either head is honoured by
+both — and a set in two files is a set that disagrees with itself. The one that would go
+stale is this one, which no other head reads. See `load-retired-into`.")
 
 ;;; A PLIST, not a struct, and this is a live-update decision rather than a
 ;;; stylistic one. `defstruct` is SKIPPED by `tui-eval --file` because a changed
@@ -46,11 +49,10 @@ because a second file for one key is a second thing to find, back up and lose.")
         :thinking "folded"   ; `open` or `folded`
         :tools "folded"
         :raw-calls nil       ; show the model's `<function=…>` markup under a call
-        :retired nil         ; warning identities the reader has retired (R19 part 3)
         :path nil)           ; where it came from, so a save goes back there; NIL
                              ; for a head with nowhere to write, which SAYS SO
                              ; rather than writing into the working directory
-  "The defaults: split diff, folds closed, raw calls hidden, nothing retired.")
+  "The defaults: split diff, folds closed, raw calls hidden.")
 
 (defun make-prefs ()
   "The defaults, as a fresh plist."
@@ -62,14 +64,12 @@ because a second file for one key is a second thing to find, back up and lose.")
 (defun prefs-thinking (p) (getf p :thinking))
 (defun prefs-tools (p)    (getf p :tools))
 (defun prefs-raw-calls (p)(getf p :raw-calls))
-(defun prefs-retired (p)  (getf p :retired))
 (defun prefs-path (p)     (getf p :path))
 
 (defun (setf prefs-diff) (v p)     (setf (getf p :diff) v))
 (defun (setf prefs-thinking) (v p) (setf (getf p :thinking) v))
 (defun (setf prefs-tools) (v p)    (setf (getf p :tools) v))
 (defun (setf prefs-raw-calls) (v p)(setf (getf p :raw-calls) v))
-(defun (setf prefs-retired) (v p)  (setf (getf p :retired) v))
 (defun (setf prefs-path) (v p)     (setf (getf p :path) v))
 
 ;;; ------------------------------------------- the bridge to a running head ;;;
@@ -94,24 +94,40 @@ default struct.")
 (defun fold-on-p (name) (string= name "open"))
 
 (defun prefs-into-head (head p)
-  "Apply a loaded `prefs` to HEAD's live plist.
+  "Apply a loaded `prefs` to HEAD's live plist — the four choices, and nothing else.
 
 Through the setter, so loading a file invalidates the render cache exactly as
 flipping a chord does — a head whose `head.toml` says `tools = \"open\"` must draw
 the tool output on the first frame, not on the second.
 
-**And the retired set, which is the one thing here that is not a preference** (R19 part
-3). It goes onto the SESSION because that is where the membership test reads it, and it
-has to be in place BEFORE the first snapshot lands: a warning retired on a previous run
-must be replanted retired, not drawn and then hidden a frame later. `run` calls this
-before it attaches, and `ingest-snapshot` is only reached through the attach."
+**The retired set is not here any more (R24),** which is why this is shorter than it was.
+R19 part 3 applied it from this file's own `retired` key; it comes from the file every head
+shares now, by `load-retired-into`, which `load-prefs-into` calls beside this."
   (setf (head-pref head :show-reasoning) (fold-on-p (prefs-thinking p))
         (head-pref head :show-tools) (fold-on-p (prefs-tools p))
         (head-pref head :raw-calls) (prefs-raw-calls p)
         (head-pref head :diff) (prefs-diff p))
-  (setf (session-retired (head-session head)) (copy-list (prefs-retired p)))
   (setf *prefs* p)
   head)
+
+(defun load-retired-into (head)
+  "The retired set from the SHARED notes file onto HEAD's session. A note, or NIL.
+
+**It goes onto the SESSION because that is where the membership test reads it, and it has
+to be in place BEFORE the first snapshot lands**: a warning retired on a previous run must
+be replanted retired, not drawn and then hidden a frame later. `run` calls this before it
+attaches, and `ingest-snapshot` is only reached through the attach.
+
+**A file that cannot be READ leaves the set empty and SAYS SO.** That is the second value
+of `read-retired-keys` and the whole of the rule: the alternative is the defect the shared
+file exists to prevent — a head that cannot read it silently starting from nothing and then
+saving over a list it never saw. Nothing is written here either way; this only reads."
+  (multiple-value-bind (keys readable) (read-retired-keys)
+    (if readable
+        (progn (setf (session-retired (head-session head)) (copy-list keys)) nil)
+        (concatenate 'string
+                     "the shared notes file exists and could not be read — nothing is "
+                     "retired this run, and it will not be written over"))))
 
 (defun head-into-prefs (head)
   "HEAD's live plist as a `prefs`, for saving."
@@ -119,20 +135,24 @@ before it attaches, and `ingest-snapshot` is only reached through the attach."
     (setf (prefs-thinking p) (fold-name (getf (head-prefs head) :show-reasoning))
           (prefs-tools p) (fold-name (getf (head-prefs head) :show-tools))
           (prefs-raw-calls p) (and (getf (head-prefs head) :raw-calls) t)
-          (prefs-diff p) (or (getf (head-prefs head) :diff) "split")
-          ;; the session's own set, which the head did not choose and cannot lose
-          (prefs-retired p) (copy-list (session-retired (head-session head))))
+          (prefs-diff p) (or (getf (head-prefs head) :diff) "split"))
     p))
 
 (defun load-prefs-into (head &optional path)
-  "Read the file (default `prefs-path`) and apply it to HEAD.
+  "Read the file (default `prefs-path`) and apply it to HEAD, then the shared notes file.
 
 Returns the notes the load produced, which are worth SAYING once — a value this
 build cannot read is named rather than swallowed — and does not treat a missing
-file or a bad line as a reason to refuse to start."
+file or a bad line as a reason to refuse to start.
+
+**Two files, and this is the one place both are read at startup.** The four choices are
+this head's own (`prefs-path`); the retired set is every head's (`notes-path`), and which is
+which is not an implementation detail — it is the difference between a preference and a
+shared record. The second file's note comes out of `load-retired-into`."
   (multiple-value-bind (p notes) (load-prefs path)
     (prefs-into-head head p)
-    notes))
+    (let ((note (load-retired-into head)))
+      (nreverse (if note (push note notes) notes)))))
 
 (defvar *write-prefs* t
   "Does a preference change go to the FILE? T for a head the operator is using, NIL
@@ -156,20 +176,31 @@ would forget*.")
     (save-prefs (head-into-prefs head) path)))
 
 (defun persist-retired (head)
-  "Write the session's retired set, and swallow a failure into a NIL.
+  "Write the session's retired set to the file every head shares. NIL when it wrote.
 
 **The ONE place a retirement is persisted**, called by the one place one is made
 (`%notes`) — for the reason the preference setter gives, that *the fifth site is the one
 that would forget*, and here forgetting means a dismissal the operator believes in and
 the file does not.
 
-**A failure is not fatal and is not silent either.** A read-only `head.toml`, a full
-disk or a missing `$XDG_CONFIG_HOME` leaves the retirement live in this process and
-absent from the file; the caller says so, and the operator can see why their dismissal
-did not survive the last restart. The alternative — signalling out of a `/notes` — would
-make a cosmetic failure into a lost command."
-  (handler-case (progn (save-head-prefs head) nil)
-    (error (e) (format nil "not saved: ~a" e))))
+**It is the shared notes file and not this head's `head.toml`**, which is the change R24's
+requirement made: letibot's `e7b6caf` measured that a dismissal is ONE FILE FOR EVERY HEAD,
+so a wholesale write from either head erases the other's. `save-retired-keys` unions with
+what the file holds, writes through a rename, and refuses to write a file it could not
+read. See the block above it for the measurement and the two things copied byte for byte.
+
+**REPLACE is the caller's distinction and not this function's**: a dismissal unions (the
+default) and a restore replaces. `/notes restore` is the same reader saying those keys are
+not retired, which is contrary evidence the union must not swallow — so the caller passes
+`:replace` there and this stays a two-line function whose whole job is to hand the keys
+over.
+
+**A failure is not fatal and is not silent either.** A read-only file, a full disk, a
+missing `$XDG_CONFIG_HOME`, or a file that exists and cannot be read: the retirement stays
+live in this process and absent from the file, and the reason comes back as a string the
+caller says out loud. The alternative — signalling out of a `/notes` — would make a
+cosmetic failure into a lost command."
+  (save-retired-keys (session-retired (head-session head)) :replace nil))
 
 ;;; ------------------------------------------------------- the fold setter ;;;
 ;;;
@@ -231,15 +262,15 @@ NIL when neither variable is set — a head with nowhere to write."
 (defun %quote-value (v)
   "V as a `key = \"value\"` line's value, wrapped in quotes and escaped by NOTHING.
 
-**Not `~s`, which is what the four preference keys use, and the difference is a real
-one found by R19 part 3's round-trip test.** `~s` escapes a `\"` as `\"` and a `\\` as
-`\\\\`, and `%unquote` — which reads the file — strips the outer pair and unescapes
-neither. That is harmless for `diff`, `thinking`, `tools` and `raw_calls`, whose values
-come from fixed sets; it is wrong for an identity, which carries a warning's DETAIL, and
-the operator's own detail was `nearly full, and \"quoted\" — see a|b`. Measured: the
-identity read back was `nearly full%2C and \\\"quoted\\\" — see a%7Cb`, one backslash
-away from the one in memory, so the membership test missed and the dismissal did not
-survive the restart — silently, which is the failure this whole part is about.
+**Not `~s`, and the difference is a real one found by R19 part 3's round-trip test.**
+`~s` escapes a `\"` as `\\\"` and a `\\` as `\\\\`; `%unquote`, which reads the file back,
+strips the outer pair and unescapes neither — so a value carrying a quote or a backslash
+comes back one backslash away from what went in. Harmless for `diff`, `thinking`, `tools`
+and `raw_calls`, whose values come from fixed sets and are written with `~s` on purpose;
+wrong for every OTHER value in the file, which is any key a person or a newer build put
+there. Measured on the fixture this record keeps for it, `nearly full, and \"quoted\" — see
+a|b`: `~s` round-tripped it to `nearly full, and \\\"quoted\\\" — see a|b`, and a membership
+test on it missed — silently, which is the failure this whole part exists to stop.
 
 What the file gets instead is the TOML spelling a person would write by hand: a quoted
 value with the quotes only at the ends, which `%unquote` reads back exactly."
@@ -286,6 +317,212 @@ same defect as duplicating a key, one line at a time."
         ((member v '("false" "no" "off") :test #'string=) nil)
         (t :unknown)))
 
+;;; ------------------------------------------- the note file, and TWO writers ;;;
+;;;
+;;; **ONE file for every head on the box.** `~/.config/letibot/head.toml` — letibot's own
+;;; path — holds the retired set, because that is where the operator's dismissals already
+;;; are and because two heads that each keep their own file never share anything. The
+;;; requirement: *"persist into the same file, with the same discipline — merge on save,
+;;; re-read on listing, never write what you did not read first."*
+;;;
+;;; **letibot's fix, `e7b6caf`, is the measurement.** Their instrument dumped every warning
+;;; in the log against the keys in the file and found six of seven IDENTICAL — code, clock
+;;; and detail hash — so the key was never the problem. The problem was the file: each head
+;;; loaded it once at startup and wrote its own list back WHOLE, so one head's save erased
+;;; another's dismissals. The operator: *"i dismissed letibot notes but they stay."*
+;;;
+;;; **This head had the same shape waiting for it.** R19 part 3 gave it persistence, and in
+;;; doing so made it the second writer to a file it did not own — so a wholesale write here
+;;; would clobber letibot's dismissals exactly as letibot was clobbering its own, and the
+;;; operator would see the bug they had just had fixed come back wearing this head's name.
+;;;
+;;; Two things are taken from letibot's `prefs.rs` and they must match **byte for byte**,
+;;; because a format that differs is a file that is corrupt rather than shared:
+;;;
+;;;   · **the format**: `retired = "k1,k2,k3"` — one quoted line, comma-joined, no spaces,
+;;;     through the same flat `key = "value"` parser this file already has;
+;;;   · **the merge**: a save UNIONS with the file and caps at 512 from the FRONT (oldest
+;;;     dropped first). A dismissal is an assertion that a key is retired, and no other
+;;;     head's save is evidence to the contrary.
+;;;
+;;; Nothing else is taken: the four preference keys stay this head's own, in this head's own
+;;; file. `diff`/`thinking`/`tools`/`raw_calls` happen to share a vocabulary, but sharing
+;;; them would mean `ctrl-t` in one head moving the other's screen, which is a different and
+;;; much larger decision than the one that was asked for.
+
+(defvar *notes-path-override* nil
+  "Where the notes file is, when a caller says. NIL means `shared-notes-path`.
+
+**A `defvar` for the reason `*write-prefs*` is one, and worse.** The notes file is the
+OPERATOR'S — `~/.config/letibot/head.toml`, shared with another head — and a test that reads
+it makes the suite depend on their dismissals, while a test that writes it edits their
+config. Measured within minutes of wiring this up: a test asserting a dismissal round-trips
+through the file read the seven keys the operator actually had, and the next assertion wrote
+over them.
+
+So the suite binds this to a directory of its own (`run-all`), and every function in this
+block goes through it rather than computing the path for itself.")
+
+(defun notes-path ()
+  "The notes file: the override when one is bound, else `shared-notes-path`."
+  (or *notes-path-override* (shared-notes-path)))
+
+(defun shared-notes-path ()
+  "**The one file every head on this box retires notes in** — letibot's own path.
+
+`$XDG_CONFIG_HOME/letibot/head.toml`, else `~/.config/letibot/head.toml`, else NIL. Not
+`leticl/head.toml`: the share is the point, and the operator's existing dismissals are
+already in this one."
+  (let ((xdg (uiop:getenv "XDG_CONFIG_HOME"))
+        (home (uiop:getenv "HOME")))
+    (cond (xdg (merge-pathnames "letibot/head.toml"
+                                (uiop:ensure-directory-pathname xdg)))
+          (home (merge-pathnames "letibot/head.toml"
+                                 (merge-pathnames ".config/"
+                                                  (uiop:ensure-directory-pathname home))))
+          (t nil))))
+
+(defun read-retired-keys (&optional (path (notes-path)))
+  "The retired keys in PATH, and whether the file could be READ.
+
+`(values KEYS READABLE-P)`, and the second value is the whole of the discipline this file
+needs. Three cases, and they are three facts rather than two:
+
+  · **no path, or no file** — `(values nil t)`. A head with no config directory and a head
+    starting for the first time are both *nothing retired*, and both may create the file.
+  · **a file that exists and cannot be read** — `(values nil nil)`. **NOT the empty set.**
+    This is the case the operator named: *a head that cannot read it must not silently start
+    from empty and then save over a file it never read.* A permissions error, an invalid
+    encoding, a directory where a file should be. The head keeps its own retirements in
+    memory and **refuses to write the file** for the rest of the session, saying so once.
+  · **a file that reads** — its keys, oldest first, capped from the front.
+
+The keys are this head's own identity format (`w|code|ts|fnv1a16`, `warning-identity`) and
+they sit in the file beside letibot's `n|…` and `d|…` ones, which are kept and never
+produced here. Nothing in this function looks at the format: a key is opaque text that is
+matched by equality."
+  (cond
+    ((null path) (values nil t))
+    ((not (probe-file path)) (values nil t))
+    (t (handler-case
+           (let* ((text (uiop:read-file-string path))
+                  (keys nil))
+             (dolist (line (%parse-prefs text))
+               (when (and (eq (first line) :pair)
+                          (string= (second line) "retired"))
+                 (setf keys (string->retired (third line)))))
+             (values (last keys (min (length keys) +retired-cap+)) t))
+         (error () (values nil nil))))))
+
+(defun merge-retired-keys (path ours)
+  "OURS unioned with what PATH holds, capped at `+retired-cap+` from the FRONT.
+
+letibot's `merge_retired`, and the union is the correct write for a shared record: **no
+other head's save is evidence against a dismissal**, so the file only ever grows from
+either writer. The cap drops the OLDEST (the front), because a reader who dismissed
+something today wants it to survive the restart tomorrow.
+
+**The caller must have read the file first** — see `save-retired-keys`, which takes the keys
+it read as an argument rather than re-reading behind the caller's back, so *never write what
+you did not read* is enforced by the shape of the call and not by a comment."
+  (let* ((existing (read-retired-keys path))
+         (out (append existing (remove-if (lambda (k) (member k existing :test #'string=))
+                                          ours))))
+    (last out (min (length out) +retired-cap+))))
+
+(defun save-retired-keys (keys &key replace)
+  "Write KEYS into the shared file, KEEPING every other line where it was.
+
+  · **default (a dismissal)** — the file's keys UNIONED with KEYS. Monotone.
+  · **REPLACE (a restore)** — the file's list is REPLACED by KEYS. **A restore is contrary
+    evidence and the union rule must not swallow it**: `/notes restore` is the same reader
+    saying those keys are not retired after all, and a union would put every one of them
+    back on the next re-read. That is a defect letibot's own tree has — see the report in
+    the requirements document — and copying the merge without this distinction would copy it.
+
+**A file this head could not read is never written.** The second value of
+`read-retired-keys` is the gate: an unreadable file means *do not write*, and the reason is
+returned so the caller can say it once. Writing a union requires having read the file; a
+wholesale write over a file the head never saw is exactly the erase-other-heads'-dismissals
+defect in a new costume.
+
+**Through a temporary file and one rename**, letibot's discipline and for their reason:
+`with-open-file` truncates then writes, so a second head reading at the wrong moment sees a
+PARTIAL list — and a head that loaded a partial list would save the partial one back, which
+is how a dismissal is lost with nothing to point at. The temporary is written in the SAME
+directory so the rename cannot cross a filesystem, and it is named after the target so two
+heads racing produce two temporaries rather than one collision.
+
+Returns NIL when it wrote, and a string saying why when it did not."
+  (let ((path (notes-path)))
+    (cond
+      ((null path) "no $HOME or $XDG_CONFIG_HOME to write the notes file to")
+      (t
+       (multiple-value-bind (existing readable) (read-retired-keys path)
+         (cond
+           ((not readable) "the notes file exists and could not be read, so it was left alone")
+           (t
+            (let* ((final (if replace
+                              (last keys (min (length keys) +retired-cap+))
+                              (let ((out (append existing
+                                                 (remove-if (lambda (k)
+                                                              (member k existing :test #'string=))
+                                                            keys))))
+                                (last out (min (length out) +retired-cap+)))))
+                   (existing-text (if (probe-file path) (uiop:read-file-string path) "")))
+              (handler-case
+                  (progn
+                    (ensure-directories-exist path)
+                    (let ((tmp (merge-pathnames
+                                (format nil ".~a.tmp" (file-namestring path))
+                                (uiop:pathname-directory-pathname path))))
+                      (with-open-file (f tmp :direction :output :if-exists :supersede
+                                             :if-does-not-exist :create)
+                        (dolist (line (%retired-file-lines existing-text final))
+                          (write-line line f)))
+                      (rename-file tmp path)))
+                (error (e) (format nil "~a" e)))))))))))
+
+(defun %retired-file-lines (existing-text keys)
+  "EXISTING-TEXT with its `retired` line replaced by KEYS — or with one added.
+
+**Everything else goes back BYTE FOR BYTE, and that is not tidiness — it is the property
+that makes a shared file possible.** This file is written by two heads; a line this head did
+not write is the other head's, and re-rendering it from a parsed value changes bytes that
+are not this head's to change. Measured, and it cost the operator their file: an earlier
+version of this function rebuilt every line as `~a = ~s`, which turned letibot's
+`raw_calls = false` into `raw_calls = \"false\"` — the same preference spelled differently,
+which letibot's own round trip then has to cope with, and which a `diff` of the file shows
+as this head having rewritten somebody else's settings.
+
+So this works on RAW LINES: the only line it touches is the one whose key is `retired`, and
+a line is recognised by the same rule `%parse-prefs` uses (trimmed, not blank, not `#`, not
+`[`, and it contains an `=`). The replacement is written at the position the line already
+had, so a person reading the file sees it stay where they left it."
+  (let* ((raw (uiop:split-string (or existing-text "") :separator '(#\newline)))
+         ;; a text ending in a newline splits into one more element than it has lines, and
+         ;; that trailing "" is dropped so every save does not append a blank line
+         (lines (if (and raw (zerop (length (car (last raw))))) (butlast raw) raw))
+         (out nil)
+         (written nil))
+    (dolist (line lines)
+      (let ((trimmed (string-trim '(#\space #\tab #\return) line)))
+        (if (and (plusp (length trimmed))
+                 (not (char= (char trimmed 0) #\#))
+                 (not (char= (char trimmed 0) #\[))
+                 (let ((eq (position #\= trimmed)))
+                   (and eq (string= "retired" (string-trim " " (subseq trimmed 0 eq))))))
+            (progn
+              (push (format nil "retired = ~a" (%quote-value (retired->string keys))) out)
+              (setf written t))
+            ;; **verbatim**, whatever it is: the other head's key, the operator's comment,
+            ;; a section header, a line this build does not understand.
+            (push line out))))
+    (unless written
+      (push (format nil "retired = ~a" (%quote-value (retired->string keys))) out))
+    (when (null (cdr out))
+      (push "# letibot head preferences — edited by the /config pane, or by hand" out))
+    (nreverse out)))
 (defparameter +retired-cap+ 512
   "How many retired notes one head remembers, on disk and in memory.
 
@@ -303,8 +540,8 @@ A `defparameter` and not a `defconstant`: the file pusher SKIPS constants.")
 
 Newest last because that is the end the cap drops from — an old dismissal is the one
 worth forgetting, and a reader who dismisses something today wants it to survive the
-restart tomorrow. The identities are already escaped by `warning-identity`, so a comma
-here is a separator and nothing else."
+restart tomorrow. **A comma is a separator and nothing else**, because an identity has no
+comma in it: it is `w|{code}|{ts}|{fnv1a-hex}`, and a hash is hex digits."
   (format nil "~{~a~^,~}"
           (last identities (min (length identities) +retired-cap+))))
 
@@ -315,8 +552,8 @@ should cost a dismissal, not a start.
 
 Each entry is TRIMMED and an all-whitespace one is dropped, so `retired = \"\"` and
 `retired = \" , \"` both read as *nothing retired* rather than as one identity that can
-never match. An identity never carries surrounding space — it is `code|ts|detail` with the
-detail escaped — so trimming cannot lose one."
+never match. An identity never carries surrounding space — it is `w|{code}|{ts}|{hex}`,
+built by `warning-identity` — so trimming cannot lose one."
   (when (and (stringp value) (plusp (length value)))
     (remove "" (mapcar (lambda (e) (string-trim '(#\space #\tab #\return) e))
                        (uiop:split-string value :separator '(#\,)))
@@ -373,13 +610,18 @@ than the bad line. Returns `(values prefs notes)`."
                                    value) notes)
                      (setf (prefs-raw-calls p) b))))
               ((string= key "retired")
-               ;; **Read, and it is the one key whose value came from elsewhere.** The
-               ;; four above are choices the operator made in a pane; this is a list of
-               ;; identities the head wrote down itself, keyed per incident, so two
-               ;; sessions do not share a dismissal. Nothing to validate beyond the
-               ;; shape: an identity is opaque here, and a wrong one costs a dismissal
-               ;; (a note comes back), never a start.
-               (setf (prefs-retired p) (string->retired value)))
+               ;; **A key that used to be ours, read as nothing and left where it is**
+               ;; (R24). The retired set lives in the file every head shares now
+               ;; (`~/.config/letibot/head.toml`), reached through `load-retired-into`;
+               ;; this line is what R19 part 3 left in THIS head's file, and it is kept
+               ;; because a save puts every line it did not write back where it found it.
+               ;;
+               ;; The arm exists so the line is RECOGNISED rather than reported as a key
+               ;; this head does not know — the operator's own file grew one, and a build
+               ;; that complained about its own history on every start would be the worse
+               ;; bug. Nothing is set: a value here cannot be trusted to be current, and
+               ;; the whole point of the move is that there is only one place it lives.
+               nil)
               (t (push (format nil "head.toml: `~a` is not a key this head knows"
                                key) notes)))))))
     (values p (nreverse notes))))
@@ -401,11 +643,12 @@ Returns the path written, or NIL for a head with nowhere to write."
          (ours (list (cons "diff" (format nil "~s" (prefs-diff p)))
                      (cons "thinking" (format nil "~s" (prefs-thinking p)))
                      (cons "tools" (format nil "~s" (prefs-tools p)))
-                     (cons "raw_calls" (if (prefs-raw-calls p) "true" "false"))
-                     ;; quoted, and by the ONE function that can quote a value
-                     ;; containing a quote — see `%quote-value` for the measurement
-                     (cons "retired" (%quote-value (retired->string
-                                                    (prefs-retired p)))))))
+                     (cons "raw_calls" (if (prefs-raw-calls p) "true" "false")))))
+    ;; **`retired` is deliberately absent** (R24): the set it names belongs to the file
+    ;; every head shares, and `persist-retired` writes it there. A save of the four choices
+    ;; must not drag a copy of it back into this file — that is how a set comes to have two
+    ;; homes and one of them stale. A `retired` line already here is preserved as somebody
+    ;; else's key, which is what it now is.
     (unless path
       ;; say so rather than writing into the working directory, where a file
       ;; nobody asked for would appear
@@ -425,8 +668,11 @@ Returns the path written, or NIL for a head with nowhere to write."
              (push (format nil "~a = ~a" key (cdr pair)) out)
              (pushnew key written :test #'string=)))
           ((eq (first line) :pair)
-           ;; somebody else's key: rewritten in our quoting so a save round-trips
-           (push (format nil "~a = ~s" (second line) (third line)) out))
+           ;; somebody else's key: rewritten through the ONE function that can quote a
+           ;; value a person might have put a `"` inside — see `%quote-value`. `~s` would
+           ;; escape it as `\"`, which `%unquote` reads back with the backslash still on,
+           ;; so the value would change on a save that was supposed to leave it alone.
+           (push (format nil "~a = ~a" (second line) (%quote-value (third line))) out))
           ;; an `:other` line carries its RAW TEXT as the second element —
           ;; `(:other raw)`, two elements, which is what makes "keep what we do
           ;; not own" work. Reading `(third line)` here took NIL into a string

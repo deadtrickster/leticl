@@ -39,6 +39,27 @@ back. A test that changes the answer to the question it is asking is the same cl
 defect as a global that survives between tests, except that this one outlives the
 process.
 
-A test that needs to see a write rebinds `leticl:*write-prefs*` to T for itself."
-  (let ((leticl:*write-prefs* nil))
-    (if (run! 'leticl) 0 1)))
+A test that needs to see a write rebinds `leticl:*write-prefs*` to T for itself.
+
+**And the notes file is pointed at a directory of the run's own** (R24). It is the
+OPERATOR'S file — `~/.config/letibot/head.toml`, shared with another head — and a suite that
+reads it depends on their dismissals and one that writes it edits their config. Measured:
+within minutes of wiring the shared file up, a test read the operator's real seven keys and
+the next assertion wrote over them.
+
+**That binding is a BOUNDARY and not isolation**, which the notes tests found out for
+themselves: one file for the whole run is still shared between tests, and R24 made the
+listing and the act re-read it. A test that touches the file takes `notes-of-its-own`
+(tests.lisp), which hands it one of its own. Keeping both is deliberate — this one is the
+reason no test can reach the operator's file even by forgetting the fixture."
+  (let ((leticl:*write-prefs* nil)
+        (leticl:*notes-path-override*
+          (merge-pathnames (format nil "leticl-test-notes-~d/head.toml"
+                                   (get-universal-time))
+                           (uiop:temporary-directory))))
+    (unwind-protect
+         (if (run! 'leticl) 0 1)
+      (ignore-errors
+        (uiop:delete-directory-tree
+         (uiop:pathname-directory-pathname leticl:*notes-path-override*)
+         :validate t)))))

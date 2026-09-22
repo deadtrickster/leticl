@@ -1088,7 +1088,7 @@ the mark is a cap the output is allowed to exceed."
 (def-test a-fence-resolves-by-its-first-word (:suite leticl)
   "The claim, in the four shapes an info string actually takes.
 
-`rust,ignore` and `python title="x"` were the two measured misses: the whole
+`rust,ignore` and `python title=\"x\"` were the two measured misses: the whole
 string was looked up and matched nothing, so the fence rendered plain while letibot
 coloured it. The rule is `from_token`'s own (`rano/src/syntax.rs:98-104`): split on a
 comma, then on whitespace, take what is left, case-insensitively."
@@ -1312,6 +1312,137 @@ a painter change, not a head change."
         ;; the test system loads from the repo root, but be explicit
         (uiop:read-file-string
          (merge-pathnames (format nil "src/~a.lisp" name) #p"/home/dead/Projects/leticl/")))))
+
+;;; -------------------- a docstring that stops in the middle ---------------- ;;;
+;;;
+;;; **A double quote inside a docstring has to be escaped**, and forgetting costs the
+;;; rest of the sentence. The string ends at that quote; the remainder of the paragraph
+;;; is read as CODE; and the compiler is left with a handful of stray symbols in the
+;;; defun's body, which it reports as one *undefined variable* per word.
+;;;
+;;; **Nothing fails, and that is what makes it worth a test.** The defun still compiles
+;;; and still runs, because the strays land in front of the real body — so the only
+;;; evidence is a docstring that stops mid-sentence, and a warning nobody reads.
+;;; Measured 2026-09-22: eleven docstrings across seven files in this tree were cut
+;;; this way, and the longest lost two thirds of itself.
+;;;
+;;; So it is CHECKED rather than remembered. The check reads every file with the READER
+;;; — the thing the compiler does with it — and looks for the shape the wreckage has:
+;;; **a body form that is not a form.**
+
+(defun %lisp-source-files ()
+  "Every `.lisp` file under `src/` and `tests/`, as (PATHNAME . PACKAGE-NAME).
+
+The package is the one the file expects to be READ in: a name interned elsewhere would
+be a different symbol, and the walk below matches heads by identity."
+  (let ((root (uiop:pathname-directory-pathname (or *load-truename* #p"./"))))
+    (loop for dir in '("src/" "tests/")
+          for pkg in '("LETICL" "LETICL/TESTS")
+          append (loop for p in (uiop:directory-files (merge-pathnames dir root))
+                       for n = (file-namestring p)
+                       for l = (length n)
+                       when (and (> l 5) (string= ".lisp" n :start2 (- l 5)))
+                         collect (cons p pkg)))))
+
+(defparameter +forms-with-a-docstring+
+  '((defun . 3) (defmacro . 3) (defmethod . 3) (def-test . 3) (lambda . 2)
+    (defparameter . 3) (defvar . 3) (defconstant . 3))
+  "Head, and how many leading elements precede an optional docstring.
+
+A `defun` is `(defun NAME LAMBDA-LIST DOC BODY…)` and a `lambda` has no name, so those
+two differ by one; `def-test` has an option list where a `defun` has its lambda list,
+which is why the count is measured off real files rather than assumed.
+
+**`defmethod` is here for the count and not for the qualifiers.** There is no
+`defmethod` in this tree; one WITH a qualifier would put the body one element further
+right than this says, and the check would name a string that is genuinely the docstring.
+A false positive that says so out loud is the right failure for a table like this.")
+
+(defparameter +symbols-that-are-a-form-alone+ '(t nil)
+  "The two symbols that mean something as a whole form. `t` is a function and `nil` is
+the empty list — any OTHER symbol standing alone in a body is not a form, it is what is
+left of one.")
+
+(defun %walk-forms (form fn)
+  "Call FN on FORM and on every subform. Quoted data is not walked.
+
+A form inside a quote is data — a list of names, a table of strings — and a symbol
+standing alone in there is the point of it rather than a wreck. The loop is written
+against `(cdr tail)` rather than with `dolist` so a dotted pair cannot take it down."
+  (funcall fn form)
+  (when (consp form)
+    (unless (member (car form) '(quote function))
+      (loop for tail = form then (cdr tail)
+            while (consp tail)
+            do (%walk-forms (car tail) fn)))))
+
+(defun %stray-body-forms (top)
+  "Every body form under TOP that is not a form, and is not the body's LAST form:
+ a symbol or a string where a call belongs.
+
+**The last-form exemption is the whole of what makes this precise.** A body may
+legitimately end in a bare symbol — it is the value the function returns, and
+`(defun %payload-view-set (value) … value)` is the shape this tree has several of — so a
+symbol in FINAL position is a return value and a symbol anywhere else is not a form at
+all, because its value would be discarded. A string in non-final position is the same
+statement one louder: no body form is a string.
+
+Each finding is reported as `(HEAD NAME FORM)`, so a failure names the definition and
+the word as well as the file."
+  (let ((bad nil))
+    (%walk-forms
+     top
+     (lambda (form)
+       (let ((how-many (and (consp form)
+                            (cdr (assoc (first form) +forms-with-a-docstring+)))))
+         (when how-many
+           (let ((body (nthcdr how-many form)))
+             (when (stringp (car body)) (setf body (cdr body)))
+             ;; `(cdr tail)` non-nil is *something follows this one*, which is where a
+             ;; stray cannot be a return value
+             (loop for tail on body
+                   for b = (car tail)
+                   when (and (cdr tail)
+                             (or (stringp b)
+                                 (and (symbolp b)
+                                      (not (keywordp b))
+                                      (not (member b +symbols-that-are-a-form-alone+)))))
+                     do (push (list (first form) (second form) b) bad)))))))
+    (nreverse bad)))
+
+(defun %docstring-truncations (path package-name)
+  "Everything `%stray-body-forms` finds in every top-level form of PATH."
+  (let ((*read-eval* nil)
+        (*package* (find-package package-name))
+        (forms nil))
+    (with-open-file (in path :external-format :utf-8)
+      (loop for form = (read in nil :eof)
+            until (eq form :eof)
+            do (push form forms)))
+    (loop for form in (nreverse forms) append (%stray-body-forms form))))
+
+(def-test no-docstring-is-cut-short-by-an-unescaped-quote (:suite leticl)
+  "**The invariant, over every source file, because the defect is one character wide.**
+
+Eleven docstrings in this tree were cut this way when this check was written — under
+`src/` and under `tests/` both — and every one of them still COMPILED. That is the whole
+reason it is a test rather than a note in a style guide: the compiler reports the
+wreckage as undefined variables in a body, and a docstring that stops mid-sentence reads
+as an interruption rather than as a mistake.
+
+It reads the files the way the compiler does, and the assertion is on the absence of the
+stray forms rather than on the words — so a fix that escapes the quote makes them go."
+  (let ((files (%lisp-source-files)))
+    (is (> (length files) 25)
+        "**a plausible source set, so a bad directory cannot pass vacuously** — ~d files"
+        (length files))
+    (dolist (pair files)
+      (let ((bad (%docstring-truncations (car pair) (cdr pair))))
+        (is (null bad)
+            (format nil "~a: ~d body form~:p that ~:[are~;is~] not a form, so a docstring
+ above this one was cut short. First: ~s"
+                    (file-namestring (car pair)) (length bad) (= 1 (length bad))
+                    (first bad)))))))
 
 (defparameter *symbol-chars*
   "*+-_/0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -5793,6 +5924,39 @@ they are pinned here rather than left to memory."
   (is (equal "!" (warning-glyph (list :code "context_wall"))) "the failure glyph")
   (is (equal "·" (warning-glyph (list :code "compacted"))) "and the routine one"))
 
+;;; --------------------------------------------------- the shared notes file ;;;
+;;;
+;;; **The run-wide file was not enough, and this is the measurement.** `run-all` points
+;;; `*notes-path-override*` at a directory of the run's own, which is what keeps the
+;;; OPERATOR'S `~/.config/letibot/head.toml` out of the suite's reach — and that is all it
+;;; does. It is still ONE FILE shared by every test in the run, and since R24 both the
+;;; listing and the act RE-READ it (two heads share it; that is the whole of R24's
+;;; requirement), so a test that starts from *nothing retired* inherits whatever the
+;;; previous notes test left behind. Measured: `the-notes-verb-lists-retires-and-restores`
+;;; failed `one went` and `the rest went`, because `a-snapshot-warning-list-keeps-the-
+;;; conversations-order` had already written its dismissal into the run-wide file — a test
+;;; that changes the answer to the question it is asking, which is the same defect as a
+;;; global that survives between tests, one layer further down.
+;;;
+;;; So a test that touches the notes file gets one of its own. `a-dismissal-survives-a-
+;;; restart` binds a path by hand because it also needs to NAME it; every other test that
+;;; touches the file takes this fixture, which is the one place the pattern is written.
+
+(defvar *notes-fixture-serial* 0
+  "Counts the notes files this run has handed out, so two tests in the same second do not
+share a directory if one of them fails to clean up.")
+
+(it.bese.fiveam:def-fixture notes-of-its-own ()
+  (let ((*notes-path-override*
+          (merge-pathnames (format nil "leticl-test-notes-~d-~d/head.toml"
+                                   (get-universal-time) (incf *notes-fixture-serial*))
+                           (uiop:temporary-directory))))
+    (unwind-protect (&body)
+      (ignore-errors
+        (uiop:delete-directory-tree
+         (uiop:pathname-directory-pathname *notes-path-override*)
+         :validate t)))))
+
 (def-test a-dismissal-survives-a-restart (:suite leticl)
   "**R19 part 3, and it supersedes §11.2's ruling** — *restart is a different requirement
 and nobody had asked for it*, correct when written and overtaken by the operator asking
@@ -5812,6 +5976,9 @@ load-bearing and both are asserted here rather than trusted:
                (format nil "/tmp/leticl-r19-~a/" (get-universal-time))))
          (file (merge-pathnames "head.toml" dir))
          (*write-prefs* t)
+         ;; **the shared notes file, pointed at this test's own directory** (R24) — it is
+         ;; the OPERATOR'S file in production, and this test writes and reads it.
+         (*notes-path-override* file)
          (*slash-out* nil) (*job-out* nil)
          (h (%on-head :cols 96 :rows 24))
          (s (head-session h)))
@@ -5820,15 +5987,17 @@ load-bearing and both are asserted here rather than trusted:
     ;; `~/.config/leticl/head.toml`. The first version of this test bound
     ;; `*write-prefs*` T and then let a dismissal save — and `save-prefs` fell through
     ;; to `default-prefs-path`, so a test about a RESTART wrote an identity from a
-    ;; temp directory into the operator's own file. Measured, and repaired by hand;
-    ;; this is the fix. `*prefs*` carries the path, so setting it here is what makes
-    ;; `persist-retired` land in the test's directory, and doing it BEFORE the first
-    ;; write is what makes that a property of the test rather than of the order its
-    ;; lines happen to run in.
+    ;; temp directory into the operator's own file. Measured, and repaired by hand.
+    ;;
+    ;; **The dismissal goes to `*notes-path-override*` and NOT to `*prefs*`'s path since
+    ;; R24**, which is the change that made this test's file a SHARED one: the retired set
+    ;; left `leticl/head.toml` for the file every head writes. The two are the same file
+    ;; here, deliberately, so one `let` covers both — and the assertion below is against
+    ;; the shared file's own reader rather than against a preference field.
     (setf leticl::*prefs* (let ((p (make-prefs))) (setf (prefs-path p) file) p))
     (unwind-protect
          (progn
-           (prefs-into-head h (load-prefs file))
+           (load-prefs-into h file)
            ;; a detail with every character that could break the file
            (leticl::%handle-frame
             h (%warning-frame "context_wall" "nearly full, and \"quoted\" — see a|b" 7))
@@ -5840,8 +6009,8 @@ load-bearing and both are asserted here rather than trusted:
            (let ((fresh (%on-head :cols 96 :rows 24)))
              (is (null (session-retired (head-session fresh)))
                  "a head that has read nothing has retired nothing")
-             (prefs-into-head fresh (load-prefs file))
-             (is (equal (prefs-retired (load-prefs file)) (session-retired (head-session fresh)))
+             (load-prefs-into fresh file)
+             (is (equal (read-retired-keys) (session-retired (head-session fresh)))
                  "and the READER sees it too, so a later save cannot drop it")
              (is (equal (session-retired s) (session-retired (head-session fresh)))
                  "**the dismissal came back with the file** — ~s against ~s"
@@ -5858,26 +6027,67 @@ load-bearing and both are asserted here rather than trusted:
       (ignore-errors (delete-file file))
       (ignore-errors (uiop:delete-directory-tree dir :validate t)))))
 
-(def-test an-identity-with-punctuation-round-trips-through-the-file (:suite leticl)
-  "The escaping, on its own, because it is the part that fails SILENTLY.
+(def-test the-retired-set-comes-from-the-shared-file-and-not-this-heads-own
+    (:suite leticl :fixture (notes-of-its-own))
+  "**R24's line between the two files, and it is the one an earlier version of this work
+crossed.** The four choices are this head's own (`~/.config/leticl/head.toml`); the retired
+set is every head's (`~/.config/letibot/head.toml`). Writing the set to the shared file and
+then READING it back from this head's own — which is what R19's `prefs-retired` did — is a
+dismissal that is saved and never honoured, and it stays invisible for exactly as long as
+the two paths happen to be the same file. They were the same file in this test's
+neighbour, which is why it passed either way.
 
-An identity is `code|ts|detail` and the set is one comma-separated value on one line. So
-a detail carrying `,` would split one identity into two — both of them matching nothing —
-and a detail carrying a newline would put half an identity on the next LINE of the file,
-where the parser reads it as a key it does not know. Neither failure is visible: the
-operator's note simply comes back next restart."
+So the two are pointed at different files here ON PURPOSE, and the assertion is that a
+fresh start finds the set in the shared one with nothing to help it in its own."
+  (let* ((dir (uiop:ensure-directory-pathname
+               (format nil "/tmp/leticl-r24-prefs-~d/" (get-universal-time))))
+         (own (merge-pathnames "head.toml" dir))
+         (h (%on-head :cols 96 :rows 24)))
+    (unwind-protect
+         (progn
+           ;; the shared file gets a dismissal, as if another head had made it
+           (setf (session-retired (head-session h)) (list "w|context_wall|42|feedfacefeedface"))
+           (persist-retired h)
+           (is (search "w|context_wall|42|feedfacefeedface"
+                       (uiop:read-file-string (notes-path)))
+               "the dismissal went to the shared file")
+           ;; this head's own file is written, and says NOTHING about retiring
+           (save-prefs (make-prefs) own)
+           (let ((own-text (uiop:read-file-string own)))
+             (is (search "diff" own-text) "the choices are in this head's own file")
+             (is (not (search "retired" own-text))
+                 "**and the set is not** — one home for it, or two answers to one question"))
+           ;; a fresh start reads the set from the SHARED file, which is the whole point
+           (let ((fresh (%on-head :cols 96 :rows 24)))
+             (load-prefs-into fresh own)
+             (is (equal '("w|context_wall|42|feedfacefeedface")
+                        (session-retired (head-session fresh)))
+                 "so the next start has the dismissal, from the file that held it")))
+      (ignore-errors (uiop:delete-directory-tree dir :validate t)))))
+
+(def-test an-identity-with-punctuation-round-trips-through-the-file (:suite leticl)
+  "An identity survives the ONE value `head.toml` holds it in, whatever the warning said.
+
+**The reason is different from the reason this test was written, and the reason is worth
+keeping straight (R24).** R19 part 3 escaped the detail — `%2C` for a comma, `%0A` for a
+newline — because the detail was IN the key and the key is one comma-separated value on one
+line. The key is now `w|{code}|{ts}|{fnv1a(detail)}`: a hash has no comma and no newline in
+it, so the escaping is not merely unnecessary, it would be a second format in a file two
+heads share. What the test still checks is the property the escaping was for — **a warning
+whose detail is nothing but punctuation retires to a key that comes back identical** — and
+that is why the details below are still the awkward ones."
   (flet ((round-trip (detail)
            (let* ((w (list :code "gate" :detail detail :ts 3))
                   (back (string->retired (retired->string (list (warning-identity w))))))
              (equal (list (warning-identity w)) back))))
-    (is (round-trip "plain") "nothing to escape")
-    (is (round-trip "a, b") "a comma is not a separator when it is escaped")
+    (is (round-trip "plain") "an ordinary detail")
+    (is (round-trip "a, b") "a comma is IN the detail and not a separator in the key")
     (is (round-trip (format nil "two~%lines")) "a newline does not split the line")
-    (is (round-trip "a|b") "`|` does not split the identity")
-    (is (round-trip "100% done") "and `%` escapes as `%25` so `%2C` in a detail is not a comma")
-    ;; the literal-escape case, which is the one a substitution-based unescape gets
-    ;; wrong: `%2C` in a detail must come back as `%2C` and NOT as `,`
-    (is (round-trip "already %2C here") "**a detail that looks escaped stays literal**")
+    (is (round-trip "a|b") "and `|` inside the detail is not one of the key's three")
+    (is (round-trip "100% done") "a `%` is a byte like any other")
+    ;; the case a substitution-based scheme gets wrong: the detail is hashed, so `%2C` in it
+    ;; is four ordinary bytes rather than an escape anybody has to un-apply
+    (is (round-trip "already %2C here") "**a detail that LOOKS escaped is hashed like anything else**")
     (is (round-trip (format nil "tab~Cand~Ccontrol" #\Tab #\Return)) "tabs and returns too")
     ;; the cap, which is the only thing that may lose one
     (let ((many (loop for i from 0 below 600 collect (format nil "c|~d|d" i))))
@@ -5972,7 +6182,8 @@ show this\"* must not look like *\"nothing happened\"*."
     (is (search "the context is nearly full" (%list-text (warning-listing-lines (head-session h))))
         "with its whole text, which is the part that must not be droppable")))
 
-(def-test a-retired-warning-stays-retired-across-a-resync-and-a-reattach (:suite leticl)
+(def-test a-retired-warning-stays-retired-across-a-resync-and-a-reattach
+    (:suite leticl :fixture (notes-of-its-own))
   "Both events the requirement names REPLACE the transcript from a snapshot, which is
 exactly why a retirement stored on the row would be undone by them. The set is keyed by
 the warning's own `(code detail ts)` and lives outside anything a snapshot carries — the
@@ -6004,7 +6215,8 @@ touch while it replaces `self.notes` wholesale."
         "/notes restore puts it back on the screen")
     (is (null (session-retired (head-session h))) "and the dismissal is undone")))
 
-(def-test a-snapshot-warning-list-keeps-the-conversations-order (:suite leticl)
+(def-test a-snapshot-warning-list-keeps-the-conversations-order
+    (:suite leticl :fixture (notes-of-its-own))
   "The daemon's list is a `Vec` pushed in arrival order — OLDEST first (`view.rs:660`) —
 and this slot is newest-first because a live warning is PUSHED. Both orders have to
 agree, or `/notes` numbers the list backwards after a resync and `/notes dismiss N`
@@ -6020,7 +6232,17 @@ retires the wrong warning."
                (mapcar (lambda (w) (getf w :code)) (warning-order (head-session h))))
         "the conversation's order, oldest first, survives the snapshot")
     (leticl::%notes h "notes" "dismiss 1")
-    (is (equal "first|1|one" (first (session-retired (head-session h))))
+    ;; **The identity is a HASH and not the detail** (R24's shared file): letibot's own
+    ;; format, `w|code|ts|fnv1a(detail)`, because the retired set now lives in a file two
+    ;; heads share and a key they cannot both read is a file neither can use. So this
+    ;; asserts the SHAPE, and that the two codes' keys are different — which is the
+    ;; property the test is about (it retired the right one), rather than a literal
+    ;; string that moves whenever the hash does.
+    ;; `session-warnings` is NEWEST-first (a live warning is pushed), so the oldest — the
+    ;; one `/notes` numbered 1 and `dismiss 1` retired — is the LAST of it. That ordering
+    ;; is the subject of this very test, one line up.
+    (is (equal "first" (getf (car (last (session-warnings (head-session h)))) :code)))
+    (is (string= "w|first|1|" (subseq (first (session-retired (head-session h))) 0 10))
         "so `/notes dismiss 1` retires the OLDEST — the one the listing numbered 1")))
 
 (def-test the-turn-failed-warning-is-not-a-second-copy-of-the-footer (:suite leticl)
@@ -6043,7 +6265,8 @@ to agree about every filter (`bacf495`)."
                            :warnings (list (list :code "turn_failed" :detail "the model died" :ts 0))))
     (is (null (%warning-rows h)) "and a snapshot does not replant it")))
 
-(def-test the-notes-verb-lists-retires-and-restores (:suite leticl)
+(def-test the-notes-verb-lists-retires-and-restores
+    (:suite leticl :fixture (notes-of-its-own))
   "`/notes`, `/notes dismiss N`, `/notes dismiss all`, `/notes restore` and `/dismiss` —
 the reference's grammar (app.rs:5772-5839), so the two heads take the same sentence. The
 listing is a SLASH listing, which is the pane this head already has for a verb's answer."
@@ -7657,7 +7880,7 @@ decodes — the head's own socket path, with a string stream standing in for it.
 
 `:live t` by default, because that is what a daemon's own `Sessions` reply means by a
 session it is holding — and the flag decides whether picking the row is a `switch` or
-a `resume`. A test that wants the other kind passes `(list :title "x" :live nil)`
+a `resume`. A test that wants the other kind passes `(list :title \"x\" :live nil)`
 itself; see `picking-a-session-on-disk-resumes-it`."
   (setf (session-sessions (head-session head))
         (loop for title in titles
@@ -8205,8 +8428,8 @@ naming the wrong row — the next scroll would ask for a row it has already got.
 
 (def-test a-row-the-daemon-does-not-hold-is-not-an-empty-row (:suite leticl)
   "`body: null` is the daemon saying it does not hold that ordinal — trimmed from ITS
-view, which is bounded by the same `ViewBounds` — and *"nobody has it"* and *"it is
-empty"* must not look alike (`view.rs:732-740`, `server.rs:683-690`).
+view, which is bounded by the same `ViewBounds` — and *\"nobody has it\"* and *\"it is
+empty\"* must not look alike (`view.rs:732-740`, `server.rs:683-690`).
 
 Measured against a real daemon: an ordinal past the end answers
 `{\"frame\":\"row_fetched\",…,\"body\":null,\"total\":0}` — the row is not there, and

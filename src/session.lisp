@@ -664,77 +664,55 @@ disclosure decision and NEVER a cap on the record.
 A `defparameter` and not a `defconstant`: the file pusher SKIPS constants, so a
 constant here could never be changed on a running head.")
 
-(defparameter +identity-escapes+
-  '((#\% . "%25") (#\, . "%2C") (#\| . "%7C")
-    (#\Newline . "%0A") (#\Return . "%0D"))
-  "The characters an identity may not carry literally, and what each becomes.
+(defun %fnv1a-64 (string)
+  "FNV-1a, 64-bit, over STRING's UTF-8 BYTES — letibot's own hash, byte for byte.
 
-**Four of them, and every one is a parsing hazard rather than a taste.** The set is
-written into `head.toml` as ONE comma-separated value on ONE line, so a comma inside a
-detail would split an identity in two, a newline would split the line (the file is
-`key = value` per line), and `|` is the separator inside an identity. A malformed row in
-the file is a dismissal that silently does not survive a restart — the exact defect R19
-part 3 exists to fix — so the escaping is what makes the claim true rather than likely.
+**Hand-rolled for the same reason letibot's is**: `sxhash` is not stable across an SBCL
+version, and a key that changes when the head is rebuilt would resurrect every note the
+operator had retired, which is the defect the whole identity exists to prevent.
 
-A `defparameter` and not a `defconstant`: the file pusher SKIPS constants.")
+The offset basis and the prime are the published ones (`offset_basis =
+0xcbf29ce484222325`, `prime = 0x100000001b3`), and the arithmetic is masked to 64 bits after
+every multiply because SBCL has bignums and Rust wraps — an unmasked product would keep
+growing and the two heads would disagree on the first string long enough to matter.
 
-(defun %escape-identity (text)
-  "TEXT with every character `+identity-escapes+` names replaced, `%` first.
+Over UTF-8 bytes because that is what `s.as_bytes()` is on the other side: a detail is a
+sentence, sentences contain `→` and `—`, and hashing CHARACTERS here would give a different
+key from hashing their encoding."
+  (let ((h #xcbf29ce484222325))
+    (loop for byte across (sb-ext:string-to-octets string :external-format :utf-8)
+          do (setf h (ldb (byte 64 0) (* (logxor h byte) #x100000001b3))))
+    h))
 
-A character-at-a-time rebuild rather than four substitutions over the whole string:
-the replacements differ in LENGTH (`%` becomes three characters), so a chain of
-in-place substitutions would rewrite the `%` it had just written. Left to right, each
-input character is consumed exactly once and no replacement is ever re-read."
-  (with-output-to-string (out)
-    (loop for ch across (or text "")
-          do (let ((hit (assoc ch +identity-escapes+)))
-               (if hit
-                   (write-string (cdr hit) out)
-                   (write-char ch out))))))
-
-(defun %unescape-identity (text)
-  "The inverse of `%escape-identity`, for a value read back off disk.
-
-ONE pass over the string rather than the substitution table in reverse, and the
-difference is not stylistic: unescaping `%2C` by substitution would also rewrite a
-literal `%2C` that the escaping had produced as `%252C`, so a detail containing `%2C`
-would read back as a comma. Scanning left to right consumes each escape once."
-  (let ((out (make-string-output-stream)))
-    (loop with i = 0
-          while (< i (length text))
-          do (let ((ch (char text i)))
-               (if (and (char= ch #\%)
-                        (< (+ i 2) (length text)))
-                   (let* ((hex (subseq text (1+ i) (+ i 3)))
-                          (hit (find hex +identity-escapes+ :key #'cdr :test #'string=)))
-                     (if hit
-                         (progn (write-char (car hit) out) (incf i 3))
-                         (progn (write-char ch out) (incf i))))
-                   (progn (write-char ch out) (incf i)))))
-    (get-output-stream-string out)))
+(defun %fnv1a-hex (string)
+  "The 16 lowercase hex digits letibot writes in a note key (`{:016x}`)."
+  (format nil "~16,'0x" (%fnv1a-64 string)))
 
 (defun warning-identity (w)
-  "The name a warning keeps across a resync, a reattach and a RESTART.
+  "The name a warning keeps across a resync, a reattach **and a restart — in a file two
+heads share.**
 
-Built from the warning's OWN facts and nothing about where it is on the screen: its
-`code`, the log's `ts` for the envelope that carried it, and its `detail`. `ts` is
-what tells one announcement from a redelivery of it, which is the same reason the
-reference's `note` dedupes on the triple (`app.rs:5689-5697`).
+**Built from the warning's own facts and nothing about where it is on the screen**, and it
+is `w|{code}|{ts}|{fnv1a(detail)}` — **letibot's format, character for character**
+(`app.rs`, `note_key`: `format!(\"w|{}|{}|{:016x}\", w.code, w.ts, fnv1a(&w.detail))`).
+`ts` is the log's clock for the envelope that carried it, which is what tells one
+announcement from a redelivery of the same one.
 
-**The detail is escaped, not hashed, and that changed with R19.** The first version of
-this said the set lived in memory for the life of the process, so writing it down was a
-change to make when it was asked for — *"and now it is asked for": the operator asked
-by restarting a head and being met by twelve red lines.* The reference hashes the detail
-because its key must fit one comma-separated value with no punctuation in it; escaping
-buys the same safety and keeps the file readable, so a person looking at `head.toml`
-sees which announcements they dismissed.
+**This head used to use `code|ts|escaped-detail`, and the difference was not cosmetic.**
+The retired set now lives in ONE file for every head on the box, and both heads compare
+keys against that file by string equality — so two formats in one file is a file both
+heads write and neither can read. The escaping machinery went with it: a hash has no comma
+and no newline in it, which is what the escaping was for, and the code and clock are the
+daemon's own identifiers.
 
-**One definition, so the memory key and the file key cannot disagree** — which they
-would if the escaping happened at write time and the unescaping at read time, on either
-side of the membership test that uses this string."
-  (format nil "~a|~a|~a"
+**The `w|` prefix is a KIND, not decoration.** letibot writes `n|…` for a 'refusal nobody
+made' note and `d|{req_id}` for a settled decision; this head files only warnings, so it
+produces only `w|…` — and it KEEPS the others on the way through, because a save merges
+the file and a key this head did not write is another head's dismissal. See
+`merge-retired-keys`."
+  (format nil "w|~a|~a|~a"
           (or (getf w :code) "") (or (getf w :ts) 0)
-          (%escape-identity (getf w :detail))))
+          (%fnv1a-hex (or (getf w :detail) ""))))
 
 (defun session-retired-p (session w)
   "Has the reader already retired W?"

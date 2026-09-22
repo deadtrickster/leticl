@@ -59,8 +59,9 @@
    #:make-prefs #:default-prefs-path #:load-prefs #:save-prefs
    #:prefs-diff #:prefs-thinking #:prefs-tools #:prefs-raw-calls #:prefs-path
    #:load-prefs-into #:save-head-prefs #:head-into-prefs #:prefs-into-head
-   #:persist-retired #:+retired-cap+
-   #:retired->string #:string->retired #:prefs-retired #:warning-glyph #:%quote-value
+   #:load-retired-into #:persist-retired #:+retired-cap+
+   #:shared-notes-path #:read-retired-keys #:merge-retired-keys #:save-retired-keys #:*notes-path-override* #:notes-path
+   #:retired->string #:string->retired #:warning-glyph #:%quote-value
    #:*write-prefs*
    ;; chrome (S8) — the alarm, the stall, the money meter, the boxed composer
    #:composer-line #:hint-bar #:alarm-line #:alarm-counts #:alarmed-p
