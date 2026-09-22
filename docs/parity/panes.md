@@ -25,7 +25,8 @@ criterion names a test, and the test is run from the tree as committed*.
 
 Those rows now carry the measurement and its date. **Every other row here is true of
 `dc62ddf` and says nothing about today; re-measure before acting on one.** Re-measured
-2026-09-22 at `047f9ad`: this file's **G4** and the **job_out** row.
+2026-09-22 against the tree at `047f9ad` (the behaviour landed in `b7a2620`): this
+file's **G4** and the **job_out** row.
 
 **Method.** Read on both sides; every verdict below carries a line on each. Nothing
 was run, no keys were sent, no head was restarted.

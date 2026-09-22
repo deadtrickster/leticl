@@ -232,10 +232,11 @@ half, and one or two are requirements whose *criterion* nobody has settled yet.
   `a-refused-job-output-read-lands-in-the-pane`,
   `a-job-output-window-is-ephemeral-and-never-stored`,
   `the-hint-bar-names-the-job-output-overlays-keys`, `a-settled-job-updates-the-row-the-pane-draws`.
-- **Status RUNS + LIVE.** `b7a2620`, 2026-09-21 00:00 — and **this document is where
-  the record was wrong**: `panes.md` G4, `keys.md` G20, `wire.md` W2/W15 and `TODO.md`'s
-  T1(3) all said this was missing, and on 2026-09-22 the driver handed that line to the
-  head as work. See *A record is not a measurement*, below.
+- **Status RUNS + LIVE.** Landed in `b7a2620` (2026-09-21 00:00); **re-measured live
+  2026-09-22** and written down here — and **this document is where the record was
+  wrong**: `panes.md` G4, `keys.md` G20, `wire.md` W2/W15 and `TODO.md`'s T1(3) all said
+  this was missing, and on 2026-09-22 the driver handed that line to the head as work.
+  See *A record is not a measurement*, below.
 
   **The measurement, live**, on a scratch head attached to a real daemon
   (`42ce9f1aae08`) with two real jobs, keys sent through tmux, screen captured:

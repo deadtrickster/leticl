@@ -18,9 +18,9 @@ one rule — *a criterion names a test, and the test is run from the tree as com
 
 Those rows now carry the measurement and its date. **Every other row here is true of
 `dc62ddf` and says nothing about today; re-measure before acting on one.** Re-measured
-2026-09-22 at `047f9ad`: this file's **W2**, **W15**, the **`ReadJobOutput`** row, the
-**`JobOutput`** row, §4f's retire half (part of **W16**), and §4i's jobs bullet;
-`panes.md` **G4** names the evidence.
+2026-09-22 against the tree at `047f9ad` (the behaviour landed in `b7a2620`): this
+file's **W2**, **W15**, the **`ReadJobOutput`** row, the **`JobOutput`** row, §4f's retire
+half (part of **W16**), and §4i's jobs bullet; `panes.md` **G4** names the evidence.
 
 Surface: the frames, the events, the session fold, the exchange. Not keys, not
 commands, not rendering, not panes — those are measured elsewhere.

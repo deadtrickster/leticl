@@ -21,8 +21,9 @@ rule — *a criterion names a test, and the test is run from the tree as committ
 
 Those rows now carry the measurement and its date. **Every other row here is true of
 `dc62ddf` and says nothing about today; re-measure before acting on one.** Re-measured
-2026-09-22 at `047f9ad`: this file's **G20** and the **§3 rows 5 and 16**; `panes.md`
-**G4** names the evidence for all of them.
+2026-09-22 against the tree at `047f9ad` (the behaviour landed in `b7a2620`): this
+file's **G20** and the **§3 rows 5 and 16**; `panes.md` **G4** names the evidence for all
+of them.
 
 ---
 
