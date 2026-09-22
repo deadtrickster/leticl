@@ -1833,12 +1833,22 @@ own columns. `/cells` is folded here as well as in the user row, and it has to
 be the SAME text going in: the pending row is cleared by matching the user item
 the daemon appends, so a head that queued an abbreviation and received the real
 thing would leave the `queued` line on the screen for the rest of the session."
-  (let* ((w (max 20 cols))
-         (tag "queued")
-         ;; the first row shares its width with the tag; the rest hang under it
-         (head-w (max 8 (- w 2 (string-width tag) 3)))
-         (indent (make-string (+ (string-width tag) 3) :initial-element #\space)))
+  (let ((w (max 20 cols)))
+    ;; **THE TAG IS PER ENTRY, not per pane** (R16): an echo a snapshot could not
+    ;; resolve is not `queued` — the head can no longer support that claim — and
+    ;; saying queued anyway is the lie R2 exists to prevent.
+    ;;
+    ;; **The layout is the reference's rule applied to whichever word is there**: the
+    ;; first row shares its width with the tag and the continuations hang under the
+    ;; text, by `width(tag) + 3` (`app.rs:9017-9046`). So an `unconfirmed` echo
+    ;; measures its own word rather than being padded to the other's — the reference's
+    ;; arithmetic, on a tag it does not have.
     (loop for text in (reverse (head-queued head))
+          for tag = (if (member text *queued-unconfirmed* :test #'equal)
+                        "unconfirmed"
+                        "queued")
+          for head-w = (max 8 (- w 2 (string-width tag) 3))
+          for indent = (make-string (+ (string-width tag) 3) :initial-element #\space)
           append (let ((rows (or (wrap-segments
                                   (list (cons (%fold-cells text) nil)) head-w)
                                  (list (list (cons "" nil))))))

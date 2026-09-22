@@ -174,6 +174,7 @@
    #:head-last-rows #:head-cols #:head-rows #:head-mode #:head-composer
    #:head-farewell #:head-quit-open #:head-secret-req #:head-connected #:head-status-note
    #:head-settings #:head-queued #:head-scroll #:head-screen-reqs #:head-want-new
+   #:*queued-unconfirmed* #:%resolve-queued #:%re-resolve-queued
    #:head-jobs #:head-subagents #:head-peeked #:head-picker-sel
    ;; hack
    #:hack-start #:hack-stop #:hack-socket-path #:list-live-heads #:hack-handle

@@ -6151,6 +6151,137 @@ whose effect is invisible. The reference sets `session_id = current` and, when
     (is (= 1 (length (session-sessions (head-session h))))
         "and the subagent row is filtered out of the picker's list here too")))
 
+;;; --------------- R16: a queued echo across a compaction -------------------- ;;;
+;;;
+;;; MEASURED with the instruction R16 itself gives — *"queue a prompt and force a
+;;; compaction under it"* — and this head FAILED it:
+;;;
+;;;     queued before the compaction      ("third thing" "second thing" "first thing")
+;;;     the snapshot LANDED (seq/items)   (900 4)
+;;;     the rows the echoes wait for       ("first thing" "second thing" "third thing")
+;;;     queued AFTER                      ("third thing" "second thing" "first thing")
+;;;
+;;; All three prompts were in the transcript the snapshot carried and all three
+;;; echoes still read `queued`. `%retire-pending` is reached from the live
+;;; `transcript_content` arm and NOWHERE ELSE, so **a row that arrives inside a
+;;; snapshot retires nothing, for the life of the session.**
+
+(defun %snapshot-with (items &key (id "s-r16") (dropped 0))
+  (list :session-id id :seq 900 :dropped 0 :items-dropped dropped
+        :turn nil :open-decisions nil :settled-decisions nil :warnings nil :heads nil
+        :items items))
+
+(defun %a-user-row (item-id text)
+  (list :item-id item-id :kind "user" :ts 0
+        :item (list :type "user" :parts (list (list :kind "text" :text text)))))
+
+(def-test a-snapshot-retires-the-echoes-whose-rows-it-carries (:suite leticl)
+  "R16's own instruction, run: queue prompts, then force a compaction whose snapshot
+carries their rows.
+
+The prompt's row arriving INSIDE a snapshot is the case the live path cannot see — the
+transcript takes the words over by being them, and a snapshot is not a
+`transcript_content` frame. So the same TEXT match has to be made against the snapshot
+too, and through the SAME function, or the two paths retire different things."
+  (let* ((leticl::*queued-unconfirmed* nil)
+         (h (%on-head :cols 90 :rows 24))
+         (s (head-session h)))
+    (setf (session-session-id s) "s-r16"
+          (head-queued h) (list "third thing" "second thing" "first thing"))
+    (leticl::%handle-frame
+     h (list :frame "resync" :reason "auto-compaction" :dropped 0 :scrubbed nil
+             :snapshot (%snapshot-with (list (%a-user-row "u1" "first thing")
+                                             (%a-user-row "u2" "second thing")
+                                             (%a-user-row "u3" "third thing")))))
+    (is (null (head-queued h))
+        "every echo whose row the snapshot carried is retired; still queued: ~s"
+        (head-queued h))
+    (is (null leticl::*queued-unconfirmed*)
+        "and nothing is left unresolved, because each one WAS resolved")
+    ;; and the same through a HELLO, the other frame a snapshot arrives on
+    (let ((h2 (%on-head :cols 90 :rows 24)))
+      (setf (session-session-id (head-session h2)) "s-r16b"
+            (head-queued h2) (list "second thing" "first thing"))
+      (leticl::%handle-frame
+       h2 (list :frame "hello" :protocol-version 23 :session-id "s-r16b"
+                :head-id "h1" :dropped 0 :sessions nil :wiring nil
+                :resumed-from nil :scrubbed nil
+                :snapshot (%snapshot-with (list (%a-user-row "u1" "first thing")
+                                                (%a-user-row "u2" "second thing"))
+                                          :id "s-r16b")))
+      (is (null (head-queued h2)) "a HELLO's snapshot resolves them too"))))
+
+(def-test an-echo-a-snapshot-cannot-resolve-stops-saying-queued (:suite leticl)
+  "**R16's second clause, and the reason it is a third mark and not a deletion.**
+
+A `queued` echo is a claim about the daemon's queue — *I sent this and have not seen
+its row* — and the head made it on the strength of a transcript that a compaction has
+just REPLACED. So when the snapshot does not carry the row, the claim has lost its
+footing in both directions: a prompt that landed may have had its row summarised away,
+and a prompt that has not landed looks exactly the same from here.
+
+Neither `queued` (which the head can no longer support) nor a silent drop (the opposite
+lie, and it would lose the one signal R2 exists to give) is honest. It is
+`unconfirmed` — and **it retires the ordinary way the moment its row does land**, so
+the mark is transient for a prompt that is genuinely still queued and permanent only
+for one whose row is never coming."
+  (let* ((leticl::*queued-unconfirmed* nil)
+         (h (%on-head :cols 90 :rows 24))
+         (s (head-session h)))
+    (setf (session-session-id s) "s-r16d"
+          (head-queued h) (list "summarised away" "also gone"))
+    (leticl::%handle-frame
+     h (list :frame "resync" :reason "auto-compaction" :dropped 0 :scrubbed nil
+             :snapshot (%snapshot-with
+                        (list (list :item-id "s1" :kind "assistant" :ts 0
+                                    :item (list :type "assistant" :text "the summary"
+                                                :tool-calls nil)))
+                        :id "s-r16d" :dropped 40)))
+    (is (equal '("also gone" "summarised away") (head-queued h))
+        "the echoes are HELD — the head cannot prove they landed")
+    (is (equal (head-queued h) leticl::*queued-unconfirmed*)
+        "and every one of them is marked unresolved")
+    ;; **the invariant**, and it is what keeps the two from drifting
+    (is (every (lambda (txt) (member txt (head-queued h) :test #'equal))
+               leticl::*queued-unconfirmed*)
+        "every unconfirmed text is still a held echo")
+    ;; the mark on the screen is the OTHER word
+    (let ((text (segs-of (leticl::queued-lines h 90))))
+      (is (search "unconfirmed · also gone" text) "the row says unconfirmed: ~s" text)
+      (is (not (search "queued · also gone" text))
+          "and does NOT say queued, which the head can no longer support"))
+    ;; and a row that lands retires it out of BOTH lists
+    (leticl::%handle-frame
+     h (list :frame "event" :seq 901 :event "transcript_content" :item-id "u9"
+             :item (list :type "user" :parts (list (list :kind "text"
+                                                         :text "summarised away")))))
+    (is (equal '("also gone") (head-queued h)) "its row landed, so it is retired")
+    (is (equal '("also gone") leticl::*queued-unconfirmed*)
+        "and it leaves the unresolved set with it")))
+
+(def-test the-coalesced-echo-is-resolved-the-same-way-on-both-paths (:suite leticl)
+  "One rule, two callers. Behind a running turn the daemon merges consecutive messages
+into one, so a landing row can be the FRONT PIECE of a coalesced echo — `row ＋ newline`
+is a prefix of the queued text, and the front comes off with the rest staying queued
+(`app.rs:4685-4703`). A snapshot has to resolve it exactly as a live row does, or the
+merged prompt stays on the screen for the rest of the session.
+
+This is the case my first attempt at the fix got WRONG, and the test exists because of
+it: I compared the queue's LENGTH rather than the queue, and the coalesced branch keeps
+the same number of entries with a shorter one."
+  (let* ((leticl::*queued-unconfirmed* nil)
+         (h (%on-head :cols 90 :rows 24))
+         (s (head-session h)))
+    (setf (session-session-id s) "s-r16e"
+          (head-queued h) (list (format nil "a~%b")))
+    (leticl::%handle-frame
+     h (list :frame "resync" :reason "auto-compaction" :dropped 0 :scrubbed nil
+             :snapshot (%snapshot-with (list (%a-user-row "u1" "a")) :id "s-r16e")))
+    (is (equal '("b") (head-queued h))
+        "the front piece came off and the rest stayed queued")
+    (is (equal '("b") leticl::*queued-unconfirmed*)
+        "and the remainder is unresolved, not confirmed")))
+
 (def-test a-landed-row-retires-the-prompt-it-echoes (:suite leticl)
   "The queue was retired by `pop` on `transcript_appended` — the NEWEST entry,
 for a row that is almost certainly the OLDEST prompt — so with two queued prompts
