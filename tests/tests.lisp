@@ -1105,30 +1105,140 @@ comma, then on whitespace, take what is left, case-insensitively."
   (dolist (info (list "rust,ignore" "python title=\"x\"" "rust title=\"y\" ignore" "RUST,"))
     (is (plusp (lang-for-fence info)) (format nil "~s colours" info))))
 
+;;; **The guard reads `rano`, and this is the whole of §11.5.**
+;;;
+;;; The test below used to carry its own hand-written list of the tokens `rano` knows — a
+;;; THIRD copy of a table that lives in `~/Projects/rano/rano/src/syntax.rs` and is mirrored
+;;; here in `*fence-tokens*`. Three copies agreeing is a coincidence; the defect is that the
+;;; guard **cannot fire for a token nobody wrote down**, because a new token in `rano` is not
+;;; in the list the guard iterates. The drift it exists to catch is exactly the one it cannot
+;;; see — §2.6's own shape one layer up, where the copy is the thing that guards the copy.
+;;;
+;;; So the tokens are EXTRACTED from `rano`'s source at test time. It is the real table by
+;;; construction, it needs no build step or generator, and `rano` is already an absolute path
+;;; dependency of three `Cargo.toml`s in the reference tree.
+;;;
+;;; Two traps, and both are answered below by a test rather than by care:
+;;;   · **an extraction that finds nothing** would make the guard vacuous — the failure mode
+;;;     it was written to end. The count is asserted, and a shape change in `rano` fails
+;;;     LOUDLY rather than silently passing;
+;;;   · **the extractor itself is a thing that can be wrong**, so `a-token-added-to-rano-is-
+;;;     seen-by-the-guard` feeds it a source with a token this head has never heard of.
+
+(defparameter +rano-syntax-rs+ "/home/dead/Projects/rano/rano/src/syntax.rs"
+  "Where `rano::syntax::Lang::from_token` is. The same absolute path three `Cargo.toml`s in
+`~/Projects/letibot/letibot` depend on, so the tree is reachable from a box that can build
+that head. A `defparameter` and not a `defconstant`: the file pusher SKIPS constants.")
+
+(defun %tokens-in-from-token (source)
+  "Every fence token SOURCE's `from_token` answers, read out of the Rust.
+
+NIL when SOURCE has no `from_token` at all, and — this is the part that matters — NIL when
+it has one with NO arms. An empty list would let the caller loop over nothing and go green,
+which is the vacuity this whole guard exists to end; `nil` says *I could not read this*.
+
+The function runs from the `fn` to the first line that is exactly four spaces and a brace,
+because that is where it ends: its `match` arms are indented deeper. Then only the **match
+arms** are read — a line carrying `=>` — because the prologue holds strings that are not
+tokens (its `unwrap_or` takes an empty literal, twice) and only arms name a grammar. `//`
+comments are stripped first: the real table carries prose among its arms, and a quote in one
+of them would otherwise be read as a token."
+  (let ((at (search "pub fn from_token" source)))
+    (when at
+      (let* ((body (subseq source at))
+             (cut (loop for start = 0 then (1+ lf)
+                        for lf = (position #\Newline body :start start)
+                        while lf
+                        when (string= (subseq body start lf) "    }")
+                          return lf)))
+        ;; **NO CLOSING BRACE, NO LIST.** Scanning to the end of the file instead would
+        ;; pick up every string below the function — a table of tokens plus whatever else
+        ;; that file holds — and the guard would fail with tokens nobody can find. `nil`
+        ;; means *I could not read this*, which is skip-able and visible as a skip.
+        (when cut
+          (let* ((head (subseq body 0 cut))
+                 (code (with-output-to-string (s)
+                         (dolist (line (uiop:split-string head :separator '(#\Newline)))
+                           (let* ((bar (search "//" line))
+                                  (arm (if bar (subseq line 0 bar) line)))
+                             ;; **ARMS ONLY.** The prologue's `unwrap_or("")` are strings
+                             ;; and not tokens; a token is what sits left of a `=>`.
+                             (when (search "=>" arm)
+                               (write-string arm s)
+                               (write-char #\Newline s))))))
+                 (toks nil) (in nil) (begin nil))
+            (loop for i from 0 below (length code)
+                  for ch = (char code i)
+                  do (when (char= ch #\")
+                       (if in
+                           (progn (push (subseq code begin i) toks) (setf in nil))
+                           (progn (setf in t begin (1+ i))))))
+            (nreverse (delete-duplicates toks :test #'string=))))))))
+
+(defun %rano-tokens ()
+  "`rano`'s tokens, or NIL when its source is not on this box."
+  (when (probe-file +rano-syntax-rs+)
+    (%tokens-in-from-token (uiop:read-file-string +rano-syntax-rs+))))
+
+(def-test a-token-added-to-rano-is-seen-by-the-guard (:suite leticl)
+  "**The extractor is the half that can be subtly wrong, so it is held to a string this
+file owns.** Not the operator's tree: a source written here, with a token this head has
+never heard of. That is the falsification of the guard's whole purpose — §11.5's ruling is
+*point the guard at `rano`*, and a guard that cannot see a token nobody wrote down is the
+defect being fixed.
+
+An extraction that finds NOTHING is the other failure, and the reason this returns NIL
+rather than an empty list when the shape it expects is gone."
+  (let ((synthetic (format nil "pub fn from_token(token: &str) -> Option<Lang> {~%
+        match word.as_str() {~%
+            \"rust\" | \"rs\" => Some(Lang::Rust),~%
+            \"elixir\" => Some(Lang::Elixir),~%
+            _ => None,~%
+        }~%
+    }~%")))
+    (let ((toks (%tokens-in-from-token synthetic)))
+      (is (equal '("rust" "rs" "elixir") toks)
+          "the tokens come out of the source in order, none invented and none missed: ~s"
+          toks)
+      (is (member "elixir" toks :test #'string=)
+          "**AND A TOKEN THIS HEAD HAS NEVER HEARD OF IS IN THE SET** — which is what makes
+`every-token-rano-knows-is-a-token-this-head-knows` able to fail for a token nobody wrote
+down. Asserted on a synthetic table rather than by editing the operator's `rano`."))
+    (is (null (%tokens-in-from-token "pub fn detect(path: &str) -> Option<Lang> {\n    }\n"))
+        "no `from_token`, no token list — NIL, so the caller must skip rather than pass
+vacuously, which is the failure this whole guard exists to end")
+    (is (null (%tokens-in-from-token "pub fn from_token(t: &str) -> Option<Lang> {\n    }"))
+        "**and a `from_token` with no arms is the OTHER vacuity** — an empty list would let
+the real test loop over nothing and go green")))
+
 (def-test every-token-rano-knows-is-a-token-this-head-knows (:suite leticl)
-  "**The painter IS the table**, so this asserts against it rather than restating it.
+  "**The painter IS the table**, so this asserts against `rano`'s OWN source rather than
+restating it (§11.5).
 
-`rano::syntax::Lang::from_token` is what letibot colours a fence with, and its
-docstring says the property that keeps it honest: *`from_token` answers every
-`Lang::name()`, and vice versa*. So the check here is a list of the tokens that table
-names — every one of them, including the ones the doc listed as missing here (tsx,
-lua, php, make, makefile, dockerfile, ini, cfg, conf, diff, patch, scheme, scm, rkt,
-clojure, clj, edn, golang, python3, mjs, jsx, xml, svg, htm, gfm, psql) — and the
-requirement that each reaches a grammar THIS BUILD HAS.
+`rano::syntax::Lang::from_token` is what letibot colours a fence with, and its docstring
+says the property that keeps it honest: *`from_token` answers every `Lang::name()`, and vice
+versa*. The requirement is that each of those tokens reaches a grammar THIS BUILD HAS.
 
-The tokens that must NOT resolve are as important and are asserted below."
-  (dolist (tk '("rust" "rs" "go" "golang" "sh" "bash" "shell" "zsh"
-                "py" "python" "python2" "python3" "c" "h" "json"
-                "lisp" "cl" "commonlisp" "common-lisp" "elisp" "emacs-lisp" "el"
-                "js" "jsx" "javascript" "mjs" "node" "ts" "typescript" "mts" "cts"
-                "tsx" "md" "markdown" "gfm" "toml" "yaml" "yml"
-                "html" "htm" "xhtml" "xml" "svg" "css" "lua" "rb" "ruby" "php" "java"
-                "make" "makefile" "gnumakefile" "dockerfile" "docker"
-                "ini" "cfg" "conf" "properties" "editorconfig"
-                "diff" "patch" "udiff" "scm" "scheme" "ss" "rkt"
-                "sql" "psql" "mysql" "plpgsql" "clj" "cljs" "cljc" "edn" "clojure"))
-    (is (plusp (lang-for-fence tk)) (format nil "~a resolves to a grammar" tk))
-    (is (stringp (fence-grammar-name tk)) (format nil "and ~a names one" tk))))
+**What this test did before, and why it could not fail.** It carried a hand-written list — a
+third copy of the table, after `rano`'s and this head's `*fence-tokens*` — so a token added
+to `rano` was invisible to it until somebody edited the list too. All three agreed at 75
+tokens when this was written, which is exactly how a copy reads as a guard.
+
+Skipped when `rano`'s source is not on the box (the same contract as the highlight shim,
+which passes with no `.so` present) — but not silently: the count is asserted, so a shape
+change in `rano` fails here rather than turning the guard off."
+  (let ((toks (%rano-tokens)))
+    (if (null toks)
+        (skip "rano's source is not on this box")
+        (progn
+          (is (> (length toks) 50)
+              "**a plausible table, so an extractor that stopped matching cannot pass** — ~d
+ tokens read out of ~a" (length toks) +rano-syntax-rs+)
+          (dolist (tk toks)
+            (is (plusp (lang-for-fence tk))
+                (format nil "rano's `~a` resolves to a grammar here" tk))
+            (is (stringp (fence-grammar-name tk))
+                (format nil "and `~a` names one" tk)))))))
 
 (def-test a-token-this-build-cannot-draw-stays-plain (:suite leticl)
   "**A grammar you do not have is not an alias you can add.** The doc's list includes
