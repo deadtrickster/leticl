@@ -108,7 +108,7 @@ For a permission that is `:option-id`; for a question it is the row's own text,
 because a question's identity IS its position in `choices` and the text is what a
 person points at. `:option-id` first when a row has both, so the id stays the
 spelling that resolves and a label stays for reading — the rule the ladder already
-keeps (*"the ID is the spelling that always works; a label is for reading"*)."
+keeps (*\"the ID is the spelling that always works; a label is for reading\"*)."
   (cond ((stringp choice) choice)
         ((consp choice) (or (getf choice :option-id) (getf choice :label) ""))
         (t "")))

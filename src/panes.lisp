@@ -2013,8 +2013,8 @@ advice: the verdict informs the answer and must never supply it, or the corpus
 fills with rows recording a keystroke rather than a judgement.
 
 **AND THIS RETURNS TWO VALUES, WHICH IS R20** (letibot `3a9b183`-era; the operator,
-seeing a card with a giant `replace` in it: *"I'm shown a permission prompt and I just
-can't see the selector"*). The card is **content** — headline, target, detail, `because`,
+seeing a card with a giant `replace` in it: *\"I'm shown a permission prompt and I just
+can't see the selector\"*). The card is **content** — headline, target, detail, `because`,
 the oracle's advice — and a **ladder**: the options, the hints that say how to answer, and
 what silence does. The content is unbounded (a diff, a commit message) and the ladder is
 bounded and is *the reason the card exists*.

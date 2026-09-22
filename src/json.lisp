@@ -89,7 +89,7 @@ missing and null, so an empty payload has to be refused where the frame is BUILT
 see `make-answer-question`.
 
 **An ARRAY element is not a key** and keeps its null: `[null]` is a value in a
-position, and there is no "absent" for a list element to fall back to.
+position, and there is no \"absent\" for a list element to fall back to.
 
 The disclosure rule in protocol.lisp's header (*fields whose presence is the
 disclosure are always written, present and zero/null rather than omitted*) is the

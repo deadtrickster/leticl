@@ -91,7 +91,7 @@ at render time would be subtracting a Unix instant from a monotonic one on every
 frame — which is what the secret card did — and a card that converts at arrival
 holds a duration that is already in one clock.
 
-NIL in, NIL out: §11.5's *"wait forever"* is `deadline: null`, and an ask that
+NIL in, NIL out: §11.5's *\"wait forever\"* is `deadline: null`, and an ask that
 cannot expire is not an ask whose deadline is zero. **A zero or negative value counts
 as no deadline too**, because epoch 0 is not an instant any daemon means and a card
 counting down from 1970 would be a rendering fault rather than a fact — this is the
@@ -102,7 +102,7 @@ guard the secret card already had (`(plusp deadline)`), kept rather than moved."
 (defun deadline-remaining-ms (deadline)
   "Milliseconds left before DEADLINE, or NIL when there is none. NEGATIVE once past.
 
-Negative rather than clamped, because *"past its deadline"* and *"no time left"* are
+Negative rather than clamped, because *\"past its deadline\"* and *\"no time left\"* are
 different facts and the caller has a different sentence for each.
 
 A non-positive DEADLINE is NIL here for the same reason `wire-deadline->monotonic`

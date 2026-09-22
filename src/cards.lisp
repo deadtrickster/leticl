@@ -1964,7 +1964,7 @@ first and was drawn that way."
 `raw_call_lines` (`app.rs:10135-10152`).
 
     ┌─ raw tool call · ctrl-x
-    │ {"path": "src/cards.lisp", "old_string": "…"}
+    │ {\"path\": \"src/cards.lisp\", \"old_string\": \"…\"}
     └─
 
 **A labelled block and not an inline row**, and the reason is the whole point of the

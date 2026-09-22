@@ -311,7 +311,7 @@ is simply not in this list.")
 **First word only, case-insensitively, and the split is on BOTH a comma and
 whitespace** — `from_token`'s own rule (`rano/src/syntax.rs:98-104`) and the reason
 the doc calls for it: an info string may carry options or a title after the
-language (```` ```rust,ignore ````, ```` ```python title="x" ````) and none of that
+language (```` ```rust,ignore ````, ```` ```python title=\"x\" ````) and none of that
 names a grammar. Ours matched the whole string, so any fence with an attribute fell
 through to plain — measured on `` ```rust,ignore ```, which rendered as prose while
 letibot coloured it."
@@ -547,7 +547,7 @@ HEADER has empty cells — `| | |` — never opened, and neither did the `|---|-
 under it, because a delimiter row only counts when the table is already open. The
 whole table then fell through to the paragraph path and rendered as one line of
 raw pipes joined by spaces. Measured on the operator's screen in the `rano`
-window: *"the three commits that are now on GitHub"* and its three-row table came
+window: *\"the three commits that are now on GitHub\"* and its three-row table came
 out as `| | | |---|---| | 2cd1dae | …`.
 
 A table with an empty header is what a model writes when the first column is a

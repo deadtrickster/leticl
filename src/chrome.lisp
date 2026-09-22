@@ -989,7 +989,7 @@ constant here could never be changed on a running head.")
 (defun notice-remaining-ms (head)
   "Milliseconds left on HEAD's status note, or NIL when nothing is counting.
 
-**The one function that answers "is the note near its end"** — and it answers it
+**The one function that answers \"is the note near its end\"** — and it answers it
 from the note's own head, so the two cannot disagree. The defect this replaces was
 read as `head-status-note` non-NIL with `*notice-ttl*` 0: a note with no clock, on a
 head that could never clear it."
@@ -1008,8 +1008,8 @@ immortal, because the body was guarded on `(plusp ttl)`.
 A note the OPERATOR must act on is not on this clock — an alarm and a stall both
 persist until they are fixed, because those are about the state of the world rather
 than about something that just happened. That is what the guard is FOR; it just has
-to be the note's own state that says so, and "no deadline" says it without also
-saying "never again"."
+to be the note's own state that says so, and \"no deadline\" says it without also
+saying \"never again\"."
   (let ((until (head-notice-until head)))
     (when (and (head-status-note head)
                (plusp until)
