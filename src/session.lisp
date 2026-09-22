@@ -786,7 +786,7 @@ production fact behind it.
 **The fourth difference needed a refinement rather than a row, and that is why it is the
 interesting one.** `frame_capture_disabled` — a frame was refused and no capture directory was
 configured, so the evidence that would identify it was not kept — reads like letibot's own
-*"a caveat that a check did not happen is a failure"*, the sentence that makes
+*\"a caveat that a check did not happen is a failure\"*, the sentence that makes
 `reseat_unchecked` and `prefix_check_skipped` failures. It is not that shape, and the clause
 that separates them is now part of the rule:
 
