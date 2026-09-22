@@ -84,6 +84,43 @@ refuses it: 'not an array with a fill pointer'.)"
     (loop for item in items do (vector-push-extend item v))
     v))
 
+(defun %decision-clock-rule (d)
+  "D with its `:deadline` moved onto THIS head's clock, the wire's value kept.
+
+**The ONE place a decision's deadline is converted**, and the reason it is a named
+function is R16's lesson one field over: a rule applied at two call sites is a rule
+that drifts, and the two call sites here — a live `decision_requested` and the
+`open_decisions` inside a snapshot — are exactly the pair that drifts silently,
+because each is right on its own and only the screen shows the difference.
+
+**R18, MEASURED LIVE 2026-09-22, on the operator's own card.** The wire says *Unix
+millis* (`event.rs:573`) and `internal-real-time-ms` is a counter since this process
+started, so a deadline that reaches the RENDERER unconverted is an instant tens of
+thousands of years away. The live arm converted and the snapshot arm did not, so a
+head that attached to a session with an ask already open drew
+
+    expires in 29833973 min · if nobody answers, nothing runs
+
+for a card whose real remaining time was 229308 ms — `3m49s left`. Read off the
+live head, not inferred: `:DEADLINE 1790038382308` (a Unix instant), `:DEADLINE-WIRE
+NIL` (never converted, so the key that marks a converted one was absent), against
+`unix-now 1790038153000`. **56 years of countdown on the one surface where the
+operator is being asked to decide**, and a lie of the class this head keeps finding:
+a rendering fault dressed as a measurement.
+
+It was found by looking at a card rather than by a test, which is why it is written
+out here: the suite had a live-path conversion and a secret-card conversion and
+nothing that attached AFTER the ask."
+  (list* :deadline (wire-deadline->monotonic (getf d :deadline))
+         (list* :deadline-wire (getf d :deadline) d)))
+
+(defun %decisions-in-head-time (decisions)
+  "Every decision in DECISIONS through `%decision-clock-rule`. A snapshot's list.
+
+NIL in, NIL out — a session with no open ask has no clock to move, and
+`(mapcar #'… nil)` would be the same list and a needless call."
+  (when decisions (mapcar #'%decision-clock-rule decisions)))
+
 (defun %clear-session-scoped (session)
   "Throw away everything that belonged to the session we are LEAVING.
 
@@ -128,7 +165,8 @@ thing that knows whether this is the same conversation (app.rs:1897-1934)."
                                        (or (getf snapshot :dropped) 0))
         (session-items-dropped session) (or (getf snapshot :items-dropped) 0)
         (session-turn session) (getf snapshot :turn)
-        (session-open-decisions session) (getf snapshot :open-decisions)
+        (session-open-decisions session) (%decisions-in-head-time
+                                           (getf snapshot :open-decisions))
         (session-settled-decisions session) (getf snapshot :settled-decisions)
         ;; **REVERSED into this slot's own order.** A snapshot's warnings are the
         ;; daemon's `Vec` pushed in arrival order — oldest first (`view.rs:660`) —
@@ -1251,24 +1289,26 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
        (setf (session-open-decisions session)
              (remove (getf env :req-id) (session-open-decisions session)
                      :key (lambda (d) (getf d :req-id)) :test #'string=))
-       (push (list :req-id (getf env :req-id)
-                   :kind (getf env :kind)
-                   :call-id (getf env :call-id)
-                   :summary (getf env :summary)
-                   :target (getf env :target)
-                   :detail (getf env :detail)
-                   :options (getf env :options)
-                   :choices (getf env :choices)
-                   :because (getf env :because)
-                   :advice (getf env :advice)
-                   ;; **converted HERE and not at the card** — see
-                   ;; `wire-deadline->monotonic`: the wire's value is a Unix instant
-                   ;; and this head's clock is a counter since process start, so the
-                   ;; subtraction can only be made where the frame arrived
-                   :deadline (wire-deadline->monotonic (getf env :deadline))
-                   :deadline-wire (getf env :deadline)
-                   :on-timeout (getf env :on-timeout)
-                   :asked-ts (getf env :ts))
+       (push (%decision-clock-rule
+               (list :req-id (getf env :req-id)
+                     :kind (getf env :kind)
+                     :call-id (getf env :call-id)
+                     :summary (getf env :summary)
+                     :target (getf env :target)
+                     :detail (getf env :detail)
+                     :options (getf env :options)
+                     :choices (getf env :choices)
+                     :because (getf env :because)
+                     :advice (getf env :advice)
+                     ;; **converted through the ONE rule, and not at the card** — see
+                     ;; `%decision-clock-rule`. This arm and the snapshot's
+                     ;; `open_decisions` are the two places a decision is folded,
+                     ;; and they must agree about which clock the deadline is on;
+                     ;; they did not, and a head that attached to a session with an
+                     ;; ask already open drew 56 years of countdown for it.
+                     :deadline (getf env :deadline)
+                     :on-timeout (getf env :on-timeout)
+                     :asked-ts (getf env :ts)))
              (session-open-decisions session))
        :dirty)
       ((:decision-answered)

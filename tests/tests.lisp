@@ -8908,6 +8908,160 @@ the golden renders."
       (is (not (search "left" text)) "and nothing counts down")
       (is (not (search "expires" text)) "and nothing expires"))))
 
+;;; --------------- R18: the deadline in a SNAPSHOT, and the label the daemon wrote ;;;
+;;;
+;;; MEASURED LIVE 2026-09-22, on the operator's own permission card, because they asked
+;;; what this head draws for a label that needs a tool name. Two answers came off the
+;;; glass in the same minute:
+;;;
+;;;  · the LABEL: `Allow \`head\` (this class) for the rest of the session` when the
+;;;    daemon can name the program, and `Allow \`<tool>\` (this class) …` when it
+;;;    cannot. This head drew BOTH, verbatim, exactly as letibot drew them.
+;;;  · the CLOCK: `expires in 29833973 min · if nobody answers, nothing runs`, on a card
+;;;    whose real remaining time was 229308 ms.
+
+(def-test a-decision-that-arrives-in-a-snapshot-counts-down-on-this-heads-clock (:suite leticl)
+  "**R18, and the fourth instance of the two-clocks trap.** The wire's deadline is Unix
+millis (`event.rs:573`); `internal-real-time-ms` is a counter since this process
+started. The live `decision_requested` arm converted one to the other and the
+snapshot's `open_decisions` did not — so a head that ATTACHED to a session with an ask
+already open drew a countdown to the year 2083 while a head that watched the ask arrive
+drew the right one.
+
+Measured on the operator's live card rather than reasoned about: `:DEADLINE
+1790038382308` (a Unix instant, unconverted), `:DEADLINE-WIRE NIL`, `unix-now
+1790038153000`, and the card read `expires in 29833973 min` for a remaining 229308 ms.
+
+The fix is one rule in one function (`%decision-clock-rule`), called from both folds,
+because a rule applied at two call sites is the rule that drifts — R16's lesson one
+field over."
+  (let ((leticl::*fixed-clock-ms* 5000000)
+        (leticl::*unix-offset-ms* 1789000000000)
+        (h (%make-head)))
+    (let* ((wall (unix-now-ms))
+           (wire (+ wall 300000)))
+      ;; (1) THE LIVE PATH: an ask that arrives while this head is watching
+      (leticl::%handle-frame
+       h (list :frame "event" :seq 1 :event "decision_requested"
+               :req-id "live" :kind "permission"
+               :summary "`bash` wants exec access" :target "cargo test"
+               :options (list (list :option-id "allow_once" :label "Allow this one"))
+               :deadline wire :on-timeout "deny"))
+      (let ((d (first (session-open-decisions (head-session h)))))
+        (is (equal "expires in 5 min" (deadline-said (getf d :deadline)))
+            "the live ask counts down from the daemon's instant: ~s"
+            (deadline-said (getf d :deadline)))
+        (is (= wire (getf d :deadline-wire))
+            "and the wire's own value is kept beside it"))
+      ;; (2) THE SNAPSHOT PATH: the same ask, read by a head that attached afterwards
+      (leticl::%handle-frame
+       h (list :frame "resync" :reason "attach" :dropped 0 :scrubbed nil
+               :snapshot (list :session-id "s-r18" :seq 900 :items nil :turn nil
+                               :dropped 0 :items-dropped 0 :warnings nil :heads nil
+                               :settled-decisions nil
+                               :open-decisions
+                               (list (list :req-id "snap" :kind "permission"
+                                           :summary "`bash` wants exec access"
+                                           :target "cargo test"
+                                           :options (list (list :option-id "allow_once"
+                                                                :label "Allow this one"))
+                                           :deadline wire :on-timeout "deny")))))
+      (let ((d (first (session-open-decisions (head-session h)))))
+        (is (equal "snap" (getf d :req-id)) "the snapshot's ask is the open one now")
+        (is (equal "expires in 5 min" (deadline-said (getf d :deadline)))
+            "**AND IT COUNTS DOWN THE SAME WAY** — this is the assertion that was
+false: the snapshot path left the Unix instant on the slot and the card read it as a
+monotonic one, ~s"
+            (deadline-said (getf d :deadline)))
+        (is (= wire (getf d :deadline-wire))
+            "with the wire's value kept, as the live path keeps it")
+        ;; the card itself, which is what the operator read
+        (let ((text (segs-of (leticl::permission-card-lines h 90))))
+          (is (search "expires in 5 min" text) "and the card says so: ~s" text)
+          (is (not (search "29833973" text)) "not the year 2083"))))))
+
+(def-test the-clock-in-a-snapshot-is-the-same-rule-as-the-clock-on-the-wire (:suite leticl)
+  "One rule, two folds — the R16 shape, stated as an invariant rather than as two cases
+that happen to agree.
+
+Every open decision this head holds has its `:deadline` on **this head's** clock,
+whether it arrived on the wire or inside a snapshot; and every one of them keeps the
+wire's own value on `:deadline-wire`, so the conversion is inspectable rather than
+merely right. A head that converted on one path and not the other passed every test in
+this suite and drew 56 years of countdown on the operator's screen."
+  (let ((leticl::*fixed-clock-ms* 5000000)
+        (leticl::*unix-offset-ms* 1789000000000)
+        (h (%make-head)))
+    (leticl::%handle-frame
+     h (list :frame "event" :seq 1 :event "decision_requested"
+             :req-id "live" :kind "permission" :summary "s"
+             :deadline (+ (unix-now-ms) 60000)
+             :options nil))
+    (leticl::%handle-frame
+     h (list :frame "resync" :reason "attach" :dropped 0 :scrubbed nil
+             :snapshot (list :session-id "s-r18b" :seq 2 :items nil :turn nil
+                             :dropped 0 :items-dropped 0 :warnings nil :heads nil
+                             :settled-decisions nil
+                             :open-decisions
+                             (list (list :req-id "snap" :kind "permission" :summary "s"
+                                         :deadline (+ (unix-now-ms) 120000)
+                                         :options nil)))))
+    (dolist (d (session-open-decisions (head-session h)))
+      (is (integerp (getf d :deadline-wire))
+          "every open decision keeps the wire's value: ~s" (getf d :req-id))
+      (let ((left (deadline-remaining-ms (getf d :deadline))))
+        (is (and (integerp left) (<= 0 left 180000))
+            "and its own deadline is a DURATION on this head's counter, not an instant
+in 2026: ~s left for ~s" left (getf d :req-id))))))
+
+(def-test the-option-label-is-drawn-as-the-daemon-wrote-it (:suite leticl)
+  "**The head half of R18's fifth wrong thing, answered by measurement.**
+
+The operator's card carried `Allow \`<tool>\` (this class) for the rest of the session`.
+That string is the DAEMON's: `grant_program` falls back to the literal `<tool>` when the
+call has no command to take a program name from (`adjudicate.rs:1592-1600`), and
+`exec_options` writes it into the label (`adjudicate.rs:602-625`). Measured on the glass
+2026-09-22, both heads on one daemon:
+`Allow \`head\` (this class) …` for the bash card whose last stage was `| head -30`, and
+`Allow \`<tool>\` (this class) …` for the `job_kill` card — identical on letibot and on
+this head, because **neither head composes an option label**: both draw the one the
+daemon sent.
+
+So this is not a drift between the heads and there is no head-side fix: a head that
+rewrote the backticked clause would be guessing which part of a sentence is a name, and
+would leave the daemon writing templates at the flowy, ACP and Android heads. What the
+head owes is that its half be a MEASUREMENT rather than an opinion — which is this test,
+and it fails the day somebody applies R15's placeholder rule (drop what has no subject)
+to a label whose subject is the daemon's to state."
+  (flet ((card-for (label)
+           (let ((h (%make-head)))
+             (setf (session-open-decisions (head-session h))
+                   (list (list :req-id "d" :kind "permission"
+                               :summary "`job_kill` wants exec access"
+                               :target "<no target argument>"
+                               :detail "ask — intents [read_file] — auto (a read inside the boundary)"
+                               :options (list (list :option-id "allow_once"
+                                                    :label "Allow this one")
+                                              (list :option-id "allow_session"
+                                                    :label label))
+                               :on-timeout "ask")))
+             (segs-of (leticl::permission-card-lines h 120)))))
+    ;; (1) the name is PRESENT — the daemon named the program
+    (let ((text (card-for "Allow `head` (this class) for the rest of the session")))
+      (is (search "Allow `head` (this class) for the rest of the session  (allow_session)"
+                  text)
+          "the name the daemon sent is drawn, with the id beside it: ~s" text))
+    ;; (2) the name is ABSENT — the daemon sent its own placeholder
+    (let ((text (card-for "Allow `<tool>` (this class) for the rest of the session")))
+      (is (search "Allow `<tool>` (this class) for the rest of the session  (allow_session)"
+                  text)
+          "and so is its placeholder — this head invents no name and strips none: ~s"
+          text))
+    ;; (3) and the one other string on that card that is the daemon's too
+    (let ((text (card-for "Allow this class for the rest of the session")))
+      (is (search "<no target argument>" text)
+          "the target placeholder is the daemon's as well, and is drawn as sent"))))
+
 (def-test the-card-says-what-silence-will-do (:suite leticl)
   "The fact that does not change, and the one an operator who walked away needs.
 
