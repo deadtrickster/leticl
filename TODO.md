@@ -71,6 +71,12 @@ predicate.
 | **the notice's clock** | a magenta `permission answered` stuck above the composer, measured as a note with NO clock beside it (`:note "permission answered" :ttl 0`, identical 2 s later, while the loop painted). The deadline is now a millisecond on the head — `+notice-ttl-ms+` 1600, the wall time the 60 frames already were — armed only by `say` and stopped only by `clear-note`, so a frame-counted timer cannot stop when the frames do and a global cannot be shadowed away from the note it ages | `57d20dc` |
 | **a request is not an outcome** | the operator chose *leave and stop the daemon* and it stayed — measured against a real daemon: the stop ARRIVES (its `daemon_stopping` warning is in the next snapshot) and the daemon then takes `EPIPE` writing the ack, with `registry.close()` behind that write; one millisecond of pause is the whole race (0 ms → stuck, 1 ms → gone in 221 ms). The head now waits for the daemon's ABSENCE with a saying, deadline-bounded row, and names the pid and `letibot --stop` when it does not go | `df5b66a` |
 | **R10, a warning is a disclosure** | the mirror of letibot's wall: a `Warning` went into `session-warnings` and was read by nothing, so `auto_compact`, `compacted`, `context_wall`, `transcript_store`, `decision_corpus` and `mode_set` had never once reached this head. Now drawn as a row where it arrived, folded to three lines plus a `… +N lines · /notes` seam, retired by `/notes`/`/dismiss` into a set keyed `(code detail ts)` **outside the transcript** — so a resync and a reattach replant the wall retired instead of replanting it — and counted on `/status` as `notes  N of M retired`. The four specialised homes (`turn_failed`, `job_output_refused`, `slash`/`slash_refused`, `secret_late`) are kept | `R10` |
+| **R19, history as news** | a fresh attach planted the snapshot's warnings as ROWS, so a restart opened with twelve red lines the operator had never been shown — *"i dont want to see that on restart."* Three faults: an attach now plants nothing (they stay in the record, listed by `/notes` and counted by `/status`), a routine code draws faint with `·` instead of the failure role (letibot's own severity table, guarded by a test that reads it), and a dismissal survives a restart. **The first version of the restart test wrote into the operator's real config**, which is why the prefs path and the notes path are both now the test's own | `771f5ab` |
+| **R20, the option ladder** | a permission card's options were the TAIL of one list that the fit loop shrank from the end, so a long diff ate the hint and then the options bottom-up — measured at every size from 8 rows to 30 with a 40-line diff: **not one option, not the hint, not the deadline on the screen.** The card now returns CONTENT and LADDER separately, `%render` pins the ladder and never trims it, and the content above it shrinks and scrolls (PgUp/PgDn/Home/End/the wheel) | `4e61ff4` |
+| **R24, a compaction is a tool call** | the most information-dense event in a long session arrived as the one shape with no affordances. It is now a `tool_result` row whose headline carries the stats (`941,290 → 9,449 tokens`) and whose payload is letibot's own sentence, so `ctrl-t` folds and pages it — and `context_wall` stays a NOTE, ruled on its own: it is terminal in the cases where nothing follows | `972a88c` |
+| **the notes file is ONE FILE FOR EVERY HEAD** | letibot's `e7b6caf` measured that a dismissal is one file for every head, so a wholesale save from either erases the other's. This head now writes letibot's own key (`w|{code}|{ts}|{fnv1a16}`), unions on save, re-reads on listing, replaces on restore, writes through a rename, and **never writes a file it could not read**. Its own `head.toml` keeps the four choices and nothing else. **The suite had been writing the operator's real file**; repaired, and the artefact it had left there was removed | `2581b25` |
+| **R22, `ctrl-n`** | one chord retires every note this head holds, and the empty press says `nothing to retire` — letibot's one amendment, on the rule that a hint bar cannot be conditional so a chord named unconditionally must answer. It runs the VERB rather than reimplementing it, and it is placed second in the hint bar because both heads' bars are the same 136 characters and anything past 80 is off the screen | `bbf6c33` |
+| **eleven docstrings stopped mid-sentence** | an unescaped quote inside a docstring ENDS it, so the rest of the paragraph is read as code and the compiler reports the wreckage as one undefined variable per word — in a defun that still compiles and still runs. Repaired across seven files, and now **checked**: a test reads every source file the way the compiler does and fails on a body form that is not a form. Falsified by putting one quote back | `5b1c4cc` |
 
 ## In flight
 
@@ -135,9 +141,24 @@ session (`s-1789639478142928813`, which carries exactly the warnings they saw):
 - **routine is painted as failure** — `+routine-warnings+`, twelve codes, drawn faint with
   `·`; everything else stays red with `!`, **including `daemon_stopping`**. Reported to the
   operator as asked, with the twelve named and the unclassified default stated.
-- **a dismissal survives a restart** — `retired` in this head's own `head.toml`, identities
-  escaped (a detail is arbitrary text and the file is one comma-separated value on one
-  line), cap 512. Live: dismiss all, restart, `/status` reads `7 of 7 retired`, no rows.
+- **a dismissal survives a restart** — and it lives in the file EVERY head shares,
+  `~/.config/letibot/head.toml`, under **letibot's own key**
+  `w|{code}|{ts}|{fnv1a16(detail)}` and its own discipline: a save UNIONS with what is
+  already there, a listing and an act RE-READ it, a save goes through a temp file and one
+  rename, and a file that cannot be READ is never written. A restore REPLACES, which is the
+  half letibot's merge is missing. cap 512, oldest dropped. **This head's own `head.toml`
+  keeps the four choices and nothing else** — a set with two homes is a set that disagrees
+  with itself, and the home that would go stale is the one no other head reads. Live:
+  dismiss all, restart, `/status` reads `7 of 7 retired`, no rows.
+
+  Two things about that are worth keeping in front of a reader. **The suite had been
+  writing the operator's real file**, and it is fixed by a path of the run's own in
+  `run-all` and a path of its OWN per test in the `notes-of-its-own` fixture — because one
+  file for the whole run is still shared between tests and `/notes` re-reads it, which is
+  how two assertions came to fail on an earlier test's leftovers. And **the old identity
+  was `code|ts|escaped-detail`**: one file two heads compare by string equality means two
+  formats is a file both write and neither can read, so the escaping went and a hash took
+  its place.
 
 **This supersedes §11.2's "restart is a different requirement and nobody has asked for
 it"** — correct when written, overtaken by the operator asking by hitting it. §11.2's row
@@ -198,6 +219,32 @@ Found on the way: `save-prefs` ignored the path the preferences were loaded from
 
 **Not mine, tracked so the list is whole:** §11.3 R13 (A moves the notice TTL to wall time),
 §11.7 R18's card (A's wording).
+
+## R22 — `ctrl-n` retires every note — DONE
+
+**Ruled by the operator, answered by letibot on both sides, landed here in `bbf6c33`.** One
+chord, `ctrl-n`, retires ALL of the notes this head holds — and **the empty press says
+`nothing to retire`**, which is the one amendment and where the first draft's silence was
+given up. The argument is this head's own rule: a chord may only be named where it acts,
+and `ctrl-t` earns that by having its seam name it only on the one row it can open — **a
+hint bar cannot be conditional**, so a chord named unconditionally has to answer
+unconditionally, or a press that produced silence is a press the operator repeats to find
+out whether it was received.
+
+**The chord runs the verb.** It is `%command head "notes dismiss all"` and not a second
+implementation, so the sentence the operator reads and the file that gets written are the
+verb's, whichever door they came through.
+
+**And the hint bar's placement is a measurement both heads got the same**: the bar is 136
+characters on each side, so at 80 columns everything past 80 is off the screen — appended,
+`ctrl-n notes` starts at 137 and is invisible; second, right after `ctrl-s sessions`, it
+starts at 18. `/help` teaches it too, which takes the help from 38 rows to 39 on both
+sides rather than on one.
+
+Its reach is the identity's rather than a hope — a note's key carries the log's `ts`, so a
+warning that happens again arrives with a new one and is a note nobody has retired, which
+means `ctrl-n` cannot mute a KIND of thing — and the byte is free on both sides (`0x0e`
+reaches no arm in either decoder, and `Key::CtrlN` does not exist).
 
 ## Open, in the order they would stop the operator
 
