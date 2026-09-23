@@ -1259,6 +1259,37 @@ a retraction is not available on that one."
                            name call-id))
          call-id)))))
 
+(defun %payload-size (payload)
+  "PAYLOAD as the account of what a deposit is about to cost (R31 (e)).
+
+**R31: *it spends the window, visibly. A 40k-token page is 40k of context the operator chose
+to buy — the size is shown before it lands, because the alternative is discovering it at the
+next compaction.***
+
+    `12 lines · 1.19k bytes · ~305 tokens`
+
+**Bytes and lines are FACTS; the token count is an ESTIMATE and is marked as one.** This head
+has no tokeniser and will not carry a model's vocabulary to draw a number — but the unit the
+requirement speaks in (*40k-token page*) is the one the operator spends context in, so a size
+said only in bytes would be a number they have to convert. Four bytes a token is the usual
+rule of thumb and a `~` says so."
+  (let* ((text (or payload ""))
+         ;; **`sb-ext:string-to-octets`, the same call `%fnv1a-64` already makes** for the same
+         ;; reason: letibot measures bytes and a head that measured characters would report a
+         ;; different size for the same page the moment it contains `→` or `—`.
+         (bytes (length (sb-ext:string-to-octets text :external-format :utf-8)))
+         ;; **A TRAILING NEWLINE IS A TERMINATOR, NOT ANOTHER LINE.** `split-string` answers a
+         ;; final empty piece for one, so a 40-line page came back as 41 and the number the
+         ;; reader was shown overstated what they bought — by one, which is exactly the kind of
+         ;; number nobody checks. One trailing empty piece is dropped; the newlines INSIDE the
+         ;; text still count, because those are lines the reader sees.
+         (pieces (uiop:split-string text :separator '(#\newline)))
+         (lines (if (and (cdr pieces) (string= "" (car (last pieces))))
+                    (1- (length pieces))
+                    (length pieces))))
+    (format nil "~d line~:p · ~,2f bytes · ~~~d tokens"
+            lines (float bytes) (ceiling bytes 4))))
+
 (defun %op-call-answer (head env)
   "**The only thing in this head that RUNS a call.** Folded from the
 `operator_call_allowed` event, which the daemon publishes after it has written the
@@ -1291,13 +1322,32 @@ what a reader has otherwise)."
                   ;; permission nothing consumed.
                   (error (e) (values "failed" (format nil "this head could not run it: ~a" e))))
                 (values "failed" (format nil "this head has no runner for `~a`, so it did not run" name)))
-          ;; FIRST on the wire, then the sentence
-          (%send head (make-operator-result (getf env :call-id) outcome payload
-                                            :reason (and (string= outcome "failed")
-                                                         payload)))
-          (say head (if (string= outcome "ok")
-                        (format nil "ran `~a` as ~a — the result is in the conversation" name (or who "you"))
-                        (format nil "`~a` as ~a did not go through (~a) — the row says so" name (or who "you") outcome))))))))
+          ;; **THE SIZE IS MEASURED BEFORE ANYTHING GOES OUT** (R31 (e)), and measured HERE
+          ;; because here is the only moment it exists: the payload is this head's from the
+          ;; instant the runner returns to the instant the frame leaves.
+          ;;
+          ;; **What this head CANNOT do, said rather than implied.** R31 asks for the size
+          ;; "before it lands", and on the wire that means before the `operator_result` —
+          ;; which this head may not delay. The frame goes out FIRST and that ordering has its
+          ;; own recorded reason (see the docstring: the deposit is what a later reader is
+          ;; missing if this head dies inside the window). So the ordering here is
+          ;; *measured, then sent, then said*: the number is composed before the deposit is
+          ;; committed, and both reach the screen together. **A VETO is not available in this
+          ;; protocol** — the daemon admitted the call and waits for an outcome, and the only
+          ;; way to withhold the payload is to answer `abstained`, which would be this head
+          ;; deciding the operator's window for them. That is a design with its own argument
+          ;; (a decision card, or a stated budget) and it is filed rather than invented here.
+          (let* ((size (%payload-size payload))
+                 (said (if (string= outcome "ok")
+                           (format nil "ran `~a` as ~a — ~a, in the conversation"
+                                   name (or who "you") size)
+                           (format nil "`~a` as ~a did not go through (~a) — ~a"
+                                   name (or who "you") outcome size))))
+            ;; FIRST on the wire, then the sentence
+            (%send head (make-operator-result (getf env :call-id) outcome payload
+                                              :reason (and (string= outcome "failed")
+                                                           payload)))
+            (say head said)))))))
 
 (defun tick-op-calls (head)
   "Say the wait out loud, once, for any call the daemon has not answered.

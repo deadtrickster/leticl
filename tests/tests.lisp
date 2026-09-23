@@ -7964,8 +7964,9 @@ reader decodes it, and tmux does not use it as a prefix."
     (is (not (leticl::op-call-draft-open-p))
         "**`/run` alone LISTS and does not open a JSON field** — the composer is an agent's shape
  and the operator should not have to learn it")
-    (is (search "web_search" (head-status-note h))
-        "naming what the door accepts, so the next thing typed is a verb")
+    (is (search "web-search" (head-status-note h))
+        "naming what the door accepts — in the spelling the key takes (R34), so the next thing
+ typed is a verb and not a shift")
     (is (search "q" (head-status-note h))
         "and which field a bare line goes into — the daemon's own answer, quoted")
     (is (eq :normal (head-mode h)) "and nothing is on the screen")))
@@ -13191,6 +13192,81 @@ table — otherwise a shortcut and a missing verb are the same measurement."
       (is (member a verbs :test #'string=)
           (format nil "`~a` is declared an alias and `%command` does not act on it" a)))))
 
+(def-test a-door-verb-is-typed-with-hyphens-and-sent-with-underscores (:suite leticl)
+  "**R34, and the whole of it is one textual transform that holds no knowledge of any tool.**
+
+The door's verbs were the only underscored slash verbs in this head: every other verb is one
+word, and the underscores were there because the name is copied straight from the daemon's tool
+name. The operator's words: *\"lets change /web_search to /web-search - no shift needed\"*.
+
+**The wire does not move.** The tool is still `web_search`; the head still holds no schema; and
+hyphen-to-underscore is a spelling rule rather than a fact about a tool. R31's *\"the name is the
+daemon's spelling\"* stands FOR THE WIRE and is amended for the keyboard.
+
+**Both spellings are accepted**, which is the operator's own condition: *\"an operator who types
+what the daemon calls it should not be told they are wrong\"*. And the assertion that matters
+most is the one on the WIRE, not on the screen — a head that accepted `/web-search` and then
+asked the daemon for a tool called `web-search` would have moved the problem into the protocol."
+  (flet ((ask (line)
+           (let* ((*head-tool-runners* (list (cons "web_search" (%stub-runner "ok" "r"))))
+                  (*ran* nil) (*op-calls* nil) (*op-call-draft* nil)
+                  (h (%on-head :cols 120 :rows 24)) (sent (%fake-daemon h)))
+             (setf (head-settings h)
+                   (%door-settings "web_search"
+                                   "[{\"name\":\"web_search\",\"field\":\"q\",\"kind\":\"text\"}]"))
+             (leticl::%command h line)
+             (let ((f (first (funcall sent))))
+               (list (getf f :frame) (getf f :name) (getf f :arguments))))))
+    ;; --- THE HYPHEN FORM, which is what a person types now
+    (is (equal '("operator_call" "web_search" "{\"q\":\"blabla\"}")
+               (ask "web-search blabla"))
+        "**`/web-search blabla` asks the daemon for `web_search`** — the key is hyphenated, the
+  wire name is the daemon's, and the arguments follow the daemon's field")
+    ;; --- AND THE UNDERSCORE FORM IS ACCEPTED: same frame, byte for byte
+    (is (equal (ask "web-search blabla") (ask "web_search blabla"))
+        "*\"an operator who types what the daemon calls it should not be told they are wrong\"* —
+  both spellings are one ask, because they are one NAME")
+    ;; --- `/run` too, both doors and both spellings
+    (is (equal (ask "web-search blabla") (ask "run web-search blabla"))
+        "`/run web-search …` and the bare verb agree")
+    (is (equal (ask "web-search blabla") (ask "run web_search blabla"))
+        "and `/run` takes the daemon's spelling as well")
+    ;; --- A NAME WITH NO UNDERSCORE IS UNTOUCHED, which is what makes it a spelling rule
+    (let* ((*head-tool-runners* (list (cons "read" (%stub-runner "ok" "r"))))
+           (*ran* nil) (*op-calls* nil)
+           (h (%on-head :cols 120 :rows 24)) (sent (%fake-daemon h)))
+      (setf (head-settings h)
+            (%door-settings "read" "[{\"name\":\"read\",\"field\":\"path\",\"kind\":\"path\"}]"))
+      (leticl::%command h "read /etc/hosts")
+      (let ((f (first (funcall sent))))
+        (is (equal "read" (getf f :name)) "a name with no underscore is the same word either way")
+        (is (equal "{\"path\":\"/etc/hosts\"}" (getf f :arguments)) "and its arguments are built")))
+    ;; --- AND COMPLETION OFFERS THE HYPHEN, which is the half that teaches the spelling
+    (let* ((h (%on-head :cols 120 :rows 24)))
+      (setf (head-settings h)
+            (%door-settings "web_search,web_fetch" nil "gate,flowy"))
+      (let ((names (mapcar #'car (leticl::%slash-completions h))))
+        (is (member "web-search" names :test #'string=)
+            "the door's verb is offered hyphenated: ~s" names)
+        (is (not (member "web_search" names :test #'string=))
+            "**and not the underscore spelling** — one verb is one row, and the row is the
+  spelling a person types")
+        (is (member "gate" names :test #'string=)
+            "a daemon verb with no underscore is offered as it is")
+        (is (equal "read" (leticl::%verb-spelling "read"))
+            "and a name with no underscore is untouched by the rule — it is a spelling, not a
+ vocabulary"))
+      ;; typing the hyphen prefix completes to the hyphen name
+      (setf (composer-buffer (head-composer h)) "/web-")
+      (leticl::%complete h)
+      (let ((buf (composer-buffer (head-composer h))))
+        (is (member buf '("/web-search" "/web-fetch") :test #'string=)
+            (format nil "`/web-` completes to a hyphenated door verb: ~s" buf)))
+      ;; **and a COMPLETED line then RUNS**, which is the whole point of completing it
+      (setf (composer-buffer (head-composer h)) "/web-search blabla")
+      (is (equal "web-search" (subseq (composer-buffer (head-composer h)) 1 11))
+          "the completed spelling is what sits in the field, ready to send"))))
+
 (def-test a-door-name-does-not-take-one-of-this-heads-verbs (:suite leticl)
   "**Precedence, and it is this head's decision rather than a side effect of where the arm sits.**
 
@@ -13239,6 +13315,81 @@ The tool is never lost by any of this, only the sugar: `/run NAME …` still nam
         (leticl::%command h "help")
         (is (eq :help (head-mode h)) "`/help` is the head's, whatever the door is called")
         (is (null (funcall sent)) "and it asked for nothing")))))
+
+(def-test the-deposit-says-what-it-costs-before-it-lands (:suite leticl)
+  "**R31 (e): *it spends the window, visibly. A 40k-token page is 40k of context the operator
+chose to buy — the size is shown before it lands, because the alternative is discovering it at
+the next compaction.***
+
+The number is measured the moment it exists — between the runner's return and the frame that
+carries the payload — and it reaches the screen with the row. **The unit is the one the operator
+spends context in**: bytes and lines are FACTS, and the token count is an estimate carrying a `~`
+so nobody reads it as one this head measured.
+
+**And what a head CANNOT do here is stated rather than implied.** The `operator_result` frame
+may not be delayed (its docstring records why), so a head cannot show the size and then wait for
+the operator to decide: *before it lands* means before the payload is composed into the
+deposit, and a VETO would need either a decision card in front of the result or a stated budget
+— a design with its own argument, filed rather than invented."
+  ;; the pure function first, because the numbers are the assertion
+  ;; **two newlines is TWO lines, not three**: the terminator ends the second one and does not
+  ;; open a third. `split-string` answers a trailing empty piece for it, and a head that counted
+  ;; that piece overstated the bill by one — the kind of number nobody checks.
+  (is (equal "2 lines · 8.00 bytes · ~2 tokens"
+             (leticl::%payload-size (format nil "ab~%cdef~%")))
+      ;; **a literal `~` in a REASON must be written `~~`**: FiveAM prints a reason with
+      ;; `format`, so a bare one is read as a directive and the failure report dies instead of
+      ;; reporting. Measured here first as `Unknown format directive (character: Space)`.
+      "eight bytes over three lines, and the token count is an ESTIMATE carrying its `~~`")
+  ;; **A CHARACTER COUNT WOULD DISAGREE WITH LETIBOT'S**, which is why these are UTF-8 bytes:
+  ;; one `中` is three bytes and one line, and a head that counted characters would report 1
+  (is (equal "1 line · 3.00 bytes · ~1 tokens"
+             (leticl::%payload-size (format nil "~C" (code-char #x4e2d))))
+      "a three-byte character is three bytes and ONE line")
+  (is (equal "0 lines · 0.00 bytes · ~0 tokens" (leticl::%payload-size ""))
+      "an empty payload says zero, which is a fact rather than a blank")
+  ;; and it is ON THE SENTENCE, from the real path
+  (let* ((*head-tool-runners* (list (cons "web_fetch"
+                                          (lambda (h a)
+                                            (declare (ignore h a))
+                                            ;; **the `~^` needs a following directive**: a
+                                            ;; first cut wrote `"~{~a~^~%}"` and SBCL's own
+                                            ;; format compiler refused it — *no corresponding
+                                            ;; close brace* — which surfaced as the runner
+                                            ;; "failing" and the test asserting an error
+                                            ;; sentence. `~{~a~%~}` is this tree's own idiom.
+                                            (values "ok" (format nil "~{~a~%~}"
+                                                                 (loop repeat 40
+                                                                       collect "a line of the page")))))))
+         (*ran* nil) (*op-calls* nil)
+         (h (%on-head :cols 120 :rows 24)) (sent (%fake-daemon h)))
+    (setf (head-settings h) (%door-settings "web_fetch"))
+    (let ((call-id (leticl::%op-call-ask h "web_fetch" "{\"url\":\"https://example.com\"}")))
+      (leticl::%handle-frame h (list :frame "event" :seq 1 :event "operator_call_allowed"
+                                     :call-id call-id :name "web_fetch" :who "human:dead"))
+      (let ((said (head-status-note h)))
+        ;; **A REASON IS A FORMAT CONTROL, measured the hard way.** FiveAM prints a failure
+        ;; reason with `format`, so a reason carrying a literal `~` — and `%payload-size`'s
+        ;; string carries one before the token count — dies as
+        ;; `Unknown format directive (character: Space)` at `~69 tokens`, three frames deep in
+        ;; the printer, instead of reporting the assertion. So the reasons here are plain and
+        ;; the sentence is asserted with `search`, which is also the stronger claim.
+        (is (search "human:dead" said) "the sentence still names who asked")
+        (is (search "40 lines" said)
+            "**and it says what the deposit cost** — 40 lines of page, not ten")
+        (is (search "tokens" said)
+            "in the unit the operator spends, marked as the estimate it is")
+        ;; **AND A FIXTURE WHOSE STUB FAILED IS SAID OUT LOUD**, because otherwise this whole
+        ;; test becomes an assertion about an error sentence: `(failed)` carries a size too.
+        (is (not (search "failed" said))
+            "the stub runner ran — the size is measured on what it returned"))
+      ;; **THE SIZE IS MEASURED BEFORE THE FRAME LEAVES**, which is the order in the source and
+      ;; the only part of *before it lands* this protocol lets a head keep: the frame is on the
+      ;; wire exactly once, and the sentence is the same measurement.
+      (let ((f (first (funcall sent))))
+        (is (equal "operator_result" (getf f :frame)) "the deposit went out once")
+        (is (equal "ok" (getf (getf f :outcome) :outcome)) "with its outcome")
+        (is (search "a line of the page" (getf f :payload)) "and the payload it measured")))))
 
 (def-test the-door-is-issuable-while-a-turn-is-running (:suite leticl)
   "**R31 (c), and it is a constraint rather than a nicety: the call is a DEPOSIT, not a request
@@ -13550,10 +13701,15 @@ This test is the JSON half, which must not have been lost when the bare half lan
          (*ran* nil) (*op-calls* nil) (*op-call-draft* nil)
          (h (%on-head)) (sent (%fake-daemon h)))
     (setf (head-settings h) (%door-settings))
-    ;; `/run` alone LISTS the door, from the daemon's row
+    ;; `/run` alone LISTS the door, from the daemon's row — **and the names on the glass are
+    ;; HYPHENATED** (R34): the list is what a person types, and the daemon's own spelling is
+    ;; what goes on the wire.
     (leticl::%command h "run")
-    (is (search "web_fetch" (head-status-note h)) "`/run` alone lists what the door accepts")
-    (is (search "web_search" (head-status-note h)) "both names, in the daemon's order")
+    (is (search "web-fetch" (head-status-note h)) "`/run` alone lists what the door accepts")
+    (is (search "web-search" (head-status-note h)) "both names, hyphenated, in the daemon's order")
+    (is (not (search "web_fetch" (head-status-note h)))
+        "**and NOT the daemon's underscore spelling** — that is the wire's name, not the key a
+ person presses; showing it would teach the shift key back")
     (is (search "url" (head-status-note h))
         "**and the field each bare line fills** — a person who asked what can I run is told how")
     (is (null (funcall sent)) "and it is not an ask")

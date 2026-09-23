@@ -104,6 +104,17 @@ point. A spelling earns a row when a person could reasonably reach for it first 
 **A name here still has to be a verb the dispatcher acts on**, or a dead name could hide in this
 list: the drift test checks both directions, including this one.")
 
+(defun %verb-spelling (name)
+  "NAME as a SLASH VERB is typed: hyphens, not underscores (R34).
+
+**The one transform, and it is textual.** The daemon's tool names are underscored because they
+are the tools' own names (`some_tool`); a slash verb here is one word and none of the others
+needs the shift key, so the door's are spelled with hyphens when they are DISPLAYED and
+COMPLETED. `read` and any other name without an underscore come back unchanged, which is what
+makes this a spelling rule and not a vocabulary: it holds no list of tools and knows nothing
+about any of them."
+  (substitute #\- #\_ name))
+
 (defun %slash-completions (head)
   "What a `/` may complete to: THIS HEAD's rows joined with the DAEMON's published verbs.
 
@@ -112,17 +123,36 @@ list: the head's rows come from `*slash-commands*` (tied to the dispatcher by a 
 daemon's come off its settings row, and a name in both is offered ONCE with the head's hint —
 `/jobs` is the live case, where the head opens the pane and the daemon reads a job's output.
 
+**A door verb is offered HYPHENATED** (`%verb-spelling`, R34), and that is the name a person
+types and completes. The underscore form is still ACCEPTED — `%door-name` resolves both — so the
+row and the key agree about what to show while neither tells the operator they are wrong.
+
 **An absent row means no daemon verbs**: an older daemon has said nothing about its half, and a
 head that guessed would offer names it cannot check. It offers its own and stays quiet, which is
 `head-run-tools`' rule for a missing list."
   (let* ((own *slash-commands*)
          (own-names (mapcar (lambda (row) (if (consp row) (car row) row)) own))
-         (theirs (remove-if (lambda (n) (member n own-names :test #'string=))
-                            (head-daemon-verbs (head-settings head)))))
+         (settings (head-settings head))
+         (fresh (lambda (n) (not (member n own-names :test #'string=))))
+         ;; **THE DOOR'S OWN VERBS — THE TOOLS** (R34). These are slash verbs a person types
+         ;; (`/some-tool blabla`), so they belong on the key as much as any verb does, and they
+         ;; are offered HYPHENATED because that is the spelling the key takes.
+         (tools (remove-if-not fresh
+                               (mapcar #'%verb-spelling (head-run-tools settings))))
+         ;; and the verbs the daemon answers, which are not this head's to enumerate
+         (verbs (remove-if (lambda (n) (or (member n own-names :test #'string=)
+                                           (member n tools :test #'string=)))
+                           (mapcar #'%verb-spelling (head-daemon-verbs settings)))))
     (append (mapcar (lambda (row) (if (consp row) row (cons row ""))) own)
-            ;; the daemon's verb with no hint yet: the row draws what it is given, and the
-            ;; daemon's `value` is the names alone
-            (mapcar (lambda (n) (cons n "")) theirs))))
+            ;; a door tool's hint is the field a bare line goes into, from the same row the
+            ;; arguments come from — so the live row teaches the short form and not just the name
+            (loop for n in tools
+                  for field = (getf (cdr (assoc n (head-run-descriptors settings)
+                                                :test #'string=)) :field)
+                  collect (cons n (if (and field (plusp (length field)))
+                                      (format nil "LINE → ~a — run it as your act" field)
+                                      "run it as your act, in JSON")))
+            (mapcar (lambda (n) (cons n "")) verbs))))
 
 (defun %prompt (head text)
   (push text (head-queued head))
@@ -552,7 +582,7 @@ T only for a key it took, or the field would stop taking letters."
 
 **The question is *is this already the wire's shape*, and the parser is the only thing that
 answers it.** The JSON form's promise is that what goes on the wire IS json text, and a
-brace test cannot keep that promise: `web_fetch {\"url\": …` with its closing brace missing
+brace test cannot keep that promise: `NAME {…` with its closing brace missing
 starts with a brace and is not json, and a head that passed it through would have sent the
 daemon an unchecked line while believing it had checked.
 
@@ -565,6 +595,26 @@ the bare one — the line is searched for, verbatim, into the field the daemon n
 row shows what was searched. That is a cost with a name rather than a hidden one."
   (and (stringp text) (plusp (length (string-trim " " text)))
        (handler-case (progn (json-decode text) t) (error () nil))))
+
+(defun %door-name (head token)
+  "The DAEMON's own name for the door tool a person typed as TOKEN, or NIL.
+
+**The transform is textual and holds no knowledge of any tool** (R34): the door's tool names are
+the daemon's, spelled with underscores because they come straight from the tool's own name, and
+**a slash verb is typed with hyphens** — `/some-tool`, not `/some_tool` — because every other
+verb in this head's vocabulary is one word and none of them needs the shift key. So a typed
+`-` is matched against a published `_` and nothing else is touched: `read` is `read`, and a tool
+whose name has neither is unaffected.
+
+**Both spellings are ACCEPTED and the WIRE name is the daemon's.** *an operator who types what
+the daemon calls it should not be told they are wrong* — so `/some_tool` works exactly as
+`/some-tool` does, and the name this head SENDS is always the published one. A head that sent
+the hyphen would be asking the daemon for a tool it does not have."
+  (let ((door (head-run-tools (head-settings head))))
+    (find-if (lambda (n)
+               (string-equal (substitute #\- #\_ n)
+                             (substitute #\- #\_ token)))
+             door)))
 
 (defun %door-arguments (head name line)
   "NAME and a person's LINE as the wire's arguments JSON, or `(values NIL WHY)`.
@@ -650,9 +700,14 @@ the operator to guess which tools take a sentence and which take JSON:
   "The operator's own shape — `/NAME blabla` — or NIL to let the verb fall through.
 
 **A DOOR NAME IS ITS OWN VERB, and only the names the daemon published.** The lookup is
-against `head-run-tools`, so a door offering one name gets that one verb: this head invents no
+against `head-run.tools`, so a door offering one name gets that one verb: this head invents no
 alias, no abbreviation and no friendly spelling, because the name IS the daemon's
 (`head-run.tools`' own reason, applied to the verb).
+
+**Two spellings of ONE name, and they are not two verbs** (R34): the typed form is hyphenated
+and the wire form is the daemon's, so both are accepted and `%door-name` resolves each to the
+single published name. That is a difference of SPELLING and not a vocabulary — the head still
+answers only to names the daemon published, and to all of them.
 
 **A name that is NOT in the door falls through untouched** — it travels to the daemon as the
 slash line the operator typed, which is what every other verb does and what keeps a daemon-side
@@ -662,12 +717,12 @@ verb of the same name working.
 observation: this calls `%op-call-ask`, so the bare form gets the same allowlist, the same two
 frames and the same admission recorded as the operator's act. Sugar that skipped the door
 would be a second door."
-  (let ((door (head-run-tools (head-settings head))))
-    (when (and door (member verb door :test #'string=))
-      (multiple-value-bind (args why) (%door-arguments head verb rest)
+  (let ((name (%door-name head verb)))
+    (when name
+      (multiple-value-bind (args why) (%door-arguments head name rest)
         (if args
             (progn (%op-call-draft-close head)
-                   (%op-call-ask head verb args))
+                   (%op-call-ask head name args))
             (say head why)))
       t)))
 
@@ -716,26 +771,36 @@ and hand it to the model as the call."
               (if (null door)
                   "this daemon offers no operator-call door — it has published no tool list, so there is nothing to run"
                   (with-output-to-string (s)
+                    ;; **hyphenated on the glass** (R34): the names here are what a person
+                    ;; types, and the daemon's own spelling is what goes on the wire.
                     (format s "the daemon will run ~{~a~^, ~} for you — type `/NAME what you want`, as the tool's own name and then a sentence"
-                            door)
+                            (mapcar #'%verb-spelling door))
                     (let ((described (remove-if-not (lambda (d) (plusp (length (getf (cdr d) :field))))
                                                     descs)))
                       (when described
                         (format s "; the bare form goes into ~{~{~a → ~a~}~^, ~}"
                                 (loop for d in described
-                                      collect (list (car d) (getf (cdr d) :field)))))
+                                      collect (list (%verb-spelling (car d))
+                                                    (getf (cdr d) :field)))))
                       (let ((json (remove-if (lambda (n) (assoc n described :test #'string=)) door)))
                         (when json
                           (format s "; ~{~a~^, ~} still take JSON" json))))
                     (format s " — and nothing runs until it says the call was admitted; alt+r types the JSON by hand"))))))
       ;; A NAME with a line: JSON if it IS json, the bare form otherwise — one decision,
       ;; made in `%door-arguments`, so `/run` and the bare verb cannot disagree.
+      ;;
+      ;; **And `/run some-tool …` is the same spelling question as the bare verb** (R34):
+      ;; `%door-name` resolves either spelling to the daemon's own, so both doors accept both
+      ;; and the wire always carries the published name. A name the door does not publish is
+      ;; passed through untouched, which is what `/run` has always done with an unknown name —
+      ;; the daemon refuses it, in the daemon's words.
       (t
        (%op-call-draft-close head)
-       (multiple-value-bind (built why) (%door-arguments head name args)
-         (if built
-             (%op-call-ask head name built)
-             (say head why)))))))
+       (let ((wire-name (or (%door-name head name) name)))
+         (multiple-value-bind (built why) (%door-arguments head wire-name args)
+           (if built
+               (%op-call-ask head wire-name built)
+               (say head why))))))))
 
 (defvar *diag* nil
   "The diagnostic read in flight or on the screen: a plist
