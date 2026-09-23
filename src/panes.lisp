@@ -183,6 +183,7 @@ Second value is the cursor's LINE: two lines per session, after a two-line heade
     ("/status" . "this head's counters — dropped, scrubbed, resync — and what each means")
     ("/verbosity" . "terse → normal → loud; /status counts what has been filtered")
     ("/interrupt" . "interrupt, when a key is awkward")
+    ("alt+r" . "run a tool the DAEMON names on this machine, as your act — it opens a composer for the tool's own JSON, and `/run NAME {…json…}` is the one-line form")
     ("/config" . "every setting and where it came from; the first row toggles the diff view between split and unified")
     ("/compact" . "summarize this session down to one record; the old transcript is forked, not lost")
     ("/mode" . "move this project to a point: read-only, always-ask, writes-allowed, automode, automode-edits, allow-all (next session)")
@@ -2139,6 +2140,43 @@ never scrolled. The content becomes a viewport that SHRINKS to whatever room is 
         (values (nreverse out) (nreverse lad))))))
 
 ;;; ----------------------------------------------------- the secret card ;;;
+
+(defun op-call-card-lines (head cols)
+  "The operator-call card (R24 part two): which tool, and exactly what its two keys do.
+
+    running a tool as your act
+      tool    NAME                          (or: type one — the names the door gives)
+      enter   asks the daemon to admit this call as your act, and nothing runs
+              until it says the call was admitted
+      esc     cancels, and asks for nothing
+
+**It draws the door's names.** This card is the only thing on the screen that knows what
+the daemon will accept, and the operator is one keypress away from asking for a call that
+would be refused by name. A list of its own here would be the same drift as a list held in
+this head — which is why the example above is `NAME` and not a tool: nothing under `src/`
+knows a door's name, and a test asserts exactly that.
+
+**And it is the composer's card**: the argument is typed in the box below, so there is a
+`tool` field rather than a prompt, and the two key rows are the whole instruction."
+  (let* ((w (max 20 cols))
+         (door (head-run-tools (head-settings head)))
+         (name (getf *op-call-draft* :name))
+         (indent (make-string 10 :initial-element #\space)))
+    (flet ((row (key text)
+             (cons (list (cons (format nil "  ~8a" key) '(:dim t))
+                         (cons (car text) nil))
+                   (mapcar (lambda (l) (list (cons indent nil) (cons l '(:dim t))))
+                           (cdr text)))))
+      (append
+       (list (list (cons "running a tool as your act" '(:bold t))))
+       (list (list (cons "  tool    " '(:dim t))
+                   (cons (or name (format nil "type one — ~{~a~^, ~}" door))
+                         '(:fg :bright-white))))
+       (row "enter" (wrap-text
+                      (format nil "asks the daemon to admit this call as your act~@[ (one of ~{~a~^, ~})~]; nothing runs until it says so"
+                              (and (null name) door))
+                      (max 8 (- w 10))))
+       (row "esc" (wrap-text "cancels, and asks for nothing" (max 8 (- w 10))))))))
 
 (defun secret-ask-lines (head cols)
   "The password card — the reference's `secret_lines` (app.rs:7305-7327):

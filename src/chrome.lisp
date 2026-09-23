@@ -588,6 +588,10 @@ is worse than no hint at all."
                  ((eq (head-mode head) :job-out)
                   "↑↓ scroll · → next page · ← back · enter re-reads · esc back to jobs")
                  ((head-secret-req head) "enter submits · esc refuses the password")
+                 ;; **the operator-call composer** (R24 part two). The two keys it owns,
+                 ;; said in the register the secret card's own row uses — and this arm is
+                 ;; what makes the card's promise checkable from the bottom row.
+                 ((op-call-draft-open-p) "the tool's own JSON, then enter asks the daemon to admit it as your act · esc cancels")
                  ((%open-decision head) "a row number answers · ↑↓ then enter · or type an option · /help")
                  ;; **`ctrl-n` IS SECOND, AND THE PLACEMENT IS A MEASUREMENT** (R22).
                  ;; This bar is 136 characters — the same 136 as letibot's, item for

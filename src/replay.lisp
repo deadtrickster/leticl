@@ -136,6 +136,12 @@ see this file's header."
          ;; replay must answer the same bytes twice
          (*payload-view* nil)
          (*daemon-protocol* nil)
+         ;; the operator-call door: an ask crosses frames, and a replay must not
+         ;; inherit another replay's pending call
+         (*op-calls* nil)
+         ;; and the composer the chord opens — a render READS it, so a draft left open
+         ;; by one test would otherwise put its card into the next replay's golden
+         (*op-call-draft* nil)
          (*skew-said-pending* nil)
          (*skew-last-said* nil)
          (*filed-notes* 0)

@@ -416,6 +416,99 @@ is empty\"* must not look alike (`view.rs:732-740`, `server.rs:683-690`)."
 (defun make-settings ()
   (list :frame "settings"))
 
+;;; ------------------------------------------- the operator-call door (R24 two) ;;;
+;;;
+;;; The daemon ENFORCES which tools a head may run for the operator and PUBLISHES the
+;;; names, so a head never holds a copy of the list. This is the same rule letibot
+;;; states for `SettingRow.choices` — *"the head had its own copy of the mode names and
+;;; it drifted"* — and the row exists exactly so a head that is never rebuilt still
+;;; offers the door the daemon is currently willing to open.
+
+(defparameter +head-run-tools-key+ "head-run.tools"
+  "The settings row carrying the operator-call door's names, comma-joined in `value`.
+The daemon's `HEAD_RUN_TOOLS_KEY`, and the ONE place this head knows it by name.")
+
+(defun %split-commas (value)
+  "VALUE split on `,` with each piece trimmed and empties dropped.
+*Comma-joined; no spaces* is what the daemon promises, and tolerating a space costs
+one trim and buys a head that still reads a hand-written row."
+  (loop with n = (length value)
+        for start = 0 then (1+ end)
+        for end = (or (position #\, value :start start) n)
+        for piece = (string-trim '(#\space #\tab) (subseq value start end))
+        unless (zerop (length piece)) collect piece
+        while (< end n)))
+
+(defun head-run-tools (settings)
+  "The names this daemon will let this head run for the operator, or NIL for NO DOOR.
+
+**NIL is a fact and not an empty list.** A daemon older than the row offers no door at
+all, and a head that invented a list would offer one the daemon will refuse — the same
+*do not guess the disclosure* rule this head follows for every absent field. A row that
+IS there with an empty `value` means the same thing to a head choosing what to offer,
+because a door with no names opens on nothing.
+
+Read from the row's `value` and never from a constant in this file: that is the whole
+reason the row exists. `the-door-is-the-daemons-list…` in the suite asks a row naming
+DIFFERENT tools and gets them back, which a copy in this file could not do."
+  (let ((row (and settings
+                  (find +head-run-tools-key+ settings
+                        :key (lambda (r) (getf r :key)) :test #'string=))))
+    (when row (%split-commas (or (getf row :value) "")))))
+
+(defvar *call-counter* 0
+  "A monotonic counter for `call_id`s, for the reason `*request-counter*` is one: a live
+push must not rewind it, or two calls on an open socket could share an id.")
+
+(defun next-call-id ()
+  "THIS head's handle for one operator-run call, unique in the session.
+
+Deliberately NOT `next-request-id`. The two travel on the same frame and answer
+different questions: `client_request_id` says *which ask is this a reply to*, and
+`call_id` is what the daemon keys the admission by and what this head matches the
+permission against. The corpus row is `op-<call_id>`, so the prefix here is
+`headrun-`; reusing `leticl-N` would make that row read `op-leticl-7`, a name that
+looks like a request id in a column that is not asking for one."
+  (format nil "headrun-~d" (incf *call-counter*)))
+
+(defun make-operator-call (call-id name arguments &optional (expected-seq 0))
+  "Frame 1: the head ASKS, before it runs anything (R24 part two).
+
+`arguments` is the arguments as JSON TEXT — the shape a model's call carries — and it
+is a STRING on the wire and not an object, so the head hands the text through without
+knowing any tool's schema. That is the point of the pair: the daemon names and enforces
+the door, and the head is the environment.
+
+`expected_seq` is the ordinary read mark for a mutating call; 0 is accepted, and it is
+what a head that has folded nothing yet honestly has.
+
+**The answer is not this frame's return, and the two answers are different kinds**: a
+`Rejected` (the name is not in the door — do not retry) or an `Accepted` (queued, and
+NOT permission). The permission is the `operator_call_allowed` EVENT, which arrives once
+the admission has been WRITTEN — that is why a head runs nothing on `Accepted`."
+  (list :frame "operator_call"
+        :client-request-id (next-request-id)
+        :expected-seq expected-seq
+        :call-id call-id
+        :name name
+        :arguments (or arguments "{}")))
+
+(defun make-operator-result (call-id outcome payload)
+  "Frame 2: the head hands back what happened (R24 part two).
+
+**No `expected_seq`, deliberately and not by omission.** This frame does not move the
+session, it hands over a fact the session is missing, and a head that asked while the
+screen moved still meant it. The daemon appends a `ToolResult` carrying
+`origin: Operator { who }` through the same writer a turn's rows go through, so the
+model sees the result and every head draws it as the person's act.
+
+`outcome` is a `ToolOutcome` wire word — `ok`, `failed`, `timed_out`, … — the daemon's
+vocabulary and already on the wire."
+  (list :frame "operator_result"
+        :call-id call-id
+        :outcome outcome
+        :payload (or payload "")))
+
 (defun make-detach ()
   "A clean goodbye. Not required: close is detach too, and detach is never
 abort (protocol.rs on ClientFrame::Detach)."

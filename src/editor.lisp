@@ -648,7 +648,15 @@ Hoisting them is also what makes the pane chords TOGGLE. Every one of these is a
 toggle in the reference and reads as one; here the second press was eaten by the
 pane the first press opened, so `ctrl-s ctrl-s` left the picker on the screen and
 Esc was a second thing to remember per pane."
-  (when (eq (getf key :type) :ctrl)
+  (when (or (eq (getf key :type) :ctrl)
+            ;; **the operator-call chord.** `alt+r` rather than a control byte, because every
+            ;; control byte with a mnemonic is taken (see `%run-command`) — and it is decoded
+            ;; here by this head's own reader, so it cannot be confused with `ctrl-r`, which
+            ;; IS a control byte and flips the thinking fold. Handling it above the `:ctrl`
+            ;; guard is what keeps the two apart: both arrive as `#\r` and differ only in type.
+            (and (eq (getf key :type) :alt) (eql (getf key :ch) #\r)))
+    (if (eq (getf key :type) :alt)
+        (progn (%command head "run") t)
     (flet ((pane (mode verb)
              (if (eq (head-mode head) mode)
                  (setf (head-mode head) :normal (head-dirty head) t)
@@ -715,7 +723,7 @@ Esc was a second thing to remember per pane."
          (setf (head-pref head :raw-calls)
                (not (head-pref head :raw-calls)))
          t)
-        (t nil)))))
+        (t nil))))))
 
 (defun %pick-card-top (head)
   "The screen row the picker card's FIRST line landed on.
@@ -1226,6 +1234,11 @@ for the lists)."
       ;; is T5, and `%decision-key`'s own `when` is what keeps every key it does
       ;; not own falling through to the lists below.
       ((%decision-key head key type))
+      ;; **THE OPERATOR-CALL COMPOSER** (R24 part two), after an open ask and before every
+      ;; list. After the ask because a card nobody asked for outranks a card the operator
+      ;; opened; before the lists because the field it fills IS the composer, so anything it
+      ;; does not take must land there — Enter and Esc are all it owns.
+      ((and *op-call-draft* (%op-call-draft-key head key type)))
       ;; a picker's own keys; what it does not take is the composer's, so a name
       ;; can be typed under the card
       ((and *pick-open* (pick-key-event head key)))

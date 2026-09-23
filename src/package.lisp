@@ -51,6 +51,9 @@
    #:make-screen-answer
    #:encode-frame #:decode-frame #:frame-name #:event-name
    #:next-request-id
+   ;; the operator-call door (R24 part two): the daemon's list, and the two frames
+   #:+head-run-tools-key+ #:head-run-tools #:next-call-id
+   #:make-operator-call #:make-operator-result
    ;; socket
    #:connect-unix #:discover-daemons #:no-daemon #:no-daemon-socket #:wait-for-input
    ;; session
@@ -186,6 +189,9 @@
    #:head-settings #:head-queued #:head-scroll #:head-screen-reqs #:head-want-new
    #:*queued-unconfirmed* #:%resolve-queued #:%re-resolve-queued
    #:head-jobs #:head-subagents #:head-peeked #:head-picker-sel
+   ;; the operator-call door (R24 part two), the head's half
+   #:*head-tool-runners* #:*op-calls* #:+op-call-wait-ms+ #:tick-op-calls #:%op-call-ask
+   #:*op-call-draft* #:op-call-draft-open-p #:op-call-card-lines #:%op-call-draft-key
    ;; hack
    #:hack-start #:hack-stop #:hack-socket-path #:list-live-heads #:hack-handle
    #:head-hack-listener #:head-hack-path #:hack-accept-loop #:hack-serve))

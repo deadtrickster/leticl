@@ -1142,7 +1142,13 @@ the screen, and a count of what is hidden is the one count that may not be wrong
             (count-if (lambda (w) (session-retired-p session w)) ws))))
 
 (defparameter +events-not-folded-here+
-  '(:explain :screen-requested :secret-requested :secret-settled)
+  '(:explain :screen-requested :secret-requested :secret-settled
+    ;; R24 part two. The head RUNS the call and sends the result from the frame
+    ;; path, because a run is an act and not a fold: it needs the socket, the
+    ;; door and — if this head ever has fetchers — the network, none of which the
+    ;; session's folder can reach. Named here so a frame this head reads and acts
+    ;; on is not reported as one it has never heard of.
+    :operator-call-allowed)
   "Events this head KNOWS and does not fold into session state.
 
 Two kinds, and both have to be named or the counter cries wolf:

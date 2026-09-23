@@ -4744,10 +4744,10 @@ section. The two heads must teach the same keys the same way."
     ;; `/config` row (the operator's running binary predates it, so its screen
     ;; still shows 36 — the source is the reference here, the binary the evidence),
     ;; and R10 added `/notes`, which the reference teaches too (`app.rs:9793-9797`)
-    (is (= 39 (count-if (lambda (l) (plusp (length l))) text))
-        "39 non-blank rows at the capture's width: the reference's 36 plus /config and
- /notes and, from R22, the `ctrl-n` row — which letibot lands too, so the two teach the
- same keys again")
+    (is (= 40 (count-if (lambda (l) (plusp (length l))) text))
+        "40 non-blank rows at the capture's width: the reference's 36 plus /config and
+ /notes and, from R22, the `ctrl-n` row — which letibot lands too — and R24 part two's
+ /run, the head's half of a door only the daemon names")
     (is (string= "  enter           send what you typed; while a turn runs it is queued as a follow-up"
                  (third text))
         "the first row, key sixteen wide after two")
@@ -7636,6 +7636,185 @@ rows are the finished form or it renders the answer twice\"* (app.rs:2650-2651).
     (apply-event s (list :seq 3 :event "transcript_appended" :item-id "i2" :kind "tool_result"))
     (is (equal '("i1" "i2") (getf (session-turn s) :appended))
         "both ids, in the order they landed")))
+
+(def-test the-chord-opens-a-composer-for-the-arguments (:suite leticl)
+  "**The chord, and the field it opens.** R24 part two is a chord and a composer, not a
+verb with two arguments on one line: the tool's own JSON is the kind of text that wants
+the composer's wrapping, history, paste and undo, and a line typed into `/run` has none
+of them.
+
+The chord is `alt+r`. That is a MEASUREMENT and not a taste: every control byte with a
+mnemonic is taken (the composer owns `a b e f k u w y z` and Rubout, the head owns
+`r t x l o s n p g q`, and `h`/`i`/`j`/`m` arrive as Backspace, Tab and Enter), which is
+R22's own arithmetic for `ctrl-n` — an ESC-prefixed chord is what is left, this head's
+reader decodes it, and tmux does not use it as a prefix."
+  (let* ((*head-tool-runners* (list (cons "web_fetch" (%stub-runner "ok" "x"))))
+         (*ran*) (*op-calls* nil) (*op-call-draft* nil) (*pick-open* nil)
+         ;; **wide on purpose**: the card and the hint bar are both longer than 60 columns,
+         ;; and a frame that cannot hold the row is not a frame that disproves it
+         (h (%on-head :cols 120 :rows 24)) (sent (%fake-daemon h)))
+    (setf (head-settings h) (%door-settings))
+    ;; --- one name in the door: the tool is PREFILLED, so the operator types arguments
+    (setf (head-settings h) (%door-settings "web_fetch"))
+    (leticl::%handle-key h (list :type :alt :ch #\r))
+    (is (leticl::op-call-draft-open-p) "the chord opens the composer")
+    (is (string= "web_fetch " (composer-buffer (head-composer h)))
+        "**and PREFILLS the one tool the door offers** — the arguments are what is left to
+ type: ~s" (composer-buffer (head-composer h)))
+    (is (= 10 (leticl::composer-cursor (head-composer h))) "with the caret after it")
+    (is (null (funcall sent)) "**and NOTHING is asked for yet** — the chord opens a field")
+    (is (null *op-calls*) "with nothing on the books")
+    ;; --- several names: no prefill, and the card draws the door
+    (setf (head-settings h) (%door-settings))
+    (leticl::%handle-key h (list :type :alt :ch #\r))
+    (is (string= "" (composer-buffer (head-composer h)))
+        "several names: the composer is left empty, because which one it is is the
+ operator's to say")
+    ;; --- the chord is not `ctrl-r`, and `ctrl-r` is not the chord: both arrive as `r`
+    (let ((before (getf (head-prefs h) :show-reasoning)))
+      (leticl::%handle-key h (list :type :ctrl :ch #\r))
+      (is (not (eq before (getf (head-prefs h) :show-reasoning)))
+          "`ctrl-r` still folds the thinking, with the composer open beside it"))
+    ;; --- the CARD, on the glass: which tool, the door's own names, the two keys
+    (let* ((leticl::*stdout* (make-string-output-stream))
+           (screen (progn (leticl::%render h) (%screen-text h))))
+      (is (search "running a tool as your act" screen) "the card is up")
+      (is (search "type one — web_search, web_fetch" screen)
+          "**and it names the door**, which is the only place on the screen that knows what
+ the daemon will accept: ~s" screen)
+      (is (search "asks the daemon to admit this call as your act" screen)
+          "with what Enter does")
+      (is (search "cancels, and asks for nothing" screen) "and what Esc does")
+      (is (search "enter asks the daemon to admit it as your act" screen)
+          "**and the hint bar says the same two keys**, so the promise is checkable from the
+ bottom row: ~s" screen)
+      ;; **THE CARD IS NOT A PANE.** A mode would swallow the composer's letters, and the
+      ;; whole point of this shape is that the JSON is typed in the composer.
+      (is (eq :normal (head-mode h)) "the screen is still the conversation")
+      (is (search "╭" screen) "with the composer box under the card, where the field is"))
+    ;; --- and `/run` with no name runs the SAME path rather than a second one
+    (leticl::%handle-key h (list :type :esc))
+    (is (not (leticl::op-call-draft-open-p)) "esc closed it")
+    (leticl::%command h "run")
+    (is (leticl::op-call-draft-open-p)
+        "**`/run` with nothing after it is the chord's own path** — one implementation, two
+ doors, which is the rule R22's `ctrl-n` follows for `/notes dismiss all`")
+    (is (eq :normal (head-mode h)) "and the draft is not a pane and not a mode")))
+
+(def-test the-composer-asks-and-only-the-admission-runs-it (:suite leticl)
+  "The composer's Enter, end to end: the arguments go out as JSON TEXT, `Accepted` runs
+nothing, and the permission does."
+  (let* ((*head-tool-runners* (list (cons "web_fetch" (%stub-runner "ok" "the page"))))
+         (*ran* nil) (*op-calls* nil) (*op-call-draft* nil) (*pick-open* nil)
+         (h (%on-head)) (sent (%fake-daemon h)))
+    (setf (head-settings h) (%door-settings "web_fetch"))
+    (leticl::%handle-key h (list :type :alt :ch #\r))
+    ;; the composer is a real composer: the arguments are TYPED into it
+    (dolist (ch (coerce "{\"url\": \"https://example.com\"}" 'list))
+      (leticl::%handle-key h (list :type :char :ch ch)))
+    (is (search "https://example.com" (composer-buffer (head-composer h)))
+        "letters and punctuation reach the field, which is the whole point of a composer")
+    (leticl::%handle-key h (list :type :enter))
+    (let ((f (first (funcall sent))))
+      (is (equal "operator_call" (getf f :frame)) "Enter asks the daemon")
+      (is (equal "web_fetch" (getf f :name)) "for the tool the card named")
+      (is (equal "{\"url\": \"https://example.com\"}" (getf f :arguments))
+          "with the operator's own JSON, verbatim — spaces and all: ~s" (getf f :arguments)))
+    (is (null (leticl::op-call-draft-open-p)) "the field is cleared with the ask")
+    (is (string= "" (composer-buffer (head-composer h))) "and so is the composer")
+    (is (null *ran*) "**nothing has run**: `asked` is not `admitted`")
+    ;; the ack, then the permission
+    (let ((call-id (getf (first *op-calls*) :call-id)))
+      (leticl::%handle-frame h (list :frame "accepted"
+                                     :client-request-id (getf (first *op-calls*) :client-request-id)
+                                     :note leticl::+note-prompt-queued+))
+      (is (null *ran*) "`Accepted` still runs nothing")
+      (leticl::%handle-frame h (list :frame "event" :seq 1 :event "operator_call_allowed"
+                                     :call-id call-id :name "web_fetch" :who "human:dead"
+                                     :arguments "{\"url\": \"https://example.com\"}"))
+      (is (equal (list "{\"url\": \"https://example.com\"}") *ran*)
+          "the permission runs it, once"))
+    (is (equal "operator_result" (getf (first (funcall sent)) :frame))
+        "and the outcome goes back on the wire")))
+
+(def-test esc-cancels-the-composer-and-says-so (:suite leticl)
+  "Esc in the composer asks for nothing — and SAYS so, which is this head's rule for a
+card it opened: silence after a press is indistinguishable from a key that never
+arrived, and the operator presses again to find out."
+  (let* ((*head-tool-runners* (list (cons "web_fetch" (%stub-runner "ok" "x"))))
+         (*ran* nil) (*op-calls* nil) (*op-call-draft* nil) (*esc-at* nil)
+         (h (%on-head)) (sent (%fake-daemon h)))
+    (setf (head-settings h) (%door-settings "web_fetch"))
+    (leticl::%handle-key h (list :type :alt :ch #\r))
+    (is (leticl::op-call-draft-open-p) "the composer is open")
+    (leticl::%handle-key h (list :type :esc))
+    (is (not (leticl::op-call-draft-open-p)) "esc takes it down")
+    (is (null (funcall sent)) "**nothing was asked for**")
+    (is (null *op-calls*) "and nothing is on the books")
+    (is (search "nothing was asked for" (head-status-note h))
+        "and it says so: ~s" (head-status-note h))
+    (is (null *esc-at*)
+        "**and it does NOT arm the interrupt** — the draft owns esc while it is up, and an
+ `esc esc` that opened a composer and then killed the turn would be two keys meaning
+ opposite things")
+    ;; a line that names no tool, and one whose arguments are not JSON, are both refused
+    ;; in place rather than retyped elsewhere. **The door is set to TWO names here**: with
+    ;; one, the card prefills it and an empty field is an ask with `{}`, not a mistake.
+    (setf (head-settings h) (%door-settings))
+    (leticl::%handle-key h (list :type :alt :ch #\r))
+    (leticl::%handle-key h (list :type :enter))
+    (is (null (funcall sent)) "an empty field names nothing, so nothing is asked")
+    (is (search "name the tool as well" (head-status-note h)) "and it says which half is missing")
+    (is (leticl::op-call-draft-open-p) "and the field stays open with the operator's line in it")
+    ;; **and an argument that is not JSON is refused in the same place**
+    (dolist (ch (coerce "web_fetch https://example.com" 'list))
+      (leticl::%handle-key h (list :type :char :ch ch)))
+    (leticl::%handle-key h (list :type :enter))
+    (is (null (funcall sent)) "a bare URL is not the arguments, so nothing is asked")
+    (is (search "JSON" (head-status-note h)) "and the head says what the field is")
+    (is (leticl::op-call-draft-open-p) "with the line still there to fix")
+    (leticl::%handle-key h (list :type :esc))))
+
+(def-test the-call-row-is-the-persons-act-and-the-result-lands-there (:suite leticl)
+  "**`the row drawn with its origin and the WHO on it, and the result folded where the
+conversation is`** — both halves on the fold path, and neither is this head's own doing:
+the daemon appends the row and the head folds it like every other one.
+
+What this pins is that the two facts do not come APART: an operator-run call's row is in
+the transcript with the person's own identity on it, drawn as a person's act and not as
+the model's — which is decision 1's headline (`d28bf22`) read through the row R24 part two
+produces."
+  (let* ((*head-tool-runners* (list (cons "web_fetch" (%stub-runner "ok" "the page"))))
+         (*ran* nil) (*op-calls* nil) (*op-call-draft* nil)
+         (h (%on-head :cols 120 :rows 30)) (sent (%fake-daemon h)))
+    (setf (head-settings h) (%door-settings "web_fetch"))
+    (leticl::%handle-key h (list :type :alt :ch #\r))
+    (leticl::%handle-key h (list :type :enter))
+    (let ((call-id (getf (first *op-calls*) :call-id)))
+      (leticl::%handle-frame h (list :frame "event" :seq 1 :event "operator_call_allowed"
+                                     :call-id call-id :name "web_fetch" :who "human:dead"
+                                     :arguments "{}"))
+      (funcall sent))
+    ;; **the daemon's row arrives as a transcript row**, with the origin WHO on it
+    (leticl::%handle-frame
+     h (list :frame "event" :seq 2 :event "transcript_appended"
+             :item-id "op-1" :kind "tool_result"))
+    (leticl::%handle-frame
+     h (list :frame "event" :seq 3 :event "transcript_content" :item-id "op-1"
+             :item (list :type "tool_result" :call-id "headrun-1" :name "web_fetch"
+                         :outcome (list :outcome "ok") :payload "the page"
+                         :origin (list :operator (list :who "human:dead")))))
+    (let ((row (find "op-1" (session-items (head-session h))
+                     :key (lambda (i) (getf i :item-id)) :test #'string=)))
+      (is (not (null row)) "the row is in the conversation, where the daemon appended it")
+      (is (equal (list :operator (list :who "human:dead")) (getf (leticl::item-body row) :origin))
+          "carrying the origin the daemon wrote — the person, not the model")
+      (let ((text (format nil "~{~a~}" (mapcar #'car (first (leticl::item-lines row 120 (head-prefs h)))))))
+        (is (search "by human:dead" text)
+            "**and the row DRAWS the WHO** — an operator-run call must not read as the
+ model's own: ~s" text)
+        (is (search "Fetched" text) "as the tool it was named as")
+        (is (search "ok" text) "with the outcome it came back with")))))
 
 (def-test a-frame-from-another-turn-is-consumed-and-not-folded (:suite leticl)
   "Measured: a `delta` carrying `turn_id \"OTHER\"` appended to the CURRENT
@@ -12148,6 +12327,316 @@ both axes together."
     (is (search "model says a_new_disposition"
                 (leticl::%advice-line (list :consulted t :would "a_new_disposition" :basis "why")))
         "**and then the line says what it was TOLD** — a new value is shown, never dropped")))
+
+;;; ------------- R24 part two: the operator-call door, this head's half --------------- ;;;
+;;;
+;;; **The split contract.** The daemon NAMES and ENFORCES the tools a head may run for the
+;;; operator, writes the ADMISSION before anything happens, and appends the row; the head
+;;; is *the environment that can reach what the daemon cannot* — it asks, runs only when
+;;; told the admission exists, and hands the outcome back. Three frames, one event, one
+;;; settings row, and **the ORDER between them is the whole requirement**: asking is not
+;;; permission, and a head that ran on `Accepted` can have run a call whose admission was
+;;; never written — a corpus row claiming the operator decided something they did not.
+
+(defun %src-text (name)
+  "The text of one file under `src/`, found the way `%lisp-source-files` finds them.
+
+`%repo-file` merges a relative path onto `*load-truename*` and then falls back to a
+hard-coded repo root; this asks the directory walk instead, so a test that greps a source
+names the file by its own name and does not care where the image was loaded from."
+  (let* ((pair (find-if (lambda (p) (search (format nil "src/~a" name) (namestring (car p))))
+                        (%lisp-source-files)))
+         (path (and pair (car pair))))
+    (and path (probe-file path) (uiop:read-file-string path))))
+
+(defun %door-settings (&optional (value "web_search,web_fetch"))
+  "The settings rows as the daemon publishes them, with the operator-call door's row."
+  (list (list :key "model" :value "qwen" :source "config" :editable "models" :choices nil)
+        (list :key +head-run-tools-key+ :value value :source "default"
+              :editable "" :choices nil)))
+
+(defvar *ran* nil
+  "What the stub runner was asked to run, newest first. A runner is a pure function of its
+arguments, so the suite binds `*head-tool-runners*` to this rather than measuring the
+network — the door's plumbing is what is under test, not anyone's fetcher.")
+
+(defun %stub-runner (outcome payload)
+  "A runner that records its arguments and answers with a fixed outcome."
+  (lambda (head args)
+    (declare (ignore head))
+    (push args *ran*)
+    (values outcome payload)))
+
+(def-test the-door-is-the-daemons-list-and-not-a-copy-in-this-head (:suite leticl)
+  "**The row exists so a head that is never rebuilt still offers the right door** —
+letibot's own reason for putting `choices` on a `SettingRow`: *\"the head had its own copy
+of the mode names and it drifted.\"* So this asserts a READ, in the only way that can
+distinguish one: a row naming DIFFERENT tools answers with those."
+  (is (equal '("web_search" "web_fetch") (head-run-tools (%door-settings)))
+      "the door's names, in the order the daemon published them")
+  (is (equal '("fetch_page" "look_up") (head-run-tools (%door-settings "fetch_page,look_up")))
+      "**a door naming different tools is a different door** — which a list held in this
+ file could not be")
+  ;; absence is a FACT and not an empty list: no row at all is no door
+  (is (null (head-run-tools (list (list :key "model" :value "m"))))
+      "a daemon older than the row offers no door at all")
+  (is (null (head-run-tools nil)) "and settings that never arrived are no door either")
+  (is (null (head-run-tools (%door-settings "")))
+      "a row that is there with no names opens on nothing, which is the same thing to a head
+ choosing what to offer")
+  ;; the promised grammar — comma-joined, no spaces — plus one mercy on top of it
+  (is (equal '("a" "b") (head-run-tools (%door-settings " a , b ,, ")))
+      "stray spaces and an empty piece still read, so a hand-written row is not a trap")
+  ;; **AND NOTHING UNDER src/ HOLDS A COPY OF THE NAMES.**
+  (dolist (pair (%lisp-source-files))
+    (when (search "src/" (namestring (car pair)))
+      (let ((text (uiop:read-file-string (car pair))))
+        (is (not (search "web_search" text))
+            (format nil "~a names a tool from the door — the list lives in the daemon's row
+ and a copy in the head is exactly the drift the row exists to stop"
+                    (file-namestring (car pair))))))))
+
+(def-test the-ask-is-a-frame-and-nothing-runs-on-it (:suite leticl)
+  "Frame 1, and the property that makes the pair necessary: **asking is not permission.**"
+  (let* ((*head-tool-runners* (list (cons "web_fetch" (%stub-runner "ok" "the page"))))
+         (*ran* nil) (*op-calls* nil)
+         (h (%on-head)) (sent (%fake-daemon h)))
+    (setf (head-settings h) (%door-settings))
+    (let ((call-id (leticl::%op-call-ask h "web_fetch" "{\"url\":\"https://example.com\"}")))
+      (let ((f (first (funcall sent))))
+        (is (equal "operator_call" (getf f :frame)) "the ask goes out as its own frame")
+        (is (equal "web_fetch" (getf f :name)) "naming the tool")
+        (is (equal "{\"url\":\"https://example.com\"}" (getf f :arguments))
+            "**the arguments are JSON TEXT and not an object** — the head hands the tool's
+ own shape through without knowing any tool's schema, which is the same rule the row keeps
+ one level up")
+        (is (equal call-id (getf f :call-id)) "carrying this head's handle for the call")
+        (is (plusp (length (or (getf f :client-request-id) "")))
+            "and an ordinary request id beside it, for the reply")
+        (is (zerop (getf f :expected-seq)) "with the read mark, which 0 is a legal value for")
+        (is (search "headrun-" call-id)
+            "**and the call id is not a request id** — the corpus row is `op-<call_id>`, and
+ a request id here would make that column read `op-leticl-7`"))
+      (is (null *ran*) "**NOTHING HAS RUN** — the daemon has not said the call was admitted")
+      (is (= 1 (length *op-calls*)) "the ask is on the books")
+      (is (search "nothing runs until it says the call was admitted" (head-status-note h))
+          "and the operator is told the wait is a wait"))))
+
+(def-test an-accepted-call-is-queued-and-not-permission (:suite leticl)
+  "`Accepted` says *queued*; the permission is the event that follows the admission write.
+A head that ran here could have run a call whose admission never got written."
+  (let* ((*head-tool-runners* (list (cons "web_fetch" (%stub-runner "ok" "the page"))))
+         (*ran* nil) (*op-calls* nil)
+         (h (%on-head)) (sent (%fake-daemon h)))
+    (setf (head-settings h) (%door-settings))
+    (leticl::%op-call-ask h "web_fetch" "{}")
+    (let* ((ask (first (funcall sent)))
+           (entry (first *op-calls*)))
+      ;; a sentinel, so *said nothing* is distinguishable from *said the same thing*
+      (setf (head-status-note h) "sentinel")
+      (leticl::%handle-frame h (list :frame "accepted"
+                                     :client-request-id (getf ask :client-request-id)
+                                     :note leticl::+note-prompt-queued+))
+      (is (null *ran*) "**`Accepted` IS NOT PERMISSION** — nothing ran")
+      (is (= 1 (length *op-calls*)) "the head is still waiting")
+      (is (getf entry :accepted) "and has recorded that the daemon queued it")
+      (is (equal "sentinel" (head-status-note h))
+          "**and said nothing** — the ask's own sentence already promised the wait, so a
+ second line for the routine cue is the noise this head suppresses for a queued prompt"))))
+
+(def-test only-the-admission-runs-it-and-it-matches-the-call-id (:suite leticl)
+  "The look-up that matters: the event is published to the SESSION, so every head sees
+every head's calls, and only the one that asked may run one."
+  (let* ((*head-tool-runners* (list (cons "web_fetch" (%stub-runner "ok" "the page"))))
+         (*ran* nil) (*op-calls* nil)
+         (h (%on-head)) (sent (%fake-daemon h)))
+    (setf (head-settings h) (%door-settings))
+    (leticl::%op-call-ask h "web_fetch" "{\"url\":\"https://example.com\"}")
+    (let ((call-id (getf (first (funcall sent)) :call-id)))
+      ;; another head's call, on this session
+      (leticl::%handle-frame h (list :frame "event" :seq 1 :event "operator_call_allowed"
+                                     :call-id "headrun-999" :name "web_fetch"
+                                     :who "human:dead" :arguments "{}"))
+      (is (null *ran*) "**a permission for a call this head never asked for runs nothing**")
+      (is (null (funcall sent)) "and writes nothing")
+      ;; ours
+      (leticl::%handle-frame h (list :frame "event" :seq 2 :event "operator_call_allowed"
+                                     :call-id call-id :name "web_fetch"
+                                     :who "human:dead"
+                                     :arguments "{\"url\":\"https://example.com\"}"))
+      (is (equal (list "{\"url\":\"https://example.com\"}") *ran*)
+          "the admitted call runs once, with the EVENT's own arguments — the record is the
+ daemon's, and its words are the ones the run uses")
+      (let ((f (first (funcall sent))))
+        (is (equal "operator_result" (getf f :frame)) "and the outcome goes straight back")
+        (is (equal call-id (getf f :call-id)) "for the call that was admitted")
+        (is (equal "ok" (getf f :outcome)) "with an outcome word from the daemon's own vocabulary")
+        (is (equal "the page" (getf f :payload)) "and what the tool produced, as text")
+        ;; **NO `expected_seq`** — this frame hands over a fact, it does not move the session
+        (is (not (getf f :expected-seq)) "and no read mark at all"))
+      (is (null *op-calls*) "the call is finished with")
+      (is (search "as human:dead" (head-status-note h))
+          "and the operator is told which person's act it was, in the daemon's own words"))))
+
+(def-test the-result-goes-out-before-anything-is-said (:suite leticl)
+  "**The one ordering a head can shorten and a reader cannot recover.** The admission is
+already on the record saying a call was permitted; the outcome is the half a later reader
+would be missing if this head died in the gap, and `op-<call_id>` is all they would have.
+
+It is pinned at the SOURCE because both writers are side effects neither can see from the
+other: `%send` puts bytes on a socket and `say` sets a slot, and no assertion over one can
+observe the order of the two. Reordering these two lines fails this test."
+  (let* ((text (%src-text "head.lisp"))
+         (start (and text (search "(defun %op-call-answer" text)))
+         (end (and text (search "(defun tick-op-calls" text))))
+    (is (and start end) "`%op-call-answer` is where this test thinks it is")
+    (when (and start end)
+      (let* ((body (subseq text start end))
+             (send (search "(make-operator-result" body))
+             (said (search "(say head" body)))
+        (is (and send said) "both the frame and the sentence are in it")
+        (is (and send said (< send said))
+            (format nil "**the result is written BEFORE the sentence** — found the frame at
+ ~s and the sentence at ~s" send said))))))
+
+(def-test a-refused-call-is-not-retried (:suite leticl)
+  "A `Rejected` means the name is not in the door. The reason is the daemon's own sentence,
+and the head's one duty is to NOT try again — with the same id or a new one."
+  (let* ((*head-tool-runners* (list (cons "bash" (%stub-runner "ok" "x"))
+                                    (cons "web_fetch" (%stub-runner "ok" "x"))))
+         (*ran* nil) (*op-calls* nil)
+         (h (%on-head)) (sent (%fake-daemon h)))
+    (setf (head-settings h) (%door-settings))
+    ;; **the head does not enforce the list** — it asks, and the daemon refuses, because
+    ;; the daemon is the only place the refusal means anything (the head is going to run
+    ;; the thing either way; what the list bounds is what may be RECORDED as the
+    ;; conversation). So `bash` is asked for with a runner bound, and refused.
+    (leticl::%op-call-ask h "bash" "{\"cmd\":\"true\"}")
+    (let* ((ask (first (funcall sent)))
+           (reason (format nil "`bash` is not a tool a head may run for you: the door accepts ~
+                                web_search, web_fetch. Nothing ran.")))
+      (setf (head-status-note h) "sentinel")
+      (leticl::%handle-frame h (list :frame "rejected"
+                                     :client-request-id (getf ask :client-request-id)
+                                     :reason reason :expected-seq 0 :actual-seq 0))
+      (is (search reason (head-status-note h))
+          "**the daemon's own sentence is the one shown** — it names what was asked for, the
+ names the door accepts, and that nothing ran")
+      (is (search "not re-sent" (head-status-note h))
+          "and the head says out loud that it is not negotiating")
+      (is (null (funcall sent))
+          "**NOTHING WAS RE-SENT** — the door is the daemon's and the list is not negotiable
+ at this layer")
+      (is (null *op-calls*) "and the call is off the books")
+      (is (null *ran*) "nothing ran"))))
+
+(def-test a-call-the-daemon-never-answers-runs-nothing-and-says-so (:suite leticl)
+  "The silence the two-frame shape exists for. **Run nothing, and say so** — and do not
+re-ask under a new id, which would admit twice under two ids."
+  (let* ((*head-tool-runners* (list (cons "web_fetch" (%stub-runner "ok" "the page"))))
+         (*ran* nil) (*op-calls* nil)
+         (h (%on-head)) (sent (%fake-daemon h)))
+    (setf (head-settings h) (%door-settings))
+    (leticl::%op-call-ask h "web_fetch" "{}")
+    (funcall sent)
+    ;; before the deadline it is simply still waiting: no sentence, no frame
+    (leticl::tick-op-calls h)
+    (is (null (funcall sent)) "nothing goes out while the daemon is still quiet")
+    (is (search "nothing runs until" (head-status-note h)) "and the wait's own sentence stands")
+    ;; past the deadline
+    (setf (getf (first *op-calls*) :deadline) 0)
+    (leticl::tick-op-calls h)
+    (is (search "never answered" (head-status-note h)) "the silence is finally said")
+    (is (search "nothing ran" (head-status-note h)) "with the outcome the operator needs")
+    (is (search "not re-sent" (head-status-note h)) "and the promise not to re-ask")
+    (is (null *ran*) "nothing ran")
+    (is (null (funcall sent)) "**and nothing was re-sent under a new id**")
+    ;; **said ONCE**, because a sentence repeated every 30 ms is a screen nobody can read
+    (setf (head-status-note h) "sentinel")
+    (leticl::tick-op-calls h)
+    (is (equal "sentinel" (head-status-note h)) "the sentence is said once and not on every tick")
+    ;; **AND A LATE ADMISSION STILL RUNS IT** — the entry is a sentence, not a decision to
+    ;; forget: the admission exists now, and running on it is what the protocol says
+    (let ((call-id (getf (first *op-calls*) :call-id)))
+      (leticl::%handle-frame h (list :frame "event" :seq 9 :event "operator_call_allowed"
+                                     :call-id call-id :name "web_fetch"
+                                     :who "human:dead" :arguments "{}"))
+      (is (equal (list "{}") *ran*)
+          "**a permission that lands after the sentence still runs the call**")
+      (is (equal "operator_result" (getf (first (funcall sent)) :frame))
+          "and is answered on the wire like any other"))))
+
+(def-test a-queued-call-that-is-never-admitted-says-the-other-sentence (:suite leticl)
+  "Two silences are two facts, so they are two sentences. A call the daemon never
+acknowledged is not in its queue; one it `Accepted` IS queued — behind a turn, perhaps —
+and *never admitted* would be a claim this head cannot make about it."
+  (let* ((*head-tool-runners* (list (cons "web_fetch" (%stub-runner "ok" "the page"))))
+         (*ran* nil) (*op-calls* nil)
+         (h (%on-head)) (sent (%fake-daemon h)))
+    (setf (head-settings h) (%door-settings))
+    (leticl::%op-call-ask h "web_fetch" "{}")
+    (let ((ask (first (funcall sent))))
+      (leticl::%handle-frame h (list :frame "accepted"
+                                     :client-request-id (getf ask :client-request-id)
+                                     :note "operator call queued")))
+    (setf (getf (first *op-calls*) :deadline) 0)
+    (leticl::tick-op-calls h)
+    (is (search "queued" (head-status-note h)) "the sentence names the queue")
+    (is (search "has not admitted it yet" (head-status-note h))
+        "**and does NOT say *never answered*** — the daemon did answer")
+    (is (not (search "never answered" (head-status-note h))) "in either direction")
+    (is (null *ran*) "nothing ran")
+    (is (null (funcall sent)) "and nothing was re-sent")))
+
+(def-test a-head-with-no-runner-or-no-door-asks-for-nothing (:suite leticl)
+  "**A head must not ask for a call it cannot run.** The daemon's answer to an ask is an
+ADMISSION, and an admission is a corpus row saying the operator decided to run this — so
+asking and then failing would put a decision on the record that nobody could carry out.
+Refusing is free on this side and a retraction is not available on that one."
+  (let* ((*head-tool-runners* nil) (*op-calls* nil)
+         (h (%on-head)) (sent (%fake-daemon h)))
+    (setf (head-settings h) (%door-settings))
+    (leticl::%command h "run web_fetch {\"url\":\"https://example.com\"}")
+    (is (null (funcall sent)) "no frame goes out")
+    (is (null *op-calls*) "nothing is on the books")
+    (is (search "cannot run" (head-status-note h)) "and the operator is told which half is missing")
+    (is (search "web_search" (head-status-note h))
+        "naming what this head COULD run if it had a way to, from the daemon's list")
+    ;; and a daemon that publishes no list at all
+    (let ((*op-calls* nil))
+      (setf (head-settings h) (list (list :key "model" :value "m")))
+      (leticl::%command h "run web_fetch {}")
+      (is (null (funcall sent)) "a daemon with no door gets no ask")
+      (is (null *op-calls*) "and nothing on the books")
+      (is (search "no operator-call door" (head-status-note h))
+          "**and the head says no door rather than guessing a list** — the rule every other
+ absence in this head follows"))))
+
+(def-test the-arguments-are-the-tools-json-and-the-head-does-not-guess-it (:suite leticl)
+  "The grammar is `/run NAME JSON`. A head that knew `web_fetch` takes `{\"url\": …}` would
+be holding a copy of the tool's schema — the drift the settings row exists to stop — so
+the arguments are handed through as text and only checked for BEING json, which the wire
+says they are."
+  (let* ((*head-tool-runners* (list (cons "web_fetch" (%stub-runner "ok" "x"))))
+         (*ran* nil) (*op-calls* nil)
+         (h (%on-head)) (sent (%fake-daemon h)))
+    (setf (head-settings h) (%door-settings))
+    ;; **A BARE URL IS NOT THE ARGUMENTS.** It would reach the corpus as a string the model
+    ;; cannot read as the call, and the head would have invented the shape that made it one.
+    (leticl::%command h "run web_fetch https://example.com")
+    (is (null (funcall sent)) "a bare URL is not JSON, so nothing was sent")
+    (is (search "JSON" (head-status-note h)) "and the head says what the field is")
+    ;; `/run` alone LISTS the door, from the daemon's row
+    (leticl::%command h "run")
+    (is (search "web_fetch" (head-status-note h)) "`/run` alone lists what the door accepts")
+    (is (search "web_search" (head-status-note h)) "both names, in the daemon's order")
+    (is (null (funcall sent)) "and it is not an ask")
+    ;; the JSON path: the text goes through as TEXT
+    (leticl::%command h "run web_fetch {\"url\": \"https://example.com\"}")
+    (let ((f (first (funcall sent))))
+      (is (equal "operator_call" (getf f :frame)) "an ask, at last")
+      (is (equal "{\"url\": \"https://example.com\"}" (getf f :arguments))
+          "with the operator's JSON verbatim, spacing and all"))))
 
 (def-test a-decision-says-what-it-was-grounded-in (:suite leticl)
   "Gap 9. `decision_detail` (app.rs:9462-9507) is five parts and we drew one.

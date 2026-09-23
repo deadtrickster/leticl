@@ -503,6 +503,14 @@ and a `hello` with a snapshot). Returns T when the queue moved."
               (say head (if (getf env :given)
                             (format nil "password given by ~a" (getf env :by))
                             (format nil "no password given (~a)" (getf env :by)))))))
+         ((:operator-call-allowed)
+          ;; **R24 part two: THE ONLY THING THAT RUNS A CALL.** The daemon has written
+          ;; the admission and says so here; anything earlier — `Accepted` — is *queued*.
+          ;; It lives in the frame path and not in `apply-event` because a run is an ACT:
+          ;; it needs the socket to hand the result back, and what it reaches is this
+          ;; head's own environment, not session state.
+          (%op-call-answer head env)
+          (setf (head-dirty head) t))
          ((:decision-requested)
           ;; **A FRESH QUESTION STARTS AT THE TOP OF ITS LADDER.**
           ;;
@@ -616,17 +624,33 @@ and a `hello` with a snapshot). Returns T when the queue moved."
      ;; the rest of the session. Anything other than the routine acceptance
      ;; still gets said (app.rs:1315, NOTE_PROMPT_QUEUED).
      (let ((note (getf frame :note)))
-       (unless (and note (string= note +note-prompt-queued+))
-         (say head note))
-       ;; **AND IF THIS IS THE ACK TO A STOP, IT IS NOT THE OUTCOME** — it is the
-       ;; daemon saying it heard. Recorded and said; `tick-stop-request` decides
-       ;; when the wait is over (`head.lisp`, "a stop that is an OUTCOME").
-       (heard-stop head note))
+       ;; **R24 part two: an `Accepted` for an OPERATOR CALL is not permission.**
+       ;; It is the daemon saying the call is QUEUED; the permission is the
+       ;; `operator_call_allowed` event, which lands once the admission has been
+       ;; written. Asked separately from the note, because a call this head asked
+       ;; for gets no line here at all — its own ask said *nothing runs until it says
+       ;; the call was admitted* — and the RECORD is what makes the eventual silence
+       ;; say the true sentence (`tick-op-calls`).
+       (unless (%op-call-accepted head frame)
+         (unless (and note (string= note +note-prompt-queued+))
+           (say head note))
+         ;; **AND IF THIS IS THE ACK TO A STOP, IT IS NOT THE OUTCOME** — it is the
+         ;; daemon saying it heard. Recorded and said; `tick-stop-request` decides
+         ;; when the wait is over (`head.lisp`, "a stop that is an OUTCOME").
+         (heard-stop head note))
+       (setf (head-dirty head) t))
      :control)
     ((string= (frame-name frame) "rejected")
-     (say head (format nil "rejected: ~a (expected seq ~a, daemon at ~a)"
-                     (getf frame :reason) (getf frame :expected-seq)
-                     (getf frame :actual-seq)))
+     ;; **NO RETRY, AND THE DAEMON'S SENTENCE IS THE ONE SHOWN** for a call this head
+     ;; asked for: it names what was asked for, the names the door accepts, and that
+     ;; nothing ran. It is also the only refusal that means anything — the head is
+     ;; going to run the thing either way, which is why the list is enforced THERE.
+     (if (%op-call-refused head frame)
+         (say head (format nil "~a — not re-sent: the door is the daemon's and the list is not negotiable at this layer"
+                           (or (getf frame :reason) "the daemon refused the call")))
+         (say head (format nil "rejected: ~a (expected seq ~a, daemon at ~a)"
+                           (getf frame :reason) (getf frame :expected-seq)
+                           (getf frame :actual-seq))))
      :control)
     ((string= (frame-name frame) "sessions")
      (setf (session-sessions (head-session head))
@@ -1049,6 +1073,193 @@ would paint forty-three frames a second to say the same thing."
                    (head-dirty head) t))
            nil)))))
 
+;;; ------------------------------------------ the operator-call door (R24 part two) ;;;
+;;;
+;;; **The split contract, and which half is whose.** The daemon names and ENFORCES the
+;;; tools a head may run for the operator, writes the ADMISSION before anything happens,
+;;; and appends the row. The head is *the environment that can reach what the daemon
+;;; cannot* — it runs the call in its own process, on the operator's own machine, and
+;;; hands the outcome back through the same writer a turn's rows go through, so the model
+;;; sees it and every head draws it as the person's act.
+;;;
+;;; Two frames and one event, and the ORDER is the whole requirement: asking is not
+;;; permission (`Accepted` says *queued*), and the permission is the
+;;; `operator_call_allowed` event, which arrives only once the daemon has WRITTEN the
+;;; admission. A head that ran on `Accepted` can have run a call whose admission never
+;;; got written — which is a row in the corpus claiming the operator decided something
+;;; they did not.
+
+(defparameter +op-call-wait-ms+ 30000
+  "How long this head waits for an answer to one `operator_call` before it says so.
+
+Not a network timeout: `Rejected` and `Accepted` come back on the same connection in
+the same read loop, and the `operator_call_allowed` event follows the admission write.
+Generous because the call may sit QUEUED behind a running turn — which is exactly why
+the sentence differs when an `Accepted` was heard (see `tick-op-calls`).")
+
+(defvar *head-tool-runners* nil
+  "NAME → how THIS head runs it, as an alist of `(name . function)`.
+The function takes `(head arguments-json)` and returns `(values outcome payload)`,
+`outcome` a `ToolOutcome` wire word.
+
+**Empty, and `/run` says so rather than pretending.** R24 part two is a split
+contract: the daemon names the door, and the head's REACH is the head's to implement.
+No fetcher is a separate landing — this head's only socket is a unix one, so reaching
+an https URL means a TLS stack in a zero-dep image — and a head with no runner must
+NOT ask, because the admission it would be asking for is a corpus row saying the
+operator decided to run something this head then cannot run. `%op-call-ask` refuses
+before the frame goes out, which is the only cheap place to refuse it.
+
+A runner is a pure function of its arguments, so the suite binds this rather than
+measuring the network (`the-answer-runs-the-call…`).")
+
+(defvar *op-calls* nil
+  "The operator-run calls this head has ASKED for and not yet finished with, newest
+first; each a plist `:call-id :name :arguments :client-request-id :asked-at :deadline
+:accepted :told`.
+
+**An entry outlives its deadline**, and that is deliberate: *the daemon never answered*
+is a sentence this head says, not a reason to forget what it asked. A permission that
+lands after the head has said so still runs the call, because the admission exists and
+running on it is what the protocol says to do. Only a `Rejected` or the permission
+itself takes an entry away.
+
+A defvar and not a head slot: a struct layout change is a restart, and this has to
+live through a push. Bound by `with-replay-globals`, so two replays in one image
+cannot inherit each other's asks.")
+
+(defun %op-call-runner (name)
+  "How this head runs NAME, or NIL when it has no way to."
+  (cdr (assoc name *head-tool-runners* :test #'string=)))
+
+(defun %op-call-entry (key &key request)
+  "The pending call whose `call-id` is KEY, or whose `client-request-id` is KEY when
+REQUEST is true. NIL when this head never asked — which is the answer for another
+head's call on the same session, and is why both matchers exist."
+  (find key *op-calls*
+        :key (lambda (e) (getf e (if request :client-request-id :call-id)))
+        :test #'equal))
+
+(defun %op-call-ask (head name arguments)
+  "Ask the daemon to admit running NAME with ARGUMENTS for the operator. The call id, or
+NIL when nothing went out — with the reason said either way.
+
+**Nothing is sent unless this head can run it.** The daemon's answer would be an
+admission, and an admission is a corpus row saying the operator decided to run this;
+asking and then failing would put a decision on the record that nobody could carry out.
+So the door is checked here too, and so is the runner — refusal is free on this side and
+a retraction is not available on that one."
+  (let ((door (head-run-tools (head-settings head))))
+    (cond
+      ((null door)
+       (say head "this daemon offers no operator-call door — it has published no tool list, so nothing was asked for")
+       nil)
+      ((null (%op-call-runner name))
+       (say head (format nil "this head cannot run `~a` itself~@[ — it can run ~{~a~^, ~}~] — so nothing was asked for, and no decision was recorded"
+                         name (remove name door)))
+       nil)
+      (t
+       (let* ((call-id (next-call-id))
+              (frame (make-operator-call call-id name arguments
+                                         (session-expected-seq (head-session head))))
+              (now (internal-real-time-ms)))
+         (%send head frame)
+         (push (list :call-id call-id :name name :arguments arguments
+                     :client-request-id (getf frame :client-request-id)
+                     :asked-at now :deadline (+ now +op-call-wait-ms+)
+                     ;; **BOTH PRESENT AND NIL, and that is load-bearing.** A `setf` of
+                     ;; `(getf entry :accepted)` on a key that is ABSENT pushes a cons onto
+                     ;; the list and stores the new head in the LOCAL variable, so the
+                     ;; record would be lost and the eventual sentence would say *never
+                     ;; answered* about a call the daemon had queued. Measured by
+                     ;; `an-accepted-call…` failing exactly that way.
+                     :accepted nil :told nil)
+               *op-calls*)
+         (say head (format nil "asked the daemon to admit `~a` (~a) as your act — nothing runs until it says the call was admitted"
+                           name call-id))
+         call-id)))))
+
+(defun %op-call-answer (head env)
+  "**The only thing in this head that RUNS a call.** Folded from the
+`operator_call_allowed` event, which the daemon publishes after it has written the
+admission.
+
+**The event's words are the ones used**, not the ones this head asked with: the record
+is the daemon's, and `who` — the identity of the person the hub sees — is a fact only the
+event carries. Its `arguments` fall back to this head's own only if the event somehow
+carries none, so a run is never attempted with nothing.
+
+**The result goes out before anything is said.** The window between the run and the row
+is the only part of this protocol a head can shorten, and it is the part a later reader
+is missing if this head dies inside it — the admission is already on the record saying a
+call was permitted, so the outcome is the half that would be absent (`op-<call-id>` is
+what a reader has otherwise)."
+  (let ((entry (%op-call-entry (getf env :call-id))))
+    (when entry
+      (setf *op-calls* (remove entry *op-calls*))
+      (let* ((name (or (getf env :name) (getf entry :name)))
+             (who (getf env :who))
+             (args (or (getf env :arguments) (getf entry :arguments) "{}"))
+             (runner (%op-call-runner name)))
+        (multiple-value-bind (outcome payload)
+            (if runner
+                (handler-case (funcall runner head args)
+                  ;; **A runner that blows up is an OUTCOME, not a lost call.** The
+                  ;; admission is written and the daemon holds the entry as pending;
+                  ;; a head that let the error reach the loop would send no result at
+                  ;; all, leaving the model with nothing and the daemon with a
+                  ;; permission nothing consumed.
+                  (error (e) (values "failed" (format nil "this head could not run it: ~a" e))))
+                (values "failed" (format nil "this head has no runner for `~a`, so it did not run" name)))
+          ;; FIRST on the wire, then the sentence
+          (%send head (make-operator-result (getf env :call-id) outcome payload))
+          (say head (if (string= outcome "ok")
+                        (format nil "ran `~a` as ~a — the result is in the conversation" name (or who "you"))
+                        (format nil "`~a` as ~a did not go through (~a) — the row says so" name (or who "you") outcome))))))))
+
+(defun tick-op-calls (head)
+  "Say the wait out loud, once, for any call the daemon has not answered.
+
+Two silences and two sentences, because they are different facts: a call the daemon
+never even acknowledged is not in its queue, while one it `Accepted` IS queued — behind
+a turn, perhaps — and *never admitted* would be a claim this head cannot make about it.
+**The entry is not dropped either way**: this is a sentence, not a decision to forget,
+and a permission that arrives afterwards still runs the call, because the admission
+exists and running on it is exactly what the protocol asks for. Only a `Rejected` or the
+permission itself retires an entry."
+  (let ((now (internal-real-time-ms)))
+    (dolist (entry (copy-list *op-calls*))
+      (when (and (not (getf entry :told)) (>= now (getf entry :deadline)))
+        (setf (getf entry :told) t
+              (head-dirty head) t)
+        (say head (if (getf entry :accepted)
+                      (format nil "the daemon queued `~a` (~a) and has not admitted it yet — nothing has run. If it is admitted later this head will run it"
+                              (getf entry :name) (getf entry :call-id))
+                      (format nil "the daemon never answered `~a` (~a) — nothing ran, and it was not re-sent under a new id"
+                              (getf entry :name) (getf entry :call-id))))))))
+
+(defun %op-call-accepted (head frame)
+  "An `Accepted` for an operator call: QUEUED, and NOT permission. Records it and says
+nothing — the ask's own sentence already promised that nothing runs until it is admitted,
+and a second line for the routine cue is the noise the reference suppresses for a queued
+prompt. The record matters: it is what makes the eventual silence say the true sentence."
+  (let ((entry (%op-call-entry (getf frame :client-request-id) :request t)))
+    (when entry (setf (getf entry :accepted) t (head-dirty head) t))
+    entry))
+
+(defun %op-call-refused (head frame)
+  "A `Rejected` for an operator call — the name is not in the door. Returns the entry when
+it was ours (the caller says the reason), or NIL for a rejection that belongs to some
+other ask.
+
+**No retry, and the reason is the daemon's own sentence** naming what was asked for, the
+names the door accepts, and that nothing ran. A head that retried, or that asked again
+under a fresh id, would be negotiating with the list the daemon does not negotiate —
+and the list is the daemon's to hold precisely so a head cannot widen it."
+  (let ((entry (%op-call-entry (getf frame :client-request-id) :request t)))
+    (when entry (setf *op-calls* (remove entry *op-calls*)))
+    entry))
+
 (defun %answer-screen-requests (head)
   "Answer every queued `screen_requested` with the rows this head just PAINTED.
 
@@ -1088,6 +1299,10 @@ Oldest request first."
              ;; drain, so the row it marks dirty is painted in THIS pass, and so
              ;; the pass that ends the loop is the one that says why
              (tick-stop-request head)
+             ;; **the wait for an operator call this head asked for** — beside the stop's
+             ;; wait, for the same reason: a silence with a deadline has to be said, and
+             ;; the pass that says it must be the pass that paints it
+             (tick-op-calls head)
              ;; 1. drain. An error while FOLDING a frame must not kill the loop
              ;; either: a frame this head cannot handle is one bad frame, not a
              ;; reason to lose the session. The failure is remembered so the

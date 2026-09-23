@@ -863,6 +863,12 @@ scrolls the transcript by a row every keystroke.
                (permission-card-lines head cols))))
           ((head-quit-open head)
            (setf card-lines (quit-card-lines head cols)))
+          ;; **the operator-call composer, between the way out and a picker.** The order is
+          ;; the keyboard's: the quit card and an open ask are asked for keys before this
+          ;; one (`%handle-key`), so they are drawn before it — a card drawn above
+          ;; something that owns the keyboard would be a picture of a key that does not work.
+          ((op-call-draft-open-p)
+           (setf card-lines (op-call-card-lines head cols)))
           (*pick-open*
            (setf card-lines (pick-card-lines head cols))))
     ;; a card with no ladder is all content, and the mode-confirm question rides
