@@ -224,10 +224,36 @@ on ClientFrame::Slash)."
       ;; the listing comes back on the session log. This head has no arm for it, so it travels.
       ((string= verb "t")
        (%flip-fold head :show-tools))
+      ;; **R38: A SETTING WITH MORE THAN TWO VALUES IS CHOSEN, NOT CYCLED.**
+      ;;
+      ;; `/verbosity` used to cycle, and with R37's fourth rung the reader who wanted one of the
+      ;; four had to press up to three times and watch the screen change twice to find out which
+      ;; they were on. *A cycle moves the cost onto the person*: it makes them hold the list in
+      ;; their head and discover the current value by changing it. The picker shows all four, marks
+      ;; the current one, says what each MEANS, and takes one press.
+      ;;
+      ;; **A NAME still works and does the thing**, which is the grammar `/mode NAME` already has
+      ;; here — and the card's own hint row says *or type a name or the number on the left*, so the
+      ;; typed path and the ladder have to agree.
       ((member verb '("verbosity" "v") :test #'string=)
-       (setf *verbosity* (next-verbosity *verbosity*))
-       (say head (format nil "verbosity ~(~a~) — ~d events filtered so far"
-                         *verbosity* *filtered-total*)))
+       (let ((name (string-downcase (string-trim " " rest))))
+         (cond
+           ((zerop (length name)) (open-pick head :verbosity))
+           ((member name (mapcar (lambda (v) (string-downcase (symbol-name v)))
+                                 +verbosity-ladder+)
+            :test #'string=)
+            (let ((was *verbosity*))
+              (set-verbosity (intern (string-upcase name) :keyword))
+              (say head (if (eq was *verbosity*)
+                            (format nil "verbosity is already ~a" name)
+                            (format nil "verbosity → ~a — the whole transcript, including everything above this line"
+                                    name)))))
+           ;; **an unknown rung is a sentence, not a silence** — and it names the four, because a
+           ;; reader who typed one cannot guess the others from a refusal
+           (t (say head (format nil "`~a` is not a verbosity — the four are ~{~a~^, ~}; `/verbosity` with no argument opens the card"
+                                name
+                                (mapcar (lambda (v) (string-downcase (symbol-name v)))
+                                        +verbosity-ladder+)))))))
       ((member verb '("config" "settings") :test #'string=)
        ;; Ask, and open the pane. The REPLY does not open it (a head asks for
        ;; settings on attach now, and a reply that opened the pane would pop

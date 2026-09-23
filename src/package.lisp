@@ -151,6 +151,8 @@
    ;; the completion surface's own pieces: the head's verbs, the declared shortcuts, and the
    ;; union Tab walks (which is where the daemon's published verbs enter)
    #:+command-aliases+ #:%slash-completions
+   ;; R38: the one writer of the rung, and the rungs themselves
+   #:set-verbosity #:+verbosity-ladder+ #:+verbosity-said+
    #:permission-card-lines #:card-content-window #:card-scroll-by #:reset-card-scroll
    #:*card-scroll* #:*card-page*
    ;; R40: which row `ctrl-t` acts on, so a seam names the chord only there

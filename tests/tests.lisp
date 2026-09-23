@@ -14301,6 +14301,216 @@ it was sent, in their order, and says nothing about any other heading — rather
             "**and no heading is reported missing** when the daemon never listed any —
  an absence of the vocabulary is not evidence about the record")))))
 
+(defun %pick-text (h &optional (cols 100))
+  "The card on the screen — content and ladder — as text."
+  (multiple-value-bind (content ladder) (leticl::pick-card-lines h cols)
+    (format nil "~{~a~^~%~}"
+            (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l)))
+                    (append content ladder)))))
+
+(def-test verbosity-is-chosen-from-a-card-and-not-cycled (:suite leticl)
+  "**R38's rule, on the setting that reached it last: a setting with more than two values is
+CHOSEN from a card that shows all of them and marks the current one. Only a true toggle may
+cycle.**
+
+`/verbosity` cycled, and with R37's fourth rung that meant up to three presses and two screen
+changes to reach the rung wanted — *and the reader discovering the current value by changing it*.
+**A cycle is cheap to implement and it moves the cost onto the person**, which is the operator's
+own framing of the criticism this answers.
+
+Four claims, each a way the card could be wrong:
+
+  · **no argument opens the card and changes nothing** — the rung is where it was, and the card
+    is up;
+  · **every value is shown, and the current one is MARKED** — the same `▸`/`← now` vocabulary the
+    mode and model cards use, because a second picker vocabulary would be a third thing to learn;
+  · **each value says what it MEANS** — *Terse, Normal, Loud and R37's rung are not
+    self-describing, and a reader is choosing between what will be on their screen*;
+  · **the card says it applies to the transcript ALREADY DRAWN**, which is the fact a reader
+    cannot infer and the one that decides whether they think the key worked."
+  (let ((leticl::*verbosity* :normal)
+        (leticl::*pick-open* nil))
+    (let* ((h (%on-head :cols 100 :rows 40)))
+      (leticl::%command h "verbosity")
+      (is (eq :verbosity leticl::*pick-open*)
+          "**no argument opens the CARD** — not a cycle")
+      (is (eq :normal leticl::*verbosity*)
+          "**and nothing was changed by opening it** — the rung is where it was")
+      (is (> (length (%pick-text h)) 0) "the card is drawn")
+      (let ((text (%pick-text h)))
+        (dolist (rung '("reading" "terse" "normal" "loud"))
+          (is (search rung text) (format nil "~a is on the card" rung)))
+        (is (search "← now" text) (format nil "the current one is MARKED: ~s" text))
+        (is (= 2 (leticl::head-picker-sel h))
+            (format nil "**seeded on what answers now**, so enter on an untouched list is a
+ no-op — `normal` is the third rung: ~d" (leticl::head-picker-sel h)))
+        ;; every value carries its MEANING, not just its name
+        (is (search "nothing the head did to produce it" text) "reading says what it hides")
+        (is (search "and every tool row" text) "terse says what it keeps")
+        (is (search "plus the model's reasoning" text) "normal says what it adds")
+        (is (search "head arrivals" text) "loud says what it adds")
+        ;; and the fact a reader cannot infer
+        (is (search "every row above is redrawn" text)
+            (format nil "**the card says it applies to the transcript already drawn**: ~s" text))
+        (is (search "this is a VIEW" text)
+            "and that nothing leaves the record, which is what makes hiding safe here")
+        (is (search "esc closes this and changes nothing" text)
+            "with esc named as a real answer")))))
+
+(def-test taking-a-rung-redraws-the-transcript-already-drawn (:suite leticl)
+  "**The half of R38 that is not the card's shape, and the one a head can get silently wrong.**
+
+*It takes effect on the transcript ALREADY DRAWN, since Verbosity applies to the whole transcript
+at once.* That is true of this head because the rung is read at DRAW time — but the lines already
+rendered are CACHED, and `%hist-key` is (generation, width, the items vector's identity). **None
+of the three moves when a rung does**, so without an invalidation the cache serves the previous
+rung's lines back and the new one appears to do nothing.
+
+Measured on the transcript rather than on the global: the same session, the same head, a row that
+the rung hides — and it must be there before, gone after, and there again on the way back."
+  (let ((leticl::*verbosity* :normal)
+        (leticl::*hist-cache* nil)
+        (leticl::*hist-generation* 0)
+        (leticl::*pick-open* nil))
+    (let* ((h (%reading-head))
+           (s (head-session h)))
+      ;; the tool result's payload is what `:reading` hides, and it is in the transcript already
+      (is (search "file contents" (%transcript-text h))
+          "the row is drawn at :normal, before anything is chosen")
+      (leticl::%command h "verbosity")
+      (is (search "file contents" (%transcript-text h))
+          "and opening the card changes nothing")
+      ;; --- **TAKE `reading` FROM THE CARD**, the way a reader does: mark the row, press enter
+      (setf (leticl::head-picker-sel h) 0)
+      (leticl::%handle-key h (list :type :enter))
+      (is (eq :reading leticl::*verbosity*) "the rung is taken")
+      (is (null leticl::*pick-open*) "and the card closes")
+      (is (not (search "file contents" (%transcript-text h)))
+          "**a row ALREADY DRAWN is gone** — the rung applies to the whole transcript")
+      ;; --- and back, which is the other direction and the one a cache gets wrong
+      (leticl::%command h "verbosity")
+      (setf (leticl::head-picker-sel h) 2)
+      (leticl::%handle-key h (list :type :enter))
+      (is (eq :normal leticl::*verbosity*) "the rung goes back")
+      (is (search "file contents" (%transcript-text h))
+          "**and every hidden row is back, retroactively** — including the span it was on")
+      ;; --- **AND THROUGH THE VIEWPORT, WHICH IS WHERE THE CACHE LIVES.**
+      ;;
+      ;; Everything above asks `item-lines` about one row, and `item-lines` renders from scratch
+      ;; every time — so none of it touches the cache and none of it can see the defect this whole
+      ;; function exists for. The viewport is what `%render` draws and it is served out of
+      ;; `%hist-cache`, whose key is (generation, width, the items vector's identity). A rung moves
+      ;; none of those three, so without `set-verbosity`'s bump the viewport would hand back the
+      ;; PREVIOUS rung's lines and the change would look like a key that did nothing.
+      (flet ((glass ()
+               (format nil "~{~a~^~&~}"
+                       (loop for l in (leticl::%viewport-lines h 100 20)
+                             when (consp l)
+                               collect (format nil "~{~a~}" (mapcar (lambda (seg)
+                                                                      (if (consp seg) (car seg) seg))
+                                                                    l))))))
+        (is (search "file contents" (glass)) "the viewport draws the row at :normal")
+        ;; take `reading` through the CARD, with the cache warm
+        (leticl::%command h "verbosity")
+        (setf (leticl::head-picker-sel h) 0)
+        (leticl::%handle-key h (list :type :enter))
+        (is (not (search "file contents" (glass)))
+            "**and a WARM cache does not serve the old rung's lines back** — the invalidation is
+ what this function is for, and a test that only asked `item-lines` could not see it")
+        ;; and back, again with the cache warm
+        (leticl::%command h "verbosity")
+        (setf (leticl::head-picker-sel h) 2)
+        (leticl::%handle-key h (list :type :enter))
+        (is (search "file contents" (glass))
+            "**and the row comes back through the cache too** — the redraw is retroactive in both
+ directions, which is what *it applies to the whole transcript* means")))))
+
+(def-test a-rung-can-be-typed-and-an-unknown-one-names-the-four (:suite leticl)
+  "**The typed path, and it has to exist**: the card's own hint row says *or type a name or the
+number on the left*, and `/mode NAME` already works that way here — two paths to one setting that
+disagree about what a word means is the drift this document keeps finding.
+
+**And a word that names no rung is a SENTENCE that lists the four**, because a reader who typed one
+cannot guess the others from a refusal — R29's rule, on a verb rather than on a note."
+  (let ((leticl::*verbosity* :normal) (leticl::*pick-open* nil))
+    (let ((h (%on-head :cols 100 :rows 40)))
+      (leticl::%command h "verbosity loud")
+      (is (eq :loud leticl::*verbosity*) "a name sets it")
+      (is (null leticl::*pick-open*) "without opening the card")
+      (is (search "verbosity → loud" (head-status-note h))
+          "and it says what it did")
+      (is (search "the whole transcript" (head-status-note h))
+          (format nil "**and that it applies to what is already drawn**, which is the fact the
+ reader needs: ~s" (head-status-note h)))
+      ;; already there: said, not silent, and not a second frame
+      (leticl::%command h "verbosity loud")
+      (is (search "already loud" (head-status-note h)) "a rung already in force says so")
+      ;; a word that is not a rung
+      (leticl::%command h "verbosity loud-ish")
+      (let ((note (head-status-note h)))
+        (is (search "is not a verbosity" note) (format nil "it says so: ~s" note))
+        (dolist (rung '("reading" "terse" "normal" "loud"))
+          (is (search rung note) (format nil "and names ~a among the four" rung))))
+      (is (eq :loud leticl::*verbosity*) "and the rung is untouched by the refusal"))))
+
+(def-test esc-on-the-verbosity-card-leaves-the-setting-alone-and-says-so (:suite leticl)
+  "**R38: *esc is a real answer: dismissed leaves the setting alone and says nothing was
+changed.***
+
+The other two lists are silent on esc, and the difference is what is behind them: choosing a mode
+or a model sends a frame and the conversation does not move, while this one changes what the WHOLE
+transcript looks like. A reader who pressed esc on a card that redraws everything has to be able
+to tell that the redraw did not happen — the same rule the payload window keeps when it says esc
+closes the view and leaves the fold open."
+  (let ((leticl::*verbosity* :normal) (leticl::*pick-open* nil))
+    (let ((h (%on-head :cols 100 :rows 40)))
+      (leticl::%command h "verbosity")
+      (setf (leticl::head-picker-sel h) 3)
+      (is (search "← now" (%pick-text h)) "the card is up on `normal`")
+      (clear-note h)
+      (leticl::%handle-key h (list :type :esc))
+      (is (eq :normal leticl::*verbosity*)
+          "**the rung is exactly where it was** — the cursor moved, the setting did not")
+      (is (null leticl::*pick-open*) "the card is closed")
+      (is (search "nothing was changed" (head-status-note h))
+          (format nil "**and it SAYS so** — a card that leaves a silent screen behind it is the
+ affordance failing: ~s" (head-status-note h)))
+      (is (search "normal" (head-status-note h))
+          "naming the rung it left as it is"))))
+
+(def-test the-three-lists-are-one-vocabulary (:suite leticl)
+  "**R38: *the same shape as your mode and model cards — one picker vocabulary per head, not a
+third.***
+
+The assertion is that the three lists produce the SAME STRUCTURE — a bold title, `▸  N  name` rows
+with the cursor's row reversed and `← now` on the one in force, and dim hint rows under them —
+because a reader who has learned one has learned all three. A card of its own shape for a third
+setting is the *third thing to learn* the requirement forbids."
+  (let ((leticl::*verbosity* :normal))
+      (let ((h (%on-head :cols 100 :rows 40)))
+        ;; mode and model read the daemon's rows; verbosity reads the head's ladder
+        (setf (head-settings h)
+              (list (list :key "mode" :value "read-only" :choices (list "read-only" "always-ask"))
+                    (list :key "model" :value "local (qwen)" :choices (list "qwen" "glm"))))
+        ;; **`leticl::*pick-open*` and not a bare name**: the special is not exported, so an
+        ;; unqualified one in this package is a DIFFERENT variable and the card never draws —
+        ;; which is exactly how this test failed the first time, with three assertions about a
+        ;; card that was not on the screen.
+        (dolist (which '(:mode :model :verbosity))
+          (setf leticl::*pick-open* which (head-picker-sel h) 0)
+          (let ((text (%pick-text h)))
+            (is (search "▸" text) (format nil "~a marks the cursor's row" which))
+            (is (search "← now" text) (format nil "~a marks the one in force: ~s" which text))
+            (is (search "↑↓ moves" text) (format nil "~a has the picker's hint row" which))))
+        ;; and the verbosity card is the one that carries MEANINGS, because it is the one whose
+        ;; values are not self-describing
+        (setf leticl::*pick-open* :verbosity)
+        (is (search "the conversation only" (%pick-text h))
+            "**only the verbosity card explains its values** — a mode name is a name")
+        (setf leticl::*pick-open* :mode)
+        (is (not (search "the conversation only" (%pick-text h)))
+            "and the mode card is unchanged: it did not grow a paragraph per row"))))
+
 (def-test the-deposit-says-what-it-costs-before-it-lands (:suite leticl)
   "**R31 (e): *it spends the window, visibly. A 40k-token page is 40k of context the operator
 chose to buy — the size is shown before it lands, because the alternative is discovering it at

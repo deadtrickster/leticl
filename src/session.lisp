@@ -499,16 +499,35 @@ work, and being shown something unexpected is the safe failure when the alternat
 withholding it. `:note` is not in this list because R37 forbids hiding a warning — and the
 allowlist's own one entry is what proved the list was the wrong shape.")
 
+(defun set-verbosity (level)
+  "Set the rung, and INVALIDATE WHAT HAS BEEN RENDERED.
+
+**The one writer, and the invalidation is the whole reason it exists.** The rung is read at DRAW
+time — `item-lines` asks `reading-p` and hides a row — but `%hist-key` is (generation, width, the
+items vector's identity) and none of the three moves when a rung does. So the lines already
+rendered would be served back out of the cache and the new rung would appear to do nothing, which
+is the defect this tree has now found at four surfaces (the fold, the payload page, the width, the
+retired note). The generation is what the cache watches, so it is bumped here.
+
+**It says nothing.** The verb and the card own their sentences; a setter that spoke would put two
+of them on the screen for one keypress."
+  (unless (member level +verbosity-ladder+ :test #'eq)
+    (error "~s is not a rung of ~s" level +verbosity-ladder+))
+  (setf *verbosity* level)
+  (incf *hist-generation*)
+  level)
+
 (defun reading-p ()
   "Is the `:reading` rung on? — the conversation, and nothing the head did to produce it."
   (eq *verbosity* :reading))
 
 (defun next-verbosity (v)
-  "The next rung DOWN, so `reading` → `terse` → `normal` → `loud` → `reading`.
+  "The next rung UP the ladder, wrapping: `reading` → `terse` → `normal` → `loud` → `reading`.
 
-**Ordered by how much is drawn, ascending**, and the cycle climbs: `/verbosity` from
-`:normal` gives `:loud`, from `:loud` wraps to `:reading`. A reader who presses it four
-times is back where they started, and the four rungs are one ring."
+**NO LONGER A USER-FACING CYCLE, and that is R38's ruling** (`.verbosity` opens a card now):
+*a setting with more than two values is chosen from a card that shows all of them; only a true
+toggle may cycle.* What survives is the ORDER — the ring is how `+verbosity-ladder+` is stated, and
+this function is the ring written down once so the two cannot disagree about which rung is next."
   (ecase v (:reading :terse) (:terse :normal) (:normal :loud) (:loud :reading)))
 
 (defparameter +verbosity-ladder+ '(:reading :terse :normal :loud)
