@@ -43,6 +43,24 @@ arithmetic: the page size is the DAEMON's (`JOB_OUTPUT_WINDOW`), and recomputing
 it here would be a second copy of a number only the daemon knows — the same
 reason `next` arrives on the event at all.")
 
+(defun job-out-pages (&optional (view *job-out*))
+  "Which page keys this overlay can act on, as `(:next BOOL :back BOOL)` — or NIL with no
+overlay open.
+
+**One answer, because TWO surfaces name these keys and only one of them was careful.** The
+pane's own footer computes them from the window it is drawing; the composer's hint bar names
+them for the MODE, and a mode is not a job — so on a job that has written nothing the footer
+correctly said `arrows scroll · Esc to jobs` while the bottom row still promised `→ next page ·
+← back`. Measured on the operator's own scenario, a build whose output went to a file so that
+`produced` is 0 and `next` is NIL: the pane told the truth and the row under it did not.
+
+R40's rule is why it matters rather than being tidiness — *a chord is named only where it
+acts* — and it is the same defect `peek-row-count` records one pane over: a surface
+advertising a key that moves nothing."
+  (when view
+    (list :next (and (getf view :next) t)
+          :back (and (getf view :back) t))))
+
 (defstruct (session (:constructor %make-session))
   (session-id "" :type string)
   (head-id "" :type string)

@@ -617,8 +617,22 @@ is worse than no hint at all."
                  ;; jobs list never closed under it, and a bottom row that says
                  ;; `esc closes` on a pane that goes back one level teaches the
                  ;; wrong thing about the key (app.rs:5424)
+                 ;;
+                 ;; **And it names the PAGE keys only where they act** (R41), through
+                 ;; `job-out-pages` — the same function the pane's own footer uses. A
+                 ;; mode is not a job: on a build whose output went to a file there is
+                 ;; nothing to page to, and this row promised `→ next page · ← back`
+                 ;; while the pane above it correctly said `Esc to jobs` alone. R40's
+                 ;; rule, on the one surface that is not a row's own seam.
                  ((eq (head-mode head) :job-out)
-                  "↑↓ scroll · → next page · ← back · enter re-reads · esc back to jobs")
+                  (let ((pages (job-out-pages)))
+                    ;; **Two plain conditionals, not two `~@[ … ~]`.** Measured on this SBCL:
+                    ;; `(format nil "|~@[A~]~@[B~]|" 1 nil)` answers `"|AB|"` — the clause
+                    ;; after a NIL argument is processed and not skipped — so the compressed
+                    ;; spelling promised the very keys this change exists to drop.
+                    (format nil "↑↓ scroll~a~a · enter re-reads · esc back to jobs"
+                            (if (getf pages :next) " · → next page" "")
+                            (if (getf pages :back) " · ← back" ""))))
                  ((head-secret-req head) "enter submits · esc refuses the password")
                  ;; **the operator-call composer** (R24 part two). The two keys it owns,
                  ;; said in the register the secret card's own row uses — and this arm is

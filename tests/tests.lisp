@@ -11098,13 +11098,30 @@ verb that still works on an old daemon."
 (def-test the-hint-bar-names-the-job-output-overlays-keys (:suite leticl)
   "The bottom row is where a key is learned, and this pane's Esc goes BACK ONE
 LEVEL rather than closing everything — a row that said `esc closes` would teach
-the wrong thing about it (app.rs:5421-5426)."
-  (let* ((leticl::*job-out* (list :job "j12" :loading t :back nil))
-         (h (%on-head :cols 100 :rows 24)))
+the wrong thing about it (app.rs:5421-5426).
+
+**And it names the PAGE keys only where they act (R41)** — R40's rule on the one surface that is
+not a row's own seam. A mode is not a job: on the operator's own scenario, a build whose output
+went to a file, there is nothing to page to, and this row promised `→ next page · ← back` while
+the pane six rows above it correctly said `arrows scroll · Esc to jobs`. The fix is one function
+the pane's footer and this row both read, so they cannot disagree again."
+  (let ((h (%on-head :cols 100 :rows 24)))
     (setf (head-mode h) :job-out)
-    (let ((text (format nil "~{~a~}" (mapcar #'car (hint-bar h 100)))))
-      (is (search "→ next page" text) "the page keys are named: ~s" text)
-      (is (search "esc back to jobs" text) "and Esc says where it goes"))))
+    ;; --- a window with BOTH pages: both keys are named
+    (let ((leticl::*job-out* (list :job "j12" :loading nil :next 10 :back '(0))))
+      (let ((text (format nil "~{~a~}" (mapcar #'car (hint-bar h 100)))))
+        (is (search "→ next page" text) "the next page is named where it exists: ~s" text)
+        (is (search "← back" text) "and so is back")
+        (is (search "esc back to jobs" text) "and Esc says where it goes")))
+    ;; --- a window with NO further page: the keys go, Esc stays
+    (let ((leticl::*job-out* (list :job "j12" :loading t :back nil :next nil)))
+      (let ((text (format nil "~{~a~}" (mapcar #'car (hint-bar h 100)))))
+        (is (not (search "next page" text))
+            (format nil "**no `→ next page` on a job with nothing to page to** — this row
+ promised it while the pane above said otherwise: ~s" text))
+        (is (not (search "← back" text)) "nor `← back`, which has no page behind it")
+        (is (search "↑↓ scroll" text) "the key that DOES something is still named")
+        (is (search "esc back to jobs" text) "and Esc's meaning is not lost with them")))))
 
 (def-test a-click-on-the-mode-picker-card-marks-a-row (:suite leticl)
   "G17. The click arm tested `head-mode`, and the mode/model picker runs with

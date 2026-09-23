@@ -1515,6 +1515,10 @@ unwindowed, which is the shape every other pane has."
          rows))
       (t
        (let* ((dropped (or (getf view :dropped) 0))
+              ;; **which page keys ACT, from the one function that answers it** — the
+              ;; bottom row was promising `→ next page · ← back` for a job with neither
+              ;; (R41); see `job-out-pages`.
+              (pages (job-out-pages view))
               (meta
                 ;; NIL defaults throughout, and a NIL view reads as `reading…`:
                 ;; this pane draws from a plist the daemon fills a field at a
@@ -1602,11 +1606,11 @@ unwindowed, which is the shape every other pane has."
               (footer
                 (list nil
                       (list (cons (format nil "    ~a"
-                                          (cond ((and (getf view :next) (getf view :back))
+                                          (cond ((and (getf pages :next) (getf pages :back))
                                                  "arrows scroll · → next page · ← back · Esc to jobs")
-                                                ((getf view :next)
+                                                ((getf pages :next)
                                                  "arrows scroll · → next page · Esc to jobs")
-                                                ((getf view :back)
+                                                ((getf pages :back)
                                                  "arrows scroll · ← back · Esc to jobs")
                                                 (t "arrows scroll · Esc to jobs")))
                                   '(:dim t))))))
