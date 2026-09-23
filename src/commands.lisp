@@ -219,6 +219,14 @@ on ClientFrame::Slash)."
       ;; R11's locator: the oracle's brief and its reply, by the adjudication's own id
       ((string= verb "diagnostic") (%diagnostic-command head rest))
       ((member verb '("quit" "q") :test #'string=) (setf (head-running head) nil))
+      ;; **R24 part two, THE OPERATOR'S OWN SHAPE: `/NAME blabla`.** LAST before the fallthrough,
+      ;; and that placement is the rule rather than tidiness: **this head's own verbs win.**
+      ;; A door row must not be a way to take `/quit` or `/help` away from the operator — a
+      ;; daemon that publishes a tool called `quit` would otherwise retire the head's own word
+      ;; for leaving — and nothing is lost, because `/run quit …` still names the door
+      ;; explicitly. Guarded on the name being IN THE DOOR, so this head answers to the daemon's
+      ;; names and to nothing else and any other verb still travels.
+      ((%op-call-verb head verb rest))
       ;; unknown verbs travel; the daemon acts and announces on the log
       (t (%send head (list :frame "slash"
                            :client-request-id (next-request-id)
@@ -395,8 +403,8 @@ they press again to see whether the first press landed."
 `{…json…}` when the card already named the tool, `NAME {…json…}` when it did not.
 
 **The arguments are checked for BEING json and for nothing else** — the wire says the
-field is json text, and a head that knew `web_fetch` takes `{\"url\": …}` would be holding
-a copy of the tool's schema, which is the drift the daemon's own list exists to stop.
+field is json text, and a head that knew one tool takes `{\"url\": …}` would be holding
+a copy of that tool's schema, which is the drift the daemon's own list exists to stop.
 
 A refusal keeps the draft and says why, so the line can be fixed rather than retyped.
 
@@ -456,16 +464,114 @@ T only for a key it took, or the field would stop taking letters."
     ;; quit is guarded on an empty composer. Falling through keeps both.
     (t nil)))
 
+(defun %json-text-p (text)
+  "Is TEXT the arguments as JSON? — by PARSING it, and by nothing else.
+
+**The question is *is this already the wire's shape*, and the parser is the only thing that
+answers it.** The JSON form's promise is that what goes on the wire IS json text, and a
+brace test cannot keep that promise: `web_fetch {\"url\": …` with its closing brace missing
+starts with a brace and is not json, and a head that passed it through would have sent the
+daemon an unchecked line while believing it had checked.
+
+**What a brace test would NOT buy, said plainly because this is where the rule is a choice.**
+The tempting justification for testing the character is *a person searching for a JSON snippet
+types braces and a colon* — but such a search is a COMPLETE snippet, it parses, and this rule
+already takes it as the arguments: neither rule can tell that search from a call. So the two
+rules differ on exactly one kind of line, the unparseable one, and there this head's answer is
+the bare one — the line is searched for, verbatim, into the field the daemon named, and the
+row shows what was searched. That is a cost with a name rather than a hidden one."
+  (and (stringp text) (plusp (length (string-trim " " text)))
+       (handler-case (progn (json-decode text) t) (error () nil))))
+
+(defun %door-arguments (head name line)
+  "NAME and a person's LINE as the wire's arguments JSON, or `(values NIL WHY)`.
+
+The ONE place both spellings meet, so the bare verb and `/run` cannot disagree about what a
+line means:
+
+  · **a line that parses as JSON IS the arguments**, verbatim — the form that shipped first,
+    kept because a tool with several fields still needs it and because the head must not
+    reinterpret something already in the wire's shape;
+  · **anything else is the BARE form** (`%bare-arguments`), where the field comes from the
+    daemon's row and this head holds no schema."
+  (if (%json-text-p line)
+      (values (string-trim " " line) nil)
+      (%bare-arguments head name line)))
+
+(defun %bare-arguments (head name line)
+  "NAME + a person's LINE as the wire's arguments JSON, or `(values NIL WHY)`.
+
+**The whole requirement, in one function: `/NAME blabla` and the head holds no schema.**
+The field comes from the daemon's own row, looked up by name — so this knows nothing about
+the tool, and a daemon that renames the field changes nothing here. `why` is the sentence
+the caller shows when the bare form cannot be built, and it NAMES the reason rather than
+leaving the operator to guess which tools take a sentence and which take JSON:
+
+  · no row at all — an older daemon: the head does not know, so it says it does not know;
+  · a name the row does not describe;
+  · a required field with nothing typed for it."
+  (let* ((descs (head-run-arguments (head-settings head)))
+         (d (cdr (assoc name descs :test #'string=)))
+         (field (getf d :field)))
+    (cond
+      ((null descs)
+       (values nil
+               (format nil "this daemon has not said which field a bare line fills for `~a`, so type the arguments as JSON — `~a {\"…\": \"…\"}`"
+                       name name)))
+      ((null field)
+       (values nil
+               (format nil "the daemon says `~a` takes no single argument — type it as JSON: `~a {\"…\": \"…\"}`"
+                       name name)))
+      ((zerop (length (string-trim " " line)))
+       (values nil
+               (format nil "`~a` needs its ~a — as `~a SOMETHING`" name field name)))
+      (t (json-encode-to-string
+          (append (list (%key-from-wire field) line)
+                  ;; **the daemon's defaults travel verbatim**, so a tool whose row says it also
+                  ;; takes a limit sends the daemon's own limit and not a head-side guess.
+                  (getf d :defaults)))))))
+
+(defun %op-call-verb (head verb rest)
+  "The operator's own shape — `/NAME blabla` — or NIL to let the verb fall through.
+
+**A DOOR NAME IS ITS OWN VERB, and only the names the daemon published.** The lookup is
+against `head-run-tools`, so a door offering one name gets that one verb: this head invents no
+alias, no abbreviation and no friendly spelling, because the name IS the daemon's
+(`head-run.tools`' own reason, applied to the verb).
+
+**A name that is NOT in the door falls through untouched** — it travels to the daemon as the
+slash line the operator typed, which is what every other verb does and what keeps a daemon-side
+verb of the same name working.
+
+**The gating is identical to every other door path**, and that is a constraint rather than an
+observation: this calls `%op-call-ask`, so the bare form gets the same allowlist, the same two
+frames and the same admission recorded as the operator's act. Sugar that skipped the door
+would be a second door."
+  (let ((door (head-run-tools (head-settings head))))
+    (when (and door (member verb door :test #'string=))
+      (multiple-value-bind (args why) (%door-arguments head verb rest)
+        (if args
+            (progn (%op-call-draft-close head)
+                   (%op-call-ask head verb args))
+            (say head why)))
+      t)))
+
 (defun %run-command (head rest)
   "`/run` — run a tool the DAEMON names, on this machine, as the operator's own act.
 
-**Two doors and one path.** `/run` with nothing after it OPENS THE OPERATOR-CALL COMPOSER
-(`%op-call-draft-open`) — the same thing the `alt+r` chord does, because a chord must run
-the verb rather than keep a second copy of it, and this is the verb. `/run NAME JSON` is
-the one-line form, which is how a head driven over a pipe asks, and it is the whole
-grammar.
+**Two doors and one path.** `/run NAME what you want` is the operator's short form (R31):
+the daemon's row says which field a bare line goes into, so this head turns the sentence into
+the wire's JSON while knowing nothing about the tool. `/run NAME {…json…}` is the form that
+shipped first and STAYS, because a tool with several fields still needs it.
 
-**Why a CHORD is `alt+r` and not a control byte**, in one measurement: every control byte
+**`/run` with nothing after it LISTS the door**, and that is a default changed on the
+operator's review (*you guys do interfaces for yourself*): the old arm opened a JSON
+composer, which is the shape an agent finds natural and a person has to learn. A person who
+types `/run` wants to know what they can run, so they get a sentence naming the names and the
+field each bare line fills. `alt+r` still opens the composer, which is the escape hatch for a
+tool with several fields.
+
+**Why the chord is not a control byte**, in one measurement: every control byte
 a mnemonic can hang on is taken here. The composer owns `a b e f k u w y z` and `Rubout`,
 the head owns `r t x l o s n p g q`, and the remaining letters do not arrive as control
 bytes at all — `h` is Backspace, `i` is Tab, `j`/`m` are Enter, and `v` is the terminal's
@@ -474,7 +580,7 @@ byte with a mnemonic*), so what is left is an ESC-prefixed chord: `alt+r` is dec
 this head's own reader, is not a prefix in tmux, and is bound to nothing else.
 
 The arguments are the tool's own JSON — the shape a model's call carries — because a head
-that knew `web_fetch` takes `{\"url\": …}` would be holding a copy of the tool's schema,
+that knew one tool takes `{\"url\": …}` would be holding a copy of that tool's schema,
 which is the same drift the settings row exists to stop one level up. They are validated as
 JSON and nothing else: the wire says the field IS json text, and a head that passed
 `https://example.com` through as the arguments would put a non-JSON string into the corpus
@@ -483,21 +589,36 @@ and hand it to the model as the call."
          (name (if space (subseq rest 0 space) rest))
          (args (if space (string-trim '(#\space #\tab) (subseq rest (1+ space))) "")))
     (cond
-      ;; NO NAME: open the composer. The door is read from the daemon's own row inside,
-      ;; which is also where *no door at all* is said.
-      ((zerop (length name)) (%op-call-draft-open head))
-      ;; A NAME AND NO ARGUMENTS: the one-line form's most useful case, and the field the
-      ;; composer would have prefilled. It asks with `{}` — a tool that takes nothing is a
-      ;; real tool, and making the operator type two braces to say so is ceremony.
-      ((zerop (length args))
-       (progn (%op-call-draft-close head) (%op-call-ask head name "{}")))
+      ;; NO NAME: **LIST what the door accepts and how to type it** — not the composer.
+      ;; The composer is an agent's shape and it was the wrong default: the common case is
+      ;; `/NAME blabla`, and a person who types `/run` to find out what is available
+      ;; should be told the short form rather than dropped into a JSON field. `alt+r` still
+      ;; opens the composer, which is the escape hatch for a tool with several fields.
+      ((zerop (length name))
+       (let* ((door (head-run-tools (head-settings head)))
+              (descs (head-run-arguments (head-settings head))))
+         (say head
+              (if (null door)
+                  "this daemon offers no operator-call door — it has published no tool list, so there is nothing to run"
+                  (with-output-to-string (s)
+                    (format s "the daemon will run ~{~a~^, ~} for you — type `/NAME what you want`, as the tool's own name and then a sentence"
+                            door)
+                    (when descs
+                      (format s "; the bare form goes into ~{~{~a → ~a~}~^, ~}"
+                              (loop for d in descs
+                                    collect (list (car d) (getf (cdr d) :field)))))
+                    (let ((json (remove-if (lambda (n) (assoc n descs :test #'string=)) door)))
+                      (when json
+                        (format s "; ~{~a~^, ~} still take JSON" json)))
+                    (format s " — and nothing runs until it says the call was admitted; alt+r types the JSON by hand"))))))
+      ;; A NAME with a line: JSON if it IS json, the bare form otherwise — one decision,
+      ;; made in `%door-arguments`, so `/run` and the bare verb cannot disagree.
       (t
        (%op-call-draft-close head)
-       (handler-case (progn (json-decode args) (%op-call-ask head name args))
-         (error ()
-           (say head (format nil "the arguments are the tool's own JSON — as `/run ~a `{\"…\": \"…\"}` — so `~a` was not sent"
-                             name (let ((l (length args)))
-                                    (if (> l 40) (concatenate 'string (subseq args 0 40) "…") args))))))))))
+       (multiple-value-bind (built why) (%door-arguments head name args)
+         (if built
+             (%op-call-ask head name built)
+             (say head why)))))))
 
 (defvar *diag* nil
   "The diagnostic read in flight or on the screen: a plist

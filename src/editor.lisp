@@ -656,7 +656,7 @@ Esc was a second thing to remember per pane."
             ;; guard is what keeps the two apart: both arrive as `#\r` and differ only in type.
             (and (eq (getf key :type) :alt) (eql (getf key :ch) #\r)))
     (if (eq (getf key :type) :alt)
-        (progn (%command head "run") t)
+        (progn (%op-call-draft-open head) t)
     (flet ((pane (mode verb)
              (if (eq (head-mode head) mode)
                  (setf (head-mode head) :normal (head-dirty head) t)

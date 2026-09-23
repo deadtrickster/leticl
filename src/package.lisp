@@ -52,7 +52,8 @@
    #:encode-frame #:decode-frame #:frame-name #:event-name
    #:next-request-id
    ;; the operator-call door (R24 part two): the daemon's list, and the two frames
-   #:+head-run-tools-key+ #:head-run-tools #:next-call-id
+   #:+head-run-tools-key+ #:+head-run-arguments-key+ #:head-run-tools #:head-run-arguments
+   #:next-call-id
    #:make-operator-call #:make-operator-result
    ;; R11's locator: the oracle's own exchange, by the adjudication's id
    #:+diagnostic-kinds+ #:make-fetch-diagnostic

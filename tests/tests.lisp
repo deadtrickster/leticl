@@ -7825,11 +7825,20 @@ rows are the finished form or it renders the answer twice\"* (app.rs:2650-2651).
     (is (equal '("i1" "i2") (getf (session-turn s) :appended))
         "both ids, in the order they landed")))
 
-(defun %door-settings (&optional (value "web_search,web_fetch"))
-  "The settings rows as the daemon publishes them, with the operator-call door's row."
-  (list (list :key "model" :value "qwen" :source "config" :editable "models" :choices nil)
-        (list :key +head-run-tools-key+ :value value :source "default"
-              :editable "" :choices nil)))
+(defun %door-settings (&optional (value "web_search,web_fetch")
+                                (args "[{\"name\":\"web_search\",\"field\":\"query\"},{\"name\":\"web_fetch\",\"field\":\"url\"}]"))
+  "The settings rows as the daemon publishes them, with the operator-call door's rows.
+
+ARGS is the argument-descriptor row that makes the BARE form possible (R24 part two, the
+operator's own shape). Pass NIL for a daemon that publishes no such row — which is every
+daemon before the ruling, and the case the head has to answer honestly rather than guess."
+  (append
+   (list (list :key "model" :value "qwen" :source "config" :editable "models" :choices nil)
+         (list :key +head-run-tools-key+ :value value :source "default"
+               :editable "" :choices nil))
+   (when args
+     (list (list :key +head-run-arguments-key+ :value args :source "default"
+                 :editable "" :choices nil)))))
 
 (defvar *ran* nil
   "What the stub runner was asked to run, newest first. A runner is a pure function of its
@@ -7915,14 +7924,19 @@ reader decodes it, and tmux does not use it as a prefix."
       ;; whole point of this shape is that the JSON is typed in the composer.
       (is (eq :normal (head-mode h)) "the screen is still the conversation")
       (is (search "╭" screen) "with the composer box under the card, where the field is"))
-    ;; --- and `/run` with no name runs the SAME path rather than a second one
+    ;; --- and `/run` with no name LISTS the door rather than opening the composer, which is
+    ;; the default the operator's review changed (`/run` is how a person asks WHAT can I run)
     (leticl::%handle-key h (list :type :esc))
     (is (not (leticl::op-call-draft-open-p)) "esc closed it")
     (leticl::%command h "run")
-    (is (leticl::op-call-draft-open-p)
-        "**`/run` with nothing after it is the chord's own path** — one implementation, two
- doors, which is the rule R22's `ctrl-n` follows for `/notes dismiss all`")
-    (is (eq :normal (head-mode h)) "and the draft is not a pane and not a mode")))
+    (is (not (leticl::op-call-draft-open-p))
+        "**`/run` alone LISTS and does not open a JSON field** — the composer is an agent's shape
+ and the operator should not have to learn it")
+    (is (search "web_search" (head-status-note h))
+        "naming what the door accepts, so the next thing typed is a verb")
+    (is (search "q" (head-status-note h))
+        "and which field a bare line goes into — the daemon's own answer, quoted")
+    (is (eq :normal (head-mode h)) "and nothing is on the screen")))
 
 (def-test the-composer-asks-and-only-the-admission-runs-it (:suite leticl)
   "The composer's Enter, end to end: the arguments go out as JSON TEXT, `Accepted` runs
@@ -12678,6 +12692,160 @@ both axes together."
 ;;; permission, and a head that ran on `Accepted` can have run a call whose admission was
 ;;; never written — a corpus row claiming the operator decided something they did not.
 
+(def-test the-bare-form-runs-it-and-holds-no-schema (:suite leticl)
+  "**R24 part two, the operator's own shape: `/web_search blabla`.**
+
+*\"you guys do interfaces for yourself\"* — the composer shipped because a JSON field is what an
+agent would want, and the person had to type braces. The field a bare line goes into comes from
+the DAEMON's row, so this head still holds no schema; what proves that is not this test's list
+of assertions but **the field NAME**: the descriptor below says `q`, which no head-side table
+would have guessed, and the arguments follow it."
+  (let* ((*head-tool-runners* (list (cons "web_search" (%stub-runner "ok" "results"))))
+         (*ran* nil) (*op-calls* nil) (*op-call-draft* nil) (wire nil)
+         (h (%on-head :cols 120 :rows 24)) (sent (%fake-daemon h)))
+    ;; **THE FIELD IS `q`, NOT `query`** — the daemon's spelling and nobody else's, which is the
+    ;; whole reason a head-side table would be wrong even when it happened to be right about
+    ;; `query`.
+    (setf (head-settings h)
+          (%door-settings "web_search"
+                          "[{\"name\":\"web_search\",\"field\":\"q\",\"defaults\":{\"limit\":10}}]"))
+    (leticl::%command h "web_search blabla")
+    ;; **ONE READ, KEPT.** `%fake-daemon`'s reader DRAINS: a second `funcall` reads an empty
+    ;; wire, and an event handed an empty `arguments` still runs — through `%op-call-answer`'s
+    ;; fallback rather than from the daemon's words. The frame that went out is what the
+    ;; assertions below are about, so it is read once and reused.
+    (let ((f (setf wire (first (funcall sent)))))
+      (is (equal "operator_call" (getf f :frame))
+          "**the bare verb goes through the SAME door** — same one frame, no second path")
+      (is (equal "web_search" (getf f :name)) "for the name the daemon published")
+      (let ((args (leticl::json-decode (getf f :arguments))))
+        (is (equal "blabla" (getf args :q))
+            (format nil "**and the person's words land in the field the DAEMON named** — ~s"
+                    (getf f :arguments)))
+        (is (equal 10 (getf args :limit))
+            "with the daemon's own defaults carried, not a head-side guess"))
+      (is (search "blabla" (getf f :arguments)) "the line is in there verbatim"))
+    (is (= 1 (length *op-calls*)) "on the books like any other ask")
+    (is (null *ran*) "and NOTHING HAS RUN — the bare form is not a shortcut past the door")
+    ;; --- **THE SAME GATING, PROVEN BY THE SAME TWO MOVES**: `Accepted` runs nothing,
+    ;; the admission does. Sugar that skipped the door would pass without these.
+    (let ((call-id (getf (first *op-calls*) :call-id)))
+      (leticl::%handle-frame h (list :frame "accepted"
+                                     :client-request-id (getf (first *op-calls*) :client-request-id)
+                                     :note leticl::+note-prompt-queued+))
+      (is (null *ran*) "`Accepted` runs nothing on the bare form either")
+      (leticl::%handle-frame h (list :frame "event" :seq 1 :event "operator_call_allowed"
+                                     :call-id call-id :name "web_search" :who "human:dead"
+                                     :arguments (getf wire :arguments)))
+      (is (equal (list "{\"q\":\"blabla\",\"limit\":10}") *ran*)
+          "and the admission runs it, with the JSON the bare line became")
+      ;; **AND THE FALLBACK IS PROVEN ON PURPOSE, not reached by accident.** The assertion
+      ;; above runs on the EVENT's own words — read off the wire once and kept — which is the
+      ;; daemon's record of the call. This one sends an event carrying NO arguments, the case
+      ;; `%op-call-answer` claims a floor under, and asserts the head runs what it asked.
+      (let ((call-id2 (leticl::%op-call-ask h "web_search" "{\"q\":\"second\"}")))
+        (leticl::%handle-frame h (list :frame "event" :seq 2 :event "operator_call_allowed"
+                                       :call-id call-id2 :name "web_search" :who "human:dead"))
+        (is (equal (list "{\"q\":\"second\"}" "{\"q\":\"blabla\",\"limit\":10}") *ran*)
+            "a daemon that sends no arguments still runs the call this head asked with")))
+    ;; --- **ONLY THE DOOR'S NAMES.** A name the daemon does not offer is not a verb here; it
+    ;; travels to the daemon as a slash line, which is what every other verb does.
+    (let ((h2 (%on-head :cols 120 :rows 24)) (sent2 nil))
+      (setf (head-settings h2) (%door-settings "web_search")
+            sent2 (%fake-daemon h2))
+      (leticl::%command h2 "not_a_door_name hello")
+      (is (equal "slash" (getf (first (funcall sent2)) :frame))
+          "**a name outside the door still TRAVELS** — the head answers to the daemon's names and
+ invents none")
+      (is (null *op-calls*) "and nothing is on the books for it"))
+    ;; --- **AND A TOOL WITH NO BARE FIELD SAYS SO**, in the sentence that refuses, rather than
+    ;; leaving the operator to guess which tools are which
+    (let ((h3 (%on-head :cols 120 :rows 24)) (sent3 nil))
+      (setf (head-settings h3)
+            (%door-settings "web_search,web_fetch"
+                            "[{\"name\":\"web_search\",\"field\":\"q\"}]")
+            sent3 (%fake-daemon h3))
+      (leticl::%command h3 "web_fetch https://example.com")
+      (is (null (funcall sent3))
+          "**the head does NOT guess a field for a tool the row does not describe**")
+      (is (search "takes no single argument" (head-status-note h3))
+          (format nil "and says why, with the JSON form it does take: ~s" (head-status-note h3)))
+      ;; and a tool the row never mentions, when OTHER tools are described
+      (leticl::%command h3 "web_search")
+      (is (search "needs its q" (head-status-note h3))
+          "a bare name with nothing typed names the field it wants"))))
+
+(def-test a-bare-line-with-no-argument-row-at-all-is-said-not-guessed (:suite leticl)
+  "**The old daemon, which is every daemon on this box tonight.** No descriptor row: the head
+cannot know which field a bare line fills, so it says exactly that and the JSON form stands.
+
+This is the same rule `head-run-tools` keeps for a missing list and `unsure` keeps for a
+missing token: an absence is a fact to report, never a value to invent."
+  (let* ((*head-tool-runners* (list (cons "web_search" (%stub-runner "ok" "r"))))
+         (*ran* nil) (*op-calls* nil) (*op-call-draft* nil)
+         (h (%on-head :cols 120 :rows 24)) (sent (%fake-daemon h)))
+    (setf (head-settings h) (%door-settings "web_search" nil))
+    (is (null (leticl::head-run-arguments (head-settings h)))
+        "the row is absent, so there are no descriptors")
+    (leticl::%command h "web_search blabla")
+    (is (null (funcall sent)) "nothing was asked for")
+    (is (search "has not said which field" (head-status-note h))
+        (format nil "**and the sentence says the daemon has not said, not that the operator typed
+ it wrong**: ~s" (head-status-note h)))
+    (is (search "JSON" (head-status-note h)) "naming the form that does work")
+    ;; **AND THE JSON FORM STILL WORKS**, which is the half that must not move.
+    ;; **ONE READ OF THE WIRE, not two.** `%fake-daemon`'s reader DRAINS the stream, so a
+    ;; second `funcall` in the same breath reads an empty wire and asserts nil against
+    ;; anything — which is what this test did, and the failure was the assertion's own
+    ;; plumbing rather than the head: the frame had gone out with the operator's JSON.
+    (leticl::%command h "web_search {\"query\": \"blabla\"}")
+    (let ((f (first (funcall sent))))
+      (is (equal "web_search" (getf f :name)) "a JSON line still asks")
+      (is (equal "{\"query\": \"blabla\"}" (getf f :arguments))
+          (format nil "with the operator's own JSON, verbatim: ~s" (getf f :arguments))))
+    ;; and `/run` with the JSON form, the spelling that shipped first
+    (leticl::%command h "run web_search {\"query\": \"x\"}")
+    (is (equal "operator_call" (getf (first (funcall sent)) :frame)) "/run still takes JSON")))
+
+(def-test a-json-line-is-not-re-interpreted-as-a-bare-one (:suite leticl)
+  "**The head must not turn a JSON line into a bare one, or a search for `{...}` into a call.**
+A line that starts with `{` IS the arguments, whatever the descriptor row says — otherwise a
+person searching for a JSON snippet would have their query mangled into a field named `{`."
+  (let* ((*head-tool-runners* (list (cons "web_search" (%stub-runner "ok" "r"))))
+         (*ran* nil) (*op-calls* nil) (*op-call-draft* nil)
+         (h (%on-head :cols 120 :rows 24)) (sent (%fake-daemon h)))
+    (setf (head-settings h)
+          (%door-settings "web_search"
+                          "[{\"name\":\"web_search\",\"field\":\"q\"}]"))
+    (leticl::%command h "web_search {\"q\": \"blabla\"}")
+    (is (equal "{\"q\": \"blabla\"}" (getf (first (funcall sent)) :arguments))
+        "the braces win: the line is the arguments, untouched")))
+
+(def-test a-line-that-only-looks-like-json-is-the-bare-form (:suite leticl)
+  "**The ONE line where a parse test and a brace test disagree, pinned so the choice is a
+test and not a sentence in a docstring.**
+
+A line beginning with a brace that does NOT parse is a mistyped call far more often than it is
+a search for that text — and this head's answer is nevertheless the BARE form: the line is
+searched for, verbatim, into the field the daemon named. The cost is real and it is named in
+`%json-text-p`: a brace test and a parse test agree on every line that parses, so both take a
+*complete* JSON snippet as a call, and the only behaviour a brace test could change is this one
+— turning a mistyped call into a refusal by the daemon rather than a search. This head keeps
+the parser as the whole rule, and the row shows what was searched."
+  (let* ((*head-tool-runners* (list (cons "web_search" (%stub-runner "ok" "r"))))
+         (*ran* nil) (*op-calls* nil) (*op-call-draft* nil)
+         (h (%on-head :cols 120 :rows 24)) (sent (%fake-daemon h)))
+    (setf (head-settings h)
+          (%door-settings "web_search"
+                          "[{\"name\":\"web_search\",\"field\":\"q\"}]"))
+    (is (not (leticl::%json-text-p "{\"q\": 1"))
+        "the parser is what decides, and it says this is not json")
+    (leticl::%command h "web_search {\"q\": 1")
+    (let ((f (first (funcall sent))))
+      (is (equal "{\"q\":\"{\\\"q\\\": 1\"}" (getf f :arguments))
+          (format nil "**unparseable braces are the bare form**: the whole line is the value of the field the DAEMON named, so the daemon can see what was searched — got ~s"
+                  (getf f :arguments))))))
+
 (def-test the-door-is-the-daemons-list-and-not-a-copy-in-this-head (:suite leticl)
   "**The row exists so a head that is never rebuilt still offers the right door** —
 letibot's own reason for putting `choices` on a `SettingRow`: *\"the head had its own copy
@@ -12706,6 +12874,101 @@ distinguish one: a row naming DIFFERENT tools answers with those."
             (format nil "~a names a tool from the door — the list lives in the daemon's row
  and a copy in the head is exactly the drift the row exists to stop"
                     (file-namestring (car pair))))))))
+
+(def-test the-argument-row-is-the-daemons-and-both-its-spellings-read (:suite leticl)
+  "**The second row, and the same rule as the first: a READ, measured by a row this file could
+not have written.** `head-run.arguments` says which field a bare line fills, per tool, and the
+head answers with what the row says — including a field name no head-side table would guess,
+which is the whole claim (`head-run.tools`' own reason, applied one level down).
+
+**TWO SPELLINGS, and neither is preferred**: an array of objects, or an object keyed by name.
+This is why the test is here and not folded into the bare-form one — the row is the DAEMON's to
+spell, and a head that read only the spelling it happened to ask for would move the cost back
+to the other side. Both spellings below name the same tool with the same field, and the
+assertion is that they are the SAME READ.
+
+And the absences are facts: a row that is absent, empty, or in a shape this head cannot read
+leaves the bare form unavailable and JSON working, which is the fallback the bare-form test
+measures from the other side."
+  (flet ((arg-row (value)
+           (list (list :key "model" :value "qwen")
+                 (list :key +head-run-arguments-key+ :value value
+                       :source "default" :editable "" :choices nil))))
+    ;; **AN ARRAY OF OBJECTS** — the spelling the requirement names
+    (is (equal '(("web_search" :field "q" :defaults (:limit 10)))
+               (head-run-arguments
+                (arg-row "[{\"name\":\"web_search\",\"field\":\"q\",\"defaults\":{\"limit\":10}}]")))
+        "the name, the field and the daemon's own defaults, read as published")
+    ;; **AN OBJECT KEYED BY NAME** — the same fact, spelled the other way
+    (is (equal (head-run-arguments
+                (arg-row "[{\"name\":\"web_search\",\"field\":\"q\",\"defaults\":{\"limit\":10}}]"))
+               (head-run-arguments
+                (arg-row "{\"web_search\":{\"field\":\"q\",\"defaults\":{\"limit\":10}}}")))
+        "**the two spellings are one read**: which one a daemon writes is the daemon's business")
+    ;; a tool with nothing after its name: published, and no field — which is a fact about
+    ;; that tool rather than a reason to drop the row or invent a field
+    (is (null (head-run-arguments (arg-row "[{\"name\":\"web_fetch\"}]")))
+        "a descriptor with no field is dropped rather than half-read — a row missing `field`
+  would silently swallow a person's sentence, so it is not a descriptor at all")
+    ;; absence, in every form the head can meet it
+    (is (null (head-run-arguments nil)) "settings that never arrived: no row, no descriptors")
+    (is (null (head-run-arguments (list (list :key "model" :value "qwen"))))
+        "a daemon older than this row says nothing, and the head does not fill the silence")
+    (is (null (head-run-arguments (arg-row ""))) "an empty row is an absence too")
+    (is (null (head-run-arguments (arg-row "not json at all")))
+        "**and so is a row this head cannot read** — the same answer, from the same place, as a
+  row that was never sent")
+    (is (null (head-run-arguments (arg-row "42")))
+        "a scalar is neither spelling, so nothing is read out of it")))
+
+(def-test a-door-name-does-not-take-one-of-this-heads-verbs (:suite leticl)
+  "**Precedence, and it is this head's decision rather than a side effect of where the arm sits.**
+
+A door row says which TOOLS a head may run; it does not get to rewrite the head's own grammar.
+Both failure modes below are real, and they are different ones:
+
+  · **the discriminating case is `/quit`**, which this file's dispatch declares AFTER `/run` —
+    so the door arm's FIRST placement, before `diagnostic` and `quit`, swallowed it. A settings
+    row that retires the operator's way out is the worst kind of surprise, and this is the
+    assertion that fails when the arm moves back up.
+  · **a head verb declared long before the door arm** (`/help`) is safe under either placement
+    and would be taken only by an arm moved to the very top of the dispatch — a different
+    mistake, so it is measured separately rather than folded in.
+
+The tool is never lost by any of this, only the sugar: `/run NAME …` still names the door."
+  ;; **the runners are bound OUTSIDE the helper**, because `*head-tool-runners*` is a
+  ;; `defvar` and a binding that ends when the helper returns is not in scope for the
+  ;; `%command` calls below — the first cut of this test read `nil` on the wire for that
+  ;; reason and looked like a defect in the dispatch.
+  (let* ((*head-tool-runners* (list (cons "quit" (%stub-runner "ok" "r"))
+                                    (cons "help" (%stub-runner "ok" "r"))))
+         (*ran* nil) (*op-calls* nil) (*op-call-draft* nil))
+    (flet ((door-head (names descs)
+             (setf *op-calls* nil)
+             (let* ((h (%on-head :cols 120 :rows 24)) (sent (%fake-daemon h)))
+               (setf (head-settings h) (%door-settings names descs))
+               (values h sent))))
+      (multiple-value-bind (h sent)
+          (door-head "quit,web_search" "[{\"name\":\"quit\",\"field\":\"q\"}]")
+        (leticl::%command h "quit")
+        (is (null (leticl::head-running h))
+            "**`/quit` still quits**: a tool named `quit` did not take the head's own word for leaving")
+        (is (null (funcall sent)) "and nothing was asked")
+        (is (null *op-calls*) "and nothing went on the books"))
+      ;; **and the tool is not dropped, only its short form**: `/run` names the door explicitly
+      (multiple-value-bind (h sent)
+          (door-head "quit,web_search" "[{\"name\":\"quit\",\"field\":\"q\"}]")
+        (leticl::%command h "run quit what now")
+        (let ((f (first (funcall sent))))
+          (is (equal "operator_call" (getf f :frame))
+              "`/run quit …` still names the door explicitly")
+          (is (equal "quit" (getf f :name)) "for that tool and no other")))
+      ;; **a verb declared before the door arm is the head's too**
+      (multiple-value-bind (h sent)
+          (door-head "help,web_search" "[{\"name\":\"help\",\"field\":\"q\"}]")
+        (leticl::%command h "help")
+        (is (eq :help (head-mode h)) "`/help` is the head's, whatever the door is called")
+        (is (null (funcall sent)) "and it asked for nothing")))))
 
 (def-test the-ask-is-a-frame-and-nothing-runs-on-it (:suite leticl)
   "Frame 1, and the property that makes the pair necessary: **asking is not permission.**"
@@ -12965,30 +13228,54 @@ Refusing is free on this side and a retraction is not available on that one."
  absence in this head follows"))))
 
 (def-test the-arguments-are-the-tools-json-and-the-head-does-not-guess-it (:suite leticl)
-  "The grammar is `/run NAME JSON`. A head that knew `web_fetch` takes `{\"url\": …}` would
-be holding a copy of the tool's schema — the drift the settings row exists to stop — so
-the arguments are handed through as text and only checked for BEING json, which the wire
-says they are."
+  "**The grammar is BOTH, and R31 is the reason it is two.** `/run NAME {…json…}` hands the
+tool's own arguments through as text and checks only that they ARE json — the drift
+`head-run.tools` exists to stop is a head holding a copy of a tool's SCHEMA, and this form
+never does. `/run NAME what you want` is the operator's short form, and it holds no schema
+either: the FIELD comes from the daemon's row.
+
+This test is the JSON half, which must not have been lost when the bare half landed."
   (let* ((*head-tool-runners* (list (cons "web_fetch" (%stub-runner "ok" "x"))))
-         (*ran* nil) (*op-calls* nil)
+         (*ran* nil) (*op-calls* nil) (*op-call-draft* nil)
          (h (%on-head)) (sent (%fake-daemon h)))
     (setf (head-settings h) (%door-settings))
-    ;; **A BARE URL IS NOT THE ARGUMENTS.** It would reach the corpus as a string the model
-    ;; cannot read as the call, and the head would have invented the shape that made it one.
-    (leticl::%command h "run web_fetch https://example.com")
-    (is (null (funcall sent)) "a bare URL is not JSON, so nothing was sent")
-    (is (search "JSON" (head-status-note h)) "and the head says what the field is")
     ;; `/run` alone LISTS the door, from the daemon's row
     (leticl::%command h "run")
     (is (search "web_fetch" (head-status-note h)) "`/run` alone lists what the door accepts")
     (is (search "web_search" (head-status-note h)) "both names, in the daemon's order")
+    (is (search "url" (head-status-note h))
+        "**and the field each bare line fills** — a person who asked what can I run is told how")
     (is (null (funcall sent)) "and it is not an ask")
     ;; the JSON path: the text goes through as TEXT
     (leticl::%command h "run web_fetch {\"url\": \"https://example.com\"}")
     (let ((f (first (funcall sent))))
-      (is (equal "operator_call" (getf f :frame)) "an ask, at last")
+      (is (equal "operator_call" (getf f :frame)) "an ask")
       (is (equal "{\"url\": \"https://example.com\"}" (getf f :arguments))
-          "with the operator's JSON verbatim, spacing and all"))))
+          "with the operator's JSON verbatim, spacing and all"))
+    ;; **AND JSON WINS OVER THE BARE FORM**, so a search for a JSON snippet is a search: the
+    ;; decision is made by PARSING, in one place, and both spellings go through it.
+    (is (leticl::%json-text-p "{\"q\": \"1\"}") "a JSON line is recognised as one")
+    (is (not (leticl::%json-text-p "blabla")) "and prose is not")))
+
+(def-test a-bare-verb-and-slash-run-agree-on-what-a-line-means (:suite leticl)
+  "**One decision, two doors.** `/web_search blabla` and `/run web_search blabla` must produce
+the same frame — otherwise the head has two answers to *what is this line* and they drift, which
+is the whole reason `%door-arguments` is one function."
+  (flet ((ask-for (line)
+           (let* ((*head-tool-runners* (list (cons "web_search" (%stub-runner "ok" "r"))))
+                  (*ran* nil) (*op-calls* nil) (*op-call-draft* nil)
+                  (h (%on-head :cols 120 :rows 24)) (sent (%fake-daemon h)))
+             (setf (head-settings h)
+                   (%door-settings "web_search"
+                                   "[{\"name\":\"web_search\",\"field\":\"q\"}]"))
+             (leticl::%command h line)
+             (let ((f (first (funcall sent))))
+               (list (getf f :frame) (getf f :name) (getf f :arguments))))))
+    (is (equal (ask-for "web_search blabla") (ask-for "run web_search blabla"))
+        "**the bare verb and `/run NAME line` are the same ask**, byte for byte")
+    (is (equal '("operator_call" "web_search" "{\"q\":\"blabla\"}")
+               (ask-for "web_search blabla"))
+        "and it is the ask the daemon's row describes")))
 
 ;;; -------------------- R11: the oracle's own exchange, by adjudication id ----------------- ;;;
 ;;;

@@ -471,6 +471,78 @@ permission against. The corpus row is `op-<call_id>`, so the prefix here is
 looks like a request id in a column that is not asking for one."
   (format nil "headrun-~d" (incf *call-counter*)))
 
+(defparameter +head-run-arguments-key+ "head-run.arguments"
+  "The settings row that says, per tool, WHICH FIELD A BARE LINE GOES INTO.
+
+**The shape of a tool's arguments is the daemon's, and this is how the head gets it without
+holding a copy.** `head-run.tools` publishes the NAMES the door opens on; this publishes how a
+person's sentence becomes the arguments — for each name, the field a bare line fills and any
+fields the daemon defaults. The head then turns `/NAME what you want` into the wire's JSON by
+LOOKING UP the name in what the daemon sent, so it still knows nothing about the tool.
+
+**Why a row and not a head-side table**, which is the whole requirement: a head that knew
+one tool takes `{\"url\": …}` would be holding a copy of that tool's schema — the same drift
+this pair of rows exists to stop — and the alternative that shipped first moved that cost onto
+the operator, who had to type braces. The knowledge stays here and the typing gets short.
+
+**The value is JSON text**: an array of `{\"name\", \"field\", \"defaults\"}`, or an object keyed
+by name with the same fields. Both are accepted (see `%argument-descriptors`) because the row
+is the daemon's to spell and a head that insisted on one spelling of a shape it ASKED for
+would be moving the cost back. A daemon that predates this row sends none: the bare form says
+so and JSON still works.")
+
+(defun %argument-descriptors (value)
+  "VALUE (a settings row's JSON text) as `(NAME :FIELD F :DEFAULTS plist)`, or NIL.
+
+NIL for anything this head cannot read, and that is a FACT rather than an error: a row
+absent, empty, or in a shape from a newer daemon all leave the bare form unavailable and JSON
+working, which is the honest fallback (`head-run-tools` keeps the same rule for a missing
+list).
+
+**TWO SPELLINGS ARE ACCEPTED**, an array of objects or an object keyed by name, because the
+row is the daemon's to spell and a head that insisted on one spelling of a shape it ASKED for
+would be moving the cost back to the other side. The conversion is guarded: a row that decodes
+to something neither shape is NIL rather than a half-read alist, since a descriptor missing
+its `field` would silently drop a person's sentence."
+  (when (and (stringp value) (plusp (length value)))
+    (handler-case
+        (let* ((parsed (json-decode value))
+               (rows (cond
+                       ;; an object keyed by name: `{"tool-a": {"field": "q"}}`
+                       ((and (consp parsed) (keywordp (car parsed)))
+                        (loop for (k v) on parsed by #'cddr
+                              when (and (consp v) (stringp (getf v :field)))
+                                collect (list :name (%key-to-wire k)
+                                              :field (getf v :field)
+                                              :defaults (getf v :defaults))))
+                       ;; an array of descriptors
+                       ((listp parsed)
+                        (loop for v in parsed
+                              when (and (consp v) (stringp (getf v :name))
+                                        (stringp (getf v :field)))
+                                collect (list :name (getf v :name)
+                                              :field (getf v :field)
+                                              :defaults (getf v :defaults))))
+                       (t nil))))
+          (when rows
+            (loop for r in rows
+                  collect (cons (getf r :name)
+                                (list :field (getf r :field)
+                                      :defaults (getf r :defaults))))))
+      (error () nil))))
+
+(defun head-run-arguments (settings)
+  "The daemon's per-tool argument descriptors, or NIL when it has published none.
+
+An alist `(NAME . (:FIELD \"query\" :DEFAULTS (:LIMIT 10)))`, read from the row and never
+merged with anything this file knows. **A tool missing from it is a tool whose bare form the
+head cannot offer**, and the caller says so rather than guessing a field name — which is the
+one thing this whole row exists to prevent."
+  (let ((row (and settings
+                  (find +head-run-arguments-key+ settings
+                        :key (lambda (r) (getf r :key)) :test #'string=))))
+    (and row (%argument-descriptors (getf row :value)))))
+
 (defun make-operator-call (call-id name arguments &optional (expected-seq 0))
   "Frame 1: the head ASKS, before it runs anything (R24 part two).
 
