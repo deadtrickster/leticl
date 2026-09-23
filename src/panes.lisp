@@ -175,7 +175,7 @@ Second value is the cursor's LINE: two lines per session, after a two-line heade
     ("/new [title]" . "start a session in this daemon and go there")
     ("/switch WHAT" . "go to a session by number, id or part of its name")
     ("ctrl-r" . "fold or unfold the model's thinking")
-    ("ctrl-t" . "fold or unfold tool output")
+    ("ctrl-t /t" . "unfold the long rows: tool output, and a queued echo (the echo's own seam names /t)")
     ("/notes" . "the disclosures this head has shown; /notes dismiss [N|all] retires one or every one, /notes restore brings them back")
     ("ctrl-n" . "retire every note this head holds — the same as /notes dismiss all. /notes still lists them and /status still counts them")
     ("ctrl-x" . "show the raw <function=…> text of tool calls, as the model wrote it")

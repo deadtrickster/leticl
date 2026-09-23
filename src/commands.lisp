@@ -41,8 +41,13 @@
     ("stats" . "this head's counters — the same as /status")
     ("notes" . "what this head has warned about — and retire one")
     ("dismiss" . "retire every warning on the screen (/notes has the rest)")
-    ;; the folds. `/t` folds tool output and is an ALIAS; `/tools` is the daemon's listing verb
-    ;; and is not this head's to describe.
+    ;; the folds
+    ;; **`/t` HAS A ROW and is not an alias, because it is now an ADVERTISED key**: the queued
+    ;; echo's seam reads *"/t opens it"* (R33), so a reader types it. With no row, Tab on `/t`
+    ;; would complete to `/think` — a different fold — which is how an alias becomes a trap the
+    ;; moment something points at it. `/tools` is the daemon's listing verb and is not this
+    ;; head's to describe.
+    ("t" . "unfold the long rows: tool output, and a queued echo (ctrl-t is the same fold)")
     ("think" . "fold or unfold the model's reasoning")
     ("verbosity" . "cycle the event-stream detail")
     ;; the surfaces
@@ -87,7 +92,7 @@ table describing the wrong one, is exactly what a copy of the other half's list 
 `/tools` comes back from `+daemon-verbs-key+`, with the daemon's meaning.")
 
 (defparameter +command-aliases+
-  '("?" "h" "i" "q" "r" "s" "t" "v")
+  '("?" "h" "i" "q" "r" "s" "v")
   "Spellings `%command` takes and the table does NOT advertise.
 
 **Declared once, and the drift test subtracts them**, because otherwise *a verb with no row* and
@@ -174,9 +179,16 @@ on ClientFrame::Slash)."
        (%notes head verb rest))
       ((member verb '("think" "r") :test #'string=)
        (%flip-fold head :show-reasoning))
-      ;; `/t` folds tool output; `/tools` ASKS what this conversation can call —
-      ;; the reference moved it off the fold (*"i think i want it to show me
-      ;; currently seated tools"*), and the listing comes back on the session log
+      ;; **`/t` IS THE *UNFOLD THE LONG ROWS* VERB, and that is now more than tool output.**
+      ;; It folds the tool rows AND opens a queued echo (R33) — one key for one idea: the echo
+      ;; is drawn as one elided headline whose seam reads *"/t opens it"*, and a second fold
+      ;; chord for a second kind of row would be a second thing to learn. The operator's words
+      ;; were *"expandable the usual way"*, so the seam names the key they already have.
+      ;; letibot ruled the same (`app.rs:6194-6203`).
+      ;;
+      ;; `/tools` is the DAEMON's listing verb and NOT a spelling of this fold: the reference
+      ;; moved it off the fold (*"i think i want it to show me currently seated tools"*), and
+      ;; the listing comes back on the session log. This head has no arm for it, so it travels.
       ((string= verb "t")
        (%flip-fold head :show-tools))
       ((member verb '("verbosity" "v") :test #'string=)

@@ -12548,25 +12548,79 @@ provider error was cut at the frame's edge."
     (is (every (lambda (l) (every (lambda (seg) (equal '(:fg :red :bold t) (cdr seg))) l)) lines)
         "every row in the failure register, not just the first")))
 
-(def-test a-queued-prompt-takes-the-shape-of-the-row-it-becomes (:suite leticl)
-  "Gap 14. `queued_lines` (app.rs:9017-9046): `▌` in `UserAccent`, the tag
-`queued · ` in `Role::Pending` where the timestamp goes, the text `Faint`, and
-continuation rows indented by `width(\"queued\") + 3`. Ours drew a bright-cyan
-`›`, put the tag at the END, and showed only the FIRST line — so a pasted
-paragraph queued as one sentence and grew into a block when the boundary landed,
-which reads as the head having changed what was sent."
-  (let ((h (%make-head)))
-    (setf (head-queued h) (list (format nil "~{~a~^ ~}" (loop repeat 30 collect "word"))))
-    (let ((lines (queued-lines h 40)))
-      (is (equal (cons "▌ " '(:fg :blue)) (first (first lines))) "the bar, UserAccent")
-      (is (equal (cons "queued · " '(:fg :yellow)) (second (first lines)))
+(def-test a-queued-echo-is-one-elided-headline (:suite leticl)
+  "**R33, and the measurement is the operator's own screen.** Three of their messages queued
+filled a 63-row pane and pushed the conversation off it. *A queued prompt is a thing WAITING,
+not content to read* — they wrote it, they do not need it read back. So the echo is ONE
+elided headline, expandable the usual way, and R25 is the rule one surface over: the text is
+kept WHOLE and the elision belongs to the drawing.
+
+**`/t` opens it**, which is letibot's ruling (`app.rs:6194-6203`, R33) and this head's own
+*unfold the long rows* verb — one key for one idea, and a second fold chord for a second kind
+of row is a second thing to learn. That is what *expandable the usual way* means, and it is
+why this test drives the PREFERENCE rather than reaching for a private flag.
+
+**The seam counts SCREEN ROWS**, the same choice `reasoning-header` makes: a pasted paragraph
+is one source line that costs forty rows, so a seam reading `+1 line` beside a row that would
+eat half the pane answers the wrong question.
+
+**And the seam has a floor rather than a promise.** Where it cannot fit — a narrow terminal —
+the echo is STILL one row, elided by the truncator, with no seam: a seam that did not fit would
+push the row to two lines and undo the requirement on exactly the screens where it matters
+most. The threshold is letibot's own (16 columns of room), so the two heads lose the seam at
+the same width."
+  (flet ((echo (h cols &optional (words 300))
+           (setf (head-queued h)
+                 (list (format nil "~{~a~^ ~}" (loop repeat words collect "word"))))
+           (queued-lines h cols))
+         (joined (lines) (apply #'concatenate 'string (mapcar #'car (first lines)))))
+    ;; --- CLOSED, at a width where the seam fits
+    (let* ((h (%make-head))
+           (closed (progn (setf (head-pref h :show-tools) nil) (echo h 80))))
+      (is (= 1 (length closed))
+          (format nil "**a long queued prompt is ONE row, not forty** — got ~d: ~s"
+                  (length closed) closed))
+      (is (equal (cons "▌ " '(:fg :blue)) (first (first closed))) "the bar, UserAccent")
+      (is (equal (cons "queued · " '(:fg :yellow)) (second (first closed)))
           "the tag where the timestamp goes, in Pending")
-      (is (equal '(:dim t) (cdr (third (first lines)))) "the words faint")
-      (is (> (length lines) 1) "and a long prompt is WRAPPED, not cut to its first line")
-      (is (equal "         " (car (second (second lines))))
-          "continuations hang under the text, by the tag's own columns")
-      (is (every (lambda (l) (<= (leticl::%segs-width l) 40)) lines)
-          "and nothing exceeds the width"))))
+      (is (search "word word" (joined closed))
+          "and the reader's OWN words are in it — an elided headline, not a summary")
+      (is (search "…" (joined closed)) "elided, with the head's own elision mark")
+      (is (search "/t opens it" (joined closed))
+          "naming the key that opens it — the key the reader already has, not a new one")
+      (is (every (lambda (l) (<= (leticl::%segs-width l) 80)) closed) "within the width")
+      ;; **OPENED: the whole echo, and the seam counted the ROWS it cost**
+      (let ((all (progn (setf (head-pref h :show-tools) t) (echo h 80))))
+        (is (> (length all) 10) "opened, the whole echo is there")
+        (is (search (format nil "+~d line~:p" (1- (length all))) (joined closed))
+            (format nil "**the count is the ROWS it would have cost** (~d here), because that is
+ what the reader is being spared: ~s" (1- (length all)) (joined closed)))
+        (is (equal "         " (car (second (second all))))
+            "and continuations hang under the text, by the tag's own columns")))
+    ;; --- A SHORT ECHO IS NOT ELIDED: a seam on one row promises nothing
+    (let ((h (%make-head)))
+      (setf (head-pref h :show-tools) nil)
+      (let ((short (echo h 80 3)))
+        (is (= 1 (length short)) "one short prompt is one row")
+        (is (not (search "… +" (joined short))) "with NO seam, because nothing is hidden")
+        (is (search "word word word" (joined short)) "and all of it is there")))
+    ;; --- NARROW: still one row, seam or no seam
+    (let ((h (%make-head)))
+      (setf (head-pref h :show-tools) nil)
+      (dolist (cols '(20 24 30 40 60))
+        (let ((lines (echo h cols)))
+          (is (= 1 (length lines))
+              (format nil "at ~d columns the echo is still ONE row: ~s" cols lines))
+          (is (every (lambda (l) (<= (leticl::%segs-width l) cols)) lines)
+              (format nil "and inside ~d columns: ~s" cols lines))))
+      ;; **AND THE ONE-ROW PROPERTY OUTLIVES THE WIDTH BOUND, which is not this
+      ;; requirement's.** At 12 columns the tag alone (`queued · ` plus the bar) is already
+      ;; wider than the terminal, so a row cannot fit however it is drawn — that is
+      ;; letibot's own tag+indent arithmetic, unchanged by R33, and it is asserted only as
+      ;; the property R33 owns rather than papered over with a narrower fixture.
+      (let ((lines (echo h 12)))
+        (is (= 1 (length lines))
+            (format nil "even at a degenerate width the echo is ONE row: ~s" lines))))))
 
 (def-test attention-is-not-pending (:suite leticl)
   "Gap 23. `Role::Attention` is `ESC[1;33m` and `Role::Pending` is `ESC[33m`,

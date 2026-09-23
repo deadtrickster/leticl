@@ -2244,24 +2244,64 @@ thing would leave the `queued` line on the screen for the rest of the session."
     ;; text, by `width(tag) + 3` (`app.rs:9017-9046`). So an `unconfirmed` echo
     ;; measures its own word rather than being padded to the other's — the reference's
     ;; arithmetic, on a tag it does not have.
-    (loop for text in (reverse (head-queued head))
-          for tag = (if (member text *queued-unconfirmed* :test #'equal)
-                        "unconfirmed"
-                        "queued")
-          for head-w = (max 8 (- w 2 (string-width tag) 3))
-          for indent = (make-string (+ (string-width tag) 3) :initial-element #\space)
-          append (let ((rows (or (wrap-segments
-                                  (list (cons (%fold-cells text) nil)) head-w)
-                                 (list (list (cons "" nil))))))
-                   (loop for row in rows
-                         for i from 0
-                         collect (append
+    (let ((open (getf (head-prefs head) :show-tools)))
+      (loop for text in (reverse (head-queued head))
+            for tag = (if (member text *queued-unconfirmed* :test #'equal)
+                          "unconfirmed"
+                          "queued")
+            for head-w = (max 8 (- w 2 (string-width tag) 3))
+            for indent = (make-string (+ (string-width tag) 3) :initial-element #\space)
+            append (let* ((rows (or (wrap-segments
+                                     (list (cons (%fold-cells text) nil)) head-w)
+                                    (list (list (cons "" nil)))))
+                          ;; **R33: A THING WAITING IS ONE ELIDED HEADLINE.** The operator,
+                          ;; looking at three of their own messages queued: *"three giant
+                          ;; messages queued"* — and three of them filled a 63-row pane,
+                          ;; the conversation pushed off the screen. They wrote it; they do
+                          ;; not need it read back. What the row owes them is *your message
+                          ;; is here and in flight*, which one row says, plus enough of it to
+                          ;; recognise if they want to — not the whole of it.
+                          ;;
+                          ;; **The unit of the seam is SCREEN ROWS**, the same choice
+                          ;; `reasoning-header` makes: a pasted paragraph is one source line
+                          ;; that costs forty rows, so "1 line" beside a row that would eat
+                          ;; half the pane answers the wrong question.
+                          ;;
+                          ;; **`/t` opens it — the head's own *unfold the long rows* verb**,
+                          ;; which is letibot's ruling (`app.rs:6194-6203`) and is the same
+                          ;; choice this head makes everywhere else: one key for one idea, and
+                          ;; a second fold chord for a second kind of row is a second thing to
+                          ;; learn. The operator asked for *expandable the usual way*, and
+                          ;; this is the usual way, so the seam names THE KEY THE READER ALREADY
+                          ;; HAS rather than a new one.
+                          (closed (< 1 (length rows)))
+                          (headline (first rows))
+                          (headline-w (reduce #'+ headline :key (lambda (seg) (string-width (car seg)))
+                                              :initial-value 0)))
+                     (if (or open (not closed))
+                         (loop for row in rows
+                               for i from 0
+                               collect (append
+                                        (list (cons "▌ " '(:fg :blue)))
+                                        (list (if (zerop i)
+                                                  (cons (format nil "~a · " tag) +role-pending+)
+                                                  (cons indent nil)))
+                                        (mapcar (lambda (seg) (cons (car seg) +md-faint+))
+                                                row)))
+                         ;; **ONE ROW, and the seam fits or the seam goes — never a second
+                         ;; row.** A seam that does not fit would push the echo to two rows and
+                         ;; undo the requirement on exactly the narrow screens where it matters
+                         ;; most, so the ellipsis the truncator adds is the fallback.
+                         (let* ((seam (format nil "  … +~d line~:p · /t opens it"
+                                              (1- (length rows))))
+                                (room (- head-w (string-width seam))))
+                           (list (append
                                   (list (cons "▌ " '(:fg :blue)))
-                                  (list (if (zerop i)
-                                            (cons (format nil "~a · " tag) +role-pending+)
-                                            (cons indent nil)))
+                                  (list (cons (format nil "~a · " tag) +role-pending+))
                                   (mapcar (lambda (seg) (cons (car seg) +md-faint+))
-                                          row)))))))
+                                          (%truncate-segs headline (if (>= room 16) room head-w)))
+                                  (when (>= room 16)
+                                    (list (cons seam '(:dim t)))))))))))))
 
 (defun turn-lines (turn cols prefs)
   "The running turn, live, in the reference's order: the working first —
