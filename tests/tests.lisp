@@ -6207,6 +6207,67 @@ letibot does not: ~s"
                 (set-difference his mine :test #'string=)
                 (set-difference mine his :test #'string=)))))))
 
+(def-test every-note-code-offers-a-remedy (:suite leticl)
+  "**R29 rule one, and the assertion is the RULE rather than an example.**
+
+The operator met two red rows from `/diff` and `/qwe` on a head whose `/dismiss` had
+worked for two days — *\"when this red shit is show it should hint what to do next\"* —
+and then could not clear them, because the note named no act and `ctrl-n` was not in the
+image they were running. Two failures stacked: the remedy was not OFFERED, and the one
+that existed was not THERE. So this test walks the head's WHOLE vocabulary — the routine
+table and the failure table together — and fails on a code with no entry.
+
+**What the test does NOT forbid, and must not:** `nothing to do` and `nothing can be done
+from here`. The operator's own rule says so — *\"nothing can be done and here is why\"
+satisfies this rule* — and the honest list is full of them: a compaction that succeeded, a
+ledger that will not replay, bytes the daemon dropped and nobody holds. **A remedy
+invented to fill the slot is the failure this test is written against**, which is why the
+assertion is about the ENTRY and not about it containing a slash command."
+  (let ((codes (remove-duplicates (append leticl::+routine-warnings+ leticl::+failure-warnings+)
+                                  :test #'string=)))
+    (is (> (length codes) 60)
+        (format nil "**a plausible vocabulary, so this cannot pass by walking an empty
+ list** — ~d codes" (length codes)))
+    (dolist (code codes)
+      (let ((remedy (leticl::note-remedy (list :code code))))
+        (is (and remedy (plusp (length remedy)))
+            (format nil "**~a names an act — or says there is none, and why.** A note that
+ states a fact and not the act is a dead end on the screen, which is R29: ~s"
+                    code remedy))))
+    ;; **and the remedy is DRAWN on the note**, not merely available: the claim is about
+    ;; the glass.
+    (let* ((h (%make-head))
+           (row (list :item-id "remedy-1" :kind "note" :ts 0
+                      :warning (list :code "slash_refused" :ts 1)
+                      :item (list :type "note"
+                                  :text "! slash_refused — /qwe\n/qwe is not a daemon verb"
+                                  :cap 3 :seam "/notes")))
+           (text (format nil "~{~a~^~%~}"
+                         (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l)))
+                                 (item-lines row 100 (head-prefs h))))))
+      (is (search "/qwe is not a daemon verb" text) "the fact is on the row")
+      (is (search "nothing to fix" text)
+          (format nil "**and so is the ACT**, on the note itself: ~s" text))
+      (is (search "ctrl-n clears this" (substitute #\space #\newline text))
+          "including the gesture, because *the affordance existed and the note did not
+ mention it* is the whole complaint — and the assertion joins the wrap, because the
+ remedy wraps like every other line on this card")
+      ;; **the remedy sits BELOW the fact and its seam**, so the cap cannot be what hides
+      ;; it: a remedy the reader has to expand a row to find is the remedy R29 was filed
+      ;; about. (It wraps like any other line, so it is not necessarily the LAST row.)
+      (is (search "→" text) "marked as the act, not as more of the fact")
+      (let* ((lines (item-lines row 100 (head-prefs h)))
+             (at (position-if (lambda (l) (search "→" (segs-of (list l)))) lines)))
+        (is (not (null at)) "the remedy is drawn")
+        (is (>= at 1)
+            (format nil "**below the fact**, which is on the first row: ~s" lines))))
+    ;; **an unknown code names NOTHING** rather than inventing a sentence — the fail-safe
+    ;; direction, the same one `unsure` and `never_ran` keep
+    (is (null (leticl::note-remedy (list :code "a_code_from_a_daemon_this_build_has_never_met")))
+        "a code this build has never met gets no invented remedy")
+    (is (null (leticl::note-remedy (list :detail "no code at all")))
+        "and neither does a note with no code")))
+
 (def-test the-severity-split-is-a-table-and-what-is-not-in-it-stays-loud (:suite leticl)
   "**The default direction, asserted**, because it is the half somebody would get wrong.
 
@@ -6229,24 +6290,18 @@ they are pinned here rather than left to memory."
                   "steering_urgent" "cache_reuse_shortfall" "test"))
     (is (routine-warning-p (list :code code :detail "x"))
         (format nil "~a is routine" code)))
-  ;; and the ones that are not, including every one a reader could mistake for routine
-  (dolist (code '("auto_compact_failed" "auto_compact_skipped" "auto_compact_no_progress"
-                  "context_wall" "gate" "gate_timeout" "turn_failed"
-                  "job_output_refused" "session_unavailable" "resume_failed"
-                  "reseat_refused" "reseat_unchecked" "mode_unknown" "mode_set_refused"
-                  "mode_unpersisted" "length_batch_refused" "length_empty_turn"
-                  "ledger_chain_mismatch" "row_coverage_gap" "reasoning_stall"
-                  "repetition_collapse" "ended_in_reasoning" "monitor_wake_not_armed"
-                  "fabric_refresh_failed" "flowy_not_seated" "frame_capture_failed"
-                  "transcript_store" "decision_corpus" "title_not_stored"
-                  "record_item_pairing" "orphan_body" "log_gap" "protocol_skew"
-                  "unreadable_frame" "slash_refused" "answer_unclaimed"
-                  "prefix_divergence" "prefix_check_skipped" "secret_late" "sudo"
-                  "absolute_path" "endpoint" "dated" "data_claim"
-                  ;; and the one that does not exist yet: the fail-safe direction
-                  "a_code_from_a_daemon_this_build_has_never_met"))
+  ;; and the ones that are not, including every one a reader could mistake for routine.
+  ;; **The list moved to `+failure-warnings+` in the source** when R29 needed the same set
+  ;; to assert that each code offers a REMEDY: one vocabulary, two tests, so a code cannot
+  ;; be added to one question and missed by the other.
+  (dolist (code leticl::+failure-warnings+)
     (is (not (routine-warning-p (list :code code :detail "x")))
         (format nil "~a stays in the failure register" code)))
+  ;; and the one that does not exist yet: the fail-safe direction, asserted here as an
+  ;; OUTSIDER because it is in no table and must be in none
+  (is (not (routine-warning-p (list :code "a_code_from_a_daemon_this_build_has_never_met"
+                                    :detail "x")))
+      "a code this build has never met stays loud")
   ;; a warning with no code at all, which is what a malformed frame leaves
   (is (not (routine-warning-p (list :detail "no code"))) "a codeless warning is not routine")
   (is (equal "!" (warning-glyph (list :code "context_wall"))) "the failure glyph")
@@ -6428,6 +6483,15 @@ that is why the details below are still the awkward ones."
   (is (null (string->retired nil)) "and neither is an absent one")
   (is (null (string->retired "  ")) "and a value of spaces is not an identity"))
 
+(defun %rows-before-remedy (rows)
+  "ROWS up to and including the seam — everything before R29's remedy line.
+
+A note's row now carries the fact (capped), the seam that counts what the cap cut, and
+then the remedy. A test about the CAP is about the first two and must say so, or every
+such test would have to know the remedy's line count."
+  (let ((at (position-if (lambda (l) (search "→" (segs-of (list l)))) rows)))
+    (if at (subseq rows 0 at) rows)))
+
 (def-test a-warning-the-daemon-sends-is-drawn-where-it-arrived (:suite leticl)
   "R10's DRAW half. A warning is filed as a row ANCHORED WHERE THE ENVELOPE ARRIVED —
 the `note-unreadable` shape — and not as a status note, which expires on a TTL and takes
@@ -6453,8 +6517,13 @@ full. The routine half is `a-routine-notice-is-not-drawn-in-the-failure-register
                  (getf (leticl::item-body row) :text))
           "saying exactly what the daemon said")
       (is (equal "! context_wall — the context is nearly full"
-                 (segs-of (item-lines row 96 (head-prefs h))))
-          "drawn in the failure role, the reference's warn_line"))
+                 (segs-of (list (first (item-lines row 96 (head-prefs h))))))
+          "drawn in the failure role, the reference's warn_line — and the FIRST row, which
+ is where the fact goes; R29's remedy is below it")
+      ;; **R29: the note carries its own remedy, and the act here is the compaction.**
+      (is (search "/compact summarises now" (segs-of (item-lines row 96 (head-prefs h))))
+          "**the note names what to DO about it** — the version of this note that met the
+ operator stated the fact and stopped, and the act existed on the head and was not said"))
     (leticl::%render h)
     (is (search "! context_wall — the context is nearly full" (%screen-text h))
         "and it is ON THE SCREEN, which is the whole point")))
@@ -6473,9 +6542,15 @@ DISCLOSURE and never the record."
       (is (> (length (wrap-segments (list (cons (format nil "! context_wall — ~a" detail) nil)) 40))
              3)
           "the premise: the unfolded warning is longer than the cap")
-      (is (= 4 (length rows)) "three lines, then the seam")
-      (is (search "… +" (segs-of (last rows))) "the seam counts what went")
-      (is (search "· /notes" (segs-of (last rows))) "and names the verb that has the rest"))
+      ;; **THREE text rows and the seam, then R29's remedy beneath both.** The fold caps
+      ;; the FACT; the remedy is not part of the fact and must not be what the cap eats —
+      ;; a remedy the reader has to expand a row to find is the remedy R29 was filed about.
+      (is (= 4 (length (%rows-before-remedy rows))) "three lines, then the seam")
+      (is (search "… +" (segs-of (list (nth 3 rows)))) "the seam counts what went")
+      (is (search "· /notes" (segs-of (list (nth 3 rows)))) "and names the verb that has the rest")
+      (is (search "→" (segs-of rows)) "**and the remedy is drawn, below the seam**")
+      (is (>= (position-if (lambda (l) (search "→" (segs-of (list l)))) rows) 4)
+          "after the capped fact AND its seam, so the cap cannot be what hides it"))
     ;; **the record is the WHOLE text** — the fold is a disclosure decision, not a cap
     (is (string= detail (getf (first (session-warnings (head-session h))) :detail))
         "every word is still in the record")
@@ -12538,6 +12613,10 @@ found nothing) as well as by all four non-answers, so five facts arrived as one 
 `unsure` token separates four of them; **`consulted` separates the rest**, and this asserts
 both axes together."
   (flet ((said (advice) (leticl::%advice-said advice)))
+   ;; **THE VERSION IS PART OF THE FIXTURE.** The fifth fact depends on the daemon being able
+   ;; to send `unsure` at all, so this test states which daemon it is talking about rather
+   ;; than inheriting the image's default — see the "23 DAEMON" paragraph in `%advice-said`.
+   (let ((*daemon-protocol* 25))
     ;; --- consulted: false — nobody spoke, and there are three reasons
     (is (search "no model was asked" (said (list :consulted nil :would "ask")))
         "an always-ask rule: nobody spoke")
@@ -12567,7 +12646,27 @@ both axes together."
  being read as *no model was asked*")
     (is (search "model says a_new_disposition"
                 (leticl::%advice-line (list :consulted t :would "a_new_disposition" :basis "why")))
-        "**and then the line says what it was TOLD** — a new value is shown, never dropped")))
+        "**and then the line says what it was TOLD** — a new value is shown, never dropped")
+    ;; --- **A 23 DAEMON CANNOT SUPPORT THE FIFTH FACT.** `consulted: true` + `would: "ask"`
+    ;; is the ANSWER only once a daemon can also send `unsure`; at 23 the same triple is what
+    ;; the four non-answers arrive as, so naming the answer there is the R12 defect for old
+    ;; daemons. Found while deciding what could be pushed LIVE to a head on a 23 daemon.
+    (let ((*daemon-protocol* 23))
+      (is (null (said (list :consulted t :would "ask")))
+          "**at protocol 23 the head does NOT name the answer** — this daemon sets those three
+ fields for a non-answer too, so the claim would be one it cannot support")
+      (is (search "model says ask"
+                  (leticl::%advice-line (list :consulted t :would "ask" :basis "b")))
+          "and falls back to the sentence it can support: what it was told")
+      ;; **but `consulted: false` is NOT gated**: whether a model was consulted is a fact 23
+      ;; has always carried, so those three rows stand on an old daemon
+      (is (search "no model was asked" (said (list :consulted nil :would "ask")))
+          "an unconsulted advice is named on any version"))
+    (let ((*daemon-protocol* 25))
+      (is (search "found nothing that authorises this" (said (list :consulted t :would "ask")))
+          "**and at 25 the absence of `unsure` IS the fifth fact**, so the head names it")
+      (is (search "ran out of room" (said (list :consulted t :would "ask" :unsure "out_of_room")))
+          "and a token beats the table, on any version — the token is the daemon's own word")))))
 
 ;;; ------------- R24 part two: the operator-call door, this head's half --------------- ;;;
 ;;;

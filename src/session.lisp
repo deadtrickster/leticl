@@ -737,6 +737,38 @@ from it rather than the other way round."
           do (setf (getf item :retired)
                    (and (session-retired-p session (getf item :warning)) t))))
 
+(defparameter +failure-warnings+
+  '("auto_compact_failed" "auto_compact_skipped" "auto_compact_no_progress"
+    "context_wall" "gate" "gate_timeout" "turn_failed"
+    "job_output_refused" "session_unavailable" "resume_failed"
+    "reseat_refused" "reseat_unchecked" "mode_unknown" "mode_set_refused"
+    "mode_unpersisted" "length_batch_refused" "length_empty_turn"
+    "ledger_chain_mismatch" "row_coverage_gap" "reasoning_stall"
+    "repetition_collapse" "ended_in_reasoning" "monitor_wake_not_armed"
+    "fabric_refresh_failed" "flowy_not_seated" "frame_capture_failed"
+    "transcript_store" "decision_corpus" "title_not_stored"
+    "record_item_pairing" "orphan_body" "log_gap" "protocol_skew"
+    "unreadable_frame" "slash_refused" "answer_unclaimed"
+    "prefix_divergence" "prefix_check_skipped" "secret_late" "sudo"
+    "absolute_path" "endpoint" "dated" "data_claim")
+  "The FAILURE-register codes this head draws — the other half of the vocabulary.
+
+**The list lived in a test until R29 needed it in the source.** `the-severity-split-is-a-table`
+walked it as a literal to assert that each one stays loud; R29's rule one then needed the
+SAME set to assert that each one offers a remedy, and two copies of one vocabulary is the
+drift this file keeps recording (see `+routine-warnings+` above: twenty codes, one head
+classifying and the other not). So the list moved here, both tests read it, and a code
+added to one arm cannot miss the other.
+
+**`a_code_from_a_daemon_this_build_has_never_met` is deliberately NOT in it.** That string
+is a test's standing example of an UNKNOWN code, and an unknown code must fall through both
+tables — it is the fail-safe direction, not a member.
+
+**Every member must also have a `+note-remedies+` entry** (R29 rule one), which
+`every-note-code-offers-a-remedy` asserts by walking this list and `+routine-warnings+`
+together, so the two facts about a code — how loud it is, and what the reader can do — are
+answered in the same place or not at all.")
+
 (defparameter +routine-warnings+
   '("auto_compact" "compacted"
     "reseated" "frame_capture_written" "frame_capture_disabled"

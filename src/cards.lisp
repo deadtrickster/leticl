@@ -855,6 +855,15 @@ from the four non-answers: a
 guard that LOOKED and found no authorisation is an ANSWER, and it arrived in the same three
 fields as *I could not answer at all*.")
 
+(defparameter +unsure-since+ 25
+  "The protocol version at which `ModelAdvice` gained `unsure`, so the head knows whether a
+daemon can DISTINGUISH the four non-answers from a real `NotAuthorised` answer.
+
+**A number here rather than a feature probe**, because the protocol's only handshake is an
+equality check at ATTACH and this is the one thing on the wire that says which fields a frame
+may carry. Below it, `consulted` + `would: \"ask\"` is ambiguous; at or above it, the absence
+of `unsure` IS the fifth fact.")
+
 (defun %advice-said (advice)
   "What the oracle's answer AMOUNTS TO, in this head's words, or NIL.
 
@@ -877,19 +886,37 @@ new fact, and silently. `the guard could not answer (some_new_kind)` is ugly on 
 only way to see it missing is a frame this build built by hand — but reading it as false would
 have the head say *no model was asked* about an advice that says a model admitted something,
 which is a claim the frame never made. So absence falls through to the caller's *what I was
-told* sentence, exactly as an unknown `would` does."
+told* sentence, exactly as an unknown `would` does.
+
+**A 23 DAEMON CANNOT SUPPORT THE `(:yes ask)` ROW, and this head was claiming it anyway.**
+`consulted: true` plus `would: ask` with no `unsure` means *the guard looked and found
+nothing* — but only on a daemon that HAS `unsure` to send. A daemon at 23 sets that same triple for the
+four non-answers too, so on it the row asserts an answer where the fact may be a failure to
+answer: **the R12 defect, reintroduced for old daemons by the fix for new ones.** Found while
+deciding what could be pushed live to a head attached to a 23 daemon — the suite runs at 25
+and cannot see it.
+
+So that ROW is version-gated: it is used when the daemon can distinguish the cases
+(`*daemon-protocol*` at or above `+unsure-since+`), and below that the caller's honest
+`model says ask: {basis}` stands. The three `consulted: false` rows are NOT gated — those are
+facts about whether a model was consulted, which 23 has always carried."
   (let* ((consulted (getf advice :consulted :absent))
          (spoke (cond ((eq consulted :absent) :absent)
                       (consulted :yes)
                       (t :no)))
          (would (getf advice :would))
-         (unsure (getf advice :unsure)))
+         (unsure (getf advice :unsure))
+         (ambiguous-on-23 (and (eq spoke :yes) (equal would "ask")
+                               (not (and (stringp unsure) (plusp (length unsure))))
+                               (< (or *daemon-protocol* 0) +unsure-since+))))
     (cond
       ;; a token the daemon sent, so the head can say exactly which non-answer this was
       ((and (stringp unsure) (plusp (length unsure)))
        (let ((hit (assoc unsure +unsure-said+ :test #'string=)))
          (if hit (cdr hit) (format nil "the guard could not answer (~a)" unsure))))
-      ;; no token: the disposition AND whether a model spoke at all, which is five cases
+      ;; no token: the disposition AND whether a model spoke at all — EXCEPT the one a
+      ;; daemon older than `unsure` cannot report; see the docstring's last paragraph.
+      (ambiguous-on-23 nil)
       ((cdr (assoc (list spoke would) +would-said+ :test #'equal)))
       (t nil))))
 
@@ -1477,6 +1504,111 @@ something copies them."
                     (cons (cons (make-string n :initial-element #\space) nil) line)))
               lines)))
 
+(defparameter +note-remedies+
+  '(;; **the reader ASKED for something that does not exist.** The act is to see what
+     ;; does; there is nothing to fix and saying so is the honest remedy.
+     ("slash_refused" . "nothing to fix — that verb does not exist. /help lists the ones that do; ctrl-n clears this note")
+     ("mode_unknown" . "nothing to fix — that mode name does not exist. /mode with no argument opens the picker")
+     ("answer_unclaimed" . "nothing to fix — the ask was already answered. /status counts it; ctrl-n clears this note")
+     ;; **a REFUSAL with a way round it.**
+     ("job_output_refused" . "nothing can be done — that job's output is gone from the daemon and nobody holds it. /job lists the ones it still has")
+     ("mode_set_refused" . "nothing was changed — the mode you named was not applied. /mode opens the picker")
+     ("reseat_refused" . "/reseat rebuilds the prompt from the tools seated now; the conversation was NOT replaced")
+     ("length_batch_refused" . "the turn was not sent as one batch; ask again, or split it")
+     ;; **the session is under pressure and the reader can act.**
+     ("context_wall" . "this turn stopped: /compact summarises now, or /new starts a fresh session")
+     ("auto_compact_skipped" . "automatic compaction is off for this session; /compact runs one now")
+     ("auto_compact_no_progress" . "compacting again will not help; /new starts a fresh session")
+     ("auto_compact_failed" . "/compact runs one now, by hand, and says what it did")
+     ("compacted" . "nothing to do — the session compacted itself; /notes lists the record")
+     ("auto_compact" . "nothing to do — the session is compacting itself")
+     ("reseated" . "nothing to do — the prompt was rebuilt from the tools seated now")
+     ;; **the session's INTEGRITY is in doubt, and there is no act.**
+     ("ledger_chain_mismatch" . "nothing can be done from here — the ledger will not replay. /status has the counters; the store holds the evidence")
+     ("row_coverage_gap" . "nothing can be done from here — the store and the log disagree. /gate corpus reads both")
+     ("transcript_store" . "nothing can be done from here — the store refused the write. /status counts it")
+     ("decision_corpus" . "nothing can be done from here — the corpus row was not written")
+     ("prefix_divergence" . "the cached prefix is not the one the server holds; the next turn re-sends it and costs a full re-prefill")
+     ("prefix_check_skipped" . "nothing to do — the prefix check does not run on this provider (D10)")
+     ("log_gap" . "/resync takes a fresh snapshot; the gap is counted by /status")
+     ("protocol_skew" . "nothing will fix it from here — the two halves speak different versions. Restart the head or the daemon")
+     ("unreadable_frame" . "this head reads past frames it cannot parse; /verbosity loud shows the envelope")
+     ("gate_timeout" . "nobody answered in time. /gate recent shows the decision, /gate todo lists any still open")
+     ("gate" . "/gate recent shows what the gate decided; /gate ok|grant|revoke rules on one afterwards")
+     ("turn_failed" . "the turn stopped. ctrl-r shows the working-out it got to; ask again")
+     ("session_unavailable" . "/resume brings a stored session back; /sessions lists them")
+     ("resume_failed" . "/sessions lists what the daemon can actually reach")
+     ("mode_unpersisted" . "the mode is live in this process and not on disk; /mode again after a restart")
+     ("mode_set_next_session_only" . "this applies to the NEXT session; /new starts one")
+     ("mode_session_only" . "nothing to do — this applies for this session only")
+     ("secret_late" . "nothing to do — the password was already given by another head")
+     ("sudo" . "nothing to do — the daemon reports it; the ask itself is a card")
+     ("daemon_stopping" . "nothing to do — the daemon is going down, by request")
+     ("ended_in_reasoning" . "the turn stopped mid-thought; ctrl-r shows it and asking again continues")
+     ("reasoning_stall" . "nothing to do — the model was thinking without writing; the turn is still running")
+     ("repetition_collapse" . "the turn was cut short by a repeat detector; asking again usually gets past it")
+     ("interrupt_idle" . "nothing to do — there was no turn running to interrupt")
+     ("promote_idle" . "nothing to do — no command was running to background")
+     ("cache_reuse_shortfall" . "nothing to do — the cache was reused less than the daemon hoped; /status has the numbers")
+     ("fabric_refresh_failed" . "nothing can be done from here — the fabric did not refresh")
+     ("flowy_not_seated" . "/flowy login [SEAT] attaches a seat; /flowy status shows whether one is held")
+     ("monitor_wake_not_armed" . "nothing can be done from here — a fired monitor wakes the model only on job_list")
+     ("frame_capture_written" . "nothing to do — the frame was written where the daemon was told to put it")
+     ("frame_capture_disabled" . "set the capture variable the detail names, and restart the daemon, to capture frames")
+     ("frame_capture_failed" . "nothing can be done from here — the capture write failed; the detail names the path")
+     ("title_not_stored" . "nothing can be done from here — the title did not reach the store")
+     ("record_item_pairing" . "nothing can be done from here — an item arrived without its pair")
+     ("orphan_body" . "nothing can be done from here — a body arrived with no row to hang it on")
+     ("absolute_path" . "nothing to do — a path in the arguments was absolute, which is a note about the call")
+     ("endpoint" . "nothing can be done from here — the model endpoint refused; the detail names it")
+     ("model_endpoint_retry" . "nothing to do — the endpoint was retried and answered")
+     ("dated" . "nothing to do — the data is older than the session")
+     ("data_claim" . "nothing to do — a claim in the answer was flagged; the detail says which")
+     ("imported" . "nothing to do — the import finished")
+     ("import_scrap" . "nothing to do — part of the import was skipped; the detail says how much")
+     ("imported_summary" . "nothing to do — the import finished and was summarised")
+     ("open_note" . "nothing to do — a note was opened; /notes lists it")
+     ("resume_note" . "nothing to do — the session was resumed")
+     ("reattached" . "nothing to do — this head reattached to the daemon")
+     ("slash" . "nothing to do — that is a command's reply; /notes lists it, ctrl-n clears it")
+     ("steering_urgent" . "nothing to do — the daemon marked the steering urgent")
+     ("test" . "nothing to do — a test note")
+     ;; the three the coverage test found missing on its first run — which is the test
+     ;; doing its job: a code the head draws with no entry is the dead end R29 is about.
+     ("mode_set" . "nothing to do — the mode is set for this session; /mode opens the picker")
+     ("reseat_unchecked" . "nothing to do — the re-seat went ahead without checking the tool list; /tools shows what is seated")
+     ("length_empty_turn" . "the turn carried no message and was not sent; type something and press enter again"))
+  "What the reader can DO about a note, per code — R29 rule one, on the note.
+
+**A note that states a fact and not the act is a dead end on the screen.** The operator,
+meeting two red rows from `/diff` and `/qwe` on a head whose `/dismiss` had worked for two
+days: *when this red shit is show it should hint what to do next.* The affordance
+existed and the note did not mention it — so the rule is that the remedy is ON THE NOTE,
+not in the hint bar, not in `/help`, not in a key the reader has to already know.
+
+**An empty slot is not allowed**, and that is the load-bearing half: the honest entries
+here include a great many `nothing to do — …` and `nothing can be done from here — …`,
+because *nothing is wrong* and *this cannot be fixed from the glass* are real answers and
+the operator's own rule says so (*nothing can be done and here is why satisfies this
+rule*). What is forbidden is silence. A test walks the head's own code set and fails on a
+code with no entry, so a new code cannot arrive without somebody deciding which of the
+three it is.
+
+**Why a table in the head and not a field from the daemon**: the ACT is the head's. The
+daemon knows what happened; only this file knows that the gesture for clearing a note is
+`ctrl-n`, that the picker is behind `/mode`, and that the corpus reader is `/gate corpus`.
+letibot composes its own for the same reason, and R29 requires the two heads to OFFER a
+remedy in the same places, not to say the same words.")
+
+(defun note-remedy (w)
+  "The line that says what the reader can DO about W, or NIL for a code this head does
+not know.
+
+NIL is for an unknown code only — an old head meeting a new daemon's warning names
+nothing, because any sentence here would be invented. Every code in this head's own set
+has an entry, which is what the suite checks."
+  (cdr (assoc (getf w :code) +note-remedies+ :test #'string=)))
+
 (defun item-lines (item cols prefs)
   "One transcript row to segment lines.
 
@@ -1743,13 +1875,23 @@ a terminal-native palette."
                  (hidden (and cap seam (> (length rows) cap) (- (length rows) cap)))
                  (out (mapcar (lambda (l)
                                 (mapcar (lambda (seg) (cons (car seg) role)) l))
-                              (if hidden (subseq rows 0 cap) rows))))
-            (if hidden
-                (append out
-                        (list (list (cons (format nil "  … +~d line~a · ~a"
-                                                  hidden (if (= hidden 1) "" "s") seam)
-                                          '(:dim t)))))
-                out)))
+                              (if hidden (subseq rows 0 cap) rows)))
+                 ;; **R29 RULE ONE: the note carries its own remedy.** Drawn AFTER the
+                 ;; seam, deliberately — the seam says how much text was cut, and a
+                 ;; remedy that the cap could cut is a remedy that was not offered,
+                 ;; which is the whole failure R29 is about. It is dim in every register
+                 ;; (the note's own role says how loud the FACT is; the remedy is an
+                 ;; instruction, not a second alarm), and it is one line plus its wrap.
+                 (remedy (note-remedy w)))
+            (append out
+                    (when hidden
+                      (list (list (cons (format nil "  … +~d line~a · ~a"
+                                                hidden (if (= hidden 1) "" "s") seam)
+                                        '(:dim t)))))
+                    (when remedy
+                      (mapcar (lambda (l) (list (cons l '(:dim t))))
+                              (wrap-text (format nil "  → ~a" remedy)
+                                         (max 20 (- cols 2))))))))
          (t nil))
         ;; the step: reasoning and tool calls are the model WORKING, under the
         ;; answer. Speech — the operator's message and the model's prose — sits at
