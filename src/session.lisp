@@ -441,19 +441,91 @@ milliseconds."
   "The session seq when a TurnStarted last named the model answering.")
 
 (defvar *verbosity* :normal
-  "How much of the event stream is drawn: `:terse`, `:normal` or `:loud` — the
-reference's `Verbosity`, cycled by `/verbosity`. Terse drops the model's reasoning
-deltas on the floor (they are FILTERED, and the ack says so); loud draws the
-head-attached and head-detached events that normal keeps off the screen. A defvar
-so a push can introduce it and a head slot need not change.")
+  "How much of the event stream is drawn, as a LADDER of four rungs — cycled by
+`/verbosity`. The reference's `Verbosity` is three of them, and its own docstrings are
+the vocabulary: Terse (*assistant text and tool outcomes only*), Normal (*plus
+reasoning*), Loud (*plus head arrivals and who issued which command*).
+
+**`:reading` is the fourth rung, BELOW terse** (R37): the conversation alone — user and
+assistant text — and **nothing the head did to produce it**. Tool calls, outcomes,
+payloads, reasoning, head arrivals and command attribution all go. It is a rung of the
+same ladder rather than a new mechanism, which is why `verbosity-at-least` keeps its
+meaning: every gate written for the three rungs above answers as it did.
+
+**Three things it may NOT hide, and each is a different reason.**
+`+reading-never-hides+` is the list, and this docstring is where the reasons live:
+
+  · **a WARNING.** letibot's own ruling, and the reasoning transfers whole: *a warning
+    is a fact the daemon chose to INTERRUPT with, and a level that hides it makes the
+    head the thing that decides the operator should not have seen it.* Sharper still
+    for this shape: the filter applies to the WHOLE transcript at once, so a rung that
+    hid warnings would retroactively erase one already read — not a filter but a
+    revision. What a reader has against a warning is `/notes dismiss`: per-note,
+    visible, counted.
+  · **a DECISION CARD.** A gate card is not a tool row. Hiding it makes the session
+    unanswerable and the call times out to `on_timeout` against a quiet screen — a head
+    that hides the question has decided it on the operator's behalf by inaction.
+  · **the live turn's FOOTER.** This is the rung's own risk: with tool rows hidden, a
+    ten-minute tool-heavy turn draws NOTHING AT ALL, and a reader cannot tell working
+    from wedged. The footer keeps the running state and its elapsed time (R13).
+
+**It is a VIEW.** Nothing leaves the transcript, the ledger, the corpus or what is sent
+to the model; switching back restores every row, retroactively, including the span the
+rung was on. That is what makes hiding safe here where an elision would need a
+disclosure per row: R29's remedy rule is satisfied by the MODE BEING NAMED on the screen
+(`chrome.lisp`'s status row) rather than by a placeholder the operator asked to be rid
+of.
+
+A defvar so a push can introduce it and a head slot need not change.")
+
+(defparameter +reading-hides+
+  '(:tool-result :reasoning :system)
+  "The body types the `:reading` rung HIDES. Everything else is drawn.
+
+**A DENYLIST, and the first cut of this was an allowlist that hid the conversation itself.**
+Written as `(user and assistant text and nothing else)` it read as *keep only these*, and the
+fixture immediately showed what that means: the operator's own message and the model's answer
+drew NOTHING, because `:user` and `:assistant` were not in the list — while the one entry in it
+was `:note`. The rule is about what GOES, so the list is the three kinds that are the head's
+work:
+
+  · `:tool-result` — a payload and an outcome: what the call returned, not what was said
+  · `:reasoning` — the working-out, which is explicitly not the answer
+  · `:system` — head arrivals and who issued which command
+
+**A body type this build has never met is DRAWN**, and that is the direction the choice has to
+fall: a new kind is at least as likely to be conversation the operator wants as it is to be
+work, and being shown something unexpected is the safe failure when the alternative is silently
+withholding it. `:note` is not in this list because R37 forbids hiding a warning — and the
+allowlist's own one entry is what proved the list was the wrong shape.")
+
+(defun reading-p ()
+  "Is the `:reading` rung on? — the conversation, and nothing the head did to produce it."
+  (eq *verbosity* :reading))
 
 (defun next-verbosity (v)
-  (ecase v (:terse :normal) (:normal :loud) (:loud :terse)))
+  "The next rung DOWN, so `reading` → `terse` → `normal` → `loud` → `reading`.
+
+**Ordered by how much is drawn, ascending**, and the cycle climbs: `/verbosity` from
+`:normal` gives `:loud`, from `:loud` wraps to `:reading`. A reader who presses it four
+times is back where they started, and the four rungs are one ring."
+  (ecase v (:reading :terse) (:terse :normal) (:normal :loud) (:loud :reading)))
+
+(defparameter +verbosity-ladder+ '(:reading :terse :normal :loud)
+  "The rungs, least-drawn first. One list, read by `next-verbosity`, `verbosity-at-least`
+and the status row, so the order cannot be written down twice.")
 
 (defun verbosity-at-least (level)
-  "Is `*verbosity*` at or above LEVEL, in the order terse < normal < loud?"
-  (>= (position *verbosity* '(:terse :normal :loud))
-      (position level '(:terse :normal :loud))))
+  "Is `*verbosity*` at or above LEVEL, in the order reading < terse < normal < loud?
+
+**The order is the whole of this function**, and adding a rung BELOW `:terse` is what
+keeps every existing gate meaningful: `(verbosity-at-least :loud)` is still false at
+`:terse`, and now also at `:reading`; `(verbosity-at-least :normal)` drops the model's
+reasoning at both. Nothing above the rung moved."
+  (>= (position *verbosity* +verbosity-ladder+)
+      (position level +verbosity-ladder+)))
+
+
 
 (defparameter +per-turn-events+
   '(:delta :prompt-progress :tokens-generated

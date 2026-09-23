@@ -373,19 +373,48 @@ its end, and a token count is not recoverable from anywhere else on the screen."
 ;;; means — reachable, which is the obligation, and not resident, which was never
 ;;; part of it.
 
+(defparameter +reading-marker+ "reading — the conversation only"
+  "What the `:reading` rung calls itself on the screen, ONE string in ONE place.
+
+**The name is letibot's to choose** (R37: *A names the rung because `Verbosity` is already
+its ladder*), and it is filed with that ask. It is a constant rather than inline text so a
+rename is one line here and one word there — nothing else in the head spells it.")
+
 (defun alarm-line (head cols)
   "The alarm row, or NIL when there is nothing to say.
 
 NIL rather than an empty line: a row that is always present is a row that costs
-the transcript a line to say nothing."
-  (let ((counts (alarm-counts head)))
+the transcript a line to say nothing.
+
+**And it is the row that names the `:reading` rung while it is on** (R37: *the head says
+which state it is in, because a reader who cannot tell will scroll to find out*). Three
+things about that placement, and each is why it is here rather than on a row of its own:
+
+  · **This row is already in the frame's budget.** It is drawn only when it has something
+    to say, so the mode costs nothing on every other rung — which matters because the rung
+    is opt-in and the layout must not change for the readers who never turn it on.
+  · **It must not EXPIRE.** A note does (`+notice-ttl-ms+`), and a mode that stopped saying
+    its own name four seconds after the keypress is a mode a reader can be inside without
+    knowing — the same affordance failure R36 describes for scroll.
+  · **It is joined to an alarm rather than replacing it.** Both facts fit on one row, and a
+    rung that hid a real alarm while it was on would be the rung deciding what the operator
+    should not see, which is the thing R37 forbids it to do with warnings.
+
+The mode alone is DIM: it is a state, not a fault, and R19's whole rule is that red and
+yellow are spent on something going wrong."
+  (let ((counts (alarm-counts head))
+        (reading (and (reading-p) +reading-marker+)))
     (cond
       ((not (head-connected head))
-       (list (cons " ⚠ detached — retrying" '(:fg :red :bold t))))
+       (list (cons (format nil " ⚠ detached — retrying~@[ · ~a~]" reading)
+                   '(:fg :red :bold t))))
       (counts
-       (list (cons (format nil " ⚠ ~{~a ~a~^ · ~}"
-                           (loop for (k . v) in counts append (list k v)))
+       (list (cons (format nil " ⚠ ~{~a ~a~^ · ~}~@[ · ~a~]"
+                           (loop for (k . v) in counts append (list k v))
+                           reading)
                    '(:fg :yellow))))
+      (reading
+       (list (cons (format nil " ~a" reading) '(:dim t))))
       (t nil))))
 
 ;;; ----------------------------------------------------------------- stall ;;;

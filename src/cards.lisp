@@ -1722,6 +1722,21 @@ a terminal-native palette."
   (when (getf item :retired)
     (return-from item-lines nil))
   (let ((body (item-body item)))
+    ;; **R37's rung, at the one place a row is turned into lines.** What goes is the head's
+    ;; WORK — `+reading-hides+` — and everything else is drawn, including a body type this
+    ;; build has never met. That direction is deliberate: a denylist that hides three named
+    ;; kinds cannot hide the conversation by omission, which is exactly what the first cut
+    ;; (an allowlist of one) did to the operator's own message.
+    ;; **`%key-from-wire`, not `intern`** — and this was a real bug for one run. The wire's
+    ;; type is snake case (`tool_result`) and `(intern (string-upcase …) :keyword)` makes
+    ;; `:|TOOL_RESULT|`, UNDERSCORE and all, which is a different symbol from the `:tool-result`
+    ;; the list holds: the row was drawn and the test said so. `%key-from-wire` is the tree's
+    ;; own answer to exactly this, and `apply-event` already uses it for the same reason
+    ;; (`"tool_call" must become :tool-call to match`).
+    (when (and (reading-p)
+               body
+               (member (%key-from-wire (getf body :type)) +reading-hides+))
+      (return-from item-lines nil))
     (cond
       ;; **The announcement arrived and the body has not — so draw NOTHING**
       ;; (app.rs:9525-9542). This drew `[{kind} — content not loaded]` in red,
@@ -1823,7 +1838,11 @@ a terminal-native palette."
              ;; read, which is the fact the markup encoded. Without this arm the pref
              ;; did nothing at all on a transcript, which is every row but the one
              ;; being written.
-             (when (getf prefs :raw-calls)
+             ;; **and the CALLS go with them** (R37): a tool call is the head's working, and
+             ;; a row that kept its `→ Read src/cards.lisp · no result` line while claiming to
+             ;; hide tool calls would be the half-hiding this rung exists to avoid. The row's
+             ;; TEXT is untouched — it is the conversation.
+             (when (and (not (reading-p)) (getf prefs :raw-calls))
                (loop for tc in (getf body :tool-calls)
                      when (and (call-answered-p (getf tc :id))
                                (plusp (length (or (getf tc :arguments) ""))))
@@ -1831,7 +1850,8 @@ a terminal-native palette."
                                (format nil "~a ~a" (getf tc :name)
                                        (getf tc :arguments))
                                cols)))
-             (loop for tc in (getf body :tool-calls)
+             (unless (reading-p)
+               (loop for tc in (getf body :tool-calls)
                    unless (call-answered-p (getf tc :id))
                      collect (let* ((tgt (display-target (getf tc :arguments)))
                                     (line (format nil "→ ~a~a · no result"
@@ -1844,7 +1864,7 @@ a terminal-native palette."
                                                          :initial-element #\space)
                                             nil)
                                       (cons line +role-attention+))
-                                cols))))))
+                                cols)))))))
          ((:reasoning)
           ;; **The model's working-out, so it can never be mistaken for its
           ;; answer.** Three signals, because any one is lost somewhere: the WORD
@@ -2406,8 +2426,15 @@ first and was drawn that way."
   (when (and turn (string= (turn-state-name turn) "running"))
     (let ((ind (activity-indent cols))
           (out nil))
+      ;; **R37: the rung hides the WORKING of a live turn and never the turn.** What goes is
+      ;; the reasoning and the calls — the head's account of producing an answer. What STAYS
+      ;; is the answer itself, the footer under it (`turn-footer-lines`, drawn separately at
+      ;; the tail), and every blank row's position: a turn that is running must still be
+      ;; visible AS running, or a ten-minute tool-heavy turn draws nothing at all and the
+      ;; reader cannot tell working from wedged. That is the rung's own stated risk.
       (flet ((emit (lines) (setf out (append out lines))))
-        (alet (getf turn :reasoning)
+        (unless (reading-p)
+          (alet (getf turn :reasoning)
           (when (plusp (length it))
             (emit (step-in-lines
                    (if (getf prefs :show-reasoning)
@@ -2421,10 +2448,10 @@ first and was drawn that way."
                                            '(:dim t :italic t))))))
                    ind))
             (emit (list nil))))
-        (let ((calls (reverse (getf turn :calls))))
-          (when calls
-            (emit (step-in-lines (mappend (lambda (c) (call-lines c (- cols ind) prefs)) calls) ind))
-            (emit (list nil))))
+          (let ((calls (reverse (getf turn :calls))))
+            (when calls
+              (emit (step-in-lines (mappend (lambda (c) (call-lines c (- cols ind) prefs)) calls) ind))
+              (emit (list nil)))))
         (alet (getf turn :text)
           (when (plusp (length it))
             (emit (markdown-lines it :width cols :limit +body-lines-budget+))
@@ -2433,7 +2460,7 @@ first and was drawn that way."
         ;; it. NOT a fold: a fold hides something the reader knows is there, while
         ;; this reveals markup the default view is required never to show, so it is
         ;; off unless asked for by name.
-        (when (getf prefs :raw-calls)
+        (when (and (not (reading-p)) (getf prefs :raw-calls))
           (let ((raw (getf turn :raw-calls)))
             (when (and (stringp raw) (plusp (length raw)))
               (emit (raw-call-lines raw cols))))))

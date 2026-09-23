@@ -13519,6 +13519,266 @@ their own action."
     (is (search "/x/real.rs" text) "the one real target is drawn")
     (is (not (search " files:" text)) "and an entry that is not a target is not counted as one")))
 
+(defun %reading-head ()
+  "A head with one of everything in it: a user row, an assistant row with a tool call, a tool
+result, a reasoning row, a system row, a warning note, a segment mark, and a RUNNING turn with
+reasoning, a call and an answer.
+
+**It does not bind `*verbosity*`, and that is the second version of it.** The first set the
+variable, and a test that built one head per rung to COMPARE them had the second build decide
+the rung for both — seven assertions failed for a reason that had nothing to do with the rung.
+The fixture builds a head; `%at` binds the rung around both the build and the read.
+
+One fixture rather than one per assertion, because the requirement is about a SET — what goes
+and what stays — and a fixture per assertion cannot show that two kinds were treated alike."
+  (let ((h (%on-head :cols 100 :rows 30))
+        (s nil))
+    ;; connected, or `alarm-line` answers with `detached — retrying` and every assertion about
+    ;; that row is an assertion about a head with no socket
+    (setf (head-connected h) t)
+    (setf s (head-session h))
+    (setf (session-items s)
+          (coerce
+           (list (list :item-id "u" :kind "user" :ts 0
+                       ;; **a user row on the wire carries PARTS, not `text`** — the first
+                       ;; cut used `:text` and the row drew NOTHING, which read as the rung
+                       ;; hiding the operator's own message
+                       :item (list :type "user"
+                                   :parts (list (list :text "the question I asked"))))
+                 (list :item-id "a" :kind "assistant" :ts 0
+                       :item (list :type "assistant" :text "the answer it gave"
+                                   :tool-calls (list (list :id "c1" :name "read"
+                                                           :arguments "{\"path\":\"a.rs\"}"))))
+                 (list :item-id "r" :kind "reasoning" :ts 0
+                       :item (list :type "reasoning" :text "hmm, let me think"))
+                 (list :item-id "t" :kind "tool_result" :ts 0
+                       :item (list :type "tool_result" :call-id "c1" :name "read"
+                                   :outcome (list :outcome "ok") :payload "file contents"))
+                 (list :item-id "y" :kind "system" :ts 0
+                       :item (list :type "system" :origin "other-head"
+                                   :text "another head attached"))
+                 (list :item-id "m" :kind "segment_mark" :ts 0
+                       :item (list :type "segment_mark" :segment-id "sg" :label "compacted"
+                                   :kind "compact" :edge "open"))
+                 (list :item-id "n" :kind "note" :ts 0
+                       :warning (list :code "context_wall"
+                                      :detail "the context is nearly full" :ts 1)
+                       :item (list :type "note"
+                                   :text "context_wall — the context is nearly full")))
+           'vector))
+    (setf (session-turn s)
+          (list :turn-id "t1" :model "m" :state (list :state "running")
+                :reasoning "thinking out loud about it"
+                :text "the answer so far"
+                :calls (list (list :call-id "c2" :name "bash"
+                                   :state (list :state "running")
+                                   :arguments "{\"command\":\"cargo test\"}"))))
+    h))
+
+(defun %transcript-text (h)
+  "Every visible row of the transcript, as one string — through `item-lines` and
+`turn-lines`, the two functions that turn rows into a screen."
+  (let ((s (head-session h)))
+    (format nil "~{~a~&~}"
+            (append (loop for i across (session-items s)
+                          append (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l)))
+                                         (item-lines i 100 (head-prefs h))))
+                    (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l)))
+                            (turn-lines (session-turn s) 100 (head-prefs h)))))))
+
+(defun %at (verbosity &key (fn #'%transcript-text))
+  "FN applied to a fresh fixture head WITH THE RUNG BOUND around both the build and the call.
+
+**One form and not two calls**, because the rung is a dynamic variable: a caller that built the
+head and then read it would read it at whatever rung was bound at that moment, which is exactly
+how the first version of these tests compared a rung against itself."
+  (let ((leticl::*verbosity* verbosity))
+    (funcall fn (%reading-head))))
+
+(def-test the-reading-rung-shows-the-conversation-and-nothing-the-head-did (:suite leticl)
+  "**R37's hidden set, measured on ONE fixture so the SET is visible rather than asserted kind by
+kind.**
+
+At `:reading` the screen is the conversation: the question and the answer. Everything the head
+did to produce that answer — the tool call on the assistant row, the tool result, the reasoning,
+the head arrival — is gone.
+
+**And the assertion is a DIFFERENCE against the rungs above, not a list of absences.** `:terse`
+is the rung above and it still draws every tool row; `:normal` draws the reasoning. So each
+hidden thing is asserted ABSENT at `:reading` and PRESENT one rung up — which is the half a test
+that only looked for absence would never check, and the half that proves the rung is real rather
+than the fixture being empty."
+  (let ((r (%at :reading)))
+    ;; --- what STAYS: the conversation
+    (is (search "the question I asked" r) (format nil "the operator's own words: ~s" r))
+    (is (search "the answer it gave" r) "and the model's answer")
+    ;; --- what GOES: everything the head did to produce it
+    (is (not (search "no result" r)) "**no tool call** — the `→` row is the head's working")
+    (is (not (search "file contents" r)) "**no payload** — a tool result is not the conversation")
+    (is (not (search "hmm, let me think" r)) "**no reasoning** — the working-out is not the answer")
+    (is (not (search "another head attached" r)) "**no head arrival**")
+    (is (not (search "cargo test" r)) "**and nothing of the live turn's working either**"))
+  ;; --- each of them IS there one rung up, which is what makes this a rung and not a loss
+  (is (search "file contents" (%at :terse)) ":terse still draws every tool row")
+  ;; **the reasoning row is FOLDED by default**, so at `:normal` it draws its header and the
+  ;; last line — and at `:reading` it draws nothing at all. The claim is about the ROW, so the
+  ;; assertion is the row's own word.
+  (is (search "Thought" (%at :normal)) "and :normal draws the reasoning row")
+  ;; **NOT asserted at `:terse`, and the omission is the finding.** `:terse` stops reasoning
+  ;; being FOLDED at arrive time (`apply-event` drops the delta), but a reasoning ROW already
+  ;; in the transcript is still drawn — so `terse` and `reading` differ here, and a test that
+  ;; claimed otherwise was claiming a behaviour the rung above does not have. That is exactly
+  ;; the difference R37 is about: Terse filters what arrives, Reading filters what is DRAWN.
+  (is (search "Thought" (%at :terse))
+      ":terse still draws a reasoning row it already holds — it filters arrivals, not rows")
+  (is (not (search "Thought" (%at :reading)))
+      "**and :reading does not** — it is the first rung that filters the transcript")
+  (is (search "another head attached" (%at :loud)) "and :loud draws the head arrival")
+  (is (search "the answer it gave" (%at :terse)) "the conversation is drawn at every rung"))
+
+(def-test the-three-things-the-reading-rung-may-not-hide (:suite leticl)
+  "**R37's not-hidden set, and each of the three is a different reason.**
+
+  · **a WARNING** — the allowlist `+reading-never-hides+`, because a warning is a fact the daemon
+    chose to INTERRUPT with, and the filter applies to the whole transcript at once, so hiding
+    one would retroactively erase a warning already read. Not a filter: a revision.
+  · **a DECISION CARD** — asserted through the card's own function, which does not go through
+    `item-lines` at all, so this pins the STRUCTURE (a card is not an item) rather than a string.
+  · **LIVENESS** — the rung's own risk and the one that would have shipped silently: with tool
+    rows hidden a ten-minute tool-heavy turn draws nothing at all, so the footer must still say
+    the turn is running, or the reader cannot tell working from wedged."
+  (unwind-protect
+       (let* ((h (progn (setf leticl::*verbosity* :reading) (%reading-head)))
+              (text (%transcript-text h)))
+         ;; --- 1. the warning is on the screen
+         (is (search "the context is nearly full" text)
+             "**a warning is never hidden** — the allowlist's one member")
+         (is (not (member :note leticl::+reading-hides+))
+             "**and a note is not in the HIDDEN list at all** — R37 forbids hiding a warning,
+ and the list is what makes that structural rather than a special case")
+         ;; --- 2. a decision card is drawn, because a card is not an item
+         (setf (session-open-decisions (head-session h))
+               (list (list :req-id "adj-r37" :kind "permission"
+                           :summary "`bash` wants exec access" :target "cargo test"
+                           :access "exec"
+                           :options (list (list :option-id "allow_once" :label "Allow once")))))
+         (multiple-value-bind (content ladder) (permission-card-lines h 100)
+           (is (plusp (length content))
+               "**the card is drawn at :reading** — a gate card is not a tool row")
+           (is (search "Allow once" (format nil "~{~a~}" (mapcar (lambda (l)
+                                                                   (format nil "~{~a~}"
+                                                                           (mapcar #'car l)))
+                                                                 ladder)))
+               "with its options, so the session stays answerable"))
+         ;; --- 3. liveness: the running indicator is not behind the rung
+         ;;
+         ;; **And it is `turn-status` rather than the transcript's footer**, which is a
+         ;; measurement: `turn-footer-lines` draws a line only for an UNUSUAL ending, so a
+         ;; running turn has no footer at all — the running state lives on the composer's own
+         ;; edge (`⠹ Responding · 4.2s`). That edge is what has to survive the rung, and it is
+         ;; built from the same `session-turn` the rung filters rows from.
+         (let ((status (turn-status h 100)))
+           (is (stringp status) "the running indicator is drawn while the turn runs")
+           (is (search "Responding" status)
+               (format nil "**and says the turn is running** — otherwise a ten-minute
+ tool-heavy turn is a blank screen and the reader cannot tell working from wedged: ~s" status)))
+         ;; **the case that would have shipped silently**: a running turn whose only content is
+         ;; its calls draws NOTHING at this rung, and that is correct — the indicator above is
+         ;; the whole of what says it is working.
+         (let* ((t2 (list :turn-id "t2" :model "m" :state (list :state "running")
+                          :text "" :reasoning "thinking"
+                          :calls (list (list :call-id "c9" :name "bash"
+                                             :state (list :state "running")
+                                             :arguments "{\"command\":\"sleep 600\"}"))))
+                (leticl::*verbosity* :reading))
+           (is (null (turn-lines t2 100 (head-prefs h)))
+               "a turn with nothing but calls draws nothing in the transcript")
+           (is (search "Responding" (turn-status h 100))
+               "**and the indicator is still the thing that says it is alive**")))
+    (setf leticl::*verbosity* :normal)))
+
+(def-test the-reading-rung-names-itself-on-a-row-that-does-not-expire (:suite leticl)
+  "**R37: *the head says which state it is in* — and that is what makes hiding safe here, where
+an elision would need a disclosure per hidden row.**
+
+R29's remedy rule is satisfied for this rung by the MODE being named rather than by a placeholder
+the operator asked to be rid of. Three properties, and each is a way the naming could fail:
+
+  · **it is on a row the frame DRAWS.** `status-line` exists in this tree and `%render` does not
+    call it — measured, `grep -rn 'status-line' src/` finds the definition and no caller — so a
+    mode named there would be named nowhere. `alarm-line` is drawn whenever it has something to
+    say, and it is already inside the frame's row budget.
+  · **it does not EXPIRE.** A note does, and a mode that stopped saying its own name four seconds
+    after the keypress is a mode a reader can be inside without knowing.
+  · **it does not REPLACE an alarm.** Both facts go on one row: a rung that hid a real alarm while
+    it was on would be the rung deciding what the operator should not see."
+  (unwind-protect
+       ;; **the alarm counters are PROCESS globals and a preceding test may have left one
+       ;; non-zero** — measured: this test passed alone and failed in the suite, because an
+       ;; earlier resync test had bumped `*resyncs*` and the row took the alarm branch. The
+       ;; subject here is the MODE's register, so the alarms are held at zero for the frame
+       ;; under test; the alarm-vs-mode interaction is asserted separately below.
+       (let* ((leticl::*scrubbed-total* 0)
+              (leticl::*resyncs* 0)
+              (leticl::*unreadable-total* 0)
+              (h (progn (setf leticl::*verbosity* :reading) (%reading-head)))
+              (row (lambda () (format nil "~{~a~}" (mapcar #'car (alarm-line h 100))))))
+         (is (search "reading" (funcall row)) (format nil "the alarm row names the rung: ~s" (funcall row)))
+         (is (search "conversation only" (funcall row)) "and what it is showing")
+         (is (equal '(:dim t) (cdr (first (alarm-line h 100))))
+             "**dim, because it is a state and not a fault** — R19 spends red and yellow on
+  something going wrong, and this rung is one the reader chose")
+         ;; --- it outlives the notice TTL, because it is not a note
+         (let ((leticl::*fixed-clock-ms* 1000))
+           (say h "a note that expires")
+           (setf leticl::*fixed-clock-ms* (+ 1000 leticl::+notice-ttl-ms+ 1))
+           (tick-notice h)
+           (is (null (head-status-note h)) "the note has expired")
+           (is (search "conversation only" (funcall row))
+               "**and the mode is still named** — a state, not something that happened"))
+         ;; --- and it does not hide an alarm: both facts on the one row
+         ;; **`dropped` and not `filtered`**: the alarm row's own list is
+         ;; `dropped · scrubbed · resync · unreadable`, and a test that set the fourth of a
+         ;; different list would assert against a row that was never going to say it.
+         (unwind-protect
+              (progn
+                (setf (session-dropped (head-session h)) 3)
+                (is (search "reading" (funcall row)) "with an alarm up, the mode is still named")
+                (is (search "dropped 3" (funcall row))
+                    "and the alarm is not hidden by it — both facts, one row"))
+           (setf (session-dropped (head-session h)) 0))
+         ;; --- leaving the rung: the name goes AND the rows come back
+         (setf leticl::*verbosity* :normal)
+         (is (not (search "conversation only" (funcall row))) "one rung up and the name is gone")
+         (is (search "file contents" (%transcript-text h))
+             "**and every hidden row is back, retroactively** — nothing was dropped from the
+  transcript, so leaving the rung restores even the span it was on"))
+    (setf leticl::*verbosity* :normal)))
+
+(def-test the-ladder-is-one-ring-including-the-new-rung (:suite leticl)
+  "The rung is a rung of the SAME ladder, so the order must be one list and the cycle must close.
+Four presses of `/verbosity` return the reader where they started, and `verbosity-at-least` still
+means what it meant for the three rungs that were there before — which is the assertion that
+adding a rung BELOW `:terse` moved nothing above it."
+  (is (equal '(:reading :terse :normal :loud) leticl::+verbosity-ladder+)
+      "least-drawn first, which is the order every gate is written against")
+  (let ((v :normal))
+    (dotimes (i 4) (setf v (leticl::next-verbosity v)))
+    (is (eq :normal v) "four presses close the ring"))
+  (is (eq :reading (leticl::next-verbosity :loud)) "loud wraps to reading, one rung further down")
+  (is (eq :terse (leticl::next-verbosity :reading)) "and reading climbs to terse")
+  ;; the order did not move for the rungs that existed before
+  (let ((leticl::*verbosity* :terse))
+    (is (not (leticl::verbosity-at-least :loud)) ":terse is still below :loud")
+    (is (not (leticl::verbosity-at-least :normal)) "and still below :normal")
+    (is (leticl::verbosity-at-least :terse) "and at :terse"))
+  (let ((leticl::*verbosity* :reading))
+    (is (not (leticl::verbosity-at-least :terse))
+        "**the new rung is BELOW :terse** — which is what makes it a rung of this ladder
+ rather than a second mechanism")
+    (is (not (leticl::verbosity-at-least :normal)) "and below everything else"))
+  (let ((leticl::*verbosity* :loud))
+    (is (leticl::verbosity-at-least :reading) "and :loud is above all of them, so the ladder is total")))
 (def-test the-deposit-says-what-it-costs-before-it-lands (:suite leticl)
   "**R31 (e): *it spends the window, visibly. A 40k-token page is 40k of context the operator
 chose to buy — the size is shown before it lands, because the alternative is discovering it at
