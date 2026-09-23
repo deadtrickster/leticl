@@ -409,11 +409,18 @@ place leaves the vector and its count identical, and that case is the generation
        (= (second a) (second b))
        (eq (third a) (third b))))
 
-(defun %history-until (head cols need)
+(defun %history-until (head cols need &optional until-id)
   "The committed transcript's lines, oldest first, at least NEED of them.
 
 Cached: a call that needs no more than the cache holds does no rendering at all,
-which is the case that matters — scrolling."
+which is the case that matters — scrolling.
+
+**UNTIL-ID is R36's anchor row, and the walk must reach it.** The window is `need` lines measured
+back from the newest row, which is right for a reader at the bottom and WRONG for a reader parked
+on a row: rows arriving below push the anchored row outside that window, `%anchor-end` then finds
+nothing, and the view silently falls back to the count — which is the defect the anchor exists to
+prevent, reintroduced from the other end. Measured: a 40-row transcript scrolled to `row-38`, then
+thirty rows appended, and the view jumped to `row-62`."
   (let* ((key (%hist-key head cols))
          (s (head-session head))
          (items (session-items s))
@@ -421,10 +428,23 @@ which is the case that matters — scrolling."
          (lines (if cached (second cached) nil))
          (next-i (if cached (third cached) (1- (length items))))
          (class-above (if cached (fourth cached) nil)))
-    (loop while (and (>= next-i 0) (< (length lines) (1+ need)))
+    ;; **THE BOUNDS ARE COLLECTED IN THE SAME WALK** (R36): which ROW each stretch of lines
+    ;; came from, so a line can be named as *this row, this offset into it* rather than as a
+    ;; count. A second pass over the items would have to reproduce this walk's air rule (a
+    ;; blank line before a class change) and would disagree with it the first time the rule
+    ;; moved — the arithmetic that decides which row a line belongs to is the arithmetic that
+    ;; decided what the lines are.
+    (let ((bounds (if cached (fifth cached) nil))
+          (raw nil))
+    (loop while (and (>= next-i 0)
+                     (or (< (length lines) (1+ need))
+                         ;; the anchor's row has not been reached yet: keep walking down to it
+                         (and until-id
+                              (not (find until-id bounds :key #'first :test #'string=)))))
           do (let* ((item (aref items next-i))
                     (il (item-lines item cols (head-prefs head)))
-                    (class (item-row-class item)))
+                    (class (item-row-class item))
+                    (before (length lines)))
                (unless (every #'%line-blank-p il)
                  (when (and lines class-above
                             (not (and (eq class :activity) (eq class-above :activity))))
@@ -442,10 +462,30 @@ which is the case that matters — scrolling."
                ;; not, and acting on that claim is what introduced the reversal —
                ;; the quadratic copy was in `%viewport-lines`' `(append hist …)`,
                ;; which `%window-of` fixed.
-               (setf lines (append il lines)))
+               (setf lines (append il lines))
+               ;; `before` to `(length lines)` is THIS row's stretch, blank line included —
+               ;; **counted from the NEWEST end**, because that is how the walk accumulates, and
+               ;; `raw` holds them that way until the total is known and they can be flipped.
+               ;; INSIDE the `let*`, because `item` is what names it: one line lower it was
+               ;; outside the binding and every render died on an unbound variable.
+               (push (cons (getf item :item-id) (cons before (length lines))) raw))
              (decf next-i))
-    (setf *hist-cache* (list key lines next-i class-above))
-    lines))
+    ;; **THE OFFSETS ARE FLIPPED TO OLDEST-FIRST HERE**, once the total is known: a row whose
+    ;; stretch ended `e` lines from the newest end starts `total - e` lines from the oldest, and
+    ;; that is the numbering the viewport and the anchor both speak in. The first cut stored the
+    ;; newest-end numbers and the anchor then computed a position 30-odd lines out — measured as
+    ;; a view that jumped to the live end.
+    ;; **ONLY ON A MISS.** A cache hit brings its own bounds and leaves `raw` NIL, and the first
+    ;; cut recomputed from `raw` unconditionally — which wiped the cached bounds on the second
+    ;; frame of every cache, so the anchor worked on the frame that built the list and vanished
+    ;; on the one after it. The measured symptom was a viewport that jumped to the live end.
+    (when raw
+      (let ((total (length lines)))
+        (setf bounds (mapcar (lambda (r)
+                               (list (car r) (- total (cddr r)) (- total (cadr r))))
+                             (nreverse raw)))))
+    (setf *hist-cache* (list key lines next-i class-above bounds))
+    (values lines bounds))))
 
 (defun %window-of (hist tail start end)
   "Elements START..END of the conceptual list `hist` + a blank + `tail`.
@@ -488,6 +528,94 @@ costs nothing either."
                  (setf cursor (cdr cursor))
                  (incf k))))
     (nreverse out)))
+
+(defvar *scroll-anchor* nil
+  "WHERE THE READER IS READING: `(ITEM-ID . LINE-OFFSET-INTO-IT)`, or NIL at the bottom.
+
+**R36's anchor, and the whole reason it is a row and an offset rather than a number.** A count
+from the bottom is invalidated by every arrival — the transcript grew, so the same number names
+different lines — and a count from the top by anything above being rewritten. Both happen here:
+R29's remedy line grows a row, a warning's detail expands, a tail lands, a snapshot replaces the
+whole list. With a row anchor none of that moves the reader by a line.
+
+**It is written by the RENDERER, from the row it actually drew at the top**, and not by the key
+handler: the key knows a number, and only the frame knows which row that number landed on. That
+is also what keeps it honest across a resize, where every offset moves.
+
+**Cleared at the bottom and only by an act that goes there** (`esc`, an explicit end, or enough
+`PgDn`s): following the live end is a STATE, and arriving content must never return the reader to
+it. `%anchor-end` is what re-finds it, `%anchor-forget` is what says a row is gone.")
+
+(defvar *hist-bounds* nil
+  "The rows the last `%history-until` rendered, oldest first, as `(ITEM-ID START END)`.
+
+**Set by `%viewport-lines` and read by the anchor**, because a line index is only meaningful
+against the list it was counted in: the bounds and the lines come out of one walk, so the answer
+to *which row is line 812* is derived from the same arithmetic that made the lines.")
+
+(defvar *anchor-lost-said* nil
+  "The item id this head has already told the reader it can no longer carry.
+
+**A flag rather than a note each frame**, because `%viewport-lines` runs on every paint: a loss
+that repeated would be a status row nobody can read, which is the R29 defect one surface over.")
+
+(defun %anchor-for (bounds index)
+  "The `(ITEM-ID . OFFSET)` for line INDEX in BOUNDS, or NIL when the index is not in a row.
+
+NIL for a line in the TAIL — the live turn, a queued echo, the carry line. Those are not rows
+with an identity across a frame, so there is nothing to anchor to and the numeric scroll is the
+honest fallback."
+  (let ((hit (find-if (lambda (b) (and (<= (second b) index) (< index (third b)))) bounds)))
+    (and hit (cons (first hit) (- index (second hit))))))
+
+(defun %anchor-end (head anchor bounds want n)
+  "The exclusive END this anchor asks for, or NIL when it cannot be placed.
+
+**The row the reader was on is put back at the same offset**, which is the whole of R36's
+arithmetic: the answer is *that row's start, plus how far into it they were, plus a window*. A
+count would have to know how many lines arrived; this needs to know nothing."
+  (declare (ignore head))
+  (let ((hit (find-if (lambda (b) (string= (first b) (car anchor))) bounds)))
+    (when hit
+      (setf *anchor-lost-said* nil)
+      (min n (+ (second hit) (cdr anchor) want)))))
+
+(defun %anchor-lose (head anchor)
+  "Say that the row the reader was on is no longer carried, once.
+
+**A row that has been summarised away is SAID, not jumped over.** R36: *if it was summarised away,
+SAY SO rather than jumping — the reader was looking at something no longer carried, and that is a
+fact about their session.* A view that silently teleported is a view the reader cannot trust to be
+where they left it.
+
+**Called from the frame, and BEFORE the scroll clamp** — see the call site: a transcript that now
+fits the window clamps the scroll to zero, and the first version detected the loss after that
+clamp, which is the one case where the reader is guaranteed to be told nothing.
+
+`head` is passed in and never `*head*`: the render path runs on a head a test built directly as
+often as on the live one, and reaching for the global died with `expected-type HEAD, datum NIL` —
+inside a render, which is the one place this tree cannot afford a guess."
+  (unless (equal *anchor-lost-said* (car anchor))
+    (setf *anchor-lost-said* (car anchor))
+    (say head (format nil "the row you were reading (row ~a, ~d line~:p in) is no longer in this transcript — a compaction or a resync replaced it, so the view is holding its place as a count instead"
+                      (car anchor) (1+ (cdr anchor))))))
+
+(defun %anchor-observe (head start bounds)
+  "Remember the row the frame has just drawn at line START; forget it at the bottom.
+
+**At the bottom the anchor is NIL, and that is the STATE R36 is about.** Following the live end is
+not a position — *a reader who scrolled up has left it and only an explicit act returns them* —
+so the anchor is cleared by the frame that is genuinely at the bottom (which only a key that went
+there can produce) and by nothing else. Content arriving below cannot clear it, because arriving
+content does not move `start`."
+  ;; **`head-scroll`, not `start`.** The first cut tested `(plusp start)`, and `start` is
+  ;; positive on EVERY frame whose transcript is longer than the viewport — including the frame
+  ;; at the very bottom, where the reader is following the live end. Measured by the test that
+  ;; goes back to the bottom: it kept an anchor, so the next arrival would have carried the
+  ;; reader away from the end they had just returned to. The state is `head-scroll`, because
+  ;; that is the variable the keys move.
+  (setf *scroll-anchor* (and (plusp (head-scroll head))
+                             (%anchor-for bounds start))))
 
 (defvar *scroll-max* 0
   "How far back the last frame let the reader scroll, in LINES — `n - want`, the value
@@ -543,7 +671,15 @@ to decide when the reader has asked for the rows above the window (`fetch-row-ab
          ;; All of that lives in `%history-until` now, because it is per-ROW state
          ;; (`class-above`) and a cache that forgets it inserts the gaps wrongly on
          ;; the frame after a hit.
-         (hist (%history-until head cols need)))
+         (hist (multiple-value-bind (lines bounds)
+                   ;; **the anchored row is walked to, not assumed to be in the window** — see
+                   ;; `%history-until`'s note: a reader parked on a row is the case the window
+                   ;; was not built for, and it is the case R36 is about.
+                   (%history-until head cols need
+                                   (and *scroll-anchor* (plusp (head-scroll head))
+                                        (car *scroll-anchor*)))
+                 (setf *hist-bounds* bounds)
+                 lines)))
     ;; **AIR ABOVE THE CHROME.** One blank row after the committed rows, always
     ;; (`body_window`: `if !hist_lines.is_empty() { segs.push(gap) }`), so the
     ;; transcript never sits on the box's top edge and the live turn never sits
@@ -586,7 +722,32 @@ to decide when the reader has asked for the rows above the window (`fetch-row-ab
       ;; show, and a wheel that kept counting would need as many turns back
       (setf *scroll-max* (max 0 (- n want))
             (head-scroll head) (max 0 (min (head-scroll head) *scroll-max*)))
-      (let* ((end (max 0 (- n (head-scroll head))))
+      ;; **R36: A SCROLLED VIEWPORT IS ANCHORED TO A ROW, NOT TO A COUNT.**
+      ;;
+      ;; *"scroll must be preserved — if i scrolled i want my view to hold, regardless of the
+      ;; new stuff below."* A count from the bottom is invalidated by every arrival (the
+      ;; transcript grew, so the same number names different lines) and a count from the top by
+      ;; anything above being rewritten — and both happen in this head: R29's remedy line grows
+      ;; a row, a note's detail expands, a tail lands. So the reader's place is stored as
+      ;; *that row, that many lines into it*, and it is re-found by identity on every frame.
+      ;;
+      ;; **The anchor is REFRESHED from what was actually drawn**, at the end of this function,
+      ;; which is why it can never drift from the screen: it is not a record of a keypress, it
+      ;; is a record of the top row of the last frame. `head-scroll` stays as the fallback and as
+      ;; the thing the fetch-above tests read.
+      (let* (;; **THE LOSS IS DETECTED BEFORE THE CLAMP, and that order was a real defect.**
+             ;; `head-scroll` is clamped to `*scroll-max*` two forms up, and a transcript that
+             ;; now FITS the window clamps it to zero — so a reader whose row was taken by a
+             ;; compaction was silently returned to the bottom instead of being told. Measured:
+             ;; the whole 40-row fixture replaced by 4 carried passages, and no note at all.
+             ;; The fact is about the ROW, not about how much there is to scroll, so it is
+             ;; answered from the row.
+             (lost (and *scroll-anchor*
+                        (not (find (car *scroll-anchor*) *hist-bounds*
+                                   :key #'first :test #'string=))))
+             (anchored (and *scroll-anchor* (not lost) (> (head-scroll head) 0)
+                            (%anchor-end head *scroll-anchor* *hist-bounds* want n)))
+             (end (or anchored (max 0 (- n (head-scroll head)))))
              (start (max 0 (- end want)))
              ;; **The window, not the whole transcript.** `(append hist …)` and then
              ;; `subseq` copies every cached line to show sixty, and that copy is
@@ -606,6 +767,26 @@ to decide when the reader has asked for the rows above the window (`fetch-row-ab
                 (list (cons (format nil "── scrolled back · ~d lines below · ↓ or esc to follow · wheel scrolls · shift+drag selects"
                                     (- n end))
                             '(:fg :yellow)))))
+        ;; **R36: THE ANCHOR IS REFRESHED FROM WHAT WAS JUST DRAWN**, which is why it cannot
+        ;; drift from the glass — it records the top ROW of this frame, not a keypress. Done
+        ;; here, after the window is known and before the caller paints it, and it is the only
+        ;; writer of `*scroll-anchor*` besides the keys that return to the bottom.
+        ;;
+        ;; `head-scroll` is kept in step when the anchor decided the window, because two things
+        ;; read it that must not disagree with the screen: the fetch-above test (`>= scroll
+        ;; *scroll-max*` is *the reader has reached the oldest row this head holds*) and the
+        ;; `↑N` the status row prints. An anchor that moved the window while leaving the number
+        ;; alone would make both of them lie by however many lines had arrived.
+        (when anchored
+          (setf (head-scroll head) (max 0 (min (- n end) *scroll-max*))))
+        ;; **and a row that is gone is SAID here, once**, with the anchor dropped: there is
+        ;; nothing left to hold a place against. The sentence is R29's shape — the fact and what
+        ;; the reader can do with it — and `*anchor-lost-said*` is what keeps it from repeating
+        ;; on every paint.
+        (when lost
+          (%anchor-lose head *scroll-anchor*)
+          (setf *scroll-anchor* nil))
+        (%anchor-observe head start *hist-bounds*)
         out))))
 
 (defparameter +right-margin+ 2

@@ -13779,6 +13779,195 @@ adding a rung BELOW `:terse` moved nothing above it."
     (is (not (leticl::verbosity-at-least :normal)) "and below everything else"))
   (let ((leticl::*verbosity* :loud))
     (is (leticl::verbosity-at-least :reading) "and :loud is above all of them, so the ladder is total")))
+(defun %anchor-head (n)
+  "A head holding N one-line rows, each naming itself, with the viewport WIDE and SHORT so the
+fixture is about the window rather than about wrapping."
+  (let ((h (%on-head :cols 60 :rows 14))
+        (items nil))
+    (dotimes (i n)
+      (push (list :item-id (format nil "row-~2,'0d" i) :kind "assistant" :ts 0
+                  :item (list :type "assistant" :text (format nil "line of row ~2,'0d" i)))
+            items))
+    (setf (session-items (head-session h)) (coerce (nreverse items) 'vector))
+    h))
+
+(defun %top-row (h)
+  "The CONTENT rows of the viewport this head would draw, oldest first, as one string.
+
+**The banner is dropped, and that is the instrument rather than a convenience.** The scrolled-back
+row carries `N lines below`, which is a count from the end and therefore CHANGES by design when
+rows arrive below — so a comparison that included it would fail on the one thing R36 says must
+move. Measured: the first version compared the whole viewport and the rows were identical while
+the banner's number had gone from 6 to 66."
+  (let ((lines (leticl::%viewport-lines h (head-cols h) (max 1 (- (head-rows h) 4)))))
+    (format nil "~{~a~^|~}"
+            (loop for l in lines
+                  when (consp l)
+                    collect (format nil "~{~a~}" (mapcar (lambda (seg)
+                                                           (if (consp seg) (car seg) seg))
+                                                         l))
+                      into texts
+                  finally (return (remove-if (lambda (text) (search "scrolled back" text))
+                                             texts))))))
+
+(def-test a-scrolled-view-does-not-move-when-rows-arrive-below (:suite leticl)
+  "**R36, measured — and the measurement is the whole of the requirement's first sentence:**
+*\"scroll must be preserved — if i scrolled i want my view to hold, regardless of the new stuff
+below.\"*
+
+Four steps, and the same bytes under the reader's eye at every one:
+
+  1. a scrolled viewport;
+  2. rows arriving BELOW it (the transcript grows under the reader);
+  3. a snapshot replacement that keeps the anchored row (a resync, `hello`);
+  4. and a compaction that REMOVES it, which must be said rather than jumped over.
+
+**A count would fail step 2 and this is the point of the anchor.** With `head-scroll` as a
+distance from the bottom, twenty rows arriving below push the same number twenty lines further
+up the transcript — the reader's view slides by exactly the amount that arrived. The anchor is
+*that row, that many lines into it*, so the same row stays at the top."
+  (let ((leticl::*scroll-anchor* nil) (leticl::*hist-cache* nil)
+        (leticl::*hist-generation* 0) (leticl::*hist-bounds* nil)
+        (leticl::*anchor-lost-said* nil))
+    (let* ((h (%anchor-head 40))
+           (s (head-session h)))
+      ;; --- 1. the reader scrolls back: an explicit act, twice, so they are not at the bottom
+      (setf (head-scroll h) 6)
+      (let ((before (%top-row h)))
+        (is (search "row " before) (format nil "a scrolled viewport has rows in it: ~s" before))
+        ;; **the anchor is a DOTTED PAIR `(id . offset)`**, so `length` on it is a type error —
+        ;; which is how the first version of this assertion failed: `datum 0`, expected LIST.
+        (is (and (consp leticl::*scroll-anchor*) (stringp (car leticl::*scroll-anchor*)))
+            (format nil "**and the frame recorded the ROW it drew at the top** (not a number):
+ ~s" leticl::*scroll-anchor*))
+        ;; --- 2. ROWS ARRIVE BELOW: the transcript grows under the reader
+        (let* ((old (session-items s))
+               (extra (coerce (loop for i from 40 below 70
+                                    collect (list :item-id (format nil "row-~2,'0d" i)
+                                                  :kind "assistant" :ts 0
+                                                  :item (list :type "assistant"
+                                                              :text (format nil "line of row ~2,'0d" i))))
+                              'vector)))
+          (setf (session-items s) (concatenate 'vector old extra))
+          (incf leticl::*hist-generation*)
+          (setf leticl::*hist-cache* nil)
+          (let ((after (%top-row h)))
+            (is (equal before after)
+                (format nil "**the same rows under the reader's eye after 30 arrived below** —
+ before: ~s~% after:  ~s" before after))))
+        ;; --- 3. A SNAPSHOT that keeps the rows (a resync builds a fresh VECTOR with the same ids)
+        ;;
+        ;; **`map 'vector`, not `copy-seq`**: `copy-seq` on a vector answers a LIST, and the next
+        ;; frame died in `aref` — the fixture telling a different story from the one it names.
+        (setf (session-items s) (map 'vector #'identity (session-items s)))
+        (incf leticl::*hist-generation*)
+        (setf leticl::*hist-cache* nil)
+        (is (equal before (%top-row h))
+            "**and after a wholesale replacement that keeps the row** — the anchor is found by
+ identity, so nothing about the vector's identity can move the reader"))
+      ;; --- 4. THE COMPACTION: the transcript is REPLACED and the anchored row is gone
+      ;;
+      ;; A compaction does not remove one row from a list — it replaces the whole list with a
+      ;; summary plus whatever it carried — so the fixture says the same thing: these are
+      ;; different rows and none of them is the one the reader was on.
+      (setf (session-items s)
+            (coerce (loop for k from 0 below 4
+                          collect (list :item-id (format nil "summary-~d" k)
+                                        :kind "assistant" :ts 0
+                                        :item (list :type "assistant"
+                                                    :text (format nil "carried passage ~d" k))))
+                    'vector))
+      (incf leticl::*hist-generation*)
+      (setf leticl::*hist-cache* nil)
+      (clear-note h)
+      (%top-row h)
+      (is (search "no longer in this transcript" (or (head-status-note h) ""))
+          (format nil "**the loss is SAID** — the reader was looking at something no longer
+ carried, and that is a fact about their session: ~s" (head-status-note h)))
+      (is (search "compaction or a resync" (or (head-status-note h) ""))
+          "and it names which kind of event took it")
+      (is (equal "row-32" leticl::*anchor-lost-said*)
+          "with the row it lost kept as the record of what it has said")
+      ;; and it is said ONCE: a loss that repeated every frame would be a status row nobody can
+      ;; read, which is R29's defect one surface over
+      (clear-note h)
+      (%top-row h)
+      (is (null (head-status-note h))
+          "**and the next frame does not say it again** — `%viewport-lines` runs on every paint"))))
+
+(def-test the-anchor-is-a-row-and-not-a-count (:suite leticl)
+  "**Why R36 insists on a row, stated as the two failures it prevents.**
+
+  · **a count from the BOTTOM is invalidated by every arrival** — the test above is exactly that
+    case: the same number, thirty more lines, and the reader's view slides;
+  · **a count from the TOP is invalidated by anything above being rewritten** — R29's remedy line
+    grows a row under a note, a detail expands, a tail lands: every one of them shifts everything
+    below it, so the reader creeps.
+
+Both are asserted here on the arithmetic rather than through the screen, because the point is the
+SENTENCE the two produce: the anchor survives what the count cannot."
+  ;; the same viewport, two arrivals: the count moves, the anchor does not
+  (let ((leticl::*scroll-anchor* nil) (leticl::*hist-cache* nil)
+        (leticl::*hist-generation* 0) (leticl::*hist-bounds* nil))
+    (let* ((h (%anchor-head 30))
+           (s (head-session h)))
+      (setf (head-scroll h) 5)
+      (let* ((view1 (%top-row h))
+             (anchor leticl::*scroll-anchor*))
+        ;; **five rows GAIN a line each, ABOVE the anchor** — the count-from-the-top case
+        (setf (session-items s)
+              (map 'vector (lambda (i) (setf (getf (getf i :item) :text)
+                                             (format nil "~a~%and a second line" (getf (getf i :item) :text)))
+                                      i)
+                   (session-items s)))
+        (incf leticl::*hist-generation*)
+        (setf leticl::*hist-cache* nil)
+        (let ((view2 (%top-row h)))
+          (is (equal anchor leticl::*scroll-anchor*)
+              "the anchor still names the same row and offset after rows above grew")
+          ;; **the ROW is what must be the same, not the row's text**: the fixture rewrote every
+          ;; row's text precisely so a text comparison could not pass by accident — and the first
+          ;; version then failed on the text it had just changed, which is a test measuring its
+          ;; own fixture.
+          ;; the row's NAME and not its length: "line of row 23" is 14 characters either way
+          (is (equal (subseq view1 0 (min 14 (length view1)))
+                     (subseq view2 0 (min 14 (length view2))))
+              (format nil "**the same ROW is at the top** — 23 stayed 23 through five rows above
+ gaining a line:~% before: ~s~% after:  ~s" view1 view2)))))))
+
+(def-test following-the-bottom-is-a-state-and-only-an-act-returns-to-it (:suite leticl)
+  "**R36's second half.** *Following the bottom is a STATE, not a position. A reader who scrolled
+up has left it and only an explicit act returns them. Arriving content must never return them.*
+
+So there are two assertions and they are different facts: the anchor is CLEARED by the act that
+goes to the bottom (esc, or a scroll of zero), and it is NOT cleared by anything arriving — which
+is what stops new content from yanking the reader back to the live end."
+  (let ((leticl::*scroll-anchor* nil) (leticl::*hist-cache* nil)
+        (leticl::*hist-generation* 0) (leticl::*hist-bounds* nil))
+    (let* ((h (%anchor-head 30)) (s (head-session h)))
+      ;; scroll back, and the frame records where the reader is
+      (setf (head-scroll h) 4)
+      (%top-row h)
+      (is (consp leticl::*scroll-anchor*) "a scrolled frame has an anchor")
+      ;; --- arriving content does NOT clear it
+      (setf (session-items s)
+            (concatenate 'vector (session-items s)
+                         (vector (list :item-id "row-99" :kind "assistant" :ts 0
+                                       :item (list :type "assistant" :text "arrived later")))))
+      (incf leticl::*hist-generation*)
+      (setf leticl::*hist-cache* nil)
+      (%top-row h)
+      (is (consp leticl::*scroll-anchor*)
+          "**content arriving below does NOT return the reader to the bottom**")
+      ;; --- the EXPLICIT act does, and it takes the number with it
+      (setf (head-scroll h) 0)
+      (%top-row h)
+      (is (null leticl::*scroll-anchor*)
+          "**and a frame at the bottom has no anchor** — following the end is a state, and the
+ state is entered by an act that goes there")
+      (is (equal leticl::*anchor-lost-said* nil)
+          "nothing was reported lost on the way"))))
+
 (def-test the-deposit-says-what-it-costs-before-it-lands (:suite leticl)
   "**R31 (e): *it spends the window, visibly. A 40k-token page is 40k of context the operator
 chose to buy — the size is shown before it lands, because the alternative is discovering it at

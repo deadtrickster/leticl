@@ -1568,7 +1568,11 @@ what the hint bar says while one runs (`esc interrupt · ctrl+c clear`)."
        ;; which is what the banner says it means. Only then does esc start
        ;; arming an interrupt: `esc esc` — twice within the gesture window.
        (when (plusp (head-scroll head))
-         (setf (head-scroll head) 0 (head-dirty head) t)
+         ;; **R36: the explicit act that returns the reader to the live end, and the anchor goes
+         ;; with the number.** Following the bottom is a STATE, so the two are cleared together —
+         ;; a scroll of 0 with an anchor still set would put the reader back where they were on
+         ;; the next frame, which reads as a key that does not work.
+         (setf (head-scroll head) 0 *scroll-anchor* nil (head-dirty head) t)
          (return-from %normal-key nil))
        (let ((now (get-internal-real-time))
              (ms (/ internal-time-units-per-second 1000.0)))

@@ -88,7 +88,8 @@
    #:*filling* #:note-filling #:reset-filling #:filling-active-p
    #:filling-progress-line
    ;; the history line cache, and the generation that invalidates it
-   #:*hist-cache* #:*hist-generation*
+   #:*hist-cache* #:*hist-generation* #:*scroll-anchor* #:*hist-bounds*
+   #:%viewport-lines
    ;; ONE place sets a preference, and it is the place that invalidates
    ;; the render cache — see prefs.lisp's header
    #:head-pref
