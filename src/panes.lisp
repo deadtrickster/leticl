@@ -2108,6 +2108,28 @@ never scrolled. The content becomes a viewport that SHRINKS to whatever room is 
           (when (and (not question) (%option-kind-p options "reject_always"))
             (ladder "  `deny_and_tell <why>` denies and sends those words to the model"
                     '(:fg :yellow)))
+          ;; **§11.7: WHAT ASKS, WHEN WHAT ASKS IS THE DECLARATION.** letibot landed this
+          ;; wording at `11f07e7` and the operator ruled it both heads' — the sentence is
+          ;; SHARED and not this head's to reword, because two heads that explain one call
+          ;; differently argue with the operator about the same fact.
+          ;;
+          ;; **The gap it closes, and it cost three 300-second refusals in one night.** The
+          ;; headline says what the tool DECLARES (`? `bash` wants exec access [exec]`) and
+          ;; the line above is layer A's reading of the ACTION (`ask — intents [inspect]…`).
+          ;; Nothing joined them, so an operator looking at `[exec]` over a line that reads
+          ;; `inspect` had two sentences to reconcile and no statement that they are about
+          ;; DIFFERENT things — the declaration and this action.
+          ;;
+          ;; **THE GUARD IS THE WHOLE SENTENCE**, and both halves are falsified below: it is
+          ;; drawn for `exec` and nothing else, because a `read` is asked about by a rule, a
+          ;; path or a mode — a sentence blaming its DECLARATION would be false on the very
+          ;; card carrying it, which is the `because: workspace: /` fault (a fact named
+          ;; after one thing and read from another). And it is NOT drawn when `access` is
+          ;; absent: an older daemon did not say, and a head that guessed `exec` would
+          ;; print a claim about a declaration nobody made.
+          (when (and (not question) (equal (getf d :access) "exec"))
+            (ladder "  the access is what asks: a tool declared to `exec` is asked about on its declaration, and the line above is a reading of this action"
+                    '(:dim t)))
           ;; **§1.6: WHAT SILENCE DOES, AND HOW LONG THERE IS.** Both facts ride on
           ;; the frame (`deadline`, `on_timeout`, event.rs:569-574) and neither was
           ;; drawn, so two cards sailed past their own 300-second budget and the

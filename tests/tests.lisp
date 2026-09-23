@@ -10848,6 +10848,96 @@ write is worse than one that promises nothing"))
                                                :kind "reject_once"))))))
     h))
 
+(defun %r18-ladder (access &key (kind "permission"))
+  "The card's LADDER as segment lines, for a decision whose tool declares ACCESS.
+
+ACCESS is passed as a marker so `:absent` and an empty string are different fixtures —
+*the daemon did not say* and *the daemon said something empty* must draw the same, and
+only one of them is what an older daemon sends."
+  (let* ((h (%make-head))
+         (d (list :req-id "r18" :kind kind :summary "`bash` wants exec access"
+                  :target "cargo test "
+                  :detail "ask — intents [inspect] over [] — auto (a read inside the boundary)"
+                  :access (unless (eq access :absent) access)
+                  :options (list (list :option-id "allow_once" :label "Allow once"
+                                       :kind "allow_once")
+                                 (list :option-id "deny" :label "Deny" :kind "deny")))))
+    (setf (session-open-decisions (head-session h)) (list d))
+    (nth-value 1 (permission-card-lines h 100))))
+
+(defun %r18-card (access &key (kind "permission"))
+  "`%r18-ladder` as one string, which is what a reader sees.
+
+**Newlines become spaces**, because the card WRAPS to its width (as it must — the published
+sentence is 139 columns) and the wrap is not part of the sentence: a verbatim assertion has to
+be about the words, not about where the frame happened to break them."
+  (let ((text (format nil "~{~a~^~%~}"
+                      (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l)))
+                              (%r18-ladder access :kind kind)))))
+    (substitute #\space #\newline text)))
+
+(def-test a-card-says-what-asks-when-the-declaration-is-what-asks (:suite leticl)
+  "**§11.7, letibot `11f07e7`, and the sentence is SHARED.**
+
+MEASURED, and expensive: an operator looking at a card whose headline says the tool
+declares `exec` over a line that is layer A's reading of the ACTION (`ask — intents
+[inspect]…`) had two sentences about different things and nothing saying so. Three
+300-second refusals in one night, all three of them that gap.
+
+The sentence is asserted VERBATIM, because two heads that explain one call differently
+argue with the operator about the same fact. What is this head's is the GUARD, and both
+halves of it are asserted with the direction that would make the sentence a lie."
+  (let ((exec (%r18-card "exec")))
+    (is (search (format nil "the access is what asks: a tool declared to `exec` is asked about on its declaration, and the line above is a reading of this action")
+                exec)
+        (format nil "**the published sentence, unchanged**: ~s" exec))
+    (is (equal '(:dim t)
+               (let ((line (find-if (lambda (l) (search "the access is what asks"
+                                                      (format nil "~{~a~}" (mapcar #'car l))))
+                                    (%r18-ladder "exec"))))
+                 (and line (cdr (first line)))))
+        "in the dim register, like every other borrowed sentence on the card — NOT the
+ yellow of the ladder, which is what a card is asking for"))
+  ;; **NOT FOR ANY OTHER ACCESS.** A `read` is asked about by a rule, a path or a mode,
+  ;; so a sentence blaming its declaration would be false on the very card carrying it.
+  (let ((read (%r18-card "read")))
+    (is (not (search "the access is what asks" read))
+        (format nil "**a `read` card does NOT get the sentence** — nothing about a read is
+ asked about because of its declaration: ~s" read)))
+  ;; **AND NOT WHEN THE DAEMON DID NOT SAY.** An older daemon sends no `access`, and a
+  ;; head that guessed `exec` would print a claim about a declaration nobody made — the
+  ;; fail-safe direction, which is the same one `unsure` and `never_ran` keep.
+  (dolist (absent (list :absent ""))
+    (let ((card (%r18-card absent)))
+      (is (not (search "the access is what asks" card))
+          (format nil "**no field, no claim** (~s): a head that guessed would be inventing
+ the fact the sentence exists to state: ~s" absent card))))
+  ;; and the question kind never gets it: a question declares nothing
+  (is (not (search "the access is what asks" (%r18-card "exec" :kind "question")))
+      "a `question` is not a tool call and declares no access")
+  ;; **AND THE LADDER STILL FITS.** The sentence is LADDER — pinned and never trimmed, per
+  ;; R20 — so it costs the card two rows on an `exec` ask, and the R20 ruling is that the
+  ;; CHOICES survive that and the CONTENT is what shrinks. Measured on a rendered frame at
+  ;; 16 rows: the sentence, the first option and the last one are all on the screen.
+  (let* ((leticl::*stdout* (make-string-output-stream))
+         (h (%make-head :cols 100 :rows 16)))
+    (setf (session-open-decisions (head-session h))
+          (list (list :req-id "r18fit" :kind "permission" :summary "`bash` wants exec access"
+                      :target "cargo test"
+                      :detail (format nil "the patch:~%~{~a~%~}"
+                                      (loop for i from 1 to 30 collect (format nil "-old ~d~%+new ~d" i i)))
+                      :access "exec"
+                      :options (list (list :option-id "allow_once" :label "Allow once")
+                                     (list :option-id "allow_session" :label "Allow session")
+                                     (list :option-id "deny" :label "Deny")))))
+    (leticl::%render h)
+    (let ((frame (format nil "~{~a~}" (leticl::screen-rows-ansi (head-screen h)))))
+      (is (search "the access is what asks" frame)
+          "**the sentence is pinned with the ladder, not trimmed away with the content**")
+      (is (search "Allow once" frame) "and the first choice is still there")
+      (is (search "Deny" frame) "and the last one")
+      (is (not (search "+new 30" frame)) "while the CONTENT is what got windowed"))))
+
 (def-test the-permission-card-draws-the-oracles-verdict (:suite leticl)
   "**The head RECEIVES the oracle's advice and never drew it.** `:advice` is
 folded onto the open decision at `src/session.lisp:324` and nothing read it, so

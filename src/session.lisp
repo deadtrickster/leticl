@@ -93,6 +93,13 @@ that drifts, and the two call sites here — a live `decision_requested` and the
 `open_decisions` inside a snapshot — are exactly the pair that drifts silently,
 because each is right on its own and only the screen shows the difference.
 
+**`access` rides through here for the same reason**, and it is §11.7's field: the
+card draws a sentence about what the tool DECLARES only when `access` is `exec`, so a
+snapshot ask that reached the card without its `access` would draw a card that says
+nothing about the very thing the sentence exists to explain — and a live one would.
+One carrier, two folds, so the two cannot disagree about what a card is allowed to
+say.
+
 **R18, MEASURED LIVE 2026-09-22, on the operator's own card.** The wire says *Unix
 millis* (`event.rs:573`) and `internal-real-time-ms` is a counter since this process
 started, so a deadline that reaches the RENDERER unconverted is an instant tens of
@@ -112,7 +119,8 @@ It was found by looking at a card rather than by a test, which is why it is writ
 out here: the suite had a live-path conversion and a secret-card conversion and
 nothing that attached AFTER the ask."
   (list* :deadline (wire-deadline->monotonic (getf d :deadline))
-         (list* :deadline-wire (getf d :deadline) d)))
+         (list* :deadline-wire (getf d :deadline)
+                (list* :access (getf d :access) d))))
 
 (defun %decisions-in-head-time (decisions)
   "Every decision in DECISIONS through `%decision-clock-rule`. A snapshot's list.
@@ -1731,6 +1739,14 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
                      :choices (getf env :choices)
                      :because (getf env :because)
                      :advice (getf env :advice)
+                     ;; **§11.7's field, MEASURED on the wire rather than read from a
+                     ;; document**: a real protocol-25 daemon's `tool_started` — and the
+                     ;; `decision_requested` beside it — carries `access: "read"` for a
+                     ;; read and `access: "exec"` for a call that declares exec. The card
+                     ;; draws its `the access is what asks:` sentence on `exec` and nothing
+                     ;; else; an ABSENT field is an older daemon and draws nothing either,
+                     ;; because the head does not know.
+                     :access (getf env :access)
                      ;; **converted through the ONE rule, and not at the card** — see
                      ;; `%decision-clock-rule`. This arm and the snapshot's
                      ;; `open_decisions` are the two places a decision is folded,
