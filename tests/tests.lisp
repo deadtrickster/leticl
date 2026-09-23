@@ -13391,6 +13391,199 @@ deposit, and a VETO would need either a decision card in front of the result or 
         (is (equal "ok" (getf (getf f :outcome) :outcome)) "with its outcome")
         (is (search "a line of the page" (getf f :payload)) "and the payload it measured")))))
 
+(defun %tmp-tree (tag files)
+  "A directory of its own with FILES in it, under the OS temp dir, cleaned by the caller.
+Directories are given with a trailing `/` so a caller can say which it means."
+  (let* ((root (format nil "/tmp/leticl-r32-~a-~d/" tag (random 1000000))))
+    (ensure-directories-exist root)
+    (dolist (f files)
+      (if (char= #\/ (char f (1- (length f))))
+          (ensure-directories-exist (concatenate 'string root f))
+          (with-open-file (o (concatenate 'string root f) :direction :output
+                                                          :if-exists :supersede
+                                                          :if-does-not-exist :create)
+            (format o "x"))))
+    root))
+
+(def-test tab-completes-the-argument-by-the-kind-the-daemon-published (:suite leticl)
+  "**R32's second clause, and its whole design is that the head holds NO LIST of which tools take
+paths.** The kind arrives on the tool's own row — `path`, `url` or `text` — so this head
+completes filenames for a path because the DAEMON said the field is one, not because it knows
+what `read` does. Nothing in `src/` names a tool to decide this.
+
+**R32's four constraints, each asserted:**
+
+  1. **A leading `/` completes from the filesystem root, anything else from the DAEMON's
+     workspace** — which is not this head's cwd and not `$PWD`. The fixture's workspace is a
+     directory built by the test, and the head's cwd is the repo, so a completion that used the
+     wrong root cannot pass by coincidence.
+  2. **A directory completes to a trailing separator and does not end the completion**: the
+     separator is added ONCE, and a second Tab walks on.
+  3. **One completion behaviour per key** — the walk is the verb position's: first match first,
+     more Tabs walking.
+  4. **What is offered must EXIST.** The directory is read; there is no fuzzy match and no
+     candidate the filesystem does not have.
+
+**And the two refusals, which are the other half of *do not guess*:** a `url` or `text` field
+completes nothing and says so, and a kind this build has never met completes nothing and says
+that instead of inventing a behaviour for a daemon newer than this head."
+  (let* ((root (%tmp-tree "r32" '("README.md" "runit.sh" "rust-tools/" "notes.txt")))
+         (*head-tool-runners* (list (cons "read" (%stub-runner "ok" "r"))))
+         (*ran* nil) (*op-calls* nil) (*op-call-draft* nil))
+    (unwind-protect
+         (flet ((head-with (kind &optional (field "path"))
+                  (let ((h (%on-head :cols 120 :rows 24)))
+                    ;; **the workspace is the DAEMON's**, said on the wiring, which is where a
+                    ;; head learns it — not this head's cwd
+                    (setf (session-wiring (head-session h)) (list :workspace root)
+                          (head-settings h)
+                          (%door-settings
+                           "read,web_fetch,odd"
+                           (format nil "[{\"name\":\"read\",\"field\":\"~a\",\"kind\":\"~a\"},
+                                         {\"name\":\"web_fetch\",\"field\":\"url\",\"kind\":\"url\"},
+                                         {\"name\":\"odd\",\"field\":\"q\",\"kind\":\"newkind\"}]"
+                                   field kind)))
+                    h))
+                (type (h text)
+                  ;; **`%set-composer`, which moves the CURSOR with the buffer.** A helper
+                  ;; that empties the buffer and leaves the cursor where the last completion put
+                  ;; it types its next character past the end of a zero-length string —
+                  ;; measured here as `Invalid index 14 for (SIMPLE-ARRAY CHARACTER (0))` thrown
+                  ;; from `%normal-key`, i.e. a keystroke, three steps before the Tab the test
+                  ;; was about. The head never does this (its own paths are `%set-composer`,
+                  ;; `%submit-line` and `%op-call-draft-close`, all of which move the cursor),
+                  ;; so a fixture that did was a fixture that could not arise.
+                  (leticl::%set-composer h text)))
+           ;; --- 1+4: a path field completes what EXISTS, from the DAEMON's workspace
+           (let ((h (head-with "path")))
+             (type h "/read REA")
+             (leticl::%complete h)
+             (is (equal "/read README.md" (composer-buffer (head-composer h)))
+                 "**a path field completes filenames** — from the daemon's row's kind, not from a
+  list of verbs that take paths")
+             ;; **AND THE MATCH IS CASE-SENSITIVE, which is a measurement rather than an
+             ;; oversight.** A path is resolved by the filesystem, so `README.md` offered for
+             ;; `rea` would be a completion that does not exist under the spelling typed —
+             ;; constraint 4 read as *exists as written*. (Verbs are case-insensitive; a verb is
+             ;; compared by the head and a path is opened by a filesystem, and the two rules are
+             ;; different for that reason.)
+             (type h "/read rea")
+             (leticl::%complete h)
+             (is (equal "/read rea" (composer-buffer (head-composer h)))
+                 "a lowercase prefix does not match `README.md`: a path is opened, not compared")
+             ;; 2: a directory gets its separator, ONCE, and stays usable
+             (type h "/read rus")
+             (leticl::%complete h)
+             (is (equal "/read rust-tools/" (composer-buffer (head-composer h)))
+                 (format nil "a directory completes to a trailing separator: ~s"
+                         (composer-buffer (head-composer h))))
+             (is (not (search "//" (composer-buffer (head-composer h))))
+                 "and exactly one — `file-namestring` already carries one on some implementations")
+             ;; 3: more Tabs walk, and a character typed on the end starts fresh
+             (type h "/read r")
+             (leticl::%complete h)
+             (let ((first-match (composer-buffer (head-composer h))))
+               (is (member first-match '("/read README.md" "/read runit.sh" "/read rust-tools/")
+                           :test #'string=)
+                   (format nil "the FIRST match is offered: ~s" first-match))
+               (leticl::%complete h)
+               (is (not (equal first-match (composer-buffer (head-composer h))))
+                   "and the next Tab walks to another one, which is the verb position's own walk")
+               (type h (concatenate 'string first-match "x"))
+               (leticl::%complete h)
+               (is (not (search "x/read" (composer-buffer (head-composer h))))
+                   "a character typed on the end starts a FRESH walk rather than clobbering"))
+             ;; a fragment nothing matches SAYS SO and offers nothing
+             (type h "/read zzz")
+             (leticl::%complete h)
+             (is (search "no file here starts with" (head-status-note h))
+                 (format nil "a miss is said, not silently ignored: ~s" (head-status-note h)))
+             (is (search root (head-status-note h))
+                 "**and it names the workspace it looked in**, so the reader learns which tree
+  the daemon is seated in rather than guessing at their own"))
+           ;; --- 1: a LEADING SLASH is the filesystem root, not the workspace
+           (let ((h (head-with "path")))
+             ;; **the fixture's own tree, reached by ABSOLUTE path** — so this asserts the
+             ;; leading-`/` rule without depending on any particular box's `/etc`. The workspace
+             ;; is the temp tree, so the same fragment typed relatively proves the other half.
+             (type h (concatenate 'string "/read " root "REA"))
+             (leticl::%complete h)
+             (let ((done (composer-buffer (head-composer h))))
+               (is (search "README.md" done)
+                   (format nil "a leading `/` completes from the filesystem root: ~s" done))
+               (is (probe-file (subseq done (length "/read ")))
+                   "**and what it offers EXISTS** — read from the directory, not guessed"))
+             (type h (concatenate 'string "/read " root))
+             (leticl::%complete h)
+             ;; **`root` already ends in `/`**, so searching for `root//` would be searching for a
+             ;; path with a doubled separator — the very thing the one-separator rule forbids.
+             (is (search root (composer-buffer (head-composer h)))
+                 "an absolute directory still completes below itself")
+             (is (null (search "//" (composer-buffer (head-composer h))))
+                 "and exactly one separator, never two"))
+           ;; --- the REFUSALS: url and text complete NOTHING, and say WHICH it is
+           ;; **the tool's own `read` field carries the kind under test**, because the kind is
+           ;; per tool and a fixture that typed a `url` tool to test the `text` case would have
+           ;; asserted a sentence about the wrong field.
+           (dolist (case '(("url" . "a url") ("text" . "a text")))
+             (let ((h (head-with (car case))))
+               (type h "/read something-here")
+               (leticl::%complete h)
+               (is (equal "/read something-here" (composer-buffer (head-composer h)))
+                   (format nil "**a ~a field completes nothing** — there is no local candidate
+  for it, and offering one would be a fuzzy match this is explicitly not" (car case)))
+               (is (search (cdr case) (head-status-note h))
+                   (format nil "and it says the field is ~a: ~s" (car case) (head-status-note h)))))
+           ;; --- an UNKNOWN kind: nothing, and no invented behaviour
+           (let ((h (head-with "path")))
+             (setf (head-settings h)
+                   (%door-settings "odd" "[{\"name\":\"odd\",\"field\":\"q\",\"kind\":\"newkind\"}]"))
+             (type h "/odd thin")
+             (leticl::%complete h)
+             (is (equal "/odd thin" (composer-buffer (head-composer h)))
+                 "a kind this build has never met completes nothing")
+             (is (search "does not know" (head-status-note h))
+                 (format nil "**and says it is a kind it does not know** rather than treating an
+  unknown kind as text or as a path: ~s" (head-status-note h))))
+           ;; --- **THE TWO POSITIONS SHARE ONE CYCLE, AND THE MIXTURE IS THE BUG.** A verb
+           ;; completion leaves `(NAMES IDX)` in the global it walks; an argument completion
+           ;; leaves `(BASE NAMES IDX)`. Walking one as the other is a `destructuring-bind`
+           ;; error thrown from a KEYSTROKE — measured while falsifying this file, which is the
+           ;; only reason it was found: the sequence that does it is *complete a verb, type an
+           ;; argument, press Tab*, which is what a person does constantly.
+           (let ((h (head-with "path")))
+             (type h "/web-")
+             (leticl::%complete h)
+             (is (equal "/web-fetch" (composer-buffer (head-composer h)))
+                 "a verb completion leaves its own cycle behind")
+             ;; now an ARGUMENT from the same head, with that cycle still in the global
+             (type h (concatenate 'string "/read " root "REA"))
+             (leticl::%complete h)
+             (is (search "README.md" (composer-buffer (head-composer h)))
+                 "**and Tab in an ARGUMENT position still works after it** — the two cycles are
+  one global and the shape is what tells them apart")
+             ;; and the other order: an argument cycle, then a verb
+             (type h "/re")
+             (leticl::%complete h)
+             (is (member (composer-buffer (head-composer h))
+                         '("/read" "/rename" "/reseat" "/resume" "/resync")
+                         :test #'string=)
+                 (format nil "a verb still completes after an argument did: ~s"
+                         (composer-buffer (head-composer h)))))
+           ;; --- the OTHER POSITION is untouched: a line with no door name in it is not an
+           ;; argument, and Tab on it behaves as it always did
+           (let ((h (head-with "path")))
+             (type h "/mod")
+             (leticl::%complete h)
+             (is (search "/mode" (composer-buffer (head-composer h)))
+                 "a bare verb still completes as a verb")
+             (type h "/mode allow")
+             (leticl::%complete h)
+             (is (equal "/mode allow" (composer-buffer (head-composer h)))
+                 "and a head verb's argument is not completed from the filesystem — `/mode` is
+  not a door tool and the daemon published no kind for it")))
+      (uiop:delete-directory-tree (pathname root) :validate t))))
+
 (def-test the-door-is-issuable-while-a-turn-is-running (:suite leticl)
   "**R31 (c), and it is a constraint rather than a nicety: the call is a DEPOSIT, not a request
 to the turn that holds the floor.** A 40k-token page an operator wants read is worth fetching
