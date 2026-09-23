@@ -493,7 +493,20 @@ the admission has been WRITTEN — that is why a head runs nothing on `Accepted`
         :name name
         :arguments (or arguments "{}")))
 
-(defun make-operator-result (call-id outcome payload)
+(defparameter +tool-outcomes+ '("ok" "abstained" "failed" "denied" "timeout" "not_run" "backgrounded")
+  "The `ToolOutcome` variants, MEASURED off the daemon rather than read from source.
+
+Asked for an unknown one, this daemon answers with its own list — *unknown variant `zzz`,
+expected one of `ok`, `abstained`, `failed`, `denied`, `timeout`, `not_run`,
+`backgrounded`* — so the vocabulary is a fact about the daemon on this box and not about
+this file. `+outcomes-taking-a-reason+` is the same measurement one step further: a
+`failed` WITHOUT a `reason` is refused by name (*missing field `reason`*) while an `ok`
+with one is accepted, so exactly one variant carries it.")
+
+(defparameter +outcomes-taking-a-reason+ '("failed")
+  "The variants whose payload is a FIELD and not just the text handed back.")
+
+(defun make-operator-result (call-id outcome payload &key reason)
   "Frame 2: the head hands back what happened (R24 part two).
 
 **No `expected_seq`, deliberately and not by omission.** This frame does not move the
@@ -502,11 +515,28 @@ screen moved still meant it. The daemon appends a `ToolResult` carrying
 `origin: Operator { who }` through the same writer a turn's rows go through, so the
 model sees the result and every head draws it as the person's act.
 
-`outcome` is a `ToolOutcome` wire word — `ok`, `failed`, `timed_out`, … — the daemon's
-vocabulary and already on the wire."
+**`outcome` IS AN OBJECT, not a word — and getting that wrong ended a live session.**
+`ToolOutcome` is an internally-tagged serde enum, so the field is `{outcome: ok}`
+and a bare `ok` fails the daemon's deserialiser — which is not one frame refused, it
+is the READ LOOP: measured against a real protocol-25 daemon, the reply was
+
+    bye: this connection sent a frame this daemon could not read
+         (malformed frame (invalid type: string, expected internally tagged enum ToolOutcome))
+
+and **a `bye` is the end of the session for this head** (`head.lisp`, the `bye` arm), so
+the live proof of R24 killed its own head by sending the shape this function used to
+build. The same probe measured the rest of the vocabulary: `ok`, `abstained`, `failed`,
+`denied`, `timeout`, `not_run`, `backgrounded`, and `failed` REQUIRES a `reason`.
+
+REASON is that field, and it is passed only for the variants that take one — an `ok`
+carrying a `reason` happens to be accepted today (serde ignores it) and would be the same
+kind of guess one variant later."
   (list :frame "operator_result"
         :call-id call-id
-        :outcome outcome
+        :outcome (if (and reason (member outcome +outcomes-taking-a-reason+
+                                         :test #'string=))
+                     (list :outcome outcome :reason reason)
+                     (list :outcome outcome))
         :payload (or payload "")))
 
 ;;; ------------------------------------------ R11: the oracle's own exchange (25) ;;;

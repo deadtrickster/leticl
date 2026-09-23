@@ -12566,6 +12566,45 @@ A head that ran here could have run a call whose admission never got written."
           "**and said nothing** — the ask's own sentence already promised the wait, so a
  second line for the routine cue is the noise this head suppresses for a queued prompt"))))
 
+(def-test the-result-frame-carries-an-OBJECT-outcome-not-a-word (:suite leticl)
+  "**The defect a live proof found, and it killed the head that sent it.**
+
+`ToolOutcome` is an internally-tagged serde enum, so `outcome` is `{\"outcome\":\"ok\"}`. A
+bare `\"ok\"` does not fail one frame — it fails the daemon's READ LOOP, which answers
+`bye`, and **this head leaves on `bye`**: measured against a real protocol-25 daemon, the
+R24 live proof ended its own session with
+
+    bye: this connection sent a frame this daemon could not read
+         (malformed frame (invalid type: string \"ok\", expected internally tagged enum
+          ToolOutcome)
+
+So the assertion is the ENCODED BYTES, because that is what the daemon reads: a plist that
+looks right to every other test in this file is exactly what went wrong."
+  (let ((line (encode-frame (make-operator-result "c1" "ok" "the page"))))
+    (is (equal (list :outcome "ok") (getf (json-decode line) :outcome))
+        (format nil "**the outcome DECODES to a tagged object, not a word** — which is what
+ the daemon reads, and a plist that looks right to every other test in this file is exactly
+ what went wrong: ~a" line))
+    (is (search "\"outcome\":{\"outcome\":\"ok\"}" line)
+        (format nil "as the bytes `{outcome:ok}`: ~a" line))
+    (is (search "\"payload\":\"the page\"" line) "with the payload beside it"))
+  ;; **`failed` CARRIES A `reason`**, measured: the daemon refuses one without it
+  ;; (*missing field `reason`*), and the head's own failure path has the sentence to give
+  (let ((line (encode-frame (make-operator-result "c1" "failed" "it blew up"
+                                                  :reason "it blew up"))))
+    (is (search "\"outcome\":{\"outcome\":\"failed\",\"reason\":\"it blew up\"}" line)
+        (format nil "a failure names its reason: ~a" line)))
+  ;; and a reason is NOT invented onto a variant that does not take one — an `ok` with a
+  ;; stray `reason` is accepted today and would be a guess about tomorrow
+  (let ((line (encode-frame (make-operator-result "c1" "ok" "x" :reason "no"))))
+    (is (not (search "reason" line)) "an `ok` carries no reason field"))
+  ;; the vocabulary itself, as measured off the daemon's own refusal
+  (is (equal '("ok" "abstained" "failed" "denied" "timeout" "not_run" "backgrounded")
+             +tool-outcomes+)
+      "the daemon's `ToolOutcome` variants, read from its own error message")
+  (is (equal '("failed") +outcomes-taking-a-reason+)
+      "and exactly one of them takes a field"))
+
 (def-test only-the-admission-runs-it-and-it-matches-the-call-id (:suite leticl)
   "The look-up that matters: the event is published to the SESSION, so every head sees
 every head's calls, and only the one that asked may run one."
@@ -12592,7 +12631,9 @@ every head's calls, and only the one that asked may run one."
       (let ((f (first (funcall sent))))
         (is (equal "operator_result" (getf f :frame)) "and the outcome goes straight back")
         (is (equal call-id (getf f :call-id)) "for the call that was admitted")
-        (is (equal "ok" (getf f :outcome)) "with an outcome word from the daemon's own vocabulary")
+        (is (equal "ok" (getf (getf f :outcome) :outcome))
+            "with an outcome word from the daemon's own vocabulary, as the TAGGED OBJECT
+ the daemon reads — a bare word here fails its read loop and ends the session")
         (is (equal "the page" (getf f :payload)) "and what the tool produced, as text")
         ;; **NO `expected_seq`** — this frame hands over a fact, it does not move the session
         (is (not (getf f :expected-seq)) "and no read mark at all"))

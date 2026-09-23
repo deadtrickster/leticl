@@ -1292,7 +1292,9 @@ what a reader has otherwise)."
                   (error (e) (values "failed" (format nil "this head could not run it: ~a" e))))
                 (values "failed" (format nil "this head has no runner for `~a`, so it did not run" name)))
           ;; FIRST on the wire, then the sentence
-          (%send head (make-operator-result (getf env :call-id) outcome payload))
+          (%send head (make-operator-result (getf env :call-id) outcome payload
+                                            :reason (and (string= outcome "failed")
+                                                         payload)))
           (say head (if (string= outcome "ok")
                         (format nil "ran `~a` as ~a — the result is in the conversation" name (or who "you"))
                         (format nil "`~a` as ~a did not go through (~a) — the row says so" name (or who "you") outcome))))))))

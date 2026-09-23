@@ -56,6 +56,7 @@
    #:make-operator-call #:make-operator-result
    ;; R11's locator: the oracle's own exchange, by the adjudication's id
    #:+diagnostic-kinds+ #:make-fetch-diagnostic
+   #:+tool-outcomes+ #:+outcomes-taking-a-reason+
    ;; socket
    #:connect-unix #:discover-daemons #:no-daemon #:no-daemon-socket #:wait-for-input
    ;; session
