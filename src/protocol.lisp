@@ -1,4 +1,4 @@
-;;;; protocol.lisp — the head frame vocabulary, protocol version 23.
+;;;; protocol.lisp — the head frame vocabulary, protocol version 25.
 ;;;; Source of truth: crates/sessionlog/src/protocol.rs. Frames are plists in
 ;;;; the image (PLAN.md §7, D4); the constructors below are the only place
 ;;;; that knows what a frame looks like on the wire.
@@ -11,7 +11,32 @@
 
 (in-package #:leticl)
 
-(defparameter +protocol-version+ 23)
+(defparameter +protocol-version+ 25
+  "The version this head announces at ATTACH, and the number is a CLAIM rather than a flag.
+
+The protocol's only compatibility check is EQUALITY at ATTACH, so a head that announces a
+version is saying *I know what those frames are* — and a head that announces a number it does
+not understand has traded a clear refusal for a mid-session surprise. So what 24 and 25 added
+is written down here rather than assumed:
+
+  · **25** is TWO FIELDS, both additive and both from this head's own asks (letibot
+    `bc852c7`): `unsure: Option<String>` on the wire `ModelAdvice`, carrying
+    `UnsureKind::as_str()` — the token, so the card can say WHICH of four non-answers it was
+    instead of echoing prose; and `FetchDiagnostic { request_id, kind }` answered by
+    `Diagnostic { request_id, kind, body: Option<String>, total }`, the locator for the
+    oracle's brief and reply.
+  · **24** is R24 part two, the operator's own tool call: `ClientFrame::OperatorCall`,
+    `ClientFrame::OperatorResult`, `SessionEvent::OperatorCallAllowed`, the
+    `head-run.tools` settings row, and `CallOrigin::Operator { who }` on a tool row.
+
+**Why announcing 25 is honest for a head that uses none of it yet**: every one of those is
+additive, this head SENDS only what it sent at 23 unless a feature is being used, and a frame
+or event it does not fold is already reported and survived rather than dropped (R3). The
+version is not a promise to use everything; it is a promise not to be surprised by it.
+
+**Measured before the bump, against the daemon on this box** — because a version is a fact
+about a running process, not about a constant in a file I can read: 23 and 24 are refused at
+ATTACH (`bye: protocol version 23, this daemon speaks 25`) and 25 answers `hello`.")
 ;; 23 is `SessionEvent::Filling { what, unit, done, total }` — a **named** operation
 ;; the daemon is filling rows for, with its own counter (letibot `4d01aca`). It
 ;; replaced `ImportProgress`, which was the same event under a narrower name: four

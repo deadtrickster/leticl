@@ -1983,10 +1983,7 @@ your words` one line apart."
                    (format nil "  ~a · ~a ms" (or (getf advice :by) "?")
                            (or (getf advice :latency-ms) 0)))))
     (mapcar (lambda (l) (list (cons l '(:dim t))))
-            (append (wrap-text (format nil "  model says ~a: ~a"
-                                       (or (getf advice :would) "?")
-                                       (or (getf advice :basis) ""))
-                               w)
+            (append (wrap-text (format nil "  ~a" (%advice-line advice)) w)
                     (wrap-text tail w)))))
 
 (defun permission-card-lines (head cols)

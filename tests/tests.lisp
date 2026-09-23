@@ -12050,6 +12050,105 @@ them together — abstained and denied were plain yellow, backgrounded was
         (format nil "~a is Failure — `display_outcome` maps it onto Failed" word)))
   (is (equal leticl::+role-success+ (leticl::%outcome-style (list :outcome "ok")))))
 
+;;; ---------------- R12: the card says WHICH non-answer it was (letibot 25) ---------------- ;;;
+;;;
+;;; Run for real, before the field existed, on three `decision_requested` frames carrying
+;;; letibot's own three `basis` sentences: **every field the head CONTROLS was identical**
+;;; (`consulted: true`, `would: "ask"`, `cites: []`), so the card echoed the daemon's prose and
+;;; authored nothing. Worse than three collapsed into one: `would: "ask"` is also what a REAL
+;;; `NotAuthorised` answer sets, so **five** distinct facts reached the glass as one line.
+;;;
+;;; letibot `bc852c7` answered with `unsure: Option<String>` on the wire `ModelAdvice`,
+;;; carrying `UnsureKind::as_str()`. The head AUTHORS the classification from that token and
+;;; the daemon's `basis` follows as the detail.
+
+(defun %advice-card-text (advice)
+  "The card's advice block as one string, which is what a reader sees."
+  (format nil "~{~a~^~%~}" (lines-text (leticl::advice-lines advice 100))))
+
+(def-test the-card-says-which-non-answer-it-was (:suite leticl)
+  "**R12's criterion, on the glass: the three are DISTINGUISHABLE.**
+
+The card is not allowed to say *no verdict* for all of them — that was the defect, and the
+operator has seen exactly one raw oracle reply in their life and it was a truncated one
+rendered as unreadable. So each token gets this head's own sentence, and the daemon's `basis`
+follows as the DETAIL rather than being the whole message."
+  (let* ((basis "oracle-local gave no verdict")
+         (card (lambda (kind)
+                 (%advice-card-text
+                  (list :consulted t :would "ask" :by "oracle-local" :basis basis
+                        :cites nil :latency-ms 812 :unsure kind)))))
+    ;; --- the three the operator named, and they are three DIFFERENT screens
+    (let ((could (funcall card "could_not_decide"))
+          (unreadable (funcall card "unreadable"))
+          (room (funcall card "out_of_room")))
+      (is (search "the guard read it and could not tell" could)
+          (format nil "`could_not_decide`: ~s" could))
+      (is (search "the guard's reply was not a verdict" unreadable)
+          (format nil "`unreadable`: ~s" unreadable))
+      (is (search "the guard ran out of room before it answered" room)
+          (format nil "`out_of_room`: ~s" room))
+      (is (not (equal could unreadable)) "**and the three are not one screen**")
+      (is (not (equal could room)) "in either direction")
+      (is (not (equal unreadable room)) "all three pairwise distinct")
+      ;; and the daemon's own words follow as the detail, under the head's classification
+      (dolist (text (list could unreadable room))
+        (is (search basis text) "with the daemon's `basis` as the detail beneath it"))
+      ;; **the classification comes FIRST**, because it is the answer to *which* and the
+      ;; `basis` is the evidence for it
+      (is (< (search "the guard ran out of room" room) (search basis room))
+          "the head's sentence leads and the daemon's follows"))
+    ;; --- the fourth kind, which the criterion did not name and the daemon has
+    (is (search "between the thresholds" (funcall card "between_thresholds"))
+        "`between_thresholds` is its own sentence too — a number pair DID decide")
+    ;; --- **AN UNRECOGNISED KIND PRINTS RAW**
+    (let ((new (funcall card "a_fifth_kind_from_a_newer_daemon")))
+      (is (search "a_fifth_kind_from_a_newer_daemon" new)
+          (format nil "**a token this build does not know is SHOWN, not folded into one of
+ the four** — a daemon that gains a fifth fact must be visible, or this exact defect comes
+ back silently: ~s" new))
+      (is (not (search "could not tell" new)) "and it is not dressed as `could_not_decide`")
+      (is (not (search "ran out of room" new)) "nor as any of the others"))))
+
+(def-test the-five-facts-unsure-does-not-cover-are-five-screens (:suite leticl)
+  "**The half `unsure` does NOT cover, and the one that made the defect worse than reported.**
+
+`would: \"ask\"` is set by a REAL answer (`OracleAnswer::NotAuthorised` — the guard looked and
+found nothing) as well as by all four non-answers, so five facts arrived as one line. The
+`unsure` token separates four of them; **`consulted` separates the rest**, and this asserts
+both axes together."
+  (flet ((said (advice) (leticl::%advice-said advice)))
+    ;; --- consulted: false — nobody spoke, and there are three reasons
+    (is (search "no model was asked" (said (list :consulted nil :would "ask")))
+        "an always-ask rule: nobody spoke")
+    (is (search "nothing to ask about" (said (list :consulted nil :would "unavailable")))
+        "an unresolved action or an uncollected trail")
+    (is (search "a rule blocked this" (said (list :consulted nil :would "refuse")))
+        "a rule that blocks")
+    ;; --- consulted: true with no token — THE FIFTH FACT, an ANSWER, not a non-answer
+    (is (search "found nothing that authorises this" (said (list :consulted t :would "ask")))
+        "**`NotAuthorised` reads as an answer**, which is what `unsure` being absent MEANS")
+    (is (search "found authorisation" (said (list :consulted t :would "admit")))
+        "and an admit says so")
+    ;; --- and the two axes are independent, which is the whole argument for two fields
+    (is (not (equal (said (list :consulted t :would "ask"))
+                    (said (list :consulted t :would "ask" :unsure "out_of_room"))))
+        (format nil "**the same `would` and the same `consulted`, two different facts** — that
+ is the defect, and it is why `unsure` is a second axis rather than a longer `would`"))
+    ;; --- a `would` this build has never met falls through to the old sentence, not to NIL
+    (is (null (said (list :consulted t :would "a_new_disposition")))
+        "no classification for a disposition this build does not know")
+    ;; --- and an ABSENT `:consulted` is not `false`: the frame never made that claim.
+    ;; `would: "ask"` is the sharpest case, because `(:no "ask")` IS in the table — so a head
+    ;; that read absence as false would put this on the always-ask list, a claim the frame
+    ;; never made (it could equally be a `NotAuthorised` that `consulted: true` would mark)
+    (is (null (said (list :would "ask" :basis "b")))
+        "**a frame that never said whether a model spoke gets no classification**, rather than
+ being read as *no model was asked*")
+    (is (search "model says a_new_disposition"
+                (leticl::%advice-line (list :consulted t :would "a_new_disposition" :basis "why")))
+        "**and then the line says what it was TOLD** — a new value is shown, never dropped")))
+
 (def-test a-decision-says-what-it-was-grounded-in (:suite leticl)
   "Gap 9. `decision_detail` (app.rs:9462-9507) is five parts and we drew one.
 The two that carry the obligation: *\"empty cites is loud\"* — an authorisation
@@ -12069,15 +12168,19 @@ nothing\" are different and a blank reads as the second."
           "said out loud rather than left blank"))
     ;; an oracle that was asked and grounded its answer in nothing
     (let* ((with-advice (append d (list :advice (list :by "guard" :latency-ms 40
+                                                      :consulted t
                                                       :would "admit" :basis "it is a build dir"
                                                       :cites nil))))
            (lines (leticl::%decision-detail with-advice 200)))
-      (is (search "oracle (guard, 40ms) would admit: it is a build dir" (format nil "~{~a~%~}" lines))
-          "the oracle's own verdict, separate from the decider's basis")
+      (is (search "oracle (guard, 40ms) the guard found authorisation for this: it is a build dir"
+                 (format nil "~{~a~%~}" lines))
+          "the oracle's own verdict, separate from the decider's basis — and it says WHAT the
+ verdict IS (R12: `consulted` + `would` + no `unsure` is an ANSWER, and the head names it)")
       (is (member "oracle cited: nothing — it could not ground this in anything you said"
                   lines :test #'equal)
           "and the emptiness is RENDERED, not the absence of a list"))
     (let* ((cited (append d (list :advice (list :by "guard" :latency-ms 40
+                                                :consulted t
                                                 :would "admit" :basis "b"
                                                 :cites (list "you said build/ is disposable")))))
            (lines (leticl::%decision-detail cited 200)))

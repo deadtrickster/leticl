@@ -826,6 +826,94 @@ reference shouts (§8.2: abstention must not read like success)."
     ("backgrounded" "STILL RUNNING")
     (t word)))
 
+(defparameter +unsure-said+
+  '(;; **letibot's four tokens** (`UnsureKind::as_str`, `authorise.rs`) and the sentence THIS
+    ;; HEAD writes for each. The token is the daemon's; the sentence is the head's, and that
+    ;; division is the point — see `%advice-said`.
+    ("could_not_decide" . "the guard read it and could not tell")
+    ("between_thresholds" . "the guard's two scores landed between the thresholds")
+    ("unreadable" . "the guard's reply was not a verdict")
+    ("out_of_room" . "the guard ran out of room before it answered"))
+  "What an `unsure` token means, as this head says it.
+
+**The sentences are the head's and the tokens are the daemon's**, which is why they live here
+rather than being echoed: letibot publishes the token precisely so a head *authors the
+classification*, with the daemon's `basis` following as the detail. A head that printed the
+token raw, or that parsed `basis` back into a kind, would be either unreadable or inventing
+the very coupling the token exists to remove.")
+
+(defparameter +would-said+
+  '(((:no "ask") . "no model was asked — a rule puts this on the always-ask list")
+    ((:no "unavailable") . "no model was asked — there was nothing to ask about")
+    ((:no "refuse") . "no model was asked — a rule blocked this")
+    ((:yes "admit") . "the guard found authorisation for this")
+    ((:yes "ask") . "the guard found nothing that authorises this"))
+  "The five cases `unsure` does NOT cover, keyed `(spoke-p would)` with `spoke-p` a keyword.
+
+`(:yes ask)` — a guard that SPOKE and said no — is the one that used to be indistinguishable
+from the four non-answers: a
+guard that LOOKED and found no authorisation is an ANSWER, and it arrived in the same three
+fields as *I could not answer at all*.")
+
+(defun %advice-said (advice)
+  "What the oracle's answer AMOUNTS TO, in this head's words, or NIL.
+
+**R12, and this function is the whole of the head's half.** The criterion says the card must
+say WHICH of the non-answers happened; the daemon now sends `unsure`, so the head does not
+echo the daemon's prose to say it — it names the fact and lets the daemon's `basis` follow as
+the detail beneath. Measured before this existed, on three real frames: `consulted: true`,
+`would: \"ask\"`, `cites: []` is what FIVE distinct facts arrived as, so the card was
+byte-identical for a guard that looked and said no and for a guard that never finished a
+sentence.
+
+**An unrecognised `unsure` token is printed RAW.** A daemon that gains a fifth kind must be
+VISIBLE — a head that folded it into one of the four would reproduce this exact defect with a
+new fact, and silently. `the guard could not answer (some_new_kind)` is ugly on purpose.
+
+**And a `would` this build has never met is shown too**, by the caller falling back to
+`model says {would}`: nothing on the wire is ever dropped for being new.
+
+**A `:consulted` that is ABSENT is not `false`.** The wire always carries the field, so the
+only way to see it missing is a frame this build built by hand — but reading it as false would
+have the head say *no model was asked* about an advice that says a model admitted something,
+which is a claim the frame never made. So absence falls through to the caller's *what I was
+told* sentence, exactly as an unknown `would` does."
+  (let* ((consulted (getf advice :consulted :absent))
+         (spoke (cond ((eq consulted :absent) :absent)
+                      (consulted :yes)
+                      (t :no)))
+         (would (getf advice :would))
+         (unsure (getf advice :unsure)))
+    (cond
+      ;; a token the daemon sent, so the head can say exactly which non-answer this was
+      ((and (stringp unsure) (plusp (length unsure)))
+       (let ((hit (assoc unsure +unsure-said+ :test #'string=)))
+         (if hit (cdr hit) (format nil "the guard could not answer (~a)" unsure))))
+      ;; no token: the disposition AND whether a model spoke at all, which is five cases
+      ((cdr (assoc (list spoke would) +would-said+ :test #'equal)))
+      (t nil))))
+
+(defun %advice-line (advice)
+  "The ONE line that says what the oracle's answer amounts to, for both surfaces.
+
+**One function because the card and the settled row are two views of one fact**, and the
+repo's rule for that is one renderer: two would drift, and this one already had. The
+classification is the head's (from the token), the `basis` is the daemon's and follows as the
+detail — so a reader gets *the guard ran out of room before it answered* first and the
+daemon's own sentence under it, and the two can never disagree because neither is derived
+from the other.
+
+When this head has no classification it says what it was told: `model says {would}`. That is
+the fallback for an unknown `would` AND for a daemon that predates `unsure`, and it is
+deliberately the OLD sentence, so an older daemon draws exactly what it drew before."
+  (let ((said (%advice-said advice))
+        (basis (or (getf advice :basis) "")))
+    (if said
+        (if (plusp (length basis))
+            (format nil "~a: ~a" said basis)
+            said)
+        (format nil "model says ~a: ~a" (or (getf advice :would) "?") basis))))
+
 (defun %decision-detail (d w &key skip-basis)
   "What a settled decision was grounded in, wrapped to W — `decision_detail`
 (app.rs:9462-9507). Returns plain strings; each caller indents and paints its
@@ -877,9 +965,13 @@ is one line in another strand's file — `:advice (getf req :advice)` beside
                        basis))))
       (if advice
           (progn
-            (say (format nil "oracle (~a, ~ams) would ~a: ~a"
+            ;; the settled row keeps its own ATTRIBUTION — who and how long — on one line,
+            ;; because a transcript row has one line to spend; the card puts them on a
+            ;; second line beneath. What they share is the classification, which is the
+            ;; half that must not be able to disagree.
+            (say (format nil "oracle (~a, ~ams) ~a"
                          (or (getf advice :by) "") (or (getf advice :latency-ms) 0)
-                         (or (getf advice :would) "") (or (getf advice :basis) "")))
+                         (%advice-line advice)))
             (let ((cites (getf advice :cites)))
               (if (null cites)
                   (say "oracle cited: nothing — it could not ground this in anything you said")
