@@ -182,6 +182,34 @@ document's oldest defect) or as an R11-style locator is letibot's call — **but
 locator, it must be reachable from the SNAPSHOT too**, or a head that attaches after a
 compaction draws a row it can never fill.
 
+## R29 rule one — DONE, live, and the audit's second clause
+
+**Landed `44830ac` and PUSHED to the operator's head** (pid 2328208, protocol 23): 109 forms,
+none failed, render gate green, and the two `slash_refused` rows on their screen now end
+`  → nothing to fix — that verb does not exist. /help lists the ones that do; ctrl-n clears
+this note`. Their eleven notes are still theirs to clear, with `ctrl-n` now in the image.
+
+**The audit's second clause** — *does the act work in the process they are in* — measured on
+that head with a throwaway head per verb, so their session saw nothing:
+
+| named act | what THIS head does |
+|---|---|
+| `/help` `/status` `/notes` `/dismiss` `/subagents` `/verbosity` `/promote` `/peek` `/switch` `/rename` `/resume` `/cells` `/quit` | runs HERE — a pane, a sentence, or an in-place change |
+| `/mode` `/models` `/sessions` `/new` `/resync` `/compact` `/reseat` `/tools` `/todos` `/interrupt` `/gate` `/job` `/flowy` | goes to the daemon as a slash line — the daemon's own verb, and its answer is the record |
+| `ctrl-n` `ctrl-r` `ctrl-t` `ctrl-p` `ctrl-q` `ctrl-s` `ctrl-x` | claimed by `%global-chord` on a fresh head |
+
+**Every act the table names resolves**, and none of them is a remedy that cannot run. The two
+that name *something the reader must do outside the glass* — `frame_capture_disabled` (set the
+env var, restart the daemon) and `protocol_skew` (restart one of the halves) — say so in those
+words rather than pointing at a key.
+
+**And the probe found a trap worth writing down: `*slash-commands*` is the COMPLETION
+registry, not the dispatcher.** The first version of the audit checked named verbs against it
+and reported `/gate`, `/flowy`, `/job` and `/verbosity` as *remedies that cannot run* — all
+four work. `%command` has arms the registry does not list (`verbosity`, `jobs`) and forwards
+anything else to the daemon, where `/gate`, `/flowy` and `/job ID` live. **An audit of *what a
+head can do* has to ask the dispatcher and the wire, not the list it completes from.**
+
 ## The elision audit — the R27 second ruling's test, on this head's surface
 
 **The operator's test, 2026-09-23:** *"they arent reread, but they are the part of the
