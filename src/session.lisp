@@ -2324,6 +2324,12 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
                 ;; see `job-out-lines`. NIL from a daemon that does not send
                 ;; the field, which draws exactly what it drew before.
                 (getf *job-out* :never-ran) (and (getf env :never-ran) t)
+                ;; **AN ANSWER ARRIVED, whatever it weighs.** Set here and not
+                ;; inferred from the window: a zero-byte window is an answer, and the
+                ;; pane must say so rather than look like it is still waiting (R41).
+                ;; See `*job-out*` for why this is not `:loading` and not the state
+                ;; word.
+                (getf *job-out* :answered) t
                 (getf *job-out* :loading) nil
                 (getf *job-out* :error) nil)
           ;; A window lands at its TAIL: a fresh page, or a re-read of a running

@@ -10827,6 +10827,120 @@ nil`; the pane asks `(getf view :never-ran)`, which answers NIL for both.)"
     (is (null (getf leticl::*job-out* :never-ran))
         "and the overlay holds NIL rather than a guessed T")))
 
+(defun %job-pane-text (h)
+  "The job-output overlay's rows as plain strings."
+  (%pane-text (job-out-lines h 100)))
+
+(def-test zero-bytes-is-an-answer-and-the-pane-says-which (:suite leticl)
+  "**R41 requirement TWO, on the pane: *pending* and *empty* are two facts and the pane must
+say which one it is looking at.**
+
+The operator opened a job whose output had been REDIRECTED to a file — `cargo build
+--release … > /tmp/release-build.log 2>&1` — and the daemon's window for it is empty **by
+construction**, because the bytes went to the file and the exec host's capture never saw
+them. They reported the pane as *\"waiting for the output\"*, and the reframing is the
+requirement's own sentence: **zero bytes is an ANSWER.** The daemon answered; what came back
+happened to weigh nothing.
+
+So the pane must never infer *has an answer arrived* from *how much the answer weighs* —
+that inference is what makes an empty answer and no answer the same screen. It is keyed on
+the daemon's own fact instead, and this asserts the three states apart: before the answer,
+an answer of nothing while the job runs, and an answer of nothing from a job that settled."
+  (let* ((leticl::*job-out* nil)
+         (h (%job-head))
+         (wire (%wire h)))
+    ;; --- PENDING: the frame is out and nothing has come back
+    (leticl::%handle-key h (list :type :enter))
+    (is (equal "read_job_output" (getf (first (%sent wire)) :frame))
+        "Enter asked the daemon for the window")
+    (is (null (getf leticl::*job-out* :answered))
+        "**and the overlay knows nothing has been answered yet** — that is the pending fact")
+    (let ((text (%job-pane-text h)))
+      (is (find-if (lambda (l) (search "reading…" l)) text) "**pending** is what it says")
+      (is (not (find-if (lambda (l) (search "written nothing" l)) text))
+          "**and it claims NOTHING about what the job wrote** — nobody has told it yet, which is
+ the whole difference from the next case"))
+    ;; --- THE ANSWER IS ZERO BYTES, AND IT IS AN ANSWER
+    (leticl::%handle-frame h (list :frame "event" :seq 1 :event "job_output" :job "j12"
+                                   :from 0 :to 0 :produced 0 :dropped 0
+                                   :state "running" :never-ran nil :lines nil :next nil))
+    (is (eq t (getf leticl::*job-out* :answered))
+        "**the arrival is recorded as an ARRIVAL** — not inferred from the window later")
+    (let ((text (%job-pane-text h)))
+      (is (not (find-if (lambda (l) (search "reading…" l)) text))
+          "**the wait is over** — zero bytes is an answer, so the pane stops saying it is reading")
+      (is (find-if (lambda (l) (search "it is running and has written nothing yet." l)) text)
+          "and it draws the daemon's own sentence for an empty window (`harness.rs:3746`)")
+      (is (find-if (lambda (l) (search "bytes 0..0 of 0" l)) text)
+          "with the daemon's own numbers above it, not a parsed sentence"))
+    ;; --- AND A SETTLED JOB IS A DIFFERENT FACT ABOUT THE SAME EMPTINESS
+    (leticl::%handle-frame h (list :frame "event" :seq 2 :event "job_output" :job "j12"
+                                   :from 0 :to 0 :produced 0 :dropped 0
+                                   :state "exited 0" :never-ran nil :lines nil :next nil))
+    (let ((text (%job-pane-text h)))
+      (is (find-if (lambda (l) (search "it wrote nothing at all." l)) text)
+          "a settled job says its own sentence, and the running one is gone"))))
+
+(def-test a-re-read-does-not-take-away-what-the-last-answer-said (:suite leticl)
+  "**The gate on the emptiness sentence is the ARRIVAL, not whether a read is in flight.**
+
+This is the defect as measured, and it is one line: the sentence was drawn `(unless :loading)`, so
+a pane that had already been told *this job has written nothing yet* took the sentence AWAY the
+moment a further read went out — a header with **nothing under it**, which is the blank the
+operator read as *waiting*, and the same shape as a log whose every line is whitespace. The
+emptiness is a fact the last answer settled; only the next page is pending.
+
+**Stated plainly, because reachability is part of the claim: the pane's own paging cannot
+currently reach this state for a silent job.** `%job-out-page` only asks when the last answer named
+a further offset, and a silent job names none — so this is the RULE the pane is written to, not a
+screen the operator can stand in front of today. It is asserted because the alternative is a rule
+nobody wrote down, and because an answer that weighs nothing must not be able to turn into a wait
+by any route a later paging scheme, or a daemon answering a named offset, opens up."
+  (let* ((leticl::*job-out* nil)
+         (h (%job-head))
+         (wire (%wire h)))
+    (leticl::%handle-key h (list :type :enter))
+    (%sent wire)
+    (leticl::%handle-frame h (list :frame "event" :seq 1 :event "job_output" :job "j12"
+                                   :from 0 :to 0 :produced 0 :dropped 0
+                                   :state "running" :never-ran nil :lines nil :next nil))
+    (is (find-if (lambda (l) (search "written nothing yet" l)) (%job-pane-text h))
+        "the answer is on the screen")
+    ;; --- the state a page re-read puts the overlay in: a read in flight, over an answer
+    (setf (getf leticl::*job-out* :loading) t)
+    (is (eq t (getf leticl::*job-out* :answered))
+        "a re-read does not un-answer the pane")
+    (is (find-if (lambda (l) (search "written nothing yet" l)) (%job-pane-text h))
+        (format nil "**and the sentence STAYS** — keyed on `:loading` this drew a header with
+ NOTHING under it: ~s" (%job-pane-text h)))))
+
+(def-test an-empty-window-is-not-a-job-that-wrote-nothing (:suite leticl)
+  "**The sentence is chosen by the daemon's own condition — `produced == 0` — and not by the
+window's shape.**
+
+A window can hold nothing while the job HAS produced bytes: a read at an offset past the end, or a
+window the capture ring dropped entirely. Called on `lines` being empty, the pane said *it wrote
+nothing at all* about a job whose own header, two lines above, said `bytes 24..24 of 24` — §11.6's
+R17 inversion one case over, and a head disagreeing with the daemon about one job: the daemon draws
+this line on `slice.produced == 0` (`harness.rs:3746`) and says nothing about emptiness otherwise.
+
+**What the pane draws instead is the header and no sentence** — the window is genuinely empty and
+the numbers say why, which is the daemon's own choice for the same case. Inventing prose for a
+state nobody has stood in front of is what this tree refuses."
+  (let* ((leticl::*job-out* (list :job "j1" :state "exited 0" :never-ran nil
+                                  :from 24 :to 24 :produced 24 :dropped 0
+                                  :lines nil :next nil :back nil :loading nil
+                                  :answered t :error nil))
+         (h (%job-head)))
+    (setf (head-mode h) :job-out)
+    (let ((text (%job-pane-text h)))
+      (is (find-if (lambda (l) (search "bytes 24..24 of 24" l)) text)
+          "the header says which window this is")
+      (is (not (find-if (lambda (l) (search "wrote nothing at all" l)) text))
+          (format nil "**and the job is NOT said to have written nothing** — it produced 24\n bytes, and the sentence would contradict the header above it: ~s" text))
+      (is (not (find-if (lambda (l) (search "written nothing yet" l)) text))
+          "nor is it called still-running-and-silent"))))
+
 (def-test a-job-that-never-ran-has-no-duration-on-its-row-either (:suite leticl)
   "**The second place the same lie was told, and it is the one the wire made easy to miss.**
 

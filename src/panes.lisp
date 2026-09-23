@@ -1427,9 +1427,15 @@ clamps against the whole window and not against the slice drawn from it. Set by
 Opened at the KEYPRESS, before any answer: the pane says `reading…` rather than
 showing nothing, and — the part that matters — `apply-event` takes a `JobOutput`
 window only when an overlay is open for that job, so the overlay has to exist
-before the frame goes out or this head would drop its own answer."
+before the frame goes out or this head would drop its own answer.
+
+**`:answered` starts NIL and `:loading` starts T, and the two are not the same
+fact** (R41): one means *a read is in flight*, the other *one has come back*. The
+pane says `reading…` on the first and only the first, so an answer of ZERO BYTES
+stops being indistinguishable from an answer that never came."
   (setf *job-out* (list :job job :state "" :never-ran nil :from 0 :to 0 :produced 0
-                        :dropped 0 :lines nil :next nil :back nil :loading t :error nil))
+                        :dropped 0 :lines nil :next nil :back nil :loading t
+                        :answered nil :error nil))
   (reset-pane-scroll)
   *job-out*)
 
@@ -1513,10 +1519,19 @@ unwindowed, which is the shape every other pane has."
                 ;; NIL defaults throughout, and a NIL view reads as `reading…`:
                 ;; this pane draws from a plist the daemon fills a field at a
                 ;; time, and a header that says `NIL — bytes NIL..NIL` is a
-                ;; render fault dressed as a measurement
-                (if (or (null view)
-                        (and (getf view :loading)
-                             (zerop (length (or (getf view :state) "")))))
+                ;; render fault dressed as a measurement.
+                ;;
+                ;; **`reading…` is `(not :answered)`, and that is R41's whole
+                ;; finding: ZERO BYTES IS AN ANSWER.** The rule used to be
+                ;; `:loading` AND an empty state word, which is a guess at arrival
+                ;; made out of two things that are not arrival — a re-read sets
+                ;; `:loading` again on a pane that has ALREADY been told what it
+                ;; needs to know, and the state word is non-empty from the moment
+                ;; the first answer lands, so it can only answer *have I ever been
+                ;; answered*, never *is this window the one I am waiting for*. Keyed
+                ;; on the arrival, a pane that has heard `running, 0 bytes` keeps
+                ;; saying so — including while it waits for the next page.
+                (if (not (getf view :answered))
                     "    reading…"
                     ;; the state and the measurement on ONE line, because they are
                     ;; one fact: what the job is, and what window of how much is on
@@ -1530,7 +1545,25 @@ unwindowed, which is the shape every other pane has."
               (body (job-out-body view))
               (shown
                 (or body
-                    (unless (getf view :loading)
+                    ;; **THE EMPTINESS SENTENCE IS THE DAEMON'S OWN CONDITION: `produced == 0`.**
+                    ;; Not *the window holds no lines* — that is the window's SHAPE, and the two
+                    ;; come apart the moment a window holds nothing while the job HAS produced
+                    ;; bytes (a read at an offset past the end, a window the ring dropped
+                    ;; entirely). Called `produced > 0` with nothing in hand, `it wrote nothing at
+                    ;; all.` is a lie about the job, and it is §11.6's own R17 inversion one case
+                    ;; over: *a row with no output must not look like a row whose output is
+                    ;; empty*. The daemon draws the line in exactly this place —
+                    ;; `harness.rs:3746`, `if slice.produced == 0` — and a head that keyed it on
+                    ;; the window would disagree with the daemon about the same job.
+                    (when (and (getf view :answered)
+                               (zerop (or (getf view :produced) 0)))
+                      ;; **AND IT IS DRAWN FROM WHAT WE HAVE BEEN TOLD, not from whether a
+                      ;; read is in flight** (R41): the window's emptiness is a fact the
+                      ;; last answer settled, so a page re-read must not take the sentence
+                      ;; away. Measured, it drew a header with NOTHING under it — which is
+                      ;; the blank the operator read as *waiting for the output*, and the
+                      ;; same shape as a log whose every line is whitespace.
+                      ;;
                       ;; **A job that never ran is not a job that wrote nothing**
                       ;; (§11.6, letibot `e1cd2b0` — *A rules the words; both heads
                       ;; render the same string*).
