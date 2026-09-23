@@ -104,7 +104,7 @@ construction, here is the grep" where that is the truth.**
 | **R17's repair** | **CLOSED — the criterion no longer asks** | ruled §11.4: SAID and COUNTED, *"repairs"* dropped. Detection RUNS: `a-gap-in-the-event-stream-is-said-counted-and-filed` files the row and `/status` counts it; who presses the key is the head's choice, with the reason in the criterion |
 | **R11** — the brief and the raw reply | **CLOSED — the locator landed on both sides** | `shown` now holds the brief (the survey found *147 cards, zero briefs*) and `oracle_reply` holds the reply verbatim, but the wire carried neither. What was asked for was *a locator keyed `(kind . id)`, not a payload*; letibot `bc852c7` shipped `FetchDiagnostic`/`Diagnostic` at protocol 25 and the head reads both halves on demand, drawing *not recorded* and *recorded and empty* as the two different facts they are | `0c5aca6` |
 | **§11.6's `never_ran`** | **still A's, not patchable here** | derived from the exit code alone (`host.rs:900`), so a command that ran `exit 125` is listed as one that never did. Measured end to end on the operator's own scratch daemon; only the daemon holds the evidence |
-| **§11.7** — R18's card | **still A's** | A's wording |
+| **§11.7** — R18's card | **CLOSED — landed `aea5dcd`** | letibot `11f07e7`; the sentence is asserted VERBATIM and the two guards falsified (widening to any access → 2; guessing `exec` when the field is absent → the `:ABSENT` assertion plus R20's fit cascade). `access` is MEASURED on the wire (`tool_started` carries `access: "read"` at 25) | `aea5dcd` |
 | **R24 part two's three rulings** | **RUNS, NOT LIVE** | each one is falsified and named below; what is missing is the real daemon, and that is one landing: a scratch `harnessd` on its own socket, `/run` against it, and a forced `operator_call_allowed`. The three: (1) *run only on `OperatorCallAllowed`, match its `call_id`* — running on `Accepted` fails `an-accepted-call-is-queued-and-not-permission` (3 assertions) and a look-up that ignores the id fails `only-the-admission-runs-it-and-it-matches-the-call-id` (7); (2) *the door's names come from the `SettingRow`* — a list held in the head fails `the-door-is-the-daemons-list-and-not-a-copy-in-this-head` (6); (3) *neither answer arrives → run nothing, say so, do not re-send under a new id* — a re-ask fails `a-refused-call-is-not-retried` (2) and one sentence for both silences fails `a-queued-call-that-is-never-admitted-says-the-other-sentence` (3) | `bc85ffc` |
 | **R12's card** | **RUNS, NOT LIVE** | the DEFECT was measured on three real frames through `tui-eval`; the FIX has not been seen live, because it needs a daemon that actually emits an `unsure` token — a guard that cannot decide, comes back unreadable, or runs out of room. Falsified four ways here | `e56fdd7` |
 | **R11's locator** | **RUNS, NOT LIVE** | the corpus half was measured live (`147 cards, zero briefs`); the read itself has not been exercised against a real adjudication id. Falsified five ways here | `0c5aca6` |
@@ -112,6 +112,74 @@ construction, here is the grep" where that is the truth.**
 **Two asks go to letibot in the same batch as R24's four**: R12's `unsure` token on the wire,
 and R11's locator. Both are one field or one frame, and both are already measured from this
 side.
+
+## For letibot's batch — a documentation defect and the R27 wire ask
+
+### 1. The R24 wire was published in a shape a careful reader could implement wrongly
+
+`## R24 part two — THE WIRE` gives frame 2 as a Rust struct with the outcome described in
+prose:
+
+```rust
+ClientFrame::OperatorResult {
+    call_id: String,
+    outcome: letibot_transcript::ToolOutcome,   // Ok / Failed / Timeout / … — already on the wire
+    payload: String,
+}
+```
+
+**A Rust type name and a prose list of variants is not a wire shape.** `ToolOutcome` in Rust
+is a typed enum; in JSON it is an INTERNALLY TAGGED OBJECT (`{"outcome":"ok"}`), and nothing
+in the comment says so. I built the bare word, and the daemon's read loop — not one frame,
+the LOOP — answered `bye`, which is the end of the session for a head that treats `bye` as
+final. The comment is also wrong on its own terms: it names `Timeout` where the variant is
+`timeout`, and `timed_out` is not a variant at all.
+
+**What the document should say**, for every frame it publishes — and this is the general form,
+not this one frame:
+
+1. **the JSON, not the Rust** — `outcome: {"outcome": "ok"}`, with the tag spelled out;
+2. **the variants listed exactly, in snake_case, on their own line** — `ok`, `abstained`,
+   `failed`, `denied`, `timeout`, `not_run`, `backgrounded` (measured off the daemon's own
+   refusal, which is the only authority);
+3. **which variants require which extra fields** — `failed` REQUIRES `reason` (refused by
+   name without it: *missing field `reason`*), and no other variant takes one;
+4. **what happens when a head gets the shape wrong** — it fails the READ LOOP, the daemon
+   answers `bye`, and a head that treats `bye` as final ENDS. A frame-shape error is not a
+   retry; it is the end of the session, and a reader who knew that would check the shape;
+5. **a pointer to the existing precedent** — a `ToolResult` row already carries this same
+   object, so "the `ToolOutcome` a `ToolResult` carries" is a shape a reader can go and look
+   at instead of inferring.
+
+This is filed as a documentation defect and not a code one: nothing in the daemon is wrong.
+But the document exists so a head can build without reading the tree, and this wire was
+ambiguous enough that I wrote the wrong shape and was right to think I could.
+
+### 2. R27 — the compaction artefact, drawn from STRUCTURE
+
+The ask, in one paragraph: **put the compaction artefact's structure beside its prose, on the
+warning frame that already carries the sentence**, as an optional, defaulted object
+`warning.compaction` — so a head draws the sections as sections and the tail as a tail and
+stops parsing `compaction-facts` out of a format string. The named fields are `kind` (the
+daemon's own word, as it is today); `tokens_before` / `tokens_after` / `transcript` /
+`resident` / `window` / `headroom` / `carried` as numbers and ids rather than digits inside a
+sentence; `cut_off` as a bool, because a templated summary is exactly where "this was
+truncated" stops being readable out of any one section's prose; `template` as a tag like the
+`brief_sha` the corpus already keeps, so a change of template is visible; **`sections` as an
+ordered list of `{name, body}` in the DAEMON's own order and names** — not five names this
+head holds, for the same reason `head-run.tools` and `SettingRow.choices` are the daemon's —
+where **an empty body is a section that is present and says nothing (`(none)`) and a name
+ABSENT from the list is a section nobody stated (`(not stated)`)**, which are the two
+different facts the operator's ruling turns on; **`tail` as `{turns: [{role, text}], carried:
+bool, because: "local_model"|"nothing_fits"|"no_turns"}`**, carried BESIDE the summary and
+never folded into it, with an unknown `because` printed RAW, and with an EMPTY tail still
+present as an object so the local artefact is the remote one with an empty tail rather than a
+different shape; and `detail` kept, the daemon's own sentence, unchanged, as the record every
+unreadable path in this head falls back to. Whether it travels inline on the `Warning` (my
+preference: one event or two can drift about WHICH compaction they describe, which is this
+document's oldest defect) or as an R11-style locator is letibot's call — **but if it is a
+locator, it must be reachable from the SNAPSHOT too**, or a head that attaches after a
+compaction draws a row it can never fill.
 
 ## In flight
 
