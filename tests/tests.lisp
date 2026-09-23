@@ -7637,6 +7637,41 @@ rows are the finished form or it renders the answer twice\"* (app.rs:2650-2651).
     (is (equal '("i1" "i2") (getf (session-turn s) :appended))
         "both ids, in the order they landed")))
 
+(defun %door-settings (&optional (value "web_search,web_fetch"))
+  "The settings rows as the daemon publishes them, with the operator-call door's row."
+  (list (list :key "model" :value "qwen" :source "config" :editable "models" :choices nil)
+        (list :key +head-run-tools-key+ :value value :source "default"
+              :editable "" :choices nil)))
+
+(defvar *ran* nil
+  "What the stub runner was asked to run, newest first. A runner is a pure function of its
+arguments, so the suite binds `*head-tool-runners*` to this rather than measuring the
+network — the door's plumbing is what is under test, not anyone's fetcher.
+
+**Declared BEFORE the tests that bind it, and that is not tidiness.** `defvar` is what makes
+a name SPECIAL at compile time; a `let` over a name the compiler has not yet seen as special
+is a LEXICAL binding, so the runner's own `push` wrote the global while the assertion read
+its private copy — `ran: NIL` on a run that really happened. It failed one run in three,
+because it depended on how far the compiler had got.")
+
+(defun %stub-runner (outcome payload)
+  "A runner that records its arguments and answers with a fixed outcome."
+  (lambda (head args)
+    (declare (ignore head))
+    (push args *ran*)
+    (values outcome payload)))
+
+(defun %src-text (name)
+  "The text of one file under `src/`, found the way `%lisp-source-files` finds them.
+
+`%repo-file` merges a relative path onto `*load-truename*` and then falls back to a
+hard-coded repo root; this asks the directory walk instead, so a test that greps a source
+names the file by its own name and does not care where the image was loaded from."
+  (let* ((pair (find-if (lambda (p) (search (format nil "src/~a" name) (namestring (car p))))
+                        (%lisp-source-files)))
+         (path (and pair (car pair))))
+    (and path (probe-file path) (uiop:read-file-string path))))
+
 (def-test the-chord-opens-a-composer-for-the-arguments (:suite leticl)
   "**The chord, and the field it opens.** R24 part two is a chord and a composer, not a
 verb with two arguments on one line: the tool's own JSON is the kind of text that wants
@@ -7733,7 +7768,10 @@ nothing, and the permission does."
                                      :call-id call-id :name "web_fetch" :who "human:dead"
                                      :arguments "{\"url\": \"https://example.com\"}"))
       (is (equal (list "{\"url\": \"https://example.com\"}") *ran*)
-          "the permission runs it, once"))
+          (format nil "the permission runs it, once — ran: ~s, books: ~s, wire: ~s"
+                  *ran* (mapcar (lambda (e) (getf e :call-id)) *op-calls*)
+                  (mapcar (lambda (f) (list (getf f :frame) (getf f :outcome) (getf f :payload)))
+                          (funcall sent)))))
     (is (equal "operator_result" (getf (first (funcall sent)) :frame))
         "and the outcome goes back on the wire")))
 
@@ -12337,35 +12375,6 @@ both axes together."
 ;;; settings row, and **the ORDER between them is the whole requirement**: asking is not
 ;;; permission, and a head that ran on `Accepted` can have run a call whose admission was
 ;;; never written — a corpus row claiming the operator decided something they did not.
-
-(defun %src-text (name)
-  "The text of one file under `src/`, found the way `%lisp-source-files` finds them.
-
-`%repo-file` merges a relative path onto `*load-truename*` and then falls back to a
-hard-coded repo root; this asks the directory walk instead, so a test that greps a source
-names the file by its own name and does not care where the image was loaded from."
-  (let* ((pair (find-if (lambda (p) (search (format nil "src/~a" name) (namestring (car p))))
-                        (%lisp-source-files)))
-         (path (and pair (car pair))))
-    (and path (probe-file path) (uiop:read-file-string path))))
-
-(defun %door-settings (&optional (value "web_search,web_fetch"))
-  "The settings rows as the daemon publishes them, with the operator-call door's row."
-  (list (list :key "model" :value "qwen" :source "config" :editable "models" :choices nil)
-        (list :key +head-run-tools-key+ :value value :source "default"
-              :editable "" :choices nil)))
-
-(defvar *ran* nil
-  "What the stub runner was asked to run, newest first. A runner is a pure function of its
-arguments, so the suite binds `*head-tool-runners*` to this rather than measuring the
-network — the door's plumbing is what is under test, not anyone's fetcher.")
-
-(defun %stub-runner (outcome payload)
-  "A runner that records its arguments and answers with a fixed outcome."
-  (lambda (head args)
-    (declare (ignore head))
-    (push args *ran*)
-    (values outcome payload)))
 
 (def-test the-door-is-the-daemons-list-and-not-a-copy-in-this-head (:suite leticl)
   "**The row exists so a head that is never rebuilt still offers the right door** —
