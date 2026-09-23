@@ -14551,6 +14551,59 @@ SENTENCE the two produce: the anchor survives what the count cannot."
               (format nil "**the same ROW is at the top** — 23 stayed 23 through five rows above
  gaining a line:~% before: ~s~% after:  ~s" view1 view2)))))))
 
+(def-test a-scroll-key-moves-the-view-and-drops-the-anchor (:suite leticl)
+  "**Scrolling is a KEY, and the anchor must not fight it — measured broken, and this is the fix.**
+
+R36's anchor is re-found by row identity every frame, and `%viewport-lines` keeps `head-scroll` in
+step with it: the anchor DECIDES the window while it is set. So a `page-down` that decremented
+`head-scroll` was overwritten by the anchor's own arithmetic before the frame was drawn and the view
+did not move at all. Measured on a 40-row transcript: six `page-down`s from the top left the scroll
+at 66 and the same row on the first line — *scrolling is broken*, in the operator's words.
+
+**The fix is that a scroll key DROPS the anchor**, and the distinction is the whole of R36: the
+anchor survives ARRIVALS (content below, which is not the reader moving) and does not survive a key
+(the reader choosing a new place). `%anchor-observe` re-establishes it from the row the next frame
+draws, so nothing is lost — and the test for arrivals below is unchanged and still passes beside
+this one, which is what says the two rules are not in conflict."
+  (let ((leticl::*scroll-anchor* nil) (leticl::*hist-cache* nil)
+        (leticl::*hist-generation* 0) (leticl::*hist-bounds* nil)
+        (leticl::*anchor-lost-said* nil) (leticl::*scroll-max* 0))
+    (let* ((h (%anchor-head 40)))
+      ;; at the bottom: no anchor, and the live end is on the screen
+      (setf (head-scroll h) 0)
+      (is (null leticl::*scroll-anchor*) "a frame at the bottom has no anchor")
+      ;; --- back two pages, drawing a frame after each press as the loop does
+      (dotimes (i 2)
+        (leticl::%handle-key h (list :type :page-up))
+        (%top-row h))
+      (is (plusp (head-scroll h)) "page-up goes back")
+      (let ((top-back (%top-row h)))
+        ;; --- **AND PAGE-DOWN MUST MOVE** — the regression. Two frames at the same scroll is
+        ;; the shape the defect had: the key was consumed and the screen did not change.
+        (leticl::%handle-key h (list :type :page-down))
+        (is (null leticl::*scroll-anchor*)
+            "**the key drops the anchor** — the reader is moving, so the row has no claim on the frame")
+        (let ((top-down (%top-row h)))
+          (is (not (equal top-back top-down))
+              (format nil "**page-down MOVES the view** — this is the defect: the anchor overwrote
+ the scroll and the same row stayed at the top:~% before: ~s~% after:  ~s" top-back top-down))
+          (is (< (head-scroll h) 66) "and the scroll came down with it")))
+      ;; --- all the way down, and the bottom is the bottom
+      (dotimes (i 8)
+        (leticl::%handle-key h (list :type :page-down))
+        (%top-row h))
+      (is (zerop (head-scroll h)) "page-down reaches the bottom and stops there")
+      (is (null leticl::*scroll-anchor*) "and the bottom is still the stateless place")
+      ;; --- and the wheel is the same rule
+      (leticl::%handle-key h (list :type :wheel-up))
+      (%top-row h)
+      (is (plusp (head-scroll h)) "wheel-up goes back")
+      (let ((top-back (%top-row h)))
+        (leticl::%handle-key h (list :type :wheel-down))
+        (let ((top-down (%top-row h)))
+          (is (not (equal top-back top-down))
+              "**and wheel-down moves too** — one rule for every key that scrolls"))))))
+
 (def-test following-the-bottom-is-a-state-and-only-an-act-returns-to-it (:suite leticl)
   "**R36's second half.** *Following the bottom is a STATE, not a position. A reader who scrolled
 up has left it and only an explicit act returns them. Arriving content must never return them.*

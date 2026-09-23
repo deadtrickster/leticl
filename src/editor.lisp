@@ -1514,6 +1514,25 @@ what the hint bar says while one runs (`esc interrupt · ctrl+c clear`)."
                     (head-dirty head) t)
               (setf *ctrlc-at* now (head-dirty head) t))))))
 
+(defun %scroll-view (head delta)
+  "Move the reader's view DELTA lines (positive is further back), and DROP THE ANCHOR.
+
+**The anchor has to go, and that was a real defect — *scrolling is broken*, measured.** R36's anchor
+is re-found every frame by row identity, and `%viewport-lines` keeps `head-scroll` in step with it
+(`(setf (head-scroll head) (- n end))`). So while an anchor is set, the anchor decides the window:
+a `page-down` that decremented `head-scroll` was overwritten by the anchor's own arithmetic before the
+frame was drawn, and the view did not move at all. Measured on a 40-row transcript: six `page-down`s
+from the top left the scroll at 66 and the same row at the top.
+
+**Why dropping is the honest fix rather than a workaround.** The anchor's job is to survive *arrivals*
+— content appearing below, which is not the reader moving. A scroll key IS the reader moving: they are
+choosing a new place, so the row they were on has no claim on the frame. `%anchor-observe`
+re-establishes the anchor from the row the NEXT frame actually draws, which is the same rule the rest
+of R36 keeps — the anchor is a record of the top row of the last frame, never of a keypress."
+  (setf *scroll-anchor* nil
+        (head-scroll head) (max 0 (+ (head-scroll head) delta))
+        (head-dirty head) t))
+
 (defun %normal-key (head key)
   (let ((c (head-composer head))
         ;; a wheel is its KIND, as `%handle-key` reads it — see there
@@ -1615,16 +1634,12 @@ what the hint bar says while one runs (`esc interrupt · ctrl+c clear`)."
       ;; seam, so an extra call here costs nothing.
       ((:page-up) (when (>= (head-scroll head) *scroll-max*)
                     (fetch-row-above head))
-                  (incf (head-scroll head) (max 1 (- (head-rows head) 3)))
-                  (setf (head-dirty head) t))
-      ((:page-down) (setf (head-scroll head) (max 0 (- (head-scroll head)
-                                                       (max 1 (- (head-rows head) 3)))))
-                    (setf (head-dirty head) t))
+                  (%scroll-view head (max 1 (- (head-rows head) 3))))
+      ((:page-down) (%scroll-view head (- (max 1 (- (head-rows head) 3)))))
       ((:wheel-up) (when (>= (head-scroll head) *scroll-max*)
                      (fetch-row-above head))
-                   (incf (head-scroll head) 3) (setf (head-dirty head) t))
-      ((:wheel-down) (setf (head-scroll head) (max 0 (- (head-scroll head) 3)))
-                     (setf (head-dirty head) t))
+                   (%scroll-view head 3))
+      ((:wheel-down) (%scroll-view head -3))
       ((:ctrl)
        (case (getf key :ch)
          ((#\c) (%ctrl-c head))
