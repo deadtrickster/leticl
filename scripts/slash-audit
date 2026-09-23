@@ -1,0 +1,294 @@
+#!/usr/bin/env python3
+"""slash-audit — which verbs does this head ACT on, and which does Tab offer?
+
+    scripts/slash-audit                 # this tree
+    scripts/slash-audit --rust PATH     # …and a letibot checkout's crates/tui/src/app.rs
+
+# Why this exists rather than a grep
+
+**A completion table is not a dispatcher**, and reading one as the other is how a verb comes
+to work perfectly and never be offered. That is R32's first clause, and this is the
+measurement it leaves behind: for every verb this head will ACT on, is it in the list Tab
+completes from?
+
+The classification is **behavioural, not textual**. Every candidate is fed to the real
+`%command` on a head with no daemon, and what the head DOES decides the class:
+
+    acts       the head did something itself — a frame of its own, or a local change it can
+               be caught in. **These must be offered by Tab.**
+    forwarded  it put a `slash` frame on the wire. The DAEMON owns that word; a head that
+               enumerated it would be holding a copy of the other half's knowledge, which is
+               the `head-run.tools` mistake exactly.
+    nothing    the head did nothing at all — a string in a comment, or a dead name.
+
+Two things this script got wrong on its first run, recorded because both are the reason to
+measure rather than to look:
+
+  · the candidate set was `%command`'s body alone, so a row the registry offers with no arm
+    behind it (lectic's `/tools` was the live one) was invisible. The candidate set is now the
+    UNION of the dispatcher's literals and the registry's own rows, which is what makes the
+    other direction measurable.
+  · the head-snapshot that detects a LOCAL act captured `(head-prefs h)` **by reference**, so
+    a fold — which mutates the plist in place — left "before" and "after" pointing at the same
+    conses, and `/think`, `/r` and `/t` were reported as *the head did nothing* while working
+    perfectly. They are copied now. **A snapshot that shares structure is not a snapshot.**
+"""
+
+import argparse
+import os
+import re
+import subprocess
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+
+# ------------------------------------------------------------------ the leticl probe
+
+PROBE = r'''
+(require :asdf)
+(require :sb-bsd-sockets)
+(require :sb-posix)
+(let ((root (pathname "ROOTPATH")))
+  (asdf:initialize-source-registry
+   `(:source-registry
+     (:directory ,root)
+     (:directory ,(merge-pathnames "vendor/alexandria/" root))
+     (:directory ,(merge-pathnames "vendor/trivial-gray-streams/" root))
+     (:directory ,(merge-pathnames "vendor/yason/" root))
+     (:directory ,(merge-pathnames "vendor/anaphora/" root))
+     (:directory ,(merge-pathnames "vendor/fiveam/" root))
+     (:directory ,(merge-pathnames "vendor/asdf-flv/" root))
+     (:directory ,(merge-pathnames "vendor/trivial-backtrace/" root))
+     :inherit-configuration))
+  (asdf:load-system :leticl))
+
+(defun %stub-head ()
+  "A head with no daemon. The wire is a string stream, so what went out can be read back."
+  (let* ((h (leticl::%make-head))
+         (wire (make-string-output-stream)))
+    (setf (leticl::head-stream h) wire (leticl::head-connected h) t)
+    (setf (leticl::head-settings h)
+          (list (list :key "model" :value "qwen")
+                (list :key leticl::+head-run-tools-key+ :value "web_search,web_fetch"
+                      :source "default" :editable "" :choices nil)))
+    (values h wire)))
+
+(defun %wire-frames (wire)
+  (nreverse (mapcar #'leticl::json-decode
+                    (remove "" (uiop:split-string (get-output-stream-string wire)
+                                                  :separator '(#\newline))
+                            :test #'string=))))
+
+(defun %snapshot (h)
+  "Everything a LOCAL act could plausibly move — copied. A fold mutates the prefs plist in
+  place, so capturing it by reference makes before and after the SAME observation."
+  (copy-tree
+   (list (leticl::head-mode h) (leticl::head-dirty h) (leticl::head-full-repaint h)
+         (leticl::head-scroll h) (leticl::head-picker-sel h) (leticl::head-decision-sel h)
+         (leticl::head-status-note h) (leticl::head-running h) (leticl::head-quit-open h)
+         (leticl::head-quit-sel h) (leticl::head-prefs h) (leticl::head-queued h)
+         (leticl::head-peeked h) (leticl::head-want-new h)
+         (leticl::composer-buffer (leticl::head-composer h))
+         leticl::*op-call-draft* leticl::*pick-open* leticl::*diag*)))
+
+(defun %classify (verb)
+  (let ((leticl::*op-calls* nil) (leticl::*op-call-draft* nil) (leticl::*pick-open* nil)
+        (leticl::*diag* nil) (leticl::*head-tool-runners* nil)
+        (leticl::*queued-unconfirmed* nil))
+    (multiple-value-bind (h wire) (%stub-head)
+      (handler-case
+          (let ((before (%snapshot h)))
+            (leticl::%command h verb)
+            (let ((frames (%wire-frames wire))
+                  (after (%snapshot h)))
+              (cond
+                ((find "slash" frames :key (lambda (f) (getf f :frame)) :test #'string=)
+                 (format t "~&FORWARDED|~a|~%" verb))
+                (frames (format t "~&ACTS|~a|head-frame-~a~%" verb (getf (first frames) :frame)))
+                ((not (equal before after)) (format t "~&ACTS|~a|local~%" verb))
+                (t (format t "~&NOTHING|~a|~%" verb)))))
+        (error (e) (format t "~&ERRORED|~a|~a~%" verb e))))))
+
+(dolist (v 'CANDIDATES)
+  (ignore-errors (%classify v)))
+(format t "~&REGISTRY-COUNT ~d~%" (length leticl::*slash-commands*))
+(dolist (row leticl::*slash-commands*)
+  (format t "~&ROW|~a|~%" (if (consp row) (car row) row)))
+'''
+
+
+def registry_rows():
+    """The registry's ROWS, as the head itself spells them.
+
+    A row may be a bare name or a `(name . hint)` pair — `*slash-commands*` carries hints, and
+    a two-word row like `reseat summarise` is ONE row and not two verbs.
+    """
+    text = open(os.path.join(ROOT, "src/commands.lisp")).read()
+    start = text.index("(defparameter *slash-commands*")
+    end = text.index("\n\n", start)
+    block = text[start:end]
+    rows = []
+    for m in re.finditer(r'\(\s*"([^"]+)"\s*(\.\s*"|\s*\))', block):
+        rows.append(m.group(1))
+    return rows
+
+
+def candidates(registry):
+    """The union of `%command`'s own literals and the registry's rows.
+
+    A superset on purpose: the classification below decides, and the union is what makes the
+    OTHER direction measurable — a row with no arm behind it.
+    """
+    text = open(os.path.join(ROOT, "src/commands.lisp")).read()
+    body = text[text.index("(defun %command "):text.index("(defun %notes ")]
+    body = re.sub(r";;.*$", "", body, flags=re.M)
+    out = []
+    for lit in re.findall(r'"([^"\\]*)"', body) + list(registry):
+        # a candidate may be TWO words: `reseat summarise` is one row and the head's arm
+        # reads the line, so the whole row is what has to be fed back in
+        if lit and re.fullmatch(r"[a-z?][a-z]*( [a-z]+)?", lit) and lit not in out:
+            out.append(lit)
+    return out
+
+
+def classify(names):
+    src = PROBE.replace("ROOTPATH", ROOT + os.sep)
+    src = src.replace("'CANDIDATES", "'(" + " ".join('"%s"' % n for n in names) + ")")
+    path = "/tmp/leticl-slash-audit.lisp"
+    open(path, "w").write(src)
+    run = subprocess.run(["sbcl", "--script", path], capture_output=True, text=True, cwd=ROOT)
+    acts, forwarded, nothing, errored, registry = [], [], [], [], []
+    for line in run.stdout.split("\n"):
+        if "|" not in line:
+            continue
+        kind, _, rest = line.partition("|")
+        verb, _, detail = rest.partition("|")
+        if kind == "ACTS":
+            acts.append((verb, detail))
+        elif kind == "FORWARDED":
+            forwarded.append(verb)
+        elif kind == "NOTHING":
+            nothing.append(verb)
+        elif kind == "ERRORED":
+            errored.append((verb, detail))
+        elif kind == "ROW":
+            registry.append(verb)
+    if not registry:
+        sys.stderr.write("the probe produced nothing:\n" + run.stdout[-2000:]
+                         + run.stderr[-3000:])
+        sys.exit(2)
+    return acts, forwarded, nothing, errored, registry
+
+
+# ------------------------------------------------------------------ the letibot half
+
+def rust_function_body(path, start_line):
+    src = open(path).read().split("\n")
+    depth, started, out = 0, False, []
+    for i in range(start_line - 1, len(src)):
+        line = src[i]
+        out.append(line)
+        stripped = re.sub(r'"(\\.|[^"\\])*"', '""', line)
+        stripped = re.sub(r"'(\\.|[^'\\])'", "''", stripped)
+        stripped = re.sub(r"//.*$", "", stripped)
+        for ch in stripped:
+            if ch == "{":
+                depth += 1
+                started = True
+            elif ch == "}":
+                depth -= 1
+        if started and depth == 0:
+            break
+    return "\n".join(out)
+
+
+def rust_measure(app_rs):
+    """(acted, offered) from a letibot checkout's dispatcher and table.
+
+    Four ways this dispatcher names a verb, and all four are read: `verb_arg(cmd, "x")`,
+    `matches!(_, "a" | "b")` **with any scrutinee** (the `verb` spelling is the one a
+    scrutinee-specific pattern misses), `strip_prefix("x ")`, and the `match` arms.
+    """
+    text = open(app_rs).read()
+    line = text[:text.index("fn command(&mut self, cmd: &str)")].count("\n") + 1
+    body = rust_function_body(app_rs, line)
+    acted = set()
+    for m in re.finditer(r'verb_arg\(cmd,\s*"([a-z0-9_-]+)"\)', body):
+        acted.add(m.group(1))
+    for m in re.finditer(r'matches!\(\s*\w+\s*,\s*((?:"[a-z0-9_ ?#-]+"\s*(?:\|\s*)?)+)\)',
+                         body):
+        for lit in re.findall(r'"([a-z0-9_ ?#-]+)"', m.group(1)):
+            acted.add(lit.strip())
+    for m in re.finditer(r'strip_prefix\("([a-z0-9_-]+) "\)', body):
+        acted.add(m.group(1))
+    for ln in body.split("\n"):
+        if "=>" not in ln:
+            continue
+        head = ln.split("=>")[0]
+        if re.fullmatch(r'\s*\|?\s*(("[a-z0-9_ ?#-]+")\s*(\|\s*)?)+\s*\{?\s*', head):
+            for lit in re.findall(r'"([a-z0-9_ ?#-]+)"', head):
+                acted.add(lit.strip())
+    start = text.index("const SLASH_COMMANDS")
+    end = text.index("\n];", start)
+    offered = set(re.findall(r'\(\s*"([^"]+)"\s*,\s*"', text[start:end]))
+    aliases = set()
+    m = re.search(r'const HEAD_COMMAND_ALIASES[^=]*= &\[([^\]]*)\]', text)
+    if m:
+        aliases = set(re.findall(r'"([^"]+)"', m.group(1)))
+    return acted, offered, aliases
+
+
+# ------------------------------------------------------------------ report
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--rust", help="a letibot tree's crates/tui/src/app.rs, if one is here")
+    args = ap.parse_args()
+
+    rows = registry_rows()
+    acts, forwarded, nothing, errored, registry = classify(candidates(rows))
+    print("=" * 78)
+    print("LETICL — the head's half")
+    print("  the registry has %d rows; the head ACTS on %d verbs"
+          % (len(registry), len(acts)))
+    acted = [v for v, _ in acts]
+    missing = [(v, d) for v, d in sorted(acts) if v not in registry]
+    print("  ** ACTS BUT NOT OFFERED BY TAB (%d):" % len(missing))
+    for v, d in missing:
+        print("       /%-12s (%s)" % (v, d))
+    print("  acted on and offered (%d): %s"
+          % (len([v for v in acted if v in registry]), sorted(v for v in acted if v in registry)))
+    # **The other direction, and it is not the same fact.** A row the head FORWARDS is a row
+    # the head does not act on: legitimate only when the DAEMON owns that word, which this
+    # head cannot check from its own source — which is why the daemon publishes them.
+    ghost = sorted(v for v in registry if v not in acted)
+    print("  ** OFFERED, AND THIS HEAD DOES NOT ACT ON IT (%d): %s" % (len(ghost), ghost))
+    for v in ghost:
+        print("       /%-12s — the head %s"
+              % (v, "forwards it; the daemon must own it" if v in forwarded
+                 else "has no arm for it at all"))
+    print("  FORWARDED to the daemon (%d) — this head's source cannot enumerate these:"
+          % len(forwarded))
+    print("       %s" % " ".join("/" + v for v in sorted(forwarded)))
+    if nothing:
+        print("  the head did NOTHING at all (%d): %s"
+              % (len(nothing), " ".join(sorted(nothing))))
+    if errored:
+        print("  ERRORED: %s" % errored)
+
+    if args.rust and os.path.exists(args.rust):
+        racted, roffered, raliases = rust_measure(args.rust)
+        print("=" * 78)
+        print("LETIBOT — App::command vs SLASH_COMMANDS (a point-in-time reading)")
+        print("  the table offers %d; the dispatcher acts on %d; %d declared aliases"
+              % (len(roffered), len(racted), len(raliases)))
+        gap = sorted(v for v in racted
+                     if v not in roffered and v not in raliases and " " not in v)
+        print("  ** ACTS, NOT OFFERED, NOT DECLARED AN ALIAS (%d): %s" % (len(gap), gap))
+        ghost = sorted(v for v in roffered if v not in racted)
+        print("  offered with no arm found (%d): %s" % (len(ghost), ghost))
+
+
+if __name__ == "__main__":
+    main()
