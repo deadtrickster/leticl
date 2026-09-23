@@ -13316,6 +13316,209 @@ The tool is never lost by any of this, only the sugar: `/run NAME …` still nam
         (is (eq :help (head-mode h)) "`/help` is the head's, whatever the door is called")
         (is (null (funcall sent)) "and it asked for nothing")))))
 
+(defun %write-card (plist cols)
+  "A permission card carrying PLIST, as the card's own lines — one call through the real path.
+A helper because four tests below ask the same question of four frames."
+  (let ((h (%make-head)))
+    (setf (session-open-decisions (head-session h))
+          (list (append (list :req-id "adj-w" :kind "permission"
+                              :summary "`bash` wants exec access to `python3 -`"
+                              :options (list (list :option-id "allow_once" :label "Allow once")))
+                        plist)))
+    (multiple-value-list (permission-card-lines h cols))))
+
+(defun %card-all-text (plist cols)
+  "Every line of the card — content AND ladder — as one string, which is what a reader sees."
+  (multiple-value-bind (content ladder) (%write-card plist cols)
+    (format nil "~{~a~^~%~}"
+            (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l)))
+                    (append content ladder)))))
+
+(defun %card-content (plist cols)
+  "The card's CONTENT lines only — the part R25's viewport may window."
+  (car (%write-card plist cols)))
+
+(def-test a-write-target-is-drawn-in-the-one-register-both-mechanisms-use (:suite leticl)
+  "**R35's first requirement, and the whole of it is that there is ONE drawing.**
+
+A write made through the `write`/`edit` tool and a write made by a `python3` heredoc the gate
+read out of the body are the SAME FACT — *this action writes this file*. The operator's words
+are about a reader: *a reader comparing two cards must not have to know which mechanism produced
+them*. So the assertion is that the two cards render the path at the same place in the same
+style, and the way to state that so it cannot pass by accident is to compare the SEGMENTS, not
+the text.
+
+**And the reason this needed a function rather than a second code path**: `%write-targets`
+falls back to the edit tool's own `target` when the daemon sent no field, so the edit card is
+drawn by the same block that will draw the heredoc's — byte for byte, which is the requirement
+made checkable."
+  (let* ((path "/home/dead/Projects/rano/rano/src/syntax.rs")
+         ;; the edit card: a `write` access whose single target IS the path
+         (edit (%card-content (list :access "write" :target path) 100))
+         ;; the heredoc card: a command for a target, and the field naming the path
+         (heredoc (%card-content (list :access "exec"
+                                       :target "cd ~/Projects/rano && python3 - <<'PY' …"
+                                       :write-targets (list (list :path path)))
+                                  100)))
+    ;; **the file's own line, in both** — found by the segment that carries the path
+    (flet ((path-line (lines)
+             (first (remove-if-not (lambda (l) (search path (format nil "~{~a~}" (mapcar #'car l))))
+                                   lines))))
+      (let ((a (path-line edit)) (b (path-line heredoc)))
+        (is (not (null a)) "the edit card names its path")
+        (is (not (null b)) "**and so does the heredoc card** — a file, not 2,000 characters of python")
+        (is (equal (caar a) (caar b))
+            (format nil "**the same place in the line** — indentation and all: ~s vs ~s"
+                    (caar a) (caar b)))
+        (is (equal (cdar a) (cdar b))
+            (format nil "**and the same emphasis** — the same style list: ~s vs ~s"
+                    (cdar a) (cdar b)))
+        (is (equal '(:bold t) (cdar b)) "which is the target register: indented four, bold")))
+  ;; --- a `write` access whose daemon sent NO field draws exactly what it always drew
+  (is (search "src/syntax.rs" (%card-all-text (list :access "write"
+                                                    :target "/x/src/syntax.rs") 100))
+      "the edit card is unchanged — one path, one line, no header")
+  (is (not (search " files:" (%card-all-text (list :access "write"
+                                                   :target "/x/src/syntax.rs") 100)))
+      "**and no count header for a single write**, because a header on one file is noise")
+  ;; --- an exec with a target and NO write field: nothing new is drawn
+  (let ((text (%card-all-text (list :access "exec" :target "cargo test") 100)))
+    (is (search "cargo test" text) "an exec card still names its command")
+    (is (not (search "could not be read" text)) "and claims no write it was not told about"))))
+
+(def-test an-unresolved-write-is-its-own-sentence-and-not-an-absence (:suite leticl)
+  "**R35's second requirement, and it is the one the operator said he most needs to see.**
+
+*An UNRESOLVED target (`a write whose target could not be read`) is a different sentence from
+no write at all, and drawing them the same way throws away the one the operator most needs to
+see.* `open(sys.argv[1],'w')` and `pathlib.Path.home() / '.ssh' / 'authorized_keys'` are
+writes whose path the classifier cannot name — and the oracle has already been measured denying
+one, so the fact is worth carrying even when the target is not literal.
+
+**The assertion is a three-way difference**, which is the only way to state *these are different
+facts*: a card with no write field, a card with a resolved write, and a card with an unresolved
+one must produce three different screens — and the unresolved one carries the words, in a
+register that is not the path register."
+  (let* ((none (%card-all-text (list :access "exec" :target "python3 -") 100))
+         (resolved (%card-all-text (list :access "exec" :target "python3 -"
+                                         :write-targets (list (list :path "/tmp/out.txt")))
+                                   100))
+         (unresolved (%card-all-text (list :access "exec" :target "python3 -"
+                                           :write-targets (list (list :unresolved t)))
+                                     100)))
+    (is (not (equal none resolved)) "a resolved write changes the card")
+    (is (not (equal resolved unresolved)) "**and an unresolved one is a THIRD card**")
+    (is (not (equal none unresolved)) "which is not the same as no write at all")
+    (is (search "a write whose target could not be read" unresolved)
+        (format nil "**the sentence says exactly that** — the words a reader can act on: ~s"
+                unresolved))
+    (is (search "runtime" unresolved)
+        "and WHY it cannot be named, because *could not be read* alone reads as a bug on the head's side")
+    (is (not (search "could not be read" resolved))
+        "a resolved write makes no such claim")
+    (is (not (search "could not be read" none))
+        "and neither does a card with no write at all — the whole point of the difference"))
+  ;; **the register**, measured rather than asserted: the sentence is not in the path register
+  (let* ((lines (%card-content (list :access "exec" :target "python3 -"
+                                     :write-targets (list (list :unresolved t)))
+                               100))
+         (line (first (remove-if-not (lambda (l)
+                                       (search "could not be read"
+                                               (format nil "~{~a~}" (mapcar #'car l))))
+                                     lines))))
+    (is (not (null line)) "the sentence is on the card")
+    (is (equal leticl::+role-attention+ (cdar line))
+        (format nil "**in the ATTENTION register**, not the path one — *somebody has to look*: ~s"
+                (cdar line)))
+    (is (not (equal '(:bold t) (cdar line)))
+        "and not bold, which is what a path is")))
+
+(def-test several-write-targets-elide-to-the-viewport-and-the-count-is-said (:suite leticl)
+  "**R35's third requirement: R25's rule at this surface.**
+
+*Several targets elide to the viewport, and the count is said.* The paths are CONTENT — the part
+`%render` windows with `card-content-window`, whose seam counts ROWS — so a card with eighty
+targets would show its window and a row-count, and the number of FILES would be nowhere on the
+screen. So the count goes above them, where no elision can reach it, and only when there is more
+than one.
+
+**And it is said on the line that names them rather than in a seam of its own**, because the
+viewport's seam is already taken and a second seam row would be two rows of chrome for one fact."
+  (let ((targets (loop for i from 0 below 12
+                       collect (list :path (format nil "/home/dead/Projects/rano/src/file-~2,'0d.rs" i)))))
+    (let* ((lines (%card-content (list :access "exec" :target "python3 -" :write-targets targets) 100))
+           (text (format nil "~{~a~^~%~}" (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l))) lines))))
+      (is (search "12 files:" text)
+          (format nil "**the count is on the card** — 12 targets, and the reader is told how many: ~s"
+                  text))
+      (is (search "file-00.rs" text) "the first is named")
+      (is (search "file-11.rs" text) "and so is the last, at this width")
+      ;; the count is ABOVE the names, so that a window onto them cannot hide it
+      (is (< (search "12 files:" text) (search "file-00.rs" text))
+          "**the count comes FIRST** — a window onto the names must not be able to hide it"))
+    ;; --- narrowing the card WRAPS the paths, and the count survives
+    (let* ((lines (%card-content (list :access "exec" :target "python3 -"
+                                        :write-targets targets)
+                                  40))
+           (text (format nil "~{~a~^~%~}" (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l))) lines))))
+      (is (> (length lines)
+             (length (%card-content (list :access "exec" :target "python3 -"
+                                          :write-targets targets)
+                                    100)))
+          "**at 40 columns the same targets cost more rows** — they wrap, and that is what the
+ viewport then windows")
+      (is (search "12 files:" text)
+          (format nil "**and the count is still on the card at 40 columns** — it is a line of its
+ own, above the names, so wrapping the names cannot lose it: ~s" text)))
+    ;; --- ONE target: no header, which is why the single-write card did not change
+    (let ((one (%card-content (list :access "exec" :target "python3 -"
+                                    :write-targets (list (list :path "/tmp/one.rs"))) 100)))
+      (is (not (search "files:" (format nil "~{~a~^~%~}"
+                                        (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l)))
+                                                one))))
+          "one target draws no count — a header over one file is a row spent on a number nobody needs")))
+  ;; --- and the viewport DOES window many targets, which is the half `%render` owns
+  (let* ((targets (loop for i from 0 below 40
+                        collect (list :path (format nil "/x/f~2,'0d.rs" i))))
+         (content (%card-content (list :access "exec" :target "python3 -"
+                                       :write-targets targets)
+                                 100)))
+    (is (> (length content) 20) "forty targets render as a long content block")
+    (let ((windowed (card-content-window content 6 0)))
+      (is (<= (length windowed) 6) "and the viewport holds them to its room")
+      (is (search "out of view" (format nil "~{~a~^~%~}"
+                                        (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l)))
+                                                windowed)))
+          "**with the seam saying how much is out of view** — R25's rule, in the viewport that owns it"))))
+
+(def-test a-write-card-says-its-own-kind-of-write-and-not-the-other (:suite leticl)
+  "**The two sentences a card must not confuse, pinned as literals.**
+
+A card is asked about one action, and the write block must describe THAT action. A `write`
+access with no field is the edit card and names its target once; an `exec` with a field names
+the files the script opens. A card that printed both — or that printed `files: 1` over the
+target it had already drawn — would be a card telling a reader about a mechanism instead of about
+their own action."
+  ;; a `write` access whose daemon DID send the field: the field wins and is drawn once
+  (let* ((path "/x/one.rs")
+         (lines (%card-content (list :access "write" :target path
+                                     :write-targets (list (list :path path)))
+                               100))
+         (hits (count-if (lambda (l) (search path (format nil "~{~a~}" (mapcar #'car l)))) lines)))
+    (is (= 2 hits)
+        (format nil "the path appears twice — once as the target line, once from the field, which is
+  what a daemon sending BOTH is telling the card: the target is what is asked about and the field is
+  what is written. Two occurrences, not a claim: ~s" hits)))
+  ;; and an entry the shape of which is not a target is dropped rather than drawn blank
+  (let ((text (%card-all-text (list :access "exec" :target "python3 -"
+                                    :write-targets (list (list :path "")
+                                                         (list :unresolved nil)
+                                                         "not an object"
+                                                         (list :path "/x/real.rs")))
+                              100)))
+    (is (search "/x/real.rs" text) "the one real target is drawn")
+    (is (not (search " files:" text)) "and an entry that is not a target is not counted as one")))
+
 (def-test the-deposit-says-what-it-costs-before-it-lands (:suite leticl)
   "**R31 (e): *it spends the window, visibly. A 40k-token page is 40k of context the operator
 chose to buy — the size is shown before it lands, because the alternative is discovering it at

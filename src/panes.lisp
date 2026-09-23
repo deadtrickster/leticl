@@ -2057,6 +2057,21 @@ never scrolled. The content becomes a viewport that SHRINKS to whatever room is 
             ;; bold rather than yellow: the question is yellow, and the thing
             ;; being asked about is not a second question
             (wrapped (format nil "    ~a" target) '(:bold t)))
+          ;; **R35: THE FILES THIS ACTION WRITES, in the register the target is in.** Drawn
+          ;; here — immediately under the target, inside the content — because that is where a
+          ;; reader looks for *what is this about to touch*, and because the edit tool's own
+          ;; path is drawn two lines up in exactly this style. A reader comparing the two cards
+          ;; must not have to know which mechanism produced them.
+          ;;
+          ;; **Only when the DAEMON sent the field**, and that guard is the whole of why the
+          ;; edit card does not draw its path twice: `%write-targets` falls back to the target
+          ;; itself for a `write` access, and that path is ALREADY on the line above. The block
+          ;; is for the case the single `target` cannot express — a script whose target is a
+          ;; command and whose writes are elsewhere, which is exactly the case R35 was filed
+          ;; for. Inert until the daemon sends the field: no daemon sends it today.
+          (when (getf d :write-targets)
+            (dolist (l (write-target-lines (%write-targets d) w))
+              (push l out)))
           (when (plusp (length (or (getf d :detail) "")))
             (wrapped (format nil "  ~a" (getf d :detail)) '(:dim t)))
           ;; the reference's card has no `because`; ours carries it and it is the
