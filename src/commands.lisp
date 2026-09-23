@@ -1,9 +1,21 @@
 ;;;; commands.lisp — the command surface: the registry, the senders, and /cells.
 ;;;;
-;;;; `*slash-commands*` is the one list the help screen, tab completion and the
-;;;; dispatcher all read, so the three cannot drift apart. The frames here are
-;;;; the ones a person or a model asks for by name; anything this file does not
-;;;; know travels to the daemon as a `slash` frame.
+;;;; `*slash-commands*` is the HEAD's OWN vocabulary: the canonical spelling of every verb
+;;;; `%command` acts on, and nothing else. Tab and the live completion row walk it joined with
+;;;; the verbs the DAEMON publishes (`+daemon-verbs-key+`), because the namespace has two
+;;;; owners and neither may enumerate the other's half.
+;;;;
+;;;; **This file used to claim the three could not drift.** It said `*slash-commands*` was
+;;;; "the one list the help screen, tab completion and the dispatcher all read" — and the
+;;;; dispatcher read nothing: it is a `cond` of string literals, and the help screen draws
+;;;; `*help-rows*`. Measured 2026-09-23 (`scripts/slash-audit`), **twelve verbs this head acts
+;;;; on had no row and one row named a verb this head does not act on** — a registry read as a
+;;;; dispatcher because it was the only list of verbs anybody had, and nearly right, which is
+;;;; why nothing said so. `the-registry-and-the-dispatcher-cannot-drift` is what keeps it
+;;;; honest now, and it reads the dispatcher rather than trusting this sentence.
+;;;;
+;;;; The frames here are the ones a person or a model asks for by name; anything this file does
+;;;; not know travels to the daemon as a `slash` frame.
 
 (in-package #:leticl)
 
@@ -19,24 +31,32 @@
 
 
 (defparameter *slash-commands*
-  '(("new" . "TITLE — start a fresh session")
+  '(;; the conversation
+    ("new" . "TITLE — start a fresh session")
     ("sessions" . "the session picker")
     ("switch" . "ID — go to another session")
     ("rename" . "NAME — name the session you are in")
     ("help" . "the key and command reference")
     ("status" . "telemetry, full screen")
+    ("stats" . "this head's counters — the same as /status")
     ("notes" . "what this head has warned about — and retire one")
     ("dismiss" . "retire every warning on the screen (/notes has the rest)")
+    ;; the folds. `/t` folds tool output and is an ALIAS; `/tools` is the daemon's listing verb
+    ;; and is not this head's to describe.
     ("think" . "fold or unfold the model's reasoning")
-    ("tools" . "fold or unfold tool output")
+    ("verbosity" . "cycle the event-stream detail")
+    ;; the surfaces
     ("config" . "every setting, as the daemon reports it")
+    ("settings" . "every setting — the same as /config")
     ("mode" . "the mode picker — or /mode NAME to type it")
     ("models" . "which model answers: the picker, or /models PROVIDER/MODEL")
+    ("model" . "which model answers — the same as /models")
     ("jobs" . "the background-jobs pane")
     ("subagents" . "the subagent tree")
-    ("cells" . "MESSAGE — send it with a copy of this screen")
     ("todos" . "the model's plan, and the repo's TODO.md — ask, then open it")
     ("peek" . "SESSION-ID — read a subagent's output without leaving this session")
+    ;; the session's own machinery
+    ("cells" . "MESSAGE — send it with a copy of this screen")
     ("resync" . "throw this head's state away and take a fresh snapshot")
     ("resume" . "SESSION-ID — bring a stored session back to life")
     ("compact" . "summarise this session and fork it")
@@ -44,9 +64,60 @@
     ("reseat summarise" . "…and summarise the conversation instead of carrying it")
     ("promote" . "move the RUNNING COMMAND to the background (ctrl-o)")
     ("interrupt" . "stop the running turn")
+    ;; the door and the oracle
     ("run" . "NAME [JSON] — run a tool the daemon names, on this machine, as your act (or alt+r to type the JSON)")
     ("diagnostic" . "ID — the oracle's brief and its reply for one adjudication, as the gate saw and heard them")
-    ("quit" . "leave the head")))
+    ("quit" . "leave the head"))
+  "The HEAD's own verbs: the canonical spelling of each, with the hint the completion row draws.
+
+**A row is a claim that `%command` acts on that name**, and
+`the-registry-and-the-dispatcher-cannot-drift` reads the dispatcher's own source and fails when
+the claim is false in either direction. That is the mechanism, because deriving one list from
+the other would mean rebuilding the dispatcher as a table, and a `cond` of literals cannot be
+read back at run time.
+
+**A spelling of an action already listed is not a row** — it is in `+command-aliases+`, the
+same division letibot's `HEAD_COMMAND_ALIASES` makes: offering both spellings doubles the list
+to teach the same actions, and the dispatcher keeps taking them either way.
+
+**A verb the DAEMON answers is not a row here either.** `/tools` was one, and it went because
+its hint said *fold or unfold tool output* — which is `/t`, the head's own fold — while the head
+has no arm for `/tools` at all and the daemon does. Two behaviours under one word, with this
+table describing the wrong one, is exactly what a copy of the other half's list produces;
+`/tools` comes back from `+daemon-verbs-key+`, with the daemon's meaning.")
+
+(defparameter +command-aliases+
+  '("?" "h" "i" "q" "r" "s" "t" "v")
+  "Spellings `%command` takes and the table does NOT advertise.
+
+**Declared once, and the drift test subtracts them**, because otherwise *a verb with no row* and
+*a shortcut of one* are the same measurement, and every alias would have to be listed to keep
+the test quiet — which doubles the table to teach the same actions and is the opposite of the
+point. A spelling earns a row when a person could reasonably reach for it first (`settings`,
+`stats`, `model` all have one); a single letter never does.
+
+**A name here still has to be a verb the dispatcher acts on**, or a dead name could hide in this
+list: the drift test checks both directions, including this one.")
+
+(defun %slash-completions (head)
+  "What a `/` may complete to: THIS HEAD's rows joined with the DAEMON's published verbs.
+
+The union is the whole design. **Neither half enumerates the other's**, and there is no third
+list: the head's rows come from `*slash-commands*` (tied to the dispatcher by a test), the
+daemon's come off its settings row, and a name in both is offered ONCE with the head's hint —
+`/jobs` is the live case, where the head opens the pane and the daemon reads a job's output.
+
+**An absent row means no daemon verbs**: an older daemon has said nothing about its half, and a
+head that guessed would offer names it cannot check. It offers its own and stays quiet, which is
+`head-run-tools`' rule for a missing list."
+  (let* ((own *slash-commands*)
+         (own-names (mapcar (lambda (row) (if (consp row) (car row) row)) own))
+         (theirs (remove-if (lambda (n) (member n own-names :test #'string=))
+                            (head-daemon-verbs (head-settings head)))))
+    (append (mapcar (lambda (row) (if (consp row) row (cons row ""))) own)
+            ;; the daemon's verb with no hint yet: the row draws what it is given, and the
+            ;; daemon's `value` is the names alone
+            (mapcar (lambda (n) (cons n "")) theirs))))
 
 (defun %prompt (head text)
   (push text (head-queued head))
@@ -498,38 +569,70 @@ line means:
       (values (string-trim " " line) nil)
       (%bare-arguments head name line)))
 
+(defun %arguments-object (field line defaults)
+  "The arguments object as JSON TEXT: FIELD set to LINE, then the daemon's DEFAULTS.
+
+**Built by hand rather than with the encoder, and that is a correctness point and not a
+style.** A default arrives from the daemon as JSON *text* — `10` for a number, `high` unquoted
+for a string — so it is spliced in raw. The encoder would quote it, sending `{\"limit\":\"10\"}`
+where a model's own call carries `{\"limit\":10}`, and the same tool would then answer two
+different questions depending on who asked.
+
+The LINE itself IS encoded, because it is a person's typing: a search containing a quote or a
+backslash has to survive the trip to the daemon as the characters they typed."
+  (with-output-to-string (s)
+    (write-string "{" s)
+    (format s "~a:~a" (json-encode-to-string field) (json-encode-to-string line))
+    (loop for (k v) on defaults by #'cddr
+          ;; **`(k v)`, not `(k . v)`, and the difference was a real bug**: the dotted form binds
+          ;; `v` to the CDR, so a default of `(:limit 10)` spliced `(10)` into the arguments —
+          ;; which is not JSON, and the daemon's parser said so one call later.
+          do (format s ",~a:~a" (json-encode-to-string (%key-to-wire k)) v))
+    (write-string "}" s)))
+
 (defun %bare-arguments (head name line)
   "NAME + a person's LINE as the wire's arguments JSON, or `(values NIL WHY)`.
 
-**The whole requirement, in one function: `/NAME blabla` and the head holds no schema.**
-The field comes from the daemon's own row, looked up by name — so this knows nothing about
-the tool, and a daemon that renames the field changes nothing here. `why` is the sentence
-the caller shows when the bare form cannot be built, and it NAMES the reason rather than
-leaving the operator to guess which tools take a sentence and which take JSON:
+**The whole requirement, in one function: `/NAME blabla` and the head holds no schema.** The
+field comes from the daemon's own row, looked up by name — so this knows nothing about the
+tool, and a daemon that renames the field changes nothing here. `why` is the sentence the
+caller shows when the bare form cannot be built, and it NAMES the reason rather than leaving
+the operator to guess which tools take a sentence and which take JSON:
 
-  · no row at all — an older daemon: the head does not know, so it says it does not know;
-  · a name the row does not describe;
-  · a required field with nothing typed for it."
-  (let* ((descs (head-run-arguments (head-settings head)))
+  · **no descriptors at all** — an older daemon: the head does not know, so it says it does not
+    know, and quotes the name rather than a field;
+  · **a name the row does not describe** — said as that, because *the daemon describes other
+    tools and not this one* is a different fact from *the daemon said nothing*;
+  · **a tool the daemon itself says has no bare form** — `:why-json` is the daemon's own
+    sentence and THIS HEAD READS IT rather than inventing one, which is the same rule as the
+    field name: the knowledge is the daemon's;
+  · **a required field with nothing typed for it** — names the field, so the next keystroke is
+    obvious."
+  (let* ((descs (head-run-descriptors (head-settings head)))
          (d (cdr (assoc name descs :test #'string=)))
-         (field (getf d :field)))
+         (field (getf d :field))
+         (why-json (getf d :why-json)))
     (cond
       ((null descs)
        (values nil
                (format nil "this daemon has not said which field a bare line fills for `~a`, so type the arguments as JSON — `~a {\"…\": \"…\"}`"
                        name name)))
-      ((null field)
+      ((null d)
+       (values nil
+               (format nil "this daemon has not described `~a` — it named it in the door and said nothing about its arguments, so type them as JSON: `~a {\"…\": \"…\"}`"
+                       name name)))
+      ;; **the daemon's own sentence**, which is why `why_json` is on the row at all
+      ((plusp (length why-json))
+       (values nil (format nil "this daemon says `~a` takes no single argument — ~a; type it as JSON: `~a {\"…\": \"…\"}`"
+                           name why-json name)))
+      ((zerop (length field))
        (values nil
                (format nil "the daemon says `~a` takes no single argument — type it as JSON: `~a {\"…\": \"…\"}`"
                        name name)))
       ((zerop (length (string-trim " " line)))
        (values nil
                (format nil "`~a` needs its ~a — as `~a SOMETHING`" name field name)))
-      (t (json-encode-to-string
-          (append (list (%key-from-wire field) line)
-                  ;; **the daemon's defaults travel verbatim**, so a tool whose row says it also
-                  ;; takes a limit sends the daemon's own limit and not a head-side guess.
-                  (getf d :defaults)))))))
+      (t (%arguments-object field line (getf d :defaults))))))
 
 (defun %op-call-verb (head verb rest)
   "The operator's own shape — `/NAME blabla` — or NIL to let the verb fall through.
@@ -596,20 +699,22 @@ and hand it to the model as the call."
       ;; opens the composer, which is the escape hatch for a tool with several fields.
       ((zerop (length name))
        (let* ((door (head-run-tools (head-settings head)))
-              (descs (head-run-arguments (head-settings head))))
+              (descs (head-run-descriptors (head-settings head))))
          (say head
               (if (null door)
                   "this daemon offers no operator-call door — it has published no tool list, so there is nothing to run"
                   (with-output-to-string (s)
                     (format s "the daemon will run ~{~a~^, ~} for you — type `/NAME what you want`, as the tool's own name and then a sentence"
                             door)
-                    (when descs
-                      (format s "; the bare form goes into ~{~{~a → ~a~}~^, ~}"
-                              (loop for d in descs
-                                    collect (list (car d) (getf (cdr d) :field)))))
-                    (let ((json (remove-if (lambda (n) (assoc n descs :test #'string=)) door)))
-                      (when json
-                        (format s "; ~{~a~^, ~} still take JSON" json)))
+                    (let ((described (remove-if-not (lambda (d) (plusp (length (getf (cdr d) :field))))
+                                                    descs)))
+                      (when described
+                        (format s "; the bare form goes into ~{~{~a → ~a~}~^, ~}"
+                                (loop for d in described
+                                      collect (list (car d) (getf (cdr d) :field)))))
+                      (let ((json (remove-if (lambda (n) (assoc n described :test #'string=)) door)))
+                        (when json
+                          (format s "; ~{~a~^, ~} still take JSON" json))))
                     (format s " — and nothing runs until it says the call was admitted; alt+r types the JSON by hand"))))))
       ;; A NAME with a line: JSON if it IS json, the bare form otherwise — one decision,
       ;; made in `%door-arguments`, so `/run` and the bare verb cannot disagree.

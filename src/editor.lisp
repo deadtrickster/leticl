@@ -527,9 +527,12 @@ SAYS SO rather than deleting what was typed to explain why nothing happened."
                       t))))))
         (unless walked
           (let* ((needle (subseq buf 1))
+                 ;; **THE UNION, and not `*slash-commands*` alone.** The head's own rows joined
+                 ;; with what the daemon published — five working daemon verbs were missing
+                 ;; from completion because this read the head's table as the whole namespace.
                  (names (mapcar #'car
                                 (remove-if-not (lambda (c) (uiop:string-prefix-p needle (car c)))
-                                               *slash-commands*))))
+                                               (%slash-completions head)))))
             (cond (names
                    (setf *completion* (list names 0))
                    (clear-note head)

@@ -777,7 +777,14 @@ answered in the same place or not at all.")
     "daemon_stopping" "resume_note" "open_note"
     "reattached" "slash"
     "imported" "import_scrap" "imported_summary"
-    "steering_urgent" "cache_reuse_shortfall" "test")
+    "steering_urgent" "cache_reuse_shortfall" "test"
+    ;; **R24 part two's own report, and it came from the OTHER tree.** The guard
+    ;; (`a-routine-warning-code-is-one-letibot-calls-routine`) caught this head missing it the
+    ;; day letibot landed `/run`: their row reads *a sentence about something the operator
+    ;; asked for that worked … the opposite of a fault*. Without the entry this head's
+    ;; fail-safe drew it RED — an alarm for the door working as designed, which is R19 itself
+    ;; and exactly the direction the guard exists for.
+    "operator_call_ran")
   "The warning codes whose fact is ROUTINE — drawn faint with a middot, not red with a bang.
 
 **R19 part 2, and this list is now letibot's rather than mine.** Both heads render these

@@ -52,7 +52,8 @@
    #:encode-frame #:decode-frame #:frame-name #:event-name
    #:next-request-id
    ;; the operator-call door (R24 part two): the daemon's list, and the two frames
-   #:+head-run-tools-key+ #:+head-run-arguments-key+ #:head-run-tools #:head-run-arguments
+   #:+head-run-tools-key+ #:+daemon-verbs-key+ #:head-run-tools #:head-run-descriptors
+   #:head-daemon-verbs
    #:next-call-id
    #:make-operator-call #:make-operator-result
    ;; R11's locator: the oracle's own exchange, by the adjudication's id
@@ -145,7 +146,10 @@
    #:wrap-ranges #:locate-in-ranges #:composer-caret #:composer-ranges #:*caret*
    #:markdown-lines #:inline-spans #:reasoning-header #:reasoning-lines
    #:wrap-segments #:top-border #:status-line
-   #:decision-card-lines #:picker-lines #:help-lines *slash-commands*
+   #:decision-card-lines #:picker-lines #:help-lines #:*slash-commands*
+   ;; the completion surface's own pieces: the head's verbs, the declared shortcuts, and the
+   ;; union Tab walks (which is where the daemon's published verbs enter)
+   #:+command-aliases+ #:%slash-completions
    #:permission-card-lines #:card-content-window #:card-scroll-by #:reset-card-scroll
    #:*card-scroll* #:*card-page*
    #:quit-card-lines #:secret-card-lines

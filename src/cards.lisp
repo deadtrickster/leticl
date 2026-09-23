@@ -1577,7 +1577,13 @@ something copies them."
      ;; doing its job: a code the head draws with no entry is the dead end R29 is about.
      ("mode_set" . "nothing to do — the mode is set for this session; /mode opens the picker")
      ("reseat_unchecked" . "nothing to do — the re-seat went ahead without checking the tool list; /tools shows what is seated")
-     ("length_empty_turn" . "the turn carried no message and was not sent; type something and press enter again"))
+     ("length_empty_turn" . "the turn carried no message and was not sent; type something and press enter again")
+     ;; **R24 part two's own report, and the entry names the act rather than filling the slot.**
+     ;; The code says the operator's call ran; what the reader may want next is what came back
+     ;; of it, and that is on the row — so the honest remedy points at the row. R29's rule is
+     ;; that the ENTRY exists and names the reason; `nothing to do — …` satisfies it, and
+     ;; inventing a verb here to look useful would be the failure that test is written against.
+     ("operator_call_ran" . "nothing to do — the call you asked for ran; the row under this note holds what it returned"))
   "What the reader can DO about a note, per code — R29 rule one, on the note.
 
 **A note that states a fact and not the act is a dead end on the screen.** The operator,

@@ -493,7 +493,10 @@ is a typing aid, not a message."
                (char= (char text 0) #\/)
                (not (find-if (lambda (c) (member c '(#\space #\tab #\newline))) text)))
       (let* ((needle (subseq text 1))
-             (parts (loop for (name . hint) in *slash-commands*
+             ;; **the union of both owners**, so the row that is drawn under the composer
+             ;; offers exactly what Tab will accept — a row listing fewer verbs than the key
+             ;; takes is the same defect as one listing verbs nothing acts on.
+             (parts (loop for (name . hint) in (%slash-completions head)
                           when (alexandria:starts-with-subseq needle name)
                             collect (format nil "/~a ~a" name hint))))
         (when parts

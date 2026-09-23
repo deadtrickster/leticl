@@ -1630,8 +1630,32 @@ a painter change, not a head change."
   "Every `.lisp` file under `src/` and `tests/`, as (PATHNAME . PACKAGE-NAME).
 
 The package is the one the file expects to be READ in: a name interned elsewhere would
-be a different symbol, and the walk below matches heads by identity."
-  (let ((root (uiop:pathname-directory-pathname (or *load-truename* #p"./"))))
+be a different symbol, and the walk below matches heads by identity.
+
+**THE ROOT IS FOUND, NOT ASSUMED, and the first cut of this assumed.** It took
+`*load-truename*`'s directory, which is the file being LOADED — so a runner that lives
+anywhere but the repo root walked an empty directory and returned NIL. A source-grepping test
+built on it then either failed obscurely or, worse, PASSED: `(dolist (pair nil))` asserts
+nothing at all. Measured 2026-09-23 with the suite driven from a scratch directory: every
+source check in this file was silently checking nothing.
+
+So the candidate roots are tried in order and the first one that actually holds the sources
+wins; if none does, this ERRORS rather than answering NIL, because a walk that finds no files
+is a fact about the caller's assumption and not about the tree."
+  (let* ((candidates (list (and *load-truename*
+                                (uiop:pathname-directory-pathname *load-truename*))
+                           ;; **ASDF's own answer is the authoritative one**: it is where the
+                           ;; system was actually found, whatever file happened to be loading.
+                           (ignore-errors
+                            (uiop:pathname-directory-pathname
+                             (asdf:system-source-directory :leticl)))
+                           (uiop:getcwd)))
+         (root (find-if (lambda (dir)
+                          (and dir (probe-file (merge-pathnames "src/commands.lisp" dir))))
+                        candidates)))
+    (unless root
+      (error "no source tree found: tried ~s — a check that walks no files checks nothing"
+             candidates))
     (loop for dir in '("src/" "tests/")
           for pkg in '("LETICL" "LETICL/TESTS")
           append (loop for p in (uiop:directory-files (merge-pathnames dir root))
@@ -7826,18 +7850,26 @@ rows are the finished form or it renders the answer twice\"* (app.rs:2650-2651).
         "both ids, in the order they landed")))
 
 (defun %door-settings (&optional (value "web_search,web_fetch")
-                                (args "[{\"name\":\"web_search\",\"field\":\"query\"},{\"name\":\"web_fetch\",\"field\":\"url\"}]"))
+                                (tools "[{\"name\":\"web_search\",\"field\":\"query\",\"kind\":\"text\"},{\"name\":\"web_fetch\",\"field\":\"url\",\"kind\":\"url\"}]")
+                                (verbs nil))
   "The settings rows as the daemon publishes them, with the operator-call door's rows.
 
-ARGS is the argument-descriptor row that makes the BARE form possible (R24 part two, the
-operator's own shape). Pass NIL for a daemon that publishes no such row — which is every
-daemon before the ruling, and the case the head has to answer honestly rather than guess."
+TOOLS is the `tools` field of the `head-run.tools` row — **the real shape**, a typed array of
+`HeadRunTool` on the row that already carries the names, and NOT a second row: a head that
+invented `head-run.arguments` with descriptors as JSON text was inventing the other half's
+grammar, which is the same defect as guessing its list. Passed as JSON text here and decoded by
+this helper, because it is easier to read a fixture that way and the decode is the wire's own
+function.
+
+Pass NIL for VERBS to leave the daemon's own verb row out — which is every daemon on this box
+tonight, and the case the head has to answer honestly rather than guess."
   (append
    (list (list :key "model" :value "qwen" :source "config" :editable "models" :choices nil)
          (list :key +head-run-tools-key+ :value value :source "default"
-               :editable "" :choices nil))
-   (when args
-     (list (list :key +head-run-arguments-key+ :value args :source "default"
+               :editable "" :choices nil
+               :tools (and tools (leticl::json-decode tools))))
+   (when verbs
+     (list (list :key +daemon-verbs-key+ :value verbs :source "default"
                  :editable "" :choices nil)))))
 
 (defvar *ran* nil
@@ -12758,22 +12790,42 @@ would have guessed, and the arguments follow it."
           "**a name outside the door still TRAVELS** — the head answers to the daemon's names and
  invents none")
       (is (null *op-calls*) "and nothing is on the books for it"))
-    ;; --- **AND A TOOL WITH NO BARE FIELD SAYS SO**, in the sentence that refuses, rather than
-    ;; leaving the operator to guess which tools are which
+    ;; --- **AND A TOOL THE ROW SAYS HAS NO BARE FORM SAYS SO IN THE DAEMON'S OWN WORDS.**
+    ;; `why_json` is on the wire for exactly this: the daemon knows why `web_fetch` has no bare
+    ;; form and this head does not, so the sentence it says is the daemon's and not a guess at
+    ;; it.
     (let ((h3 (%on-head :cols 120 :rows 24)) (sent3 nil))
       (setf (head-settings h3)
-            (%door-settings "web_search,web_fetch"
-                            "[{\"name\":\"web_search\",\"field\":\"q\"}]")
+            (%door-settings
+             "web_search,web_fetch"
+             "[{\"name\":\"web_search\",\"field\":\"q\",\"kind\":\"text\"},
+               {\"name\":\"web_fetch\",\"field\":\"\",\"kind\":\"\",\"why_json\":\"its arguments are a URL and a format, and one line cannot be both\"}]")
             sent3 (%fake-daemon h3))
       (leticl::%command h3 "web_fetch https://example.com")
       (is (null (funcall sent3))
-          "**the head does NOT guess a field for a tool the row does not describe**")
+          "**the head does NOT guess a field for a tool the daemon says has none**")
+      (is (search "one line cannot be both" (head-status-note h3))
+          (format nil "and says why IN THE DAEMON'S WORDS, which is what `why_json` is for: ~s"
+                  (head-status-note h3)))
       (is (search "takes no single argument" (head-status-note h3))
-          (format nil "and says why, with the JSON form it does take: ~s" (head-status-note h3)))
+          "inside this head's own sentence, so the JSON form is named too")
       ;; and a tool the row never mentions, when OTHER tools are described
       (leticl::%command h3 "web_search")
       (is (search "needs its q" (head-status-note h3))
-          "a bare name with nothing typed names the field it wants"))))
+          "a bare name with nothing typed names the field it wants")
+      ;; **AND A TOOL THE ROW DOES NOT DESCRIBE IS A THIRD FACT**, not the same one as a row that
+      ;; never arrived: the daemon named it in the door and said nothing about its arguments.
+      ;; A name that is not one of this head's own verbs, so the door arm is what answers.
+      (let ((h4 (%on-head :cols 120 :rows 24)) (sent4 nil))
+        (setf (head-settings h4)
+              (%door-settings "web_search,later_tool"
+                              "[{\"name\":\"web_search\",\"field\":\"q\",\"kind\":\"text\"}]")
+              sent4 (%fake-daemon h4))
+        (leticl::%command h4 "later_tool blabla")
+        (is (null (funcall sent4)) "nothing is asked for a tool with no descriptor")
+        (is (search "has not described" (head-status-note h4))
+            (format nil "and the sentence says the daemon named it and said nothing more, which is
+  not the same fact as a row that never arrived: ~s" (head-status-note h4)))))))
 
 (def-test a-bare-line-with-no-argument-row-at-all-is-said-not-guessed (:suite leticl)
   "**The old daemon, which is every daemon on this box tonight.** No descriptor row: the head
@@ -12785,7 +12837,7 @@ missing token: an absence is a fact to report, never a value to invent."
          (*ran* nil) (*op-calls* nil) (*op-call-draft* nil)
          (h (%on-head :cols 120 :rows 24)) (sent (%fake-daemon h)))
     (setf (head-settings h) (%door-settings "web_search" nil))
-    (is (null (leticl::head-run-arguments (head-settings h)))
+    (is (null (leticl::head-run-descriptors (head-settings h)))
         "the row is absent, so there are no descriptors")
     (leticl::%command h "web_search blabla")
     (is (null (funcall sent)) "nothing was asked for")
@@ -12875,51 +12927,215 @@ distinguish one: a row naming DIFFERENT tools answers with those."
  and a copy in the head is exactly the drift the row exists to stop"
                     (file-namestring (car pair))))))))
 
-(def-test the-argument-row-is-the-daemons-and-both-its-spellings-read (:suite leticl)
-  "**The second row, and the same rule as the first: a READ, measured by a row this file could
-not have written.** `head-run.arguments` says which field a bare line fills, per tool, and the
-head answers with what the row says — including a field name no head-side table would guess,
-which is the whole claim (`head-run.tools`' own reason, applied one level down).
+(defun %tool-row (tools &optional (names "web_search,web_fetch,read"))
+  "A `head-run.tools` row as the daemon writes one: the names in `value`, the descriptors in
+the row's typed `tools` field. TOOLS is JSON text, because that is how a fixture reads best;
+the decode is the wire's own function."
+  (list (list :key "model" :value "qwen")
+        (list :key +head-run-tools-key+ :value names :source "default" :editable ""
+              :choices nil :tools (and tools (leticl::json-decode tools)))))
 
-**TWO SPELLINGS, and neither is preferred**: an array of objects, or an object keyed by name.
-This is why the test is here and not folded into the bare-form one — the row is the DAEMON's to
-spell, and a head that read only the spelling it happened to ask for would move the cost back
-to the other side. Both spellings below name the same tool with the same field, and the
-assertion is that they are the SAME READ.
+(def-test the-door-row-describes-each-tool-and-the-head-holds-no-schema (:suite leticl)
+  "**A READ, measured by a row this file could not have written** — and read from the place the
+daemon actually writes it.
 
-And the absences are facts: a row that is absent, empty, or in a shape this head cannot read
-leaves the bare form unavailable and JSON working, which is the fallback the bare-form test
-measures from the other side."
-  (flet ((arg-row (value)
-           (list (list :key "model" :value "qwen")
-                 (list :key +head-run-arguments-key+ :value value
-                       :source "default" :editable "" :choices nil))))
-    ;; **AN ARRAY OF OBJECTS** — the spelling the requirement names
-    (is (equal '(("web_search" :field "q" :defaults (:limit 10)))
-               (head-run-arguments
-                (arg-row "[{\"name\":\"web_search\",\"field\":\"q\",\"defaults\":{\"limit\":10}}]")))
-        "the name, the field and the daemon's own defaults, read as published")
-    ;; **AN OBJECT KEYED BY NAME** — the same fact, spelled the other way
-    (is (equal (head-run-arguments
-                (arg-row "[{\"name\":\"web_search\",\"field\":\"q\",\"defaults\":{\"limit\":10}}]"))
-               (head-run-arguments
-                (arg-row "{\"web_search\":{\"field\":\"q\",\"defaults\":{\"limit\":10}}}")))
-        "**the two spellings are one read**: which one a daemon writes is the daemon's business")
-    ;; a tool with nothing after its name: published, and no field — which is a fact about
-    ;; that tool rather than a reason to drop the row or invent a field
-    (is (null (head-run-arguments (arg-row "[{\"name\":\"web_fetch\"}]")))
-        "a descriptor with no field is dropped rather than half-read — a row missing `field`
-  would silently swallow a person's sentence, so it is not a descriptor at all")
-    ;; absence, in every form the head can meet it
-    (is (null (head-run-arguments nil)) "settings that never arrived: no row, no descriptors")
-    (is (null (head-run-arguments (list (list :key "model" :value "qwen"))))
-        "a daemon older than this row says nothing, and the head does not fill the silence")
-    (is (null (head-run-arguments (arg-row ""))) "an empty row is an absence too")
-    (is (null (head-run-arguments (arg-row "not json at all")))
-        "**and so is a row this head cannot read** — the same answer, from the same place, as a
-  row that was never sent")
-    (is (null (head-run-arguments (arg-row "42")))
-        "a scalar is neither spelling, so nothing is read out of it")))
+`HeadRunTool { name, field, kind, defaults, why_json }` is a TYPED FIELD on the row that already
+publishes the door's names (`SettingRow.tools` on `head-run.tools`), **not a second row**. The
+first cut of this head invented `head-run.arguments` with the descriptors as JSON text in
+`value`, which is a shape no daemon has ever sent: it invented the other half's grammar, which is
+the same defect as guessing its list, one level down.
+
+**`kind` is here for R32**: it is how Tab knows to complete filenames for `read` without this
+head holding a list of which tools take paths. **`why_json` is here so a refusal is the daemon's
+sentence** rather than a head-side guess at why a tool has no bare form. And **`defaults` values
+are JSON TEXT**, not strings — `10`, not `\"10\"` — because the arguments this head builds must be
+the same object a model's own call would carry."
+  ;; **THE THREE FACTS PER TOOL, read as published**
+  (is (equal '(("web_search" :field "query" :kind "text" :defaults nil :why-json "")
+               ("web_fetch" :field "url" :kind "url" :defaults nil :why-json "")
+               ("read" :field "path" :kind "path" :defaults nil :why-json ""))
+             (head-run-descriptors
+              (%tool-row "[{\"name\":\"web_search\",\"field\":\"query\",\"kind\":\"text\"},
+                           {\"name\":\"web_fetch\",\"field\":\"url\",\"kind\":\"url\"},
+                           {\"name\":\"read\",\"field\":\"path\",\"kind\":\"path\"}]")))
+      "the name, the field and the kind — the daemon's three answers, in its order")
+  ;; **THE KIND IS THE DAEMON'S WORD AND THIS HEAD DOES NOT KNOW THE SET**
+  (is (equal '("path" "url" "text")
+             (mapcar (lambda (d) (getf (cdr d) :kind))
+                     (head-run-descriptors
+                      (%tool-row "[{\"name\":\"a\",\"field\":\"p\",\"kind\":\"path\"},
+                                   {\"name\":\"b\",\"field\":\"u\",\"kind\":\"url\"},
+                                   {\"name\":\"c\",\"field\":\"q\",\"kind\":\"text\"}]"))))
+      "three tools, three kinds — carried as the daemon spelled them")
+  ;; a tool with no bare form: described, empty field, and the DAEMON's reason
+  (is (equal '(("two_fields" :field "" :kind "" :defaults nil
+                :why-json "it needs a URL and a format, and one line carries one"))
+             (head-run-descriptors
+              (%tool-row "[{\"name\":\"two_fields\",\"field\":\"\",\"kind\":\"\",
+                            \"why_json\":\"it needs a URL and a format, and one line carries one\"}]")))
+      "**a tool with no bare form is DESCRIBED, not absent** — the field is empty and the
+ daemon's own sentence is what the head will say")
+  ;; defaults map as they were sent, values and all
+  (is (equal '(("web_search" :field "q" :kind "text" :defaults (:limit "10") :why-json ""))
+             (head-run-descriptors
+              (%tool-row "[{\"name\":\"web_search\",\"field\":\"q\",\"kind\":\"text\",
+                            \"defaults\":{\"limit\":\"10\"}}]")))
+      "the defaults map, values and all")
+  ;; **THE DEFAULT IS A STRING ON THE WIRE AND RAW JSON IN THE ARGUMENTS**, and both halves are
+  ;; asserted because the difference between them is the bug: the daemon's `defaults` is a
+  ;; `BTreeMap<String, String>`, so `10` arrives as `"10"` — and it is spliced into the arguments
+  ;; UNQUOTED, because a model's own call carries `{"limit":10}` and the same tool must not
+  ;; answer two different questions depending on who asked.
+  (let* ((desc (cdr (first (head-run-descriptors
+                            (%tool-row "[{\"name\":\"web_search\",\"field\":\"q\",
+                                          \"kind\":\"text\",
+                                          \"defaults\":{\"limit\":\"10\"}}]")))))
+         (limit (getf (getf desc :defaults) :limit)))
+    (is (equal "10" limit)
+        "**the default arrives as the TEXT `10`** — a string on the wire, as the daemon sends it")
+    (is (equal "{\"q\":\"blabla\",\"limit\":10}"
+               (leticl::%arguments-object "q" "blabla" (getf desc :defaults)))
+        (format nil "**and it is spliced RAW, not quoted** — `10` and not `\"10\"`, which is the
+ difference between an arguments object and one the daemon will refuse: ~s"
+                (leticl::%arguments-object "q" "blabla" (getf desc :defaults)))))
+  ;; absence, in every form the head can meet it
+  (is (null (head-run-descriptors nil)) "settings that never arrived: no row, no descriptors")
+  (is (null (head-run-descriptors (list (list :key "model" :value "qwen"))))
+      "a daemon older than the field says nothing, and the head does not fill the silence")
+  (is (null (head-run-descriptors (%tool-row nil)))
+      "a row with the names and no `tools` field is the OLD daemon: names, no descriptors")
+  (is (null (head-run-descriptors (%tool-row "[]"))) "an empty array describes nothing")
+  ;; **AND THE INVENTED ROW IS GONE**, which is about honesty rather than parsing: a head that
+  ;; reads a row nobody sends is a head that will be wrong quietly.
+  (is (null (find "head-run.arguments" (%tool-row "[]")
+                  :key (lambda (r) (getf r :key)) :test #'string=))
+      "there is no `head-run.arguments` row — the descriptors ride on the tool row"))
+
+(def-test the-daemons-verbs-come-from-the-daemons-row (:suite leticl)
+  "**The other half of the namespace, and the head does not enumerate it.** R32's third
+constraint: a head that does not recognise a verb FORWARDS it, so the daemon's verbs are the
+daemon's to publish — the same rule as `head-run.tools`, and the reason `/gate`, `/flowy` and
+`/job` work while appearing nowhere in this tree.
+
+**It is a READ, and the only way to distinguish a read is a row naming different verbs**: the
+same tools here are named by rows this file could not have written, and the union follows.
+
+**And an absent row is a fact**: a daemon older than this one says nothing about its half, so the
+head offers its own verbs and stays quiet rather than guessing — `head-run-tools`' rule for a
+missing list. It is not an empty list this head is entitled to fill."
+    (let ((h (%on-head :cols 120 :rows 24)))
+      ;; no row: the head's own verbs only
+      (setf (head-settings h) (%door-settings))
+      (is (null (head-daemon-verbs (head-settings h)))
+          "no row, no daemon verbs — and no guess at them")
+      (let ((names (mapcar #'car (leticl::%slash-completions h))))
+        (is (member "help" names :test #'string=) "the head's own verbs are offered")
+        (is (not (member "gate" names :test #'string=))
+            "**and the daemon's are not invented** — `/gate` is nowhere in this tree, which is
+  exactly why the daemon has to say so"))
+      ;; the row, naming a daemon nobody in this file has ever heard of
+      (setf (head-settings h)
+            (%door-settings "web_search,web_fetch" nil "zorp,qwibble,gate"))
+      (is (equal '("zorp" "qwibble" "gate") (head-daemon-verbs (head-settings h)))
+          "the daemon's own verbs, in the order it published them")
+      (let ((names (mapcar #'car (leticl::%slash-completions h))))
+        (is (member "zorp" names :test #'string=) "and they are offered")
+        (is (member "gate" names :test #'string=) "including one no head-side list holds"))
+      ;; **A NAME BOTH HALVES REACH IS OFFERED ONCE, WITH THE HEAD'S HINT** — `/jobs` is the live
+      ;; case (the head opens the pane, the daemon reads a job's output).
+      (setf (head-settings h)
+            (%door-settings "web_search,web_fetch" nil "jobs,zorp"))
+      (let* ((rows (leticl::%slash-completions h))
+             (jobs (remove-if-not (lambda (r) (string= "jobs" (car r))) rows)))
+        (is (= 1 (length jobs)) "`jobs` is offered once and not twice")
+        (is (plusp (length (cdr (first jobs))))
+            "with the HEAD's hint, because the head is the half that opens the pane"))
+      ;; **AND A VERB THE DAEMON FORWARDS IS NOT SOMETHING THIS HEAD WILL REFUSE** — the
+      ;; dividing line R29 draws pointed the other way: offering what the daemon answers is
+      ;; not offering something nobody acts on, which is why `/gate` is offered here and
+      ;; `/bash` is not offered by anybody.
+      (is (not (member "bash" (mapcar #'car (leticl::%slash-completions h)) :test #'string=))
+          "a verb neither half owns is still not on the key")))
+
+(defun %verbs-in-dispatch (text)
+  "Every verb literal `%command` TESTS FOR, read out of its own source form.
+
+**The Lisp reader, not a regex**, and that is the lesson this document keeps earning: a pattern
+that is nearly right reads exactly like one that is right. This walks the real form, so a verb in
+comment prose or in an arm's BODY string cannot be mistaken for a verb the dispatcher acts on,
+and `(or (string= verb \"models\") (string= verb \"model\"))` yields both spellings because the walk
+descends into the `or`.
+
+It takes the dispatcher's TEXT because that is the only honest source: a `cond` of literals has
+no run-time table to read, and `function-lambda-expression` answers NIL for a compiled function
+in this image."
+  (let* ((form (with-input-from-string (s text) (read s)))
+         (found nil))
+    (labels ((quoted (x) (if (and (consp x) (eq (car x) 'quote)) (cadr x) x))
+             (verb-arg-p (x)
+               (and (symbolp x) (string= "VERB" (symbol-name x))))
+             (head-name (f) (and (consp f) (symbolp (car f)) (symbol-name (car f))))
+             (walk (f)
+               (when (consp f)
+                 (cond
+                   ((and (= (length f) 3)
+                         ;; **`eql` and not `string=`**: the walker descends into every list,
+                         ;; `(car f)` is often a LIST (`(head line)`), and `string=` on one is a
+                         ;; type error at the middle of the dispatcher.
+                         (member (car f) '(string= string-equal))
+                         (verb-arg-p (cadr f)) (stringp (caddr f)))
+                    (pushnew (caddr f) found :test #'string=))
+                   ((and (>= (length f) 3) (string= "MEMBER" (or (head-name f) ""))
+                         (verb-arg-p (cadr f)))
+                    (dolist (x (quoted (caddr f)))
+                      (when (stringp x) (pushnew x found :test #'string=))))
+                   (t (walk (car f)) (walk (cdr f)))))))
+      (walk form))
+    (sort found #'string<)))
+
+(def-test the-registry-and-the-dispatcher-cannot-drift (:suite leticl)
+  "**The mechanism, not a promise.** The registry and the dispatcher must not be two lists that
+agree by maintenance — *\"we will remember to add it in both places\"* is how the twelve missing
+verbs happened. In CL a `cond` of literals could be rebuilt as a table, which would derive one
+list from the other; that is a rewrite of the dispatcher and a much larger change than the defect
+warrants, so this takes the other mechanism the requirement allows and the sibling tree took: **a
+test that reads the dispatcher's own source and fails when the two diverge**.
+
+Measured 2026-09-23 (`scripts/slash-audit`) before this test existed: the file claimed the three
+could not drift, and **twelve verbs `%command` acts on had no row** while **one row named a verb
+the head does not act on** (`/tools`, whose hint described `/t`'s fold). Both directions are
+asserted here, and the aliases are subtracted from a declared list rather than listed in the
+table — otherwise a shortcut and a missing verb are the same measurement."
+  (let* ((src (%src-text "commands.lisp"))
+         ;; **THE DISPATCHER'S OWN BODY**, from `(defun %command` to the next top-level form.
+         (body (subseq src (search "(defun %command " src)))
+         (body (subseq body 0 (search "(defun %notes " body)))
+         (verbs (%verbs-in-dispatch body)))
+    (is (>= (length verbs) 25)
+        (format nil "the extraction found ~d verbs, which is too few to be the dispatcher: ~s"
+                (length verbs) verbs))
+    ;; **DIRECTION ONE: every verb the dispatcher acts on is offered or declared an alias.**
+    (let ((rows (mapcar (lambda (r) (if (consp r) (car r) r)) *slash-commands*)))
+      (dolist (v verbs)
+        (is (or (member v rows :test #'string=)
+                (member v leticl::+command-aliases+ :test #'string=))
+            (format nil "**`/~a` is dispatched and nothing offers it** — a person cannot reach
+  a verb that works, which is R32's first clause exactly. Add a row to `*slash-commands*` or
+  declare it in `+command-aliases+` with the reason it is a shortcut." v))))
+    ;; **DIRECTION TWO: every row names a verb the dispatcher acts on**, so a phantom row cannot
+    ;; survive — `/tools` did, describing the fold under a name the head has no arm for.
+    (dolist (row *slash-commands*)
+      (let ((name (if (consp row) (car row) row)))
+        (is (member (first (uiop:split-string name :separator '(#\space)))
+                    verbs :test #'string=)
+            (format nil "**`/~a` is offered and `%command` has no arm for it** — a row that
+  promises an act this head does not perform. If it is the DAEMON's verb it belongs on
+  `+daemon-verbs-key+`, with the daemon's meaning, and not in this table." name))))
+    ;; **AND THE ALIAS LIST IS NOT A LOOPHOLE**: a name declared an alias must also be dispatched,
+    ;; or a dead name could be parked there to keep the test quiet.
+    (dolist (a leticl::+command-aliases+)
+      (is (member a verbs :test #'string=)
+          (format nil "`~a` is declared an alias and `%command` does not act on it" a)))))
 
 (def-test a-door-name-does-not-take-one-of-this-heads-verbs (:suite leticl)
   "**Precedence, and it is this head's decision rather than a side effect of where the arm sits.**
@@ -12969,6 +13185,47 @@ The tool is never lost by any of this, only the sugar: `/run NAME …` still nam
         (leticl::%command h "help")
         (is (eq :help (head-mode h)) "`/help` is the head's, whatever the door is called")
         (is (null (funcall sent)) "and it asked for nothing")))))
+
+(def-test the-door-is-issuable-while-a-turn-is-running (:suite leticl)
+  "**R31 (c), and it is a constraint rather than a nicety: the call is a DEPOSIT, not a request
+to the turn that holds the floor.** A 40k-token page an operator wants read is worth fetching
+WHILE the model is still talking; a door that opened only when the head was idle would make them
+wait for the turn to end to fill a form nobody is waiting on.
+
+**What is measured here is THIS head's half** — the half that can be wrong on this side. Nothing
+on the door path consults turn state: `%op-call-ask`, `%op-call-verb`, `%run-command` and the
+composer take the same two gates (the daemon's door row, and a runner in this image) and none of
+them asks whether a turn is running. The assertion is the frame on the wire with a RUNNING turn
+in the session; the daemon's half — whether it admits the call while the turn holds the floor —
+is letibot's and is filed with the R31 wire ask rather than assumed here."
+  (let* ((*head-tool-runners* (list (cons "web_search" (%stub-runner "ok" "r"))))
+         (*ran* nil) (*op-calls* nil) (*op-call-draft* nil)
+         (h (%on-head :cols 120 :rows 24)) (sent (%fake-daemon h)))
+    (setf (head-settings h)
+          (%door-settings "web_search" "[{\"name\":\"web_search\",\"field\":\"q\"}]")
+          ;; **a turn is RUNNING in this session**, which is the whole condition of the test
+          (session-turn (head-session h)) (list :state (list :state "running")))
+    (is (equal "running" (leticl::turn-state-name (session-turn (head-session h))))
+        "the fixture really is a running turn, so this cannot pass on an idle head")
+    ;; --- the bare verb
+    (leticl::%command h "web_search blabla")
+    (let ((f (first (funcall sent))))
+      (is (equal "operator_call" (getf f :frame)) "the bare verb asks mid-turn")
+      (is (equal "web_search" (getf f :name)) "for the door's own tool"))
+    (is (= 1 (length *op-calls*)) "and it is on the books like any other ask")
+    ;; --- the chord and its composer
+    (leticl::%handle-key h (list :type :alt :ch #\r))
+    (is (op-call-draft-open-p)
+        "**the composer opens mid-turn too** — a key that arrived is not a key that was dropped")
+    (dolist (ch (coerce "{\"q\": \"x\"}" 'list))
+      (leticl::%handle-key h (list :type :char :ch ch)))
+    (leticl::%handle-key h (list :type :enter))
+    (let ((f (first (funcall sent))))
+      (is (equal "operator_call" (getf f :frame)) "and its Enter asks, mid-turn")
+      (is (equal "{\"q\": \"x\"}" (getf f :arguments)) "with what was typed"))
+    (is (= 2 (length *op-calls*)) "two asks on the books, both while the turn ran")
+    (is (null *ran*)
+        "and neither has run: mid-turn is earlier, not later, on the same door")))
 
 (def-test the-ask-is-a-frame-and-nothing-runs-on-it (:suite leticl)
   "Frame 1, and the property that makes the pair necessary: **asking is not permission.**"
@@ -14714,3 +14971,4 @@ Three orders, all of them things a reader relies on without noticing:
       (is (and head-at one-at four-at) "the header and both ends of the body are drawn")
       (is (< head-at one-at) "the header is ABOVE the body, not below it")
       (is (< one-at four-at) "and the body reads top-down, not bottom-up"))))
+

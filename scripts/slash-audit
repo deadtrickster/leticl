@@ -115,6 +115,10 @@ PROBE = r'''
 (format t "~&REGISTRY-COUNT ~d~%" (length leticl::*slash-commands*))
 (dolist (row leticl::*slash-commands*)
   (format t "~&ROW|~a|~%" (if (consp row) (car row) row)))
+(format t "~&ALIASES|~{~a~^ ~}|~%"
+        (sort (mapcar (lambda (x) (if (stringp x) x (symbol-name x)))
+                      leticl::+command-aliases+)
+              #'string<))
 '''
 
 
@@ -158,7 +162,7 @@ def classify(names):
     path = "/tmp/leticl-slash-audit.lisp"
     open(path, "w").write(src)
     run = subprocess.run(["sbcl", "--script", path], capture_output=True, text=True, cwd=ROOT)
-    acts, forwarded, nothing, errored, registry = [], [], [], [], []
+    acts, forwarded, nothing, errored, registry, aliases = [], [], [], [], [], []
     for line in run.stdout.split("\n"):
         if "|" not in line:
             continue
@@ -174,11 +178,16 @@ def classify(names):
             errored.append((verb, detail))
         elif kind == "ROW":
             registry.append(verb)
+        elif kind == "ALIASES":
+            # `ALIASES|? h i q r s t v|` — the spellings the dispatcher takes and the table
+            # deliberately does not advertise, read out of the head's own declaration so the
+            # script cannot disagree with the source about what counts as an alias.
+            aliases = verb.split()
     if not registry:
         sys.stderr.write("the probe produced nothing:\n" + run.stdout[-2000:]
                          + run.stderr[-3000:])
         sys.exit(2)
-    return acts, forwarded, nothing, errored, registry
+    return acts, forwarded, nothing, errored, registry, aliases
 
 
 # ------------------------------------------------------------------ the letibot half
@@ -247,16 +256,19 @@ def main():
     args = ap.parse_args()
 
     rows = registry_rows()
-    acts, forwarded, nothing, errored, registry = classify(candidates(rows))
+    acts, forwarded, nothing, errored, registry, aliases = classify(candidates(rows))
     print("=" * 78)
     print("LETICL — the head's half")
     print("  the registry has %d rows; the head ACTS on %d verbs"
           % (len(registry), len(acts)))
     acted = [v for v, _ in acts]
-    missing = [(v, d) for v, d in sorted(acts) if v not in registry]
-    print("  ** ACTS BUT NOT OFFERED BY TAB (%d):" % len(missing))
+    missing = [(v, d) for v, d in sorted(acts) if v not in registry and v not in aliases]
+    print("  ** ACTS BUT NOT OFFERED BY TAB, AND NOT A DECLARED ALIAS (%d):" % len(missing))
     for v, d in missing:
         print("       /%-12s (%s)" % (v, d))
+    if aliases:
+        print("  declared aliases — the dispatcher takes them, Tab does not advertise them (%d): %s"
+              % (len(aliases), " ".join("/" + a for a in aliases)))
     print("  acted on and offered (%d): %s"
           % (len([v for v in acted if v in registry]), sorted(v for v in acted if v in registry)))
     # **The other direction, and it is not the same fact.** A row the head FORWARDS is a row

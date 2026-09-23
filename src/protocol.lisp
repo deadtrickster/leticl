@@ -471,77 +471,75 @@ permission against. The corpus row is `op-<call_id>`, so the prefix here is
 looks like a request id in a column that is not asking for one."
   (format nil "headrun-~d" (incf *call-counter*)))
 
-(defparameter +head-run-arguments-key+ "head-run.arguments"
-  "The settings row that says, per tool, WHICH FIELD A BARE LINE GOES INTO.
+(defun head-run-descriptors (settings)
+  "Per tool, what the DAEMON says a bare line means — or NIL when it has said nothing.
 
-**The shape of a tool's arguments is the daemon's, and this is how the head gets it without
-holding a copy.** `head-run.tools` publishes the NAMES the door opens on; this publishes how a
-person's sentence becomes the arguments — for each name, the field a bare line fills and any
-fields the daemon defaults. The head then turns `/NAME what you want` into the wire's JSON by
-LOOKING UP the name in what the daemon sent, so it still knows nothing about the tool.
+An alist `(NAME :FIELD \"query\" :KIND \"text\" :DEFAULTS ((\"limit\" . \"10\")) :WHY-JSON \"\")`, read
+off the `head-run.tools` row and never merged with anything this file knows. **A tool missing
+from it is a tool whose bare form this head cannot build**, and the caller says so rather than
+guessing a field name — which is the one thing the whole row exists to prevent.
 
-**Why a row and not a head-side table**, which is the whole requirement: a head that knew
-one tool takes `{\"url\": …}` would be holding a copy of that tool's schema — the same drift
-this pair of rows exists to stop — and the alternative that shipped first moved that cost onto
-the operator, who had to type braces. The knowledge stays here and the typing gets short.
+**WHERE IT IS READ FROM, and this was wrong once — measured, not assumed.** The daemon carries
+these as a TYPED FIELD on the row that already publishes the door's names: `SettingRow.tools`,
+an array of `HeadRunTool { name, field, kind, defaults, why_json }`. It is not a second row.
+The first cut of this file invented a `head-run.arguments` row with the descriptors as JSON
+*text* in `value`, which is a shape no daemon has ever sent — it was the shape convenient on
+this side, and a head that invents the other half's grammar is committing the same defect as
+one that guesses its list.
 
-**The value is JSON text**: an array of `{\"name\", \"field\", \"defaults\"}`, or an object keyed
-by name with the same fields. Both are accepted (see `%argument-descriptors`) because the row
-is the daemon's to spell and a head that insisted on one spelling of a shape it ASKED for
-would be moving the cost back. A daemon that predates this row sends none: the bare form says
-so and JSON still works.")
+  · **`:field`** is where the sentence goes. Empty means this tool has no single obvious field,
+    and then `:why-json` carries the daemon's OWN sentence saying why — said in the daemon's
+    words rather than in a head-side guess at them.
+  · **`:kind`** is `path`, `url` or `text` (R32): what the field IS, so Tab can complete it
+    without this head holding a list of which tools take paths. Closed on purpose — a head
+    branches on it, so a fourth value is a head rebuilt.
+  · **`:defaults`** maps a name to **JSON TEXT, not to a JSON string**: the daemon renders a
+    numeric default as `10` and a string one unquoted, so a value here is spliced into the
+    arguments as raw JSON. Encoding it as a string would send `{\"limit\":\"10\"}` where the
+    daemon sends `{\"limit\":10}`, and the same tool would answer two different questions
+    depending on who asked.
 
-(defun %argument-descriptors (value)
-  "VALUE (a settings row's JSON text) as `(NAME :FIELD F :DEFAULTS plist)`, or NIL.
-
-NIL for anything this head cannot read, and that is a FACT rather than an error: a row
-absent, empty, or in a shape from a newer daemon all leave the bare form unavailable and JSON
-working, which is the honest fallback (`head-run-tools` keeps the same rule for a missing
-list).
-
-**TWO SPELLINGS ARE ACCEPTED**, an array of objects or an object keyed by name, because the
-row is the daemon's to spell and a head that insisted on one spelling of a shape it ASKED for
-would be moving the cost back to the other side. The conversion is guarded: a row that decodes
-to something neither shape is NIL rather than a half-read alist, since a descriptor missing
-its `field` would silently drop a person's sentence."
-  (when (and (stringp value) (plusp (length value)))
-    (handler-case
-        (let* ((parsed (json-decode value))
-               (rows (cond
-                       ;; an object keyed by name: `{"tool-a": {"field": "q"}}`
-                       ((and (consp parsed) (keywordp (car parsed)))
-                        (loop for (k v) on parsed by #'cddr
-                              when (and (consp v) (stringp (getf v :field)))
-                                collect (list :name (%key-to-wire k)
-                                              :field (getf v :field)
-                                              :defaults (getf v :defaults))))
-                       ;; an array of descriptors
-                       ((listp parsed)
-                        (loop for v in parsed
-                              when (and (consp v) (stringp (getf v :name))
-                                        (stringp (getf v :field)))
-                                collect (list :name (getf v :name)
-                                              :field (getf v :field)
-                                              :defaults (getf v :defaults))))
-                       (t nil))))
-          (when rows
-            (loop for r in rows
-                  collect (cons (getf r :name)
-                                (list :field (getf r :field)
-                                      :defaults (getf r :defaults))))))
-      (error () nil))))
-
-(defun head-run-arguments (settings)
-  "The daemon's per-tool argument descriptors, or NIL when it has published none.
-
-An alist `(NAME . (:FIELD \"query\" :DEFAULTS (:LIMIT 10)))`, read from the row and never
-merged with anything this file knows. **A tool missing from it is a tool whose bare form the
-head cannot offer**, and the caller says so rather than guessing a field name — which is the
-one thing this whole row exists to prevent."
+**NIL is a fact and not an empty list**, on `head-run-tools`' own rule: a daemon older than the
+field sends no `tools` at all, and a head that invented descriptors would offer a form the
+daemon cannot answer."
   (let ((row (and settings
-                  (find +head-run-arguments-key+ settings
+                  (find +head-run-tools-key+ settings
                         :key (lambda (r) (getf r :key)) :test #'string=))))
-    (and row (%argument-descriptors (getf row :value)))))
+    (loop for d in (and row (getf row :tools))
+          when (and (consp d) (stringp (getf d :name)) (plusp (length (getf d :name))))
+            collect (cons (getf d :name)
+                          (list :field (or (getf d :field) "")
+                                :kind (or (getf d :kind) "")
+                                :defaults (getf d :defaults)
+                                :why-json (or (getf d :why-json) ""))))))
+
+(defparameter +daemon-verbs-key+ "daemon.verbs"
+  "The settings row on which the DAEMON publishes the verbs IT answers — R32's third constraint.
+
+**A head completes `/`-commands from a table, and a head that does not recognise a verb
+FORWARDS it.** So the namespace has two owners, and neither may enumerate the other's half:
+this head offers its own verbs from `*slash-commands*`, and these from the row the daemon
+publishes.
+
+The measured reason, 2026-09-23 (`scripts/slash-audit`): this head forwards five names that
+appear in its source only as string literals, and `/gate`, `/flowy` and `/job` do not appear in
+this tree AT ALL — so no amount of reading it finds them. That is the shape and not an
+oversight, and the daemon's list is the authority for the daemon's half.
+
+`value` is the names, comma-joined with no spaces. **An absent row is a daemon older than this
+one**, and the head then offers its own verbs and says nothing about the rest rather than
+guessing.")
+
+(defun head-daemon-verbs (settings)
+  "The verbs the daemon answers, as IT published them, or NIL when it has not said.
+
+Read from the row's `value` and never from a constant in this file — the same reason
+`head-run-tools` reads its own row and not a list. NIL and the empty list mean the same thing to
+a head choosing what to offer, which is what an empty row comes back as."
+  (let ((row (and settings
+                  (find +daemon-verbs-key+ settings
+                        :key (lambda (r) (getf r :key)) :test #'string=))))
+    (when row (%split-commas (or (getf row :value) "")))))
 
 (defun make-operator-call (call-id name arguments &optional (expected-seq 0))
   "Frame 1: the head ASKS, before it runs anything (R24 part two).
