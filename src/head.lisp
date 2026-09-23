@@ -652,6 +652,39 @@ and a `hello` with a snapshot). Returns T when the queue moved."
                            (getf frame :reason) (getf frame :expected-seq)
                            (getf frame :actual-seq))))
      :control)
+    ((string= (frame-name frame) "diagnostic")
+     ;; **R11's answer, and only the reader who ASKED takes it.** The frame is a read and
+     ;; the daemon keys it by the ADJUDICATION's own id — the thing `/gate` takes — so a
+     ;; head that asked for one id draws the answer to that id and nothing else. An answer
+     ;; for something nobody is reading is not an error and not a row: it is `:filtered`,
+     ;; which `/status` counts, and which is the honest word for *I read this and chose not
+     ;; to show it*.
+     (let ((diag *diag*))
+       (cond
+         ((null diag) :filtered)
+         ((not (equal (getf frame :request-id) (getf diag :request-id)))
+          ;; **SAID, not swallowed**: a mismatched id is either a head that asked for two
+          ;; ids at once (this one does not) or a daemon answering an id nobody named, and
+          ;; a reader who is looking at an empty pane deserves to know which.
+          (say head (format nil "a diagnostic for ~a arrived while this head was reading ~a — nothing of it was taken"
+                            (or (getf frame :request-id) "no id") (or (getf diag :request-id) "nothing")))
+          :control)
+         (t
+          (let* ((kind (or (getf frame :kind) ""))
+                 (ans (cdr (assoc kind (getf diag :answers) :test #'string=))))
+            ;; **an ANSWER, which is a different thing from a WAIT**: `:decided` is what
+            ;; turns *reading…* into one of the three endings, and it is set HERE rather
+            ;; than inferred from a body being present, because `body: None` is an answer.
+            (when ans
+              (setf (getf ans :decided) t
+                    (getf ans :body) (getf frame :body)
+                    (getf ans :total) (getf frame :total)))
+            (open-diagnostic-listing diag head)
+            (when (not (eq (head-mode head) :slash))
+              (setf (head-mode head) :slash))
+            (reset-pane-scroll)
+            (setf (head-dirty head) t)
+            :control)))))
     ((string= (frame-name frame) "sessions")
      (setf (session-sessions (head-session head))
            ;; subagents are not sessions a picker lists, on this frame as on the

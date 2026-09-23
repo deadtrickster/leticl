@@ -54,6 +54,8 @@
    ;; the operator-call door (R24 part two): the daemon's list, and the two frames
    #:+head-run-tools-key+ #:head-run-tools #:next-call-id
    #:make-operator-call #:make-operator-result
+   ;; R11's locator: the oracle's own exchange, by the adjudication's id
+   #:+diagnostic-kinds+ #:make-fetch-diagnostic
    ;; socket
    #:connect-unix #:discover-daemons #:no-daemon #:no-daemon-socket #:wait-for-input
    ;; session
@@ -192,6 +194,8 @@
    ;; the operator-call door (R24 part two), the head's half
    #:*head-tool-runners* #:*op-calls* #:+op-call-wait-ms+ #:tick-op-calls #:%op-call-ask
    #:*op-call-draft* #:op-call-draft-open-p #:op-call-card-lines #:%op-call-draft-key
+   ;; R11's locator
+   #:*diag* #:diagnostic-listing-lines #:open-diagnostic-listing #:%diagnostic-ask
    ;; hack
    #:hack-start #:hack-stop #:hack-socket-path #:list-live-heads #:hack-handle
    #:head-hack-listener #:head-hack-path #:hack-accept-loop #:hack-serve))

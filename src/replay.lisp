@@ -142,6 +142,9 @@ see this file's header."
          ;; and the composer the chord opens — a render READS it, so a draft left open
          ;; by one test would otherwise put its card into the next replay's golden
          (*op-call-draft* nil)
+         ;; R11's read: a `diagnostic` frame is answered into this, and a replay must not
+         ;; inherit another replay's read
+         (*diag* nil)
          (*skew-said-pending* nil)
          (*skew-last-said* nil)
          (*filed-notes* 0)

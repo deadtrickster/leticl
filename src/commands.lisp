@@ -44,7 +44,8 @@
     ("reseat summarise" . "…and summarise the conversation instead of carrying it")
     ("promote" . "move the RUNNING COMMAND to the background (ctrl-o)")
     ("interrupt" . "stop the running turn")
-    ("run" . "NAME [JSON] — run a tool the daemon names, on this machine, as your act")
+    ("run" . "NAME [JSON] — run a tool the daemon names, on this machine, as your act (or alt+r to type the JSON)")
+    ("diagnostic" . "ID — the oracle's brief and its reply for one adjudication, as the gate saw and heard them")
     ("quit" . "leave the head")))
 
 (defun %prompt (head text)
@@ -215,6 +216,8 @@ on ClientFrame::Slash)."
        ;; too, which is a round trip for the one verb whose point is to be fast
        (%interrupt head "interrupted from the head"))
       ((string= verb "run") (%run-command head rest))
+      ;; R11's locator: the oracle's brief and its reply, by the adjudication's own id
+      ((string= verb "diagnostic") (%diagnostic-command head rest))
       ((member verb '("quit" "q") :test #'string=) (setf (head-running head) nil))
       ;; unknown verbs travel; the daemon acts and announces on the log
       (t (%send head (list :frame "slash"
@@ -495,6 +498,85 @@ and hand it to the model as the call."
            (say head (format nil "the arguments are the tool's own JSON — as `/run ~a `{\"…\": \"…\"}` — so `~a` was not sent"
                              name (let ((l (length args)))
                                     (if (> l 40) (concatenate 'string (subseq args 0 40) "…") args))))))))))
+
+(defvar *diag* nil
+  "The diagnostic read in flight or on the screen: a plist
+`:request-id ID :kinds (KIND…) :answers ((KIND :decided B :body S :total N)…)`.
+
+**One at a time, deliberately.** The answer is keyed by the ADJUDICATION's id, so two
+reads open at once would put two ids' answers in one pane and neither labelled; asking for
+a second id REPLACES this, which is also what the pane does.
+
+**`*diag*` is not cleared when the pane closes.** The answers are already here, and an
+operator who left the listing with Esc and comes back with `/diagnostic` — with the same id
+still the newest — should not be sent to the daemon again for two bodies this head is
+holding. Bound by `with-replay-globals`, because a replay that folds a `diagnostic` frame
+must not inherit another replay's read.")
+
+(defun %diagnostic-ask (head request-id)
+  "Open the pane and ask for BOTH halves, one frame each. T when the ask went out.
+
+**Opened at the keypress, before any answer** — the job overlay's own rule: a pane that
+appears only when the second frame lands is a pane the operator has been staring at an
+empty screen for, and `reading…` is a fact rather than a blank.
+
+**Both kinds, from `+diagnostic-kinds+`**, so a third kind is a name in that list and not a
+second call site to remember."
+  (let ((answers (loop for kind in +diagnostic-kinds+
+                       collect (list kind :decided nil :body nil :total nil))))
+    (setf *diag* (list :request-id request-id :kinds (copy-list +diagnostic-kinds+)
+                       :answers answers))
+    (open-diagnostic-listing *diag* head)
+    ;; **THE VERB TAKES THE SCREEN**, which is the head's rule for a reply the operator
+    ;; asked for (`note-slash-reply`'s own comment: a reply the operator asked for takes the
+    ;; screen rather than scrolling past). Opening the listing without the mode would leave
+    ;; the pane in `*slash-out*` and the conversation on the glass.
+    (setf (head-mode head) :slash)
+    (reset-pane-scroll)
+    (setf (head-dirty head) t)
+    (dolist (kind +diagnostic-kinds+)
+      (%send head (make-fetch-diagnostic request-id kind)))
+    (say head (format nil "reading the oracle's brief and reply for ~a — what the gate was shown, and what it answered"
+                      request-id))
+    t))
+
+(defun %diagnostic-target (head)
+  "The adjudication this head would read the oracle's exchange for, or NIL.
+
+**The newest settled decision first, then an open ask.** Both `req-id`s are the
+adjudication's own — the same id `/gate` takes — and the order is what an operator means by
+*that one*: the ask in front of them if there is one, otherwise the last thing decided. A
+head that picked the oldest, or the first, would read the wrong row on a session with more
+than one decision in it."
+  (let* ((s (head-session head))
+         (open (session-open-decisions s))
+         (settled (session-settled-decisions s))
+         (last (and settled (getf (car (last settled)) :req-id))))
+    (or (and open (getf (car open) :req-id))
+        last)))
+
+(defun %diagnostic-command (head rest)
+  "`/diagnostic [ID]` — the oracle's brief and its reply, as the gate saw and heard them.
+
+**A verb, because it is a READ of one named row.** `/gate` already takes a request id and
+lists what the gate decided; this is the other half of that row, and it is asked for by the
+same id so the two cannot disagree about which adjudication is being talked about.
+
+With no id the head reads the newest one it can name — the open ask if there is one,
+otherwise the last settled decision — and says which it chose, because a pane about
+the wrong adjudication looks exactly like a pane about the right one."
+  (let ((rest (string-trim " " rest)))
+    (cond
+      ((plusp (length rest)) (%diagnostic-ask head rest))
+      (t
+       (let ((id (%diagnostic-target head)))
+         (if id
+             (progn (%diagnostic-ask head id)
+                    (say head (format nil "reading ~a — the newest adjudication this head can name (~a)"
+                                      id (if (session-open-decisions (head-session head))
+                                             "the ask in front of you"
+                                             "the last one settled"))))
+             (say head "nothing to read: `/diagnostic ID` names an adjudication, and this head has met none yet — `/gate recent` lists them")))))))
 
 (defun %refresh-notes-listing (head)
   "Redraw the notes listing, if the listing on the screen is the NOTES one.

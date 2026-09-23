@@ -509,6 +509,46 @@ vocabulary and already on the wire."
         :outcome outcome
         :payload (or payload "")))
 
+;;; ------------------------------------------ R11: the oracle's own exchange (25) ;;;
+;;;
+;;; **A LOCATOR, not a payload.** R11 put both halves of the oracle's exchange on the
+;;; corpus row (`shown`, `oracle_reply`) and neither reached a head, because a card that
+;;; carried a whole brief and a whole reply would carry them for every card on the
+;;; screen. This is the same shape as `FetchRow`, which is this document's own precedent
+;;; for *the head asks the daemon for something big it does not normally hold*.
+;;;
+;;; **`body: None` and `body: Some("")` are two facts.** The store holds NULL on every row
+;;; written before R11 kept the exchange, and an oracle that never answered has no reply
+;;; either — *"nobody kept this"* and *"here it is, and it is empty"* are both real, and
+;;; `total` is on the frame rather than inferred because `body.map(len).unwrap_or(0)`
+;;; cannot tell them apart either.
+;;;
+;;; **A `request_id` nobody has is `body: None`, NOT an error and NOT a `Rejected`**: the
+;;; row may have been compacted, the id may be from another session, and *not recorded* is
+;;; the honest answer to all of it. A head draws the same sentence and does not retry.
+;;;
+;;; **No `expected_seq`**: this is a read, it moves nothing, and a head that asked while
+;;; the screen moved still meant it. The wire says `brief`/`reply`; the store has always
+;;; said `shown`/`oracle_reply`, and that mapping is the daemon's own (`DiagnosticSource`)
+;;; — neither vocabulary is flattened into the other.
+
+(defparameter +diagnostic-kinds+ '("brief" "reply")
+  "The two halves, in the order a card reads them. The daemon's own spellings.
+
+A `defparameter` rather than a constant because the file pusher skips constants, and it
+is the ONE place this head knows that there are two: `%diagnostic-ask` walks it, so a
+third kind would be asked for by adding a name here and nowhere else.")
+
+(defun make-fetch-diagnostic (request-id kind)
+  "The read: the oracle's brief or its reply, for the adjudication REQUEST-ID.
+
+Two fields, and both absences are deliberate: no `expected_seq` (a read moves nothing) and
+no `client_request_id` (there is no per-ask reply — the answer is a `diagnostic` frame
+keyed by the ADJUDICATION's id, which is also what `/gate` takes)."
+  (list :frame "fetch_diagnostic"
+        :request-id request-id
+        :kind kind))
+
 (defun make-detach ()
   "A clean goodbye. Not required: close is detach too, and detach is never
 abort (protocol.rs on ClientFrame::Detach)."

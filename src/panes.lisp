@@ -2178,6 +2178,68 @@ knows a door's name, and a test asserts exactly that.
                       (max 8 (- w 10))))
        (row "esc" (wrap-text "cancels, and asks for nothing" (max 8 (- w 10))))))))
 
+(defun %size-said (n)
+  "N BYTES as a person reads it, with the unit named. Nothing for zero, which is not a
+size — a zero-byte body is the *recorded and empty* fact and its own sentence says so."
+  (cond ((null n) nil)
+        ((>= n 1024) (format nil "~,1f KB" (/ n 1024.0)))
+        (t (format nil "~d bytes" n))))
+
+(defun diagnostic-listing-lines (diag)
+  "The `/diagnostic` listing: the oracle's brief and its reply, each labelled with what it
+IS and how big it is — the R11 half that had never reached a head.
+
+**THREE states per half, and they are three different sentences.** `body: None` is *nobody
+kept this* — a row written before R11 kept the exchange, or an id no adjudication has;
+`Some(\"\")` is *recorded, and empty* — the gate really was shown nothing. The second is not
+a rendering of the first, and a head that drew both as an empty pane would have rebuilt the
+defect this file's `%advice-said` exists for, one field over.
+
+**`total` is drawn, not derived.** `body.map(len)` cannot tell the two absences apart, and
+the daemon sends the byte count precisely so a head does not have to guess it.
+
+Lines come back UNWRAPPED: the slash pane wraps at its own width, and wrapping here too
+would wrap twice — the same division `warning-listing-lines` keeps."
+  (let* ((answers (getf diag :answers))
+         (out nil))
+    (dolist (kind +diagnostic-kinds+)
+      (let ((ans (cdr (assoc kind answers :test #'string=))))
+        ;; the daemon's own word for which half this is, at the head of the block
+        (push (format nil "~a~@[ · ~a~]"
+                      (if (string= kind "brief") "brief — what the gate was shown"
+                          "reply — what the gate answered, verbatim")
+                      (%size-said (getf ans :total)))
+              out)
+        (cond
+          ;; **NOT ANSWERED YET**: the frame is out and nothing has come back. Said
+          ;; rather than drawn as an absence, because the two are different facts.
+          ((null (getf ans :decided))
+           (push "  reading…" out))
+          ;; **NOTHING KEPT IT** — `body: None`, and the sentence names both reasons
+          ((null (getf ans :body))
+           (push (format nil "  nobody kept this. The row predates the store keeping the ~
+                             exchange, or ~a names no adjudication here."
+                         (or (getf diag :request-id) "that id"))
+                 out))
+          ;; **RECORDED AND EMPTY** — a body that is present and is nothing
+          ((zerop (length (getf ans :body)))
+           (push "  recorded, and empty — this half was kept and holds nothing." out))
+          (t (dolist (l (%lines-of (getf ans :body)))
+               (push l out))))
+        (push "" out)))
+    (nreverse out)))
+
+(defun open-diagnostic-listing (diag head)
+  "Put the `/diagnostic` listing in the slash pane. T when there is one.
+
+Fills `*slash-out*` and does NOT touch the mode — except that the CALLER opened the pane
+from a keypress, which is where the mode belongs (the job overlay's rule: opened at the
+keypress, saying `reading…`, rather than showing an empty screen for the answer)."
+  (declare (ignore head))
+  (setf *slash-out* (cons (format nil "/diagnostic ~a" (or (getf diag :request-id) ""))
+                          (diagnostic-listing-lines diag)))
+  t)
+
 (defun secret-ask-lines (head cols)
   "The password card — the reference's `secret_lines` (app.rs:7305-7327):
 

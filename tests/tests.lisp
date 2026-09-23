@@ -12638,6 +12638,212 @@ says they are."
       (is (equal "{\"url\": \"https://example.com\"}" (getf f :arguments))
           "with the operator's JSON verbatim, spacing and all"))))
 
+;;; -------------------- R11: the oracle's own exchange, by adjudication id ----------------- ;;;
+;;;
+;;; **The ask, as it was filed** (`TODO.md`, R11 ARGUED): `shown` held the brief on the corpus
+;;; row and `oracle_reply` held the reply verbatim, and the wire carried NEITHER — the survey
+;;; found *147 cards, zero briefs*. What R11 asked for was *a locator keyed `(kind . id)`, not
+;;; a payload*: a card that carried a whole brief and a whole reply would carry them for every
+;;; card on the screen. letibot `bc852c7` answered at protocol 25 with `FetchDiagnostic` and
+;;; `Diagnostic`, and the wire is in the requirements document.
+
+(def-test the-diagnostic-read-is-a-locator-and-not-a-payload (:suite leticl)
+  "**The frame's shape, against the published wire.** Two fields, and both ABSENCES are
+part of it: no `expected_seq` (this is a read, it moves nothing, and a head that asked while
+the screen moved still meant it) and no `client_request_id` (there is no per-ask reply — the
+answer is keyed by the ADJUDICATION's id, which is what `/gate` takes)."
+  (let ((f (make-fetch-diagnostic "adj-7" "brief")))
+    (is (equal "fetch_diagnostic" (getf f :frame)) "the wire's tag, snake_case")
+    (is (equal "adj-7" (getf f :request-id)) "the adjudication's own id")
+    (is (equal "brief" (getf f :kind)) "and which half")
+    (is (not (getf f :expected-seq))
+        "**and no read mark** — a read that moves nothing cannot have one")
+    (is (not (getf f :client-request-id))
+        "nor a per-ask request id: the answer is keyed by the adjudication, not by this ask")
+    (is (equal (list "brief" "reply") +diagnostic-kinds+)
+        "the two halves, in the order a card reads them — the daemon's own spellings")
+    (is (equal "reply" (getf (make-fetch-diagnostic "adj-7" "reply") :kind))
+        "and the other half asks the same way")
+    ;; **AND IT SURVIVES THE ENCODER**, which is where a plist that is not JSON-shaped dies
+    (let ((line (encode-frame f)))
+      (is (not (search "null" line)) (format nil "nothing null on it: ~a" line))
+      (is (equal "fetch_diagnostic" (getf (json-decode line) :frame))
+          "and it round-trips its frame name"))))
+
+(def-test a-diagnostic-answers-are-three-different-screens (:suite leticl)
+  "**R11's whole point, as three assertions: *not recorded*, *recorded and empty*, and a body.**
+
+`body: None` and `body: Some(\"\")` are two facts the store really holds — the store has NULL
+on every row written before R11 kept the exchange, and an oracle that never answered has no
+reply either — and `body.map(len).unwrap_or(0)` cannot tell them apart, which is why `total`
+is on the frame. A head that drew both as an empty pane would have rebuilt the defect
+`%advice-said` exists for, one field over."
+  (flet ((pane (brief-body brief-total reply-body reply-total)
+           (format nil "~{~a~^~%~}"
+                   (leticl::diagnostic-listing-lines
+                    (list :request-id "adj-7"
+                          :answers (list (list "brief" :decided t :body brief-body :total brief-total)
+                                         (list "reply" :decided t :body reply-body :total reply-total)))))))
+    ;; (1) BOTH KEPT: the bodies, labelled, with their sizes
+    (let ((text (pane (format nil "you said build/ is disposable") 26
+                      (format nil "not authorised~%no cites") 24)))
+      (is (search "brief — what the gate was shown · 26 bytes" text)
+          (format nil "the brief is labelled and sized: ~s" text))
+      (is (search "you said build/ is disposable" text) "with what the gate was shown")
+      (is (search "reply — what the gate answered, verbatim · 24 bytes" text)
+          "and the reply is labelled as the other half")
+      (is (search "not authorised" text) "with what it answered")
+      (is (search "no cites" text)
+          "**and a multiline body keeps its lines** — a body folded at its first newline
+ would hide the sentence that matters"))
+    ;; (2) RECORDED AND EMPTY: not the same screen as (3)
+    (let* ((empty (pane "" 0 "" 0))
+           (absent (pane nil 0 nil 0)))
+      (is (search "recorded, and empty" empty)
+          (format nil "**`Some(\"\")` says it was kept and holds nothing**: ~s" empty))
+      (is (search "nobody kept this" absent)
+          (format nil "**`None` says NOBODY KEPT IT**, and names the id: ~s" absent))
+      (is (search "adj-7" absent) "naming the id it has nothing for")
+      (is (not (search "nobody kept this" empty))
+          "**and the two are NOT the same screen** — a head that drew both as an absence would
+ have rebuilt the R12 defect one field over")
+      (is (not (search "recorded, and empty" absent)) "in either direction")
+      (is (not (equal empty absent)) "the two screens differ")
+      ;; and neither is a body's screen — **both halves KEPT**, or the other half's absence
+      ;; sentence would be on it and this would be asserting about the wrong block
+      (let ((body (pane "something" 9 "and a reply" 11)))
+        (is (not (equal empty body)) "and a body is a third")
+        (is (not (search "recorded, and empty" body)) "which says neither of the two")
+        (is (not (search "nobody kept this" body)))))
+    ;; (3) NOT ANSWERED YET is a fourth screen, and it is not an absence either
+    (let ((waiting (format nil "~{~a~^~%~}"
+                           (leticl::diagnostic-listing-lines
+                            (list :request-id "adj-7"
+                                  :answers (list (list "brief" :decided nil)
+                                                 (list "reply" :decided nil)))))))
+      (is (search "reading…" waiting) "before an answer the pane says it is reading")
+      (is (not (search "nobody kept this" waiting))
+          "and does NOT claim the daemon kept nothing")
+      (is (not (search "recorded, and empty" waiting)) "nor that it kept something empty"))))
+
+(def-test a-recorded-diagnostic-draws-its-body-lines-and-not-a-blob (:suite leticl)
+  "A body is prose with line breaks in it, and the pane has to show them: the head's own
+`%lines-of` rule — one trailing newline is dropped so the last line is not a phantom blank,
+which is the defect that put a signed, numbered blank row at the foot of every diff."
+  (let* ((body (format nil "first line~%second line~%"))
+         (lines (leticl::diagnostic-listing-lines
+                 (list :request-id "a" :answers (list (list "brief" :decided t :body body :total 24)
+                                                       (list "reply" :decided t :body "" :total 0))))))
+    (is (member "first line" lines :test #'string=) "the first line")
+    (is (member "second line" lines :test #'string=) "and the second, as its own row")
+    (is (not (member "first line~%second line" lines :test #'string=))
+        "**and not as one blob with a newline inside it**, which the pane would paint as a
+ single row with a hole in it")
+    ;; **and no phantom blank.** The count is the assertion, because a blank line here is
+    ;; ALSO the block separator: exactly one per half, whatever the body's trailing
+    ;; newlines. `uiop:split-string` adds a second for the `~%` the body ends with.
+    (is (= 2 (count-if (lambda (l) (string= l "")) lines))
+        (format nil "one blank line per half and none from the body's trailing newline: ~s"
+                lines))))
+
+(def-test the-diagnostic-verb-asks-for-both-halves-and-opens-the-pane (:suite leticl)
+  "**The operator's door.** `/diagnostic ID` asks the daemon for both halves — one frame each,
+from `+diagnostic-kinds+` — and opens the LISTING at the keypress, saying `reading…`, because
+a pane that appears only when the last frame lands is a pane the operator stared at an empty
+screen for (the job overlay's rule).
+
+It reuses the `/slash` pane on purpose: this is a verb's answer that is a listing, which is
+exactly what that pane is, so the scrolling, Esc, `ctrl-c` and the footer are already right."
+  (let* ((*diag* nil) (*slash-out* nil) (*pane-scroll* 0) (*pane-lines* 0) (*pane-room* 0)
+         (h (%on-head :cols 100 :rows 24)) (wire (%wire h)))
+    (leticl::%diagnostic-command h "adj-42")
+    (let ((sent (%sent wire)))
+      (is (= 2 (length sent)) "two frames go out, one per half")
+      (is (equal '("brief" "reply") (sort (mapcar (lambda (f) (getf f :kind)) sent) #'string<))
+          "for both halves, in the daemon's own spellings")
+      (dolist (f sent)
+        (is (equal "fetch_diagnostic" (getf f :frame)))
+        (is (equal "adj-42" (getf f :request-id)) "by the id the operator named")
+        (is (not (getf f :expected-seq)) "and with no read mark, as the wire says")))
+    (is (equal "adj-42" (getf *diag* :request-id)) "the read is on the books")
+    (is (eq :slash (head-mode h)) "**and the pane is up AT ONCE**")
+    (is (equal "/diagnostic adj-42" (car *slash-out*)) "as the listing for that id")
+    (is (search "reading…" (format nil "~{~a~^~%~}" (cdr *slash-out*)))
+        "saying it is reading rather than showing a blank pane")
+    ;; --- THE FIRST ANSWER DRAWS, and the second replaces it in the same pane
+    (leticl::%handle-frame h (list :frame "diagnostic" :request-id "adj-42" :kind "brief"
+                                   :body "you said build/ is disposable" :total 26))
+    (is (search "you said build/ is disposable" (format nil "~{~a~^~%~}" (cdr *slash-out*)))
+        "the brief is on the pane as soon as it lands")
+    (is (search "reading…" (format nil "~{~a~^~%~}" (cdr *slash-out*)))
+        "**with the other half still saying `reading…`** — one answer is not two")
+    (leticl::%handle-frame h (list :frame "diagnostic" :request-id "adj-42" :kind "reply"
+                                   :body "not authorised" :total 14))
+    (let ((text (format nil "~{~a~^~%~}" (cdr *slash-out*))))
+      (is (search "not authorised" text) "and the reply joins it")
+      (is (not (search "reading…" text)) "with nothing left waiting")
+      (is (search "adj-42" (car *slash-out*)) "both under the id that was asked for"))
+    ;; --- and the frames do not pile up as unreadable notes anywhere
+    (is (null (session-warnings (head-session h)))
+        "an answer is not a warning: nothing to dismiss")
+    (is (equal 0 leticl::*unreadable-total*)
+        "and not a frame this head cannot read")))
+
+(def-test a-diagnostic-nobody-asked-for-is-not-taken (:suite leticl)
+  "**An answer for a different adjudication does not go into this pane.** The daemon keys the
+answer by the id, so a head reading one id must not draw another's brief under the first's
+label — and the head SAYS so, because a reader looking at a pane that did not change cannot
+tell *nothing arrived* from *something arrived for somebody else*."
+  (let* ((*diag* (list :request-id "adj-1"
+                       :answers (list (list "brief" :decided t :body "mine" :total 4)
+                                      (list "reply" :decided t :body nil :total 0))))
+         (*slash-out* (cons "/diagnostic adj-1" (leticl::diagnostic-listing-lines *diag*)))
+         (*pane-scroll* 0) (h (%on-head :cols 100 :rows 24)))
+    (leticl::%handle-frame h (list :frame "diagnostic" :request-id "adj-2" :kind "brief"
+                                   :body "SOMEBODY ELSE'S BRIEF" :total 20))
+    (let ((text (format nil "~{~a~^~%~}" (cdr *slash-out*))))
+      (is (search "mine" text) "the brief this head asked for is still the one on the pane")
+      (is (not (search "SOMEBODY ELSE'S" text))
+          "**and the other id's body was NOT taken**")
+      (is (search "adj-2" (head-status-note h))
+          (format nil "**and it is SAID** — which id arrived while which was being read: ~s"
+                  (head-status-note h))))
+    ;; and an answer with no read open at all is not a row either
+    (let ((*diag* nil))
+      (is (eq :filtered (leticl::%handle-frame
+                         h (list :frame "diagnostic" :request-id "adj-3" :kind "brief"
+                                 :body "x" :total 1)))
+          "with nothing open, an answer is filtered — read and not shown, which is a counted
+ fact and not an unreadable frame"))))
+
+(def-test the-diagnostic-verb-names-the-adjudication-it-chose (:suite leticl)
+  "With no id the head reads the newest one it can name — **the open ask first, then the last
+settled decision** — and says which it chose, because a pane about the wrong adjudication looks
+exactly like a pane about the right one."
+  (let* ((*diag* nil) (*slash-out* nil) (*pane-scroll* 0)
+         (h (%on-head :cols 100 :rows 24)) (wire (%wire h)))
+    ;; nothing met yet: a sentence, and NO frame
+    (leticl::%diagnostic-command h "")
+    (is (null (%sent wire)) "nothing to read sends nothing")
+    (is (search "nothing to read" (head-status-note h)) "and says so, naming the way to list them")
+    (is (null *diag*) "and opens no pane")
+    ;; a settled decision is the target, and it is NAMED
+    (setf (leticl::session-settled-decisions (head-session h))
+          (list (list :req-id "adj-old") (list :req-id "adj-new")))
+    (leticl::%diagnostic-command h "")
+    (is (equal "adj-new" (getf *diag* :request-id))
+        "**the LAST one settled**, not the first — the newest adjudication is the one meant")
+    (is (search "the last one settled" (head-status-note h)) "and the head says which it read")
+    ;; an OPEN ask wins, because that is the decision in front of the operator
+    (setf (session-open-decisions (head-session h)) (list (list :req-id "adj-ask")))
+    (leticl::%command h "diagnostic")
+    (is (equal "adj-ask" (getf *diag* :request-id))
+        "**the ask in front of you outranks the ledger** — the same id the card is about")
+    (is (search "the ask in front of you" (head-status-note h)) "and it says which that was")
+    ;; and an explicit id is taken verbatim, open ask or not
+    (leticl::%command h "diagnostic adj-by-hand")
+    (is (equal "adj-by-hand" (getf *diag* :request-id)) "an id the operator typed is used")))
+
 (def-test a-decision-says-what-it-was-grounded-in (:suite leticl)
   "Gap 9. `decision_detail` (app.rs:9462-9507) is five parts and we drew one.
 The two that carry the obligation: *\"empty cites is loud\"* — an authorisation
