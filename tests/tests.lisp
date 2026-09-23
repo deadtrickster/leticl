@@ -12639,6 +12639,134 @@ invisible on the row that attached it."
                                      80 nil)))
         "which is what reaches the screen")))
 
+(def-test a-user-row-this-session-wrote-is-not-drawn-as-the-operators (:suite leticl)
+  "**R42's head half — the operator: *\"why job completion events arrive as my messages?\"***
+
+Everything this session appends is a `User` item: a job settlement, a salvage notice, a steering
+line, the intent check. On the wire they were indistinguishable, so a head drew a completion
+exactly as it drew the person typing.
+
+**Asserted on the ESCAPES, not on the words** — the words are identical in both cases, which is
+exactly why the three renderings below can be told apart only by their registers. And the security
+half is the reason it is not cosmetic: the oracle refuses to let agent text authorise an action,
+so a head drawing agent text as the operator's shows the READER the lie the oracle is defended
+from, and the reader is the other party the gate serves."
+  (flet ((row (speaker)
+           (let ((body (list :type "user"
+                            :parts (list (list :kind "text" :text "the job finished: 3 files")))))
+             (when speaker (setf (getf body :speaker) speaker))
+             (item-lines (list :item-id "u" :kind "user" :ts 0 :item body) 90 nil))))
+    (let* ((op (row "operator"))
+           (ag (row "agent")))
+      ;; --- the operator's block, unchanged
+      (is (equal '(:fg :blue) (cdr (first (first op)))) "the operator's row keeps its `▌` bar")
+      (is (some (lambda (l) (some (lambda (sg) (equal '(:reverse t) (cdr sg))) l)) op)
+          "and its raised background")
+      ;; --- the session's row: no bar, no background, faint, and LABELLED
+      (is (not (search "▌" (segs-of ag))) "**the session's row has no accent bar**")
+      (is (not (some (lambda (l) (some (lambda (sg) (equal '(:reverse t) (cdr sg))) l)) ag))
+          "**and no background** — the block is the operator's alone")
+      (is (search "session · " (segs-of ag))
+          "**and it is LABELLED** — *a row nobody can attribute is the defect, not the fix*")
+      (is (some (lambda (sg) (and (search "session · " (car sg)) (equal '(:dim t) (cdr sg))))
+                (first ag))
+          "the label is faint, the register R29 gives the head talking about its own origin")
+      (is (search "the job finished: 3 files" (segs-of ag)) "with the words it came with")
+      ;; --- **the two are NOT the same bytes**, which is the whole requirement
+      (is (not (equal (segs-of op) (segs-of ag)))
+          (format nil "**the two speakers are two renderings**:~% operator: ~s~% agent:    ~s"
+                  (segs-of op) (segs-of ag))))))
+
+(def-test a-user-row-with-no-speaker-draws-exactly-as-it-always-did (:suite leticl)
+  "**THE ADDITIVE RULE — the operator's own correction of their first ruling, and the reason it
+matters is on every screen tonight.**
+
+They said: *\"a User row with no speaker is not 'the operator', it is 'not recorded'.\"* Applied
+to the `▌` BLOCK, that made **every user row on every running daemon draw as plain prose** —
+including the operator's own and their next one — because no daemon on this box sends the field
+until it is restarted onto the binary that has it.
+
+**The correction: the block is not a claim about who spoke.** It is the SHAPE of a user-kind row,
+and it has never said *operator* — it says *this is an item of user kind*. What must not be
+asserted without the field is the WORD `operator`, or any label naming a speaker. So a row with no
+field keeps **exactly** the rendering it always had, and the field only ever ADDS a mark.
+
+**And the generalisable half, which is worth more than the fix:** applying a *not recorded* rule to
+a rendering that PREDATES the field makes the head narrate its own uncertainty on every historical
+row in every log. That is a cost a new field must never impose backwards."
+  (let* ((old (item-lines (list :item-id "u" :kind "user" :ts 0
+                                :item (list :type "user"
+                                            :parts (list (list :kind "text" :text "an old row"))))
+                          90 nil))
+         ;; a row the daemon DOES mark, for the contrast — same words, one field between them
+         (marked (item-lines (list :item-id "u" :kind "user" :ts 0
+                                   :item (list :type "user" :speaker "operator"
+                                               :parts (list (list :kind "text" :text "an old row"))))
+                             90 nil)))
+    ;; --- **the block is back**: bar, background, full-width pad, exactly as before the field
+    (is (equal '(:fg :blue) (cdr (first (first old))))
+        "**a row with no speaker keeps its `▌` bar** — the block is the user-kind SHAPE")
+    (is (some (lambda (l) (some (lambda (sg) (equal '(:reverse t) (cdr sg))) l)) old)
+        "and its raised background")
+    (is (search "an old row" (segs-of old)) "and its words")
+    ;; --- **no claim is made**: the label is where a claim about a speaker would go
+    (is (not (search "session ·" (segs-of old))) "no `session ·` label")
+    (is (not (search "operator ·" (segs-of old)))
+        (format nil "**and no `operator ·` either** — the block says *user kind*, not *who*: ~s"
+                (segs-of old)))
+    ;; --- and it is byte-for-byte what an EXPLICIT `operator` draws, which is what *additive* means
+    (is (equal (segs-of old) (segs-of marked))
+        (format nil "**absent and explicit `operator` draw the same block** — the field adds a mark\n for the OTHER speakers, and changes nothing about this one:~% absent:   ~s~% operator: ~s"
+                (segs-of old) (segs-of marked)))
+    ;; --- the row class follows: a user-kind row has the air of speech, as it always did
+    (is (eq :speech (leticl::item-row-class (list :item-id "u" :kind "user" :ts 0
+                                                  :item (list :type "user"
+                                                              :parts (list (list :kind "text" :text "x"))))))
+        "**and it is a SPEECH row** — the class is the air, and this row's air never changed")
+    ;; --- while the marked-later speaker is still distinguished, which is the whole point
+    (let ((agent (item-lines (list :item-id "u" :kind "user" :ts 0
+                                   :item (list :type "user" :speaker "agent"
+                                               :parts (list (list :kind "text" :text "an old row"))))
+                             90 nil)))
+      (is (not (search "▌" (segs-of agent)))
+          "**the session's row still has no block** — the distinction the field was added for")
+      (is (search "session ·" (segs-of agent)) "because it is labelled instead"))))
+
+(def-test a-user-rows-speaker-is-read-from-the-wire-and-names-itself (:suite leticl)
+  "The three answers, the fourth case, and the daemon's own guarantee from this side of it.
+
+**A word this build does not know still NAMES somebody** — the rule `%call-origin-said` keeps for
+`origin`, where *a wrong colour is worse than none*: the field exists so a row the session wrote is
+not drawn as the person's, so an unrecognised speaker renders its own word rather than falling back
+to the operator's."
+  ;; --- the wire, decoded by this head's own reader
+  (is (eq :agent (leticl::%user-speaker
+                  (json-decode "{\"type\":\"user\",\"speaker\":\"agent\",\"parts\":[]}")))
+      "`speaker: agent` reaches the row and is read")
+  (is (eq :operator (leticl::%user-speaker
+                     (json-decode "{\"type\":\"user\",\"speaker\":\"operator\",\"parts\":[]}")))
+      "and so does `operator`")
+  (is (eq :unrecorded (leticl::%user-speaker (json-decode "{\"type\":\"user\",\"parts\":[]}")))
+      "**and a row with no field answers `:unrecorded`** — its own answer, not `:operator`")
+  (is (not (equal (json-decode "{\"type\":\"user\",\"speaker\":\"agent\",\"parts\":[]}")
+                  (json-decode "{\"type\":\"user\",\"speaker\":\"operator\",\"parts\":[]}")))
+      "**the two speakers are never the same bytes**, which is what the daemon's test asserts too")
+  ;; --- a word from a newer build
+  (let ((lines (item-lines (list :item-id "u" :kind "user" :ts 0
+                                 :item (list :type "user" :speaker "web-hook"
+                                             :parts (list (list :kind "text" :text "posted"))))
+                           90 nil)))
+    (is (search "web-hook · " (segs-of lines))
+        (format nil "**an unknown speaker names ITSELF** rather than falling back to the operator's: ~s"
+                (segs-of lines)))
+    (is (not (search "▌" (segs-of lines))) "and it is certainly not drawn as the person's"))
+  ;; --- and the row class: a session row is not `:speech`, while an absent one still is
+  (dolist (speaker '("agent" "web-hook"))
+    (is (eq :other (leticl::item-row-class
+                    (list :item-id "u" :kind "user" :ts 0
+                          :item (list :type "user" :speaker speaker :parts (list (list :kind "text" :text "x"))))))
+        (format nil "a ~a row is `:other`, not `:speech`" speaker))))
+
 (def-test a-system-row-names-its-origin-and-is-dim (:suite leticl)
   "Gap 11. `dim(\"system ({origin:?})\")` and then the text, every line dim
 (app.rs:9544-9548). Ours drew `◦ ` and the text in YELLOW and no origin at all —

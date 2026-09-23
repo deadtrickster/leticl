@@ -333,7 +333,14 @@ neighbours: does a blank line belong between them. The reference's `RowClass`."
     (if (null body)
         :other
         (case (intern (string-upcase (getf body :type)) :keyword)
-          ((:user) :speech)
+          ;; **A user-kind row is Speech for BOTH `operator` and an absent speaker** (the additive
+          ;; rule, R42): the class is what the layout reads for *does a blank line belong between
+          ;; these two*, and a row that predates the field draws exactly as it always did — block
+          ;; and all. A row this session appended, and one naming a speaker this build cannot read,
+          ;; is `:other`: it is not somebody in the conversation speaking, and its air says so.
+          ;; letibot draws its `agent` rows as `RowClass::Other` for the same reason.
+          ((:user) (let ((who (%user-speaker body)))
+                     (if (or (eq who :operator) (eq who :unrecorded)) :speech :other)))
           ((:assistant) (if (plusp (length (string-trim " " (or (getf body :text) ""))))
                             :speech :activity))
           ((:reasoning :tool_result) :activity)

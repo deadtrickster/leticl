@@ -148,6 +148,8 @@
    #:markdown-lines #:inline-spans #:reasoning-header #:reasoning-lines
    #:wrap-segments #:top-border #:status-line
    #:decision-card-lines #:picker-lines #:help-lines #:*slash-commands*
+   ;; R42: who spoke a user row, and the label the session's own rows carry
+   #:%user-speaker #:+session-label+
    ;; the completion surface's own pieces: the head's verbs, the declared shortcuts, and the
    ;; union Tab walks (which is where the daemon's published verbs enter)
    #:+command-aliases+ #:%slash-completions
