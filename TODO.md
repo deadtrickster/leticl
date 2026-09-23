@@ -210,6 +210,27 @@ four work. `%command` has arms the registry does not list (`verbosity`, `jobs`) 
 anything else to the daemon, where `/gate`, `/flowy` and `/job ID` live. **An audit of *what a
 head can do* has to ask the dispatcher and the wire, not the list it completes from.**
 
+## R38 — a setting with more than two values is CHOSEN, not cycled
+
+**Landed `dfad931`, the verbosity half.** `/verbosity` opened a four-rung cycle: with R37's rung the
+reader pressed up to three times and watched the screen change twice to reach the one they wanted,
+and discovered the current value *by changing it*. It is now the picker this head already has
+(`:verbosity` beside `:mode` and `:model`), each value saying what it MEANS and the card saying that
+it applies to the transcript already drawn; `esc` closes it and says nothing was changed.
+
+**`set-verbosity` is the one writer and invalidates the render history** — the rung is read at draw
+time and `%hist-key` is (generation, width, items identity), none of which a rung moves, so without
+the bump the cache serves the previous rung's lines back.
+
+**The diff half is FILED and not built**, per R38's own instruction (*name the values first, then
+build the card*). The ask to letibot names this head's two words (`split`, `unified`), asks whether
+there is a third (`auto` is accepted as an input spelling here and maps to `split`), and asks the
+one question that is not vocabulary at all: **does letibot's diff carry a sign column?** leticl's
+does — `+`/`-`/space is the carrier and the colour is on top, so a monochrome terminal reads it —
+and if the other head is coloured without a sign then no setting makes the two diffs one artifact.
+
+---
+
 ## The elision audit — the R27 second ruling's test, on this head's surface
 
 **The operator's test, 2026-09-23:** *"they arent reread, but they are the part of the
@@ -220,7 +241,7 @@ site draws and what gets you back:
 
 | site | what it is | the way back | verdict |
 |---|---|---|---|
-| folded tool payload (`… +N lines · ctrl-t`) | window | `ctrl-t` pages it; the seam names the key | **PASS** |
+| folded tool payload (`… +N lines · ctrl-t opens it`) | window | `ctrl-t` pages it; the seam names the key **on the row the chord acts on**, `/t unfolds it` on every other row (R40) | **PASS** |
 | R20 card content (`… N rows out of view · PgDn`) | window | PgUp/PgDn/Home/End/wheel, pinned ladder unharmed | **PASS** |
 | the `rows above` seam (T1(1)) | window | scroll to the top asks the daemon for the row | **PASS** |
 | job output, windowed mid-log (`512 earlier bytes gone off the front`) | ERASURE by the daemon's ring | nobody holds them; the window's state and count are all there is | **PASS by necessity** — the erasure is the daemon's, and the row says which |
