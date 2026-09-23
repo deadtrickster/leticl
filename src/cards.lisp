@@ -1051,6 +1051,58 @@ implied: only ONE row has a window at a time, and it is this one."
                    (> (length (%tool-payload-rows body)) +payload-pageable-lines+))
            return (cons (getf item :item-id) 0))))
 
+(defparameter +call-origin-cols+ 32
+  "How many columns of an actor's identity a row will carry.
+
+**Bounded because the row's arithmetic depends on it** (R25): the actor goes in the TAIL,
+which is measured first so the subject is given what is left. An unbounded identity would
+be a row whose subject is squeezed by a name, and the name is the daemon's to keep short —
+`human:dead` is ten columns. Thirty-two is `human:` plus a long one, disclosed with an `…`
+like every other cut in this tree.")
+
+(defun %call-origin-said (body)
+  "WHO this row's call came from, as the daemon named them, or NIL for the MODEL's own call.
+
+**R24 part two, decision 1**, and the field it renders is letibot `dd81999`.
+`TranscriptItem::ToolResult` carries `origin: Option<CallOrigin>`, and the wire spells it:
+
+    {\"origin\": {\"operator\": {\"who\": \"human:dead\"}}}
+
+**ABSENCE is a fact with a meaning, not a hole**, and that is the half a head gets wrong.
+`None` is *the model proposed this call* — which is also what every row written before the
+field existed means, since a missing key for an `Option` reads as `None` and that is why
+the field needs no version bump. So this answering NIL must leave the row drawing exactly
+what it drew before the field was thought of; it does not mean *nobody asked*.
+
+**A shape this build cannot read still NAMES somebody.** The field exists so that a call
+the model did not make is not drawn as the model's, so an `origin` this build does not
+recognise renders its own key rather than falling back to silence — *a wrong colour is
+worse than none*, but silence here is not no colour, it is the model's colour.
+
+`who` is the gate's own identity (`human:dead`, the same string `verdict_by` records), so
+the row and the adjudication for one call name the actor the same way. It is drawn
+VERBATIM: a head that stripped the `human:` scope would be recomposing a name the daemon
+owned."
+  (let ((origin (getf body :origin)))
+    (cond
+      ((null origin) nil)
+      ;; an origin named as a word — the shape `SystemOrigin` uses on a system row, kept
+      ;; so one function reads both and a tool row never mis-draws one as the model's
+      ((stringp origin) (truncate-to-width origin +call-origin-cols+))
+      ((consp origin)
+       ;; **the VALUE is guarded before `getf` reads it**: an origin this build does not know
+       ;; may carry a word rather than a plist (`{"flowy": "seat-3"}`), and a reader that
+       ;; signalled on it would take the head down over a fact it was only trying to NAME.
+       (let* ((kind (loop for (k v) on origin by #'cddr return k))
+              (val (and kind (getf origin kind)))
+              (who (and (consp val) (getf val :who))))
+         (truncate-to-width
+          (if (and (stringp who) (plusp (length who)))
+              who
+              (string-downcase (string kind)))
+          +call-origin-cols+)))
+      (t nil))))
+
 (defun %tool-result-lines (item body cols prefs)
   "One settled tool-result row — the reference's `TranscriptItem::ToolResult` arm,
 followed step for step, because a screen comparison showed ours had folded the
@@ -1098,16 +1150,27 @@ header, also printed `· 1 line` — a count for a fold with nothing to fold."
          (size-style (if (>= n +big-output-lines+) '(:bold t) faint))
          (shown-word (%outcome-word word))
          (took (if (numberp ms) (format nil " · ~a" (duration ms)) ""))
+         ;; **WHO ASKED FOR THIS CALL** — `nil` for the model's own, which is every row
+         ;; that has no `origin` at all. See `%call-origin-said`.
+         (asked (let ((said (%call-origin-said body)))
+                  (if (and said (plusp (length said)))
+                      (format nil " · by ~a" said)
+                      "")))
          ;; the tail is measured FIRST and the subject is given what is left
          (tail-cols (+ 3 (string-width shown-word) (string-width took)
+                       (string-width asked)
                        3 6 (length (format nil "~d" n))))
          (lead (+ (length mark) 1 (length verb) 1))
          (subject (%shorten-subject subject (max 8 (- w lead tail-cols))))
-         (head (list (cons mark (if bad '(:fg :red) faint))
-                     (cons (format nil " ~a " verb) faint)
-                     (cons subject nil)
-                     (cons (format nil " · ~a" shown-word) outcome-style)
-                     (cons took faint)))
+         ;; **the actor's segment is APPENDED, not always present**, so a row the model
+         ;; proposed has the same SEGMENTS in the same order as it had before this field
+         ;; existed — not merely the same text.
+         (head (append (list (cons mark (if bad '(:fg :red) faint))
+                             (cons (format nil " ~a " verb) faint)
+                             (cons subject nil))
+                       (when (plusp (length asked)) (list (cons asked faint)))
+                       (list (cons (format nil " · ~a" shown-word) outcome-style)
+                             (cons took faint))))
          (head-width (%segs-width head))
          (why (%outcome-why outcome))
          (out nil))

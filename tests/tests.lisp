@@ -1262,6 +1262,110 @@ the viewport."
         (is (<= (length wider) (length (leticl::raw-call-lines raw cols)))
             (format nil "a wider block is not more lines than a narrow one at ~d" cols))))))
 
+;;; ------------------- R24 part two, decision 1: a row says WHO asked ----------------- ;;;
+;;;
+;;; letibot `dd81999`: `TranscriptItem::ToolResult` carries `origin: Option<CallOrigin>`,
+;;; wire-spelled `{"origin": {"operator": {"who": "human:dead"}}}`. leticl reads `:origin`
+;;; only on a SYSTEM row today, so an operator-run call drew as the model's — the exact lie
+;;; the field exists to prevent.
+;;;
+;;; **The negative case is the one that matters**, in letibot's own words: `None` is *the
+;;; model proposed it*, not *nobody did*, and a row written before the field existed reads
+;;; as `None` — so the absence of the key must change NOTHING.
+
+(defun %origin-row (origin &optional (cols 100))
+  "The one drawing line a settled `web_fetch` row makes, with ORIGIN in its body.
+
+ORIGIN is passed as a marker so a test can say *the key is absent* differently from *the
+key is present and nil* — they must draw the same, and only one of them is the wire shape a
+pre-field daemon sends."
+  (let* ((body (list :type "tool_result" :call-id "o-c1" :name "web_fetch"
+                     :outcome (list :outcome "ok") :payload "the page"))
+         (body (if (eq origin :absent) body (list* :origin origin body)))
+         (lines (item-lines (list :item-id "o1" :kind "tool_result" :ts 0 :item body)
+                            cols (list :show-tools nil))))
+    (format nil "~{~a~}" (mapcar #'car (first lines)))))
+
+(defun %origin-row-segments (origin)
+  "The SEGMENTS of that same line, so a change in the segment list is visible and not
+only a change in the text."
+  (let* ((body (list :type "tool_result" :call-id "o-c1" :name "web_fetch"
+                     :outcome (list :outcome "ok") :payload "the page"))
+         (body (if (eq origin :absent) body (list* :origin origin body)))
+         (lines (item-lines (list :item-id "o1" :kind "tool_result" :ts 0 :item body)
+                            100 (list :show-tools nil))))
+    (first lines)))
+
+(def-test a-row-the-operator-ran-says-who (:suite leticl)
+  "**R24 part two, decision 1, on the glass.** An operator-run call is drawn as the person's
+act and NAMES them — `who` verbatim, because it is the identity the gate records in
+`verdict_by` and the row and the adjudication for one call must name the actor the same way."
+  (let ((mine (%origin-row (list :operator (list :who "human:dead")))))
+    (is (search "· by human:dead" mine)
+        (format nil "the row names the actor: ~s" mine))
+    (is (not (search "· by human:leticl" mine)) "and not the other person on this box")
+    (is (search " · ok" mine) "with the outcome in its place")
+    ;; the actor sits BETWEEN the call and its outcome, so it is not buried at the end of a
+    ;; long row where a reader scanning for what happened would miss it
+    (is (< (search "· by human:dead" mine) (search " · ok" mine))
+        "before the outcome, not after it")
+    ;; **the SEGMENTS, not only the text** — the actor is its own segment in the faint
+    ;; register, so a fix that moved the text and forgot the style would show here
+    (let ((segs (%origin-row-segments (list :operator (list :who "human:dead")))))
+      (is (find " · by human:dead" segs :key #'car :test #'string=)
+          (format nil "the actor is its own segment: ~s" (mapcar #'car segs)))
+      (is (equal '(:dim t)
+                 (cdr (find " · by human:dead" segs :key #'car :test #'string=)))
+          "in the faint register, like the mark and the duration"))))
+
+(def-test a-row-nobody-named-still-draws-exactly-as-it-did (:suite leticl)
+  "**THE NEGATIVE CASE, and it is the one the field's own docs put first.**
+
+`None` is *the model proposed this call* — which is ALSO what every row written before the
+field existed means, since a missing key for an `Option` reads as `None`. That is why the
+field needs no version bump and why letibot's test asserts it. So the head's half is that
+the absence changes *nothing*: not the text, and not the segment list.
+
+Asserted as a LITERAL, because *draws as before* is only checkable against what before was."
+  (let ((before (%origin-row :absent))
+        (explicit-nil (%origin-row nil)))
+    (is (string= "  ▸ Fetched (o-c1) · ok · the page" before)
+        (format nil "a row with no origin draws the row it always drew: ~s" before))
+    (is (string= before explicit-nil)
+        "**and a key that is present and nil is the same absence** — the wire shape a daemon
+ from before the field sends, and the one a head must not treat as a new fact")
+    (is (not (search "by " before))
+        "nothing of the actor's clause appears when there is no actor")
+    ;; **and the SEGMENT LIST is unchanged too**, which is stricter than the text: a fix
+    ;; that appended an empty segment would pass a text comparison and fail this one
+    (is (equal (mapcar #'car (%origin-row-segments :absent))
+               (mapcar #'car (%origin-row-segments nil)))
+        "the same segments in the same order")
+    (is (notany (lambda (s) (search "by " (car s))) (%origin-row-segments :absent))
+        "and no empty actor segment riding along")))
+
+(def-test an-origin-this-build-cannot-read-still-names-somebody (:suite leticl)
+  "**The fail-safe direction, which is not the same question as the negative case.**
+
+A missing origin means *the model proposed it*. A PRESENT origin this build does not know
+means *somebody else did, and this build cannot say who* — and drawing that as the model's
+is the precise lie the field exists to prevent. So silence is not the safe fallback here:
+*a wrong colour is worse than none*, but silence here is not no colour, it is the model's
+colour."
+  (let ((unknown (%origin-row (list :flowy "seat-3"))))
+    (is (search "· by flowy" unknown)
+        (format nil "an unknown origin renders its own key rather than silence: ~s" unknown))
+    (is (not (string= (%origin-row :absent) unknown))
+        "**and it is NOT drawn as a row the model proposed** — that is the whole point"))
+  ;; an origin given as a bare word — the shape a SYSTEM row uses — reads the same way
+  (is (search "· by bootstrap" (%origin-row "bootstrap"))
+      "a bare-word origin names itself too, so one reader covers both rows")
+  ;; and an identity is BOUNDED, so a pathological one cannot squeeze the subject out
+  (let ((long (%origin-row (list :operator
+                                 (list :who "human:a-very-long-identity-that-runs-past-the-bound")))))
+    (is (<= (string-width long) 100) "a long identity does not overflow the row")
+    (is (search "…" long) "and the cut is disclosed like every other cut in this tree")))
+
 (def-test fence-language-names-map-to-the-highlighter (:suite leticl)
   "A fence carries a NAME; the shim takes a PATH. Both spellings work."
   (is (eq 0 (lang-for-fence "no-such-language")) "an unknown name is 0, not a guess")
