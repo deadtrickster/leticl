@@ -6704,6 +6704,59 @@ than a bar that draws `NIL of NIL NIL`."
       (is (null *filling*)
           (format nil "a tick that cannot be a fraction of anything sets nothing: ~a" line)))))
 
+(def-test the-daemons-filling-is-drawn-and-not-only-rendered (:suite leticl)
+  "**A renderer nothing calls is a screen with no line on it.**
+
+`filling-progress-line` had exactly ONE call site — `carry-line`'s carry branch — and
+`carry-line` returned NIL when a filling was active. So *\"when the daemon reports the
+operation, this yields to it\"* was implemented as a yield with nothing on the other side,
+and the case the function exists for was the one case it never drew.
+
+**Measured on the glass before the fix**, during a real opencode import (9,570 parts), nine
+samples over eight seconds with the filling active at every one (`320 of 9570` →
+`2816 of 9570`): the screen carried no count, no bar and no operation name — while the head
+asked the loop for a frame ten times a second for a line it never drew.
+
+So this asserts the LINE, through `carry-line` and then through the render, which is what
+the old test could not do: it called the renderer directly, so it passed while the screen
+was empty. **The failure this test is built to catch took a live import to see**, because
+the function's own output was always right."
+  (let ((*filling* nil) (*now-ms* 1000) (*carry-outstanding* nil)
+        (*carry-last-done* nil) (*carry-moved-at* nil) (*pane-scroll* 0)
+        (*stdout* (make-string-output-stream))
+        (h (%on-head :cols 100 :rows 24)))
+    ;; --- the premise: the daemon says it is importing, in its own words
+    (apply-event (head-session h)
+                 (json-decode "{\"frame\":\"event\",\"seq\":1,\"event\":\"filling\",\"what\":\"importing an opencode conversation\",\"unit\":\"parts\",\"done\":320,\"total\":9570}"))
+    (is (filling-active-p) "the head knows an operation is running")
+    ;; --- **THE LINE.** Before the fix this was NIL, and the screen was empty.
+    (let ((text (segs-of (carry-line h 100))))
+      (is (plusp (length text))
+          "**`carry-line` DRAWS the daemon's line instead of yielding to nothing** — this is
+ the assertion that failed on the glass during a real import")
+      (is (search "320 of 9570 parts" text)
+          (format nil "with the daemon's own count and its own unit: ~s" text))
+      (is (search "importing an opencode conversation" text)
+          (format nil "and the daemon's own name for the operation, VERBATIM: ~s" text))
+      (is (find #\▐ text) "and the bar"))
+    ;; and through the render, which is where it has to end up
+    (leticl::%render h)
+    (let ((screen (%screen-text h)))
+      (is (search "320 of 9570 parts" screen)
+          (format nil "**THE LINE IS ON THE SCREEN** — the criterion is the glass, not the
+ function's return value: ~s" (subseq screen 0 (min 300 (length screen)))))
+      (is (search "importing an opencode conversation" screen)
+          "with the operation named, so a reader knows what is being filled"))
+    ;; --- and it is the DAEMON'S line, not an inferred one: no carry wording leaks in
+    (is (not (search "announced, waiting for the daemon" (segs-of (carry-line h 100))))
+        "nothing of the head's own inferred sentence appears: the daemon named this one")
+    ;; --- a completed operation takes the line away with it
+    (apply-event (head-session h)
+                 (json-decode "{\"frame\":\"event\",\"seq\":2,\"event\":\"filling\",\"what\":\"x\",\"unit\":\"parts\",\"done\":9570,\"total\":9570}"))
+    (is (not (filling-active-p)) "done == total ends it")
+    (is (null (carry-line h 100))
+        "and the line goes with it, so a finished import does not leave a bar at 100%")))
+
 ;;; ------------------------------ the carry line (§2.5) --------------------- ;;;
 ;;;
 ;;; `/reseat` and `/compact` announce every carried row before a single body follows.

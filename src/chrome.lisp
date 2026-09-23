@@ -1456,8 +1456,23 @@ head that says both is worse than the bar it replaced."
   (multiple-value-bind (total done) (%carry-counts (head-session head))
     (let ((outstanding (- total done)))
       (cond
-        ;; **the daemon is counting this one**: its line, its numbers, its name
-        ((filling-active-p) nil)
+        ;; **the daemon is counting this one**: its line, its numbers, its name.
+        ;;
+        ;; **DRAWN HERE, and it is a fix rather than a phrasing.** This branch used to
+        ;; answer NIL, on the intent stated in this function's own docstring — *"when the
+        ;; daemon reports the operation, this yields to it"* — with the yielding
+        ;; implemented and the thing it yields TO not. `filling-progress-line` had exactly
+        ;; ONE call site (the carry branch below) and was therefore unreachable for the
+        ;; case it was written for. Measured on the glass during a real opencode import
+        ;; (9,570 parts, the filling active at every sample from t=0 to t=8 s, 320 → 2,816
+        ;; of 9,570): **the screen carried no count, no bar and no operation name**, while
+        ;; the head asked the loop for a frame ten times a second (`live-frame-tenths-p`
+        ;; includes `filling-active-p`) for a line it never drew. So the two halves of the
+        ;; old sentence were both true and joined by nothing.
+        ((filling-active-p)
+         (filling-progress-line (getf *filling* :what) (getf *filling* :unit)
+                                (getf *filling* :done) (getf *filling* :total)
+                                cols (and (plusp *now-ms*) *now-ms*)))
         ((or (minusp outstanding) (zerop outstanding))
          ;; every row the announcement promised has arrived — or there is no carry at
          ;; all. Either way the line is done, and it forgets the carry it measured.
