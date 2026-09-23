@@ -158,7 +158,7 @@ with half a tree. When a change is to the struct, say so and take the restart in
 
 ### A fixture poked into a live head is indistinguishable from the thing it imitates
 
-**The fourth of these, and the worst of the four, because the first three cost a wrong
+**The fourth probe lesson, and the worst, because the first three cost a wrong
 number and this one costs the operator a decision.**
 
 A synthetic card is a *fixture*, and a fixture on the operator's screen is not on a
@@ -224,6 +224,33 @@ Two guards, both cheap: the list is taken inside the same script that starts the
 the first thing done with the pid is a `--where` or a read of its screen to check it is the
 session you think it is. **A push is not a read** — `--file` at the wrong pid writes code
 into somebody else's running conversation, and a head cannot tell you it was the wrong one.
+
+### A probe that waits before applying its variable measures the wait
+
+**The sibling of *a measurement that takes time starves what it measures*, and it bit
+2026-09-23 while re-measuring the orphaned-daemon race.**
+
+The thing under test was a TIMING: a `Stop` frame followed by the socket closing, where
+closing at once leaves the daemon alive and closing a second later does not. The first probe
+sent the `Stop` and then **read frames for three seconds** before closing — so every arm had
+three seconds to finish, all three read `gone after 200ms`, and the conclusion would have been
+*the race is fixed*. It is not: closing at once still strands the daemon, and the corrected
+probe — which closes before any read — shows it.
+
+**The rule: the variable has to be applied before the thing it is a variable of can finish.**
+A probe that reads to EOF, sleeps, or waits for a reply before doing the thing it is varying
+has measured the wait. **And if the arms of a probe all agree, that is the first thing to
+suspect** — three arms built to differ, and differing in nothing, is a probe that never
+applied its difference.
+
+Two smaller tells from the same run, both worth knowing:
+
+- **A daemon that answers `bye` on ATTACH is refusing a version, not failing.** The reply
+  carries the reason: `"protocol version 23, this daemon speaks 24"`. A probe that prints only
+  the frame names sees `['bye']` and learns nothing.
+- **A scratch daemon must be killed by HANDLE.** `pkill -f <path>` matches the shell writing
+  the pattern, so it refuses itself; `pkill` (the tool) with `action: list` then `kill` +
+  `pids` is the way, and it reports what it actually killed.
 
 ### The gate REFRESHES what it measures
 
