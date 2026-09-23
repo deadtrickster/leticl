@@ -52,7 +52,12 @@
     ;; *ctrl-t is the same fold*, which stopped being true when the chord was narrowed.
     ("t" . "unfold every long row: tool output, and a queued echo (ctrl-t opens one row's window)")
     ("think" . "fold or unfold the model's reasoning")
-    ("verbosity" . "cycle the event-stream detail")
+    ;; **R38: it is a PICKER, and the row must say so.** This said *"cycle the event-stream detail"*
+    ;; — true until R38 and false after it, and it is the row a reader reads while typing `/v`. A
+    ;; verb whose advertisement names the mechanism it no longer uses is R29's defect on the
+    ;; completion row: the reader is told what will not happen. `/mode` two rows down already
+    ;; reads *"the mode picker — or /mode NAME to type it"*, so this is the same shape, not a new one.
+    ("verbosity" . "the verbosity picker — or /verbosity NAME to type it")
     ;; the surfaces
     ("config" . "every setting, as the daemon reports it")
     ("settings" . "every setting — the same as /config")

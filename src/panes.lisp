@@ -181,7 +181,7 @@ Second value is the cursor's LINE: two lines per session, after a two-line heade
     ("ctrl-x" . "show the raw <function=…> text of tool calls, as the model wrote it")
     ("ctrl-l" . "repaint the screen")
     ("/status" . "this head's counters — dropped, scrubbed, resync — and what each means")
-    ("/verbosity" . "terse → normal → loud; /status counts what has been filtered")
+    ("/verbosity" . "the card that picks what the transcript shows — conversation, terse, normal or loud; /status counts what has been filtered")
     ("/interrupt" . "interrupt, when a key is awkward")
     ("alt+r" . "run a tool the DAEMON names on this machine, as your act — it opens a composer for the tool's own JSON, and `/run NAME {…json…}` is the one-line form")
     ("/config" . "every setting and where it came from; the first row toggles the diff view between split and unified")
@@ -260,7 +260,7 @@ fourteen-column indent, then a blank. 26 rows against our 18."
       (row "seq" (format nil "~d · ~d rendered" (session-seq s) *rendered-total*)
            "The log's monotonic, gap-free position, and how many of those events reached the screen. Both counted by this head, not by the daemon.")
       (row "filtered" (format nil "~d (~(~a~))" *filtered-total* *verbosity*)
-           "Events this head chose not to show at the current verbosity. /verbosity walks terse → normal → loud.")
+           "Events this head chose not to show at the current verbosity. /verbosity opens a card of four rungs.")
       ;; **R10's counted half.** The number `/status` reads so a dismissal is
       ;; COUNTED rather than a disappearance: retiring a warning takes its row off the
       ;; screen and changes nothing here — `/notes` lists it with its whole text, and
@@ -1890,7 +1890,7 @@ otherwise say why not and keep the card."
       ((null choices)
        (say head (ecase *pick-open*
                    (:model "this daemon does not send the model list; use `/models PROVIDER/MODEL`")
-                   (:verbosity "this head has no rungs to offer, which cannot happen; /verbosity cycles as a fallback")
+                   (:verbosity "this head has no rungs to offer, which cannot happen — the ladder is the head's own list")
                    (:mode "this daemon does not send the mode list; use `/mode NAME`"))))
       (t
        (let* ((n (ignore-errors (parse-integer typed)))

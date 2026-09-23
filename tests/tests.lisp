@@ -12255,6 +12255,18 @@ a row that appears and disappears is noise."
       (is (search "/mode" text) "the verb")
       (is (search "the mode picker" text) "and its hint, as the reference joins them")
       (is (search "/models" text) "and every other match"))
+    ;; **R38: the verb's OWN row must name the picker, not the cycle it replaced.** This said
+    ;; *"cycle the event-stream detail"* until R38, and the completion row is where a reader learns
+    ;; what a verb does while typing it — so a row naming the mechanism the verb no longer uses is
+    ;; R29's defect on the completion surface: the reader is told what will not happen. `/mode` two
+    ;; rows up is the shape to match, and this is the assertion that keeps the two alike.
+    (setf (composer-buffer (head-composer h)) "/v")
+    (let ((vtext (car (lines-text (leticl::completions-line h 200)))))
+      (is (search "/verbosity" vtext) "`/v` matches the verb")
+      (is (search "picker" vtext)
+          (format nil "**and its own row says PICKER** — R38 made it one: ~s" vtext))
+      (is (not (search "cycle" vtext))
+          "**not the cycle it used to be** — the advertisement must name what the verb does"))
     (setf (composer-buffer (head-composer h)) "/zzz")
     (is (null (leticl::completions-line h 200)) "a prefix nothing matches is no row")
     (setf (composer-buffer (head-composer h)) "/mode allow-all")

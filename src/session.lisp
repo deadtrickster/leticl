@@ -441,8 +441,8 @@ milliseconds."
   "The session seq when a TurnStarted last named the model answering.")
 
 (defvar *verbosity* :normal
-  "How much of the event stream is drawn, as a LADDER of four rungs — cycled by
-`/verbosity`. The reference's `Verbosity` is three of them, and its own docstrings are
+  "How much of the event stream is drawn, as a LADDER of four rungs — chosen from
+`/verbosity`'s card (R38). The reference's `Verbosity` is three of them, and its own docstrings are
 the vocabulary: Terse (*assistant text and tool outcomes only*), Normal (*plus
 reasoning*), Loud (*plus head arrivals and who issued which command*).
 
