@@ -3042,15 +3042,23 @@ path the operator cannot reach."
 why these landed AFTER the features."
   (let ((*pane-scroll* 0) (*repo-todo-open* nil)
         (h (%make-head)))
-    ;; ctrl-r and ctrl-t flip the folds, which now persist (S5)
+    ;; **`ctrl-r` flips the thinking fold, which persists (S5) — and it is the ONE fold a chord
+    ;; still owns.**
     (let ((before (getf (head-prefs h) :show-reasoning)))
       (%press h (list :type :ctrl :ch #\r))
       (is (not (eq before (getf (head-prefs h) :show-reasoning)))
           "ctrl-r flips the thinking fold"))
+    ;; **and `ctrl-t` does NOT flip the tool fold** (R40): the conversation-wide unfold is `/t`,
+    ;; and the chord opens a window on one row. Asserted here because this is the test that says
+    ;; which chord reaches which feature, and the answer changed.
     (let ((before (getf (head-prefs h) :show-tools)))
       (%press h (list :type :ctrl :ch #\t))
+      (is (eq before (getf (head-prefs h) :show-tools))
+          "ctrl-t leaves the tool fold alone — `/t` is the verb that unfolds it")
+      (%press h (list :type :ctrl :ch #\t))
+      (leticl::%command h "t")
       (is (not (eq before (getf (head-prefs h) :show-tools)))
-          "ctrl-t flips the tool fold"))
+          "**and `/t` does flip it**, which is what the seams on every folded row name"))
     ;; ctrl-p/g/q open their panes through the one command path
     (%press h (list :type :ctrl :ch #\p))
     (is (eq :todos (head-mode h)) "ctrl-p opens the todos pane")
@@ -3737,7 +3745,11 @@ where the reference prints one row is a transcript nobody can scan."
     (let ((folded (segs-of (item-lines item 80 (list :show-tools nil)))))
       (is (search "30 line" folded) "the count says how much there is")
       (is (search "… +29 lines" folded) "and the fold names how many are hidden")
-      (is (search "ctrl-t" folded) "and the chord that shows them")
+      ;; **R40: the seam names the key that acts on THIS row.** Drawn outside a frame the head
+      ;; cannot know whether this is the newest long result, so the seam takes the claim that is
+      ;; true of every folded row — `/t`, the conversation-wide unfold — and `ctrl-t` is named
+      ;; only on the row it opens.
+      (is (search "/t unfolds it" folded) "and the key that unfolds them, named on the row")
       ;; the reference's three rows: the header, the FIRST LINE (which is where a
       ;; tool puts what it did), and the seam with the chord on it. Ours had put
       ;; the seam on the header and dropped the line, so a folded row said how
@@ -4005,36 +4017,52 @@ the same defect as a global that survives between tests."
                       cols (head-prefs h))))
 
 (def-test a-long-payload-is-unreachable-until-a-window-is-opened (:suite leticl)
-  "The criterion, end to end: what the reader presses, what each seam says, and how
-they know they are at the end.
+  "The criterion, end to end — and it now states R40's split, which changed what the chord does.
 
-Folded, a sixty-line result is its header, its first line, and a seam naming the key
-that pages it. `ctrl-t` opens the fold AND a window on it, so the seam changes to the
-key that moves INSIDE the window — and the row that used to say `… +59 lines · ctrl-t`
-with nothing behind the chord can now be read to its last line."
+**`ctrl-t` opens a window on ONE row; `/t` unfolds the conversation.** Folded, a sixty-line result
+is its header, its first line, and a seam naming a key that acts on it: `ctrl-t opens it` on the
+row the chord would open, `/t unfolds it` on every other row. The reader presses the chord, the
+window opens ON THIS ROW while the conversation stays folded — which is the whole point of the
+split, because before it the only way to read one result's rest was to unfold every result in the
+session.
+
+**And the window is the row's own length, not the fold's.** That is the companion change and it is
+load-bearing: with `shown` still reading `(or open …)`, a window on a row in a folded conversation
+drew ONE body line and paged one line per press. The measurement is the assertion at 41 rows:
+header, a screenful, and a seam."
   (let ((*item-facts* nil) (*payload-view* nil) (*hist-generation* 0)
+        (leticl::*payload-head* nil)
         (leticl::*write-prefs* nil)
         (h (%payload-head 60)))
-    (setf (getf (head-prefs h) :show-tools) nil)
-    ;; --- folded: one line, and the seam names the chord that opens the view
+    (setf (getf (head-prefs h) :show-tools) nil
+          ;; the seam's predicate asks the head, and a row drawn outside a frame gets the
+          ;; conservative answer — set here so this test measures the FRAME's answer
+          leticl::*payload-head* h)
+    ;; --- folded: one line, and the seam names the chord that acts on THIS row
     (let ((rows (%payload-row h)))
       (is (= 3 (length rows)) "header, first line, seam")
       (is (search "line 1 of 60" (second rows)) "the first line")
-      (is (string= "    … +59 lines · ctrl-t pages" (third rows))
-          "and the seam names the chord AND what it does"))
-    ;; --- ctrl-t: the fold opens and the window is seeded on the newest payload
+      (is (string= "    … +59 lines · ctrl-t opens it" (third rows))
+          (format nil "**the chord, on the row it acts on**: ~s" (third rows))))
+    ;; --- ctrl-t: a window on this row, and the CONVERSATION stays folded
     (%press h (list :type :ctrl :ch #\t))
-    (is (eq t (head-pref h :show-tools)) "the fold is open")
     (is (equal (cons "t1" 0) leticl::*payload-view*)
-        "and a window is open on the row, at its first line")
+        (format nil "a window is open on the row, at its first line — got ~s"
+                leticl::*payload-view*))
+    (is (null (head-pref h :show-tools))
+        (format nil "**and the fold is NOT opened** — that is the half R40 converged: one chord
+ cannot be named by a per-row seam and mean the whole conversation, and `head-scroll` was left
+ alone: ~s" (head-pref h :show-tools)))
     (let ((rows (%payload-row h)))
-      (is (= 41 (length rows)) "header, 39 body rows, seam")
+      (is (= 41 (length rows))
+          (format nil "**header, a screenful, seam** — the window is the row's own length and not
+ the fold's: ~d rows" (length rows)))
       (is (search "line 1 of 60" (second rows)) "it starts at the head")
       (is (search "line 39 of 60" (nth 39 rows)) "and runs to the fortieth row of the frame")
       (is (string= "    … +21 lines · ↓ pages down · esc closes" (car (last rows)))
           "the seam says which key moves INSIDE the window, and that esc leaves it")
       (is (notany (lambda (l) (search "ctrl-t" l)) rows)
-          "and it never names the fold's chord: the fold is already open"))
+          "and it never names the chord that opened it: the window is already here"))
     ;; --- paging: the seam above names where the reader IS
     (%press h (list :type :down))
     (let ((rows (%payload-row h)))
@@ -4056,33 +4084,70 @@ with nothing behind the chord can now be read to its last line."
           "and the seam says so, so 'no more' is not 'the key stopped working'")
       (is (search "↑ 59 more lines above" (second rows))
           "with the reader's position stated in lines"))
-    ;; --- esc gives the arrows back and closes NOTHING else
+    ;; --- **the chord TOGGLES**: a second press closes the window
+    (%press h (list :type :ctrl :ch #\t))
+    (is (null leticl::*payload-view*) "ctrl-t again closes the window")
+    (is (null (head-pref h :show-tools)) "and the fold is still shut")
+    (is (string= "    … +59 lines · ctrl-t opens it" (car (last (%payload-row h))))
+        "so the seam goes back to naming the chord")
+    ;; --- **and `/t` is the conversation-wide unfold**, which is the other half of the split
+    (%press h (list :type :ctrl :ch #\t))
+    (is (consp leticl::*payload-view*) "the window is open again")
+    (leticl::%command h "t")
+    (is (eq t (head-pref h :show-tools))
+        "**`/t` unfolds the conversation** — the verb the seams on every OTHER row name")
+    (is (consp leticl::*payload-view*) "and it leaves the window where it was")
     (%press h (list :type :esc))
     (is (null leticl::*payload-view*) "esc closes the window")
-    (is (eq t (head-pref h :show-tools)) "and leaves the fold open")
-    ;; the fold is still open, so the row is the fold's 39-row body with the seam that
-    ;; opens the view again — not the folded one-line form
-    (is (string= "    … +21 lines · ctrl-t pages" (car (last (%payload-row h))))
-        "and the seam goes back to naming the chord that opens a view")))
+    (is (eq t (head-pref h :show-tools)) "and leaves the fold open")))
 
 (def-test the-payload-seam-never-names-a-key-that-does-nothing (:suite leticl)
-  "The defect this mechanism exists for, asserted as a property rather than as a
-string: **a seam may not name `ctrl-t` while the fold is open**, because that is the
-chord that closes it again. That was the row the operator could not read past."
+  "The defect this mechanism exists for, asserted as a property rather than as a string — **and
+R40 sharpened it into two properties, because there are now two keys and each acts in a
+different scope.**
+
+  · **`ctrl-t` may be named only on the row it opens.** It acts on ONE row — the newest long
+    result — so a seam on any other row that named it would be telling the reader to press a key
+    that does nothing to the row they are on. That is the same defect as the bad old row, with
+    the scopes swapped.
+  · **while the window is open on this row, no seam may name the chord that would close it** —
+    the arrows and esc are what work there.
+
+Both are measured on the SAME fixture, so the two scopes are visible in one place."
   (let ((*item-facts* nil) (*payload-view* nil)
+        (leticl::*payload-head* nil)
         (leticl::*write-prefs* nil)
-        (h (%payload-head 60)))
-    (setf (getf (head-prefs h) :show-tools) nil)
-    (labels ((seams ()
-               (remove-if-not (lambda (l) (search "…" l)) (%payload-row h))))
-      (is (every (lambda (l) (search "ctrl-t pages" l)) (seams))
-          "folded, the seam names the chord that opens the view")
+        (h (%payload-head 60 60)))
+    (setf (getf (head-prefs h) :show-tools) nil
+          leticl::*payload-head* h)
+    (labels ((seams (index)
+               (remove-if-not (lambda (l) (search "…" l)) (%payload-row h index)))
+             (any (needle lines) (some (lambda (l) (search needle l)) lines)))
+      ;; **TWO rows, and the chord is named on exactly one of them.** `t2` is the newest, so it
+      ;; is the row `ctrl-t` would open; `t1` is not, and its seam must send the reader to the
+      ;; verb instead.
+      (is (any "ctrl-t opens it" (seams 1))
+          (format nil "the seam on the NEWEST long row names the chord: ~s" (seams 1)))
+      (is (not (any "ctrl-t" (seams 0)))
+          (format nil "**and the older row's seam does not** — ctrl-t does nothing to it: ~s"
+                  (seams 0)))
+      (is (any "/t unfolds it" (seams 0))
+          (format nil "it names the verb that reaches it instead: ~s" (seams 0)))
+      ;; the window is this row's, and open, so no seam on it names the chord
       (%press h (list :type :ctrl :ch #\t))
-      (is (notany (lambda (l) (search "ctrl-t" l)) (seams))
-          "open, it never names it again")
+      (is (consp leticl::*payload-view*) "ctrl-t opened a window")
+      (is (not (any "ctrl-t" (seams 1)))
+          "**with the window open on the row, its seam never names the chord again**")
       (is (every (lambda (l) (or (search "pages down" l) (search "end of output" l)))
-                 (seams))
-          "it names the arrows and esc, which are what work"))))
+                 (seams 1))
+          "it names the arrows and esc, which are what work")
+      ;; and the OTHER row's seam is unchanged: its key was `/t` before and after
+      (is (not (any "ctrl-t" (seams 0)))
+          "the row the chord does not act on never names it, window or no window")
+      ;; **NIL, which is what it was set to**: the claim is that NOTHING in this test touched the
+      ;; fold, and asserting T would have asserted the opposite of the fixture's own state.
+      (is (null (head-pref h :show-tools))
+          "**and no fold was touched anywhere in this test** — the window is the row's own"))))
 
 (def-test a-window-opens-on-the-newest-payload-that-has-one (:suite leticl)
   "One row at a time, keyed on the ITEM id — and a payload with nothing behind it gets
@@ -4131,7 +4196,7 @@ folded shape."
     (let ((rows (%payload-row h)))
       (is (= 41 (length rows)) "header, 39 body rows, seam")
       (is (search "line 39 of 40" (nth 39 rows)) "the body stops one short")
-      (is (string= "    … +1 lines · ctrl-t pages" (car (last rows)))
+      (is (string= "    … +1 lines · /t unfolds it" (car (last rows)))
           "and the seam admits it")))
   (let ((*item-facts* nil) (*payload-view* nil)
         (leticl::*write-prefs* nil)
@@ -4281,7 +4346,7 @@ count. Ours had the seam on the header and the line nowhere."
     ;; `ctrl-t PAGES` — the chord opens the view and the arrows move inside it, and
     ;; the seam says which is which. Measured against the reference's own screen for
     ;; `tests/fixtures/payload-window.jsonl`: `… +59 lines · ctrl-t pages`.
-    (is (equal "    … +2 lines · ctrl-t pages" (segs-of (list (third lines))))
+    (is (equal "    … +2 lines · /t unfolds it" (segs-of (list (third lines))))
         "the seam, stepped in, naming the key AND what it does"))
   ;; **A two-line payload folds to ONE line and a seam**, which is the reference's
   ;; arithmetic and was not ours: the folded body is `limit - 1` and the last row is
@@ -4295,7 +4360,7 @@ count. Ours had the seam on the header and the line nowhere."
          (lines (item-lines (list :item-id "t2" :kind "tool_result" :item two)
                             80 (list :show-tools nil))))
     (is (= 3 (length lines)) "header, one line, seam")
-    (is (equal "    … +1 lines · ctrl-t pages" (segs-of (list (third lines))))
+    (is (equal "    … +1 lines · /t unfolds it" (segs-of (list (third lines))))
         "and the second line is what the fold would show")))
 
 (def-test a-whitespace-bearing-target-is-debug-quoted (:suite leticl)
@@ -5768,15 +5833,22 @@ own, the pager finds it, and the fold opens the summary rather than one sentence
           "the headline is still the numbers")
       (is (> (length (leticl::%tool-payload-rows body)) leticl::+payload-pageable-lines+)
           "**and the payload is longer than a fold's worth** — the summary is in there")
-      ;; the pager seeds on THIS row, by its own item id
-      (is (equal (getf row :item-id) (car (leticl::payload-view-seed (head-session h))))
-          "**`ctrl-t` opens this row** and seeds on it by item id")
+      ;; **the PURE question, and that matters here**: this assertion used to call
+      ;; `payload-view-seed`, which OPENS the window — so the chord pressed three lines later
+      ;; found a window already open and closed it, and the details were never drawn. The test
+      ;; was toggling itself off. `newest-payload-item-id` asks the same question and changes
+      ;; nothing; R40 split the two for exactly this reason.
+      (is (equal (getf row :item-id) (leticl::newest-payload-item-id (head-session h)))
+          "**`ctrl-t` would open this row** — it is the newest pageable one, by item id")
+      (is (null leticl::*payload-view*) "and asking has opened nothing")
       ;; **and `ctrl-t` ON THIS ROW opens it** — the real chord, through the real
       ;; handler, and not a `setf`: a seam that names a key the composer swallows is
-      ;; the lie this repo keeps finding. The chord does two things and this asserts
-      ;; both, because either alone is a half-measure — it opens the FOLD (which is
-      ;; what decides whether a payload is drawn at all) and it seeds the window on
-      ;; the newest pageable row, which is this one.
+      ;; the lie this repo keeps finding.
+      ;;
+      ;; **It no longer opens the fold** (R40): the chord is the window's now, and what the
+      ;; assertion below measures is that the details are DRAWN — which works because a window
+      ;; is the row's own length and not the fold's. That is the companion change, and this test
+      ;; is where it shows: before it, a window on a folded conversation drew one body line.
       (leticl::%handle-key h (list :type :ctrl :ch #\t))
       (let ((text (%row-text h row)))
         (is (search "parity harness" text)
@@ -6773,6 +6845,46 @@ survives a hint the operator cannot see."
     (is (= 1 (length (hint-bar h 80)))
         "**one constant string**, so a narrow frame truncates it rather than re-ordering
  it — the prefix that used to move sideways is not back")))
+
+(def-test the-bar-says-what-the-chord-does-and-names-the-verb (:suite leticl)
+  "**R40, on the bar: the key advertised at the bottom of the screen must do what it says.**
+
+The defect R40 was filed for is letibot's, one head over, and it is R29's rule failing on the bar
+instead of on a note: the bar read `ctrl-t tool output` while the chord had become the window on
+ONE row, and `/t` — the verb that now does the unfolding — appeared nowhere on the screen. *A
+remedy the reader has to go looking for was not offered.*
+
+Three claims, and each is a different way the bar could be wrong:
+
+  · **`/t` is ON it**, and inside the first eighty columns, because it is the only affordance the
+    conversation-wide unfold has on a narrow screen: every folded row's seam names it, and a seam
+    that names a key nowhere on the screen is the defect.
+  · **`ctrl-t`'s item says what it does now** — `window`, not `tool output`. A bar is a promise;
+    this one promised the whole conversation and delivered one row.
+  · **R22's placement survives**: `ctrl-n` is still second, at column 18, where that ruling put it.
+    A fix that fixed this by moving somebody else's reflex would be trading one bar defect for
+    another."
+  (let* ((h (%on-head :cols 210 :rows 24))
+         (text (format nil "~{~a~}" (mapcar #'car (hint-bar h 210)))))
+    (is (search "/t unfolds rows" text)
+        (format nil "**the verb is on the bar**: ~s" text))
+    (is (< (search "/t unfolds rows" text) 80)
+        "and inside the first eighty columns, where a narrow screen still shows it")
+    (is (search "ctrl-t window" text)
+        (format nil "**and the chord says what it does now** — a window on one row, not the
+ whole conversation: ~s" text))
+    (is (not (search "tool output" text))
+        "the word it stopped meaning is gone from the bar")
+    ;; R22's own placement, unbroken
+    (is (< (search "ctrl-n notes" text) (search "/t unfolds rows" text))
+        "**`ctrl-n` is still second** — R22's ruling put it at 18 and this fix did not move it")
+    (is (< (search "ctrl-s sessions" text) (search "ctrl-n notes" text))
+        "and `ctrl-s` still opens the bar")
+    ;; nothing was dropped: at the operator's own width every item is on screen
+    (is (search "/help" text) "every item is there at the operator's width")
+    (is (search "ctrl-q jobs" text) "including the ones that fall off at 80")
+    (is (= 1 (length (hint-bar h 210)))
+        "**one constant string** — a narrow frame truncates it rather than re-ordering it")))
 
 (def-test ctrl-n-keeps-the-asks-keys-and-the-ladders
     (:suite leticl :fixture (notes-of-its-own))

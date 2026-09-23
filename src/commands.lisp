@@ -47,7 +47,10 @@
     ;; would complete to `/think` — a different fold — which is how an alias becomes a trap the
     ;; moment something points at it. `/tools` is the daemon's listing verb and is not this
     ;; head's to describe.
-    ("t" . "unfold the long rows: tool output, and a queued echo (ctrl-t is the same fold)")
+    ;; **`/t` is the ONLY spelling of the conversation-wide unfold** (R40): `ctrl-t` opens a
+    ;; window on one row, `/t` unfolds every tool row and a queued echo. The row used to say
+    ;; *ctrl-t is the same fold*, which stopped being true when the chord was narrowed.
+    ("t" . "unfold every long row: tool output, and a queued echo (ctrl-t opens one row's window)")
     ("think" . "fold or unfold the model's reasoning")
     ("verbosity" . "cycle the event-stream detail")
     ;; the surfaces

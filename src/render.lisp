@@ -671,6 +671,11 @@ to decide when the reader has asked for the rows above the window (`fetch-row-ab
          ;; All of that lives in `%history-until` now, because it is per-ROW state
          ;; (`class-above`) and a cache that forgets it inserts the gaps wrongly on
          ;; the frame after a hit.
+         ;; **the head the payload seam's predicate reads** (R40): a row's line function is handed
+         ;; an item and a preference list, so *is this the newest pageable row* needs the session
+         ;; from somewhere. Set here, in the one place that draws rows, and read only inside the
+         ;; frame it is set for.
+         (*payload-head* head)
          (hist (multiple-value-bind (lines bounds)
                    ;; **the anchored row is walked to, not assumed to be in the window** — see
                    ;; `%history-until`'s note: a reader parked on a row is the case the window

@@ -1208,6 +1208,40 @@ makes.)"
 
 (defun payload-view-open-p () (and *payload-view* t))
 
+(defun newest-payload-row-p (item)
+  "Is ITEM the row `ctrl-t` would open — the newest one with something to page?
+
+**This exists because of R40's rule**: *a chord is named only where it acts*. `ctrl-t` opens the
+window on ONE row, so a seam may name it on that row and on no other — every other folded row
+names `/t`, the verb that unfolds the whole conversation. Before the split, every seam could
+honestly say `ctrl-t` because the chord did both; after it, a seam that named `ctrl-t` on an
+older row would be telling the reader to press a key that does nothing to the row they are on.
+
+**The test is `payload-view-seed`'s own walk and not a second opinion**: it asks whether this
+item's id is the one the seed would pick, by calling the same function, so the seam and the chord
+cannot disagree about which row that is.
+
+**With no head in scope the answer is NO, and that is the safe direction rather than a fallback
+for convenience.** A row can be drawn outside a frame — a test, a pane, a file that builds rows
+to measure them — and a head that cannot see the session cannot assert that `ctrl-t` acts on this
+row. `/t unfolds it` is the claim that is TRUE of every folded row whatever the session is, so an
+unknowable case takes it. Measured: reaching for the head unconditionally made every direct
+`item-lines` call die with `expected-type HEAD, datum NIL`, which is ten tests telling the same
+story about a predicate that answered a question it had no information for."
+  (let ((head *payload-head*))
+    (and head
+         (getf item :item-id)
+         ;; **the PURE question**, not the seeder: asking must not open a window
+         (equal (newest-payload-item-id (head-session head)) (getf item :item-id)))))
+
+(defvar *payload-head* nil
+  "The head whose items `newest-payload-row-p` judges, for the one thing that needs it.
+
+**A defvar because a row's LINE function is handed an item and a preference list and nothing
+else** (`item-lines`), so asking *is this the newest pageable row* needs the session from
+somewhere. Set by `%viewport-lines` — the one place that draws rows and therefore the one place
+that can know — and read only inside a frame, so it never outlives the paint that set it.")
+
 (defun payload-view-close ()
   "Close the window. T when there was one."
   (when (payload-view-open-p)
@@ -1242,22 +1276,32 @@ The reference's test in `newest_payload_row` (`payload.lines().count() > 2`), an
 same number for a reason rather than by coincidence: a folded row already draws one
 line and the seam, so two is the point past which paging gains anything.")
 
-(defun payload-view-seed (session)
-  "Open the window on the NEWEST row with something to page, at its first line.
-NIL when no row has one — which leaves the fold open with no view, and that is the
-right answer for a session whose last result is one line long.
+(defun newest-payload-item-id (session)
+  "WHICH row a window would open on — the newest with something to page — or NIL.
 
-The newest, because that is the row a reader is looking at: rows are appended at the
-bottom, the fold is one switch for all of them, and the command just run is at the
-end. This is also the whole limit of the mechanism and is written down rather than
-implied: only ONE row has a window at a time, and it is this one."
+**PURE, and split from `payload-view-seed` for a reason that cost a real defect** (R40): the
+predicate that decides whether a row's seam may name `ctrl-t` has to ASK this question, and the
+first version asked it by calling the seeder — so drawing a row OPENED A WINDOW. Every frame
+would have opened one on the newest long result, and the reader's `ctrl-t` would then close a
+window they never asked for.
+
+**The newest, because that is the row a reader is looking at**: rows are appended at the bottom,
+so the command just run is at the end. Only ONE row has a window at a time, and it is this one —
+which is also the whole limit of the mechanism, written down rather than implied."
+  (loop for i of-type fixnum from (1- (length (session-items session))) downto 0
+        for item = (aref (session-items session) i)
+        for body = (item-body item)
+        when (and (consp body) (string= (getf body :type) "tool_result")
+                  (> (length (%tool-payload-rows body)) +payload-pageable-lines+))
+          return (getf item :item-id)))
+
+(defun payload-view-seed (session)
+  "Open the window on the newest row with something to page, at its first line.
+NIL when no row has one — which is the right answer for a session whose last result is
+one line long, and leaves the fold with no view rather than inventing one."
   (%payload-view-set
-   (loop for i of-type fixnum from (1- (length (session-items session))) downto 0
-         for item = (aref (session-items session) i)
-         for body = (item-body item)
-         when (and (consp body) (string= (getf body :type) "tool_result")
-                   (> (length (%tool-payload-rows body)) +payload-pageable-lines+))
-           return (cons (getf item :item-id) 0))))
+   (let ((id (newest-payload-item-id session)))
+     (and id (cons id 0)))))
 
 (defparameter +call-origin-cols+ 32
   "How many columns of an actor's identity a row will carry.
@@ -1456,7 +1500,8 @@ header, also printed `· 1 line` — a count for a fold with nothing to fold."
             (dolist (l (subseq rows 0 keep))
               (emit (cons (cons "  " nil) l)))
             (when (plusp hidden)
-              (emit (list (cons (format nil "  … +~d diff rows · ctrl-t" hidden) faint)))))
+              (emit (list (cons (format nil "  … +~d diff rows · /t unfolds it" hidden)
+                                faint)))))
           (return-from %tool-result-lines (nreverse out)))
         ;; Folded shows the first line, which is where a tool puts what it did,
         ;; then the seam: `… +N lines`, a separator row and not a sentence — it is
@@ -1478,7 +1523,15 @@ header, also printed `· 1 line` — a count for a fold with nothing to fold."
         ;; past its head.
         (let* ((window (payload-view-for item))
                (page (if window (min window (max 0 (1- n))) 0))
-               (shown (if (or open (and bad (null why))) +body-lines-budget+ 2))
+               ;; **THE WINDOW IS THE ROW'S OWN LENGTH, NOT THE FOLD'S** (R40). This read
+               ;; `(or open …)`, so a window that was open on a row whose conversation was not
+               ;; unfolded drew ONE body line and paged one line per keypress — and the only way
+               ;; to give one result its rest was to unfold every result in the session, which is
+               ;; exactly what made `ctrl-t` a wall. `window` is first for that reason: the
+               ;; reader asked for THIS row's rest, and the fold's state is a different question
+               ;; about a different scope.
+               (shown (if (or window open (and bad (null why)))
+                          +body-lines-budget+ 2))
                (above (plusp page))
                (body-rows (max 1 (- shown 1 (if above 1 0))))
                (end (min n (+ page body-rows)))
@@ -1490,9 +1543,16 @@ header, also printed `· 1 line` — a count for a fold with nothing to fold."
           (cond
             (below
              (emit (list (cons (format nil "  … +~d lines · ~a" (- n end)
-                                       (if window
-                                           "↓ pages down · esc closes"
-                                           "ctrl-t pages"))
+                                       (cond
+                                         ;; the window is open on THIS row: the keys are the
+                                         ;; window's own
+                                         (window "↓ pages down · esc closes")
+                                         ;; **the chord, on the row it acts on**, and the verb
+                                         ;; everywhere else (R40). `ctrl-t` opens the window on
+                                         ;; the newest long result; `/t` unfolds every tool row,
+                                         ;; after which this row's own window can be paged.
+                                         ((newest-payload-row-p item) "ctrl-t opens it")
+                                         (t "/t unfolds it")))
                                faint))))
             ;; The end of the payload, SAID — so "no more" cannot be confused with
             ;; "the arrow stopped working", which is the other half of a seam's job.
@@ -1501,7 +1561,7 @@ header, also printed `· 1 line` — a count for a fold with nothing to fold."
             ;; the payload was short enough to show whole, but the REASON was
             ;; cut — so the affordance has to be here
             (why-folded
-             (emit (list (cons "  … the rest of the reason · ctrl-t" faint)))))))
+             (emit (list (cons "  … the rest of the reason · /t unfolds it" faint)))))))
       ;; `item-lines` steps the whole row in by the activity indent
       (nreverse out))))
 

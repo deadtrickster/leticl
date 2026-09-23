@@ -870,21 +870,31 @@ Esc was a second thing to remember per pane."
       (case (getf key :ch)
         ((#\r) (%flip-fold head :show-reasoning) t)   ; fold the thinking
         ((#\t)
-         ;; **The fold AND a window into the newest payload.**
+         ;; **ONE ROW, NOT A SWITCH — R10's ruling on the overload, and R40 converges this head
+         ;; onto letibot's split.**
          ;;
-         ;; The fold alone was the bug this whole mechanism exists for: it raises
-         ;; the BUDGET (which rows may be long — two rows folded, forty open) and
-         ;; gives no row an OFFSET, so a payload past its first screenful stayed
-         ;; unreachable and the seam said `… +N lines · ctrl-t` to a chord that
-         ;; revealed none of them. The reference at the same key (app.rs:3473-3496)
-         ;; explains it in one line: *"opening the fold changed the budget, not the
-         ;; offset. There was no offset."*
+         ;; This used to flip the conversation-wide tool fold *and* seed a window on the newest
+         ;; long result, so one chord did two things: the wall, and one row's rest. The seam
+         ;; under the reader's eyes says `… +N lines · ctrl-t opens it`, which reads PER-ROW, and
+         ;; the operator's report is exactly that **what surprised them was that ctrl-t triggered
+         ;; the wall AT ALL**. A chord cannot be named by a per-row seam and mean the whole
+         ;; conversation, so it keeps the meaning a seam can honestly name; the conversation-wide
+         ;; unfold is `/t`, where it already was.
          ;;
-         ;; Closing the fold closes the view WITH it: a page offset into a payload
-         ;; that is no longer drawn is a cursor in a closed file.
-         (if (%flip-fold head :show-tools)
-             (payload-view-seed (head-session head))
-             (payload-view-close))
+         ;; **Why this head agrees rather than arguing** (R40 asks): its own tree had already
+         ;; split the two for the echo — R33's seam says `/t opens it` — so `ctrl-t` and `/t` were
+         ;; already two names for *unfold* here, and the chord was the one doing both jobs. The
+         ;; measurement that decided which of the two the BAR shows: on the operator's own session
+         ;; the payload seam names its key **3,211 times** and the reasoning header names `ctrl-r`
+         ;; **1,642 times** — a screen talks about the long rows twice as often as about the
+         ;; working-out, so the long rows keep the visible place.
+         ;;
+         ;; The window follows the newest long result for the reason `payload-view-seed` gives
+         ;; (that is the row a reader is looking at), and the seam names this chord only on that
+         ;; row — every other row names `/t`, because a chord may only be named where it acts.
+         (if (payload-view-open-p)
+             (payload-view-close)
+             (payload-view-seed (head-session head)))
          t)
         ((#\l) (setf (head-full-repaint head) t (head-dirty head) t) t)
         ;; `o` on the subagents pane switches INTO the row under the cursor
