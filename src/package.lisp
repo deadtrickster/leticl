@@ -155,6 +155,9 @@
    #:+command-aliases+ #:%slash-completions
    ;; R38: the one writer of the rung, and the rungs themselves
    #:set-verbosity #:+verbosity-ladder+ #:+verbosity-said+
+   #:verbosity-name #:verbosity-for-word #:+verbosity-other-words+
+   ;; R42's sibling: the rung persists, and the interactive writer that keeps it
+   #:%choose-verbosity #:prefs-verbosity
    #:permission-card-lines #:card-content-window #:card-scroll-by #:reset-card-scroll
    #:*card-scroll* #:*card-page*
    ;; R40: which row `ctrl-t` acts on, so a seam names the chord only there

@@ -2062,14 +2062,119 @@ of the difference."
            (setf (prefs-diff out) "unified"
                  (prefs-thinking out) "open"
                  (prefs-tools out) "open"
-                 (prefs-raw-calls out) t)
+                 (prefs-raw-calls out) t
+                 (prefs-verbosity out) "terse")
            (save-prefs out p)
            (let ((back (load-prefs p)))
              (is (string= "unified" (prefs-diff back)))
              (is (string= "open" (prefs-thinking back)))
              (is (string= "open" (prefs-tools back)))
-             (is (eq t (prefs-raw-calls back)))))
+             (is (eq t (prefs-raw-calls back)))
+             ;; **the rung survives too** — the fifth choice, and the one the card could set
+             ;; while the file forgot (letibot's `1da8f08`, and this head's own gap).
+             (is (string= "terse" (prefs-verbosity back)) "the rung round-trips")))
       (forget-prefs-file p))))
+
+(def-test choosing-a-rung-writes-it-down-and-the-next-head-comes-back-on-it (:suite leticl)
+  "**The persistence gap, driven the way a restart drives it.**
+
+letibot's `1da8f08`: *\"it was the one setting the card could change and the file did not keep, so a
+reader who chose `conversation` got `normal` back on every restart — a setting that forgets is a
+setting the reader has to keep re-making.\"* This head had the same gap for `diff`, `thinking`,
+`tools` and `raw_calls` closed and for the rung open.
+
+**Two halves, and the second is the one a unit test forgets**: choosing goes through
+`%choose-verbosity` and lands in the file, and a FRESH head loading that file comes back on the
+rung. A test that only checked the first would pass with a file nothing ever read."
+  (let ((p (temp-prefs-path "rung"))
+        (*write-prefs* t)
+        (leticl::*prefs* (make-prefs)))
+    (unwind-protect
+         (progn
+           (setf (prefs-path leticl::*prefs*) p)
+           (ensure-directories-exist p)
+           ;; --- one head chooses a rung, which is what the card and the verb both do
+           (let ((leticl::*verbosity* :normal))
+             (let ((h (%on-head :cols 100 :rows 30)))
+               (%choose-verbosity h :reading)
+               (is (eq :reading leticl::*verbosity*) "the rung is live on this head")))
+           (let ((text (uiop:read-file-string p)))
+             (is (search "verbosity = \"reading\"" text)
+                 (format nil "**choosing wrote it down**, quoted like the rest: ~s" text)))
+           ;; --- and the NEXT head reads it back, which is the whole of *survives a restart*
+           (let ((leticl::*verbosity* :normal))
+             (multiple-value-bind (fresh notes) (load-prefs p)
+               (is (string= "reading" (prefs-verbosity fresh)) "the file carries the rung")
+               (is (null notes) "and nothing to complain about")
+               (let ((h2 (%on-head :cols 100 :rows 30)))
+                 (prefs-into-head h2 fresh)
+                 (is (eq :reading leticl::*verbosity*)
+                     "**a fresh head comes back on the rung it chose** — that is the setting that
+ no longer has to be re-made")))))
+      (forget-prefs-file p))))
+
+(def-test a-load-does-not-write-the-file-it-just-read (:suite leticl)
+  "**The file discipline, on the path a restart takes.**
+
+`prefs-into-head` applies the rung through `set-verbosity` and NOT through the persisting writer,
+because a load must never save: a head that could not read the file would otherwise write over a
+file it never saw, which is the one thing *never write what you did not read first* forbids. The
+interactive writer is a separate function for exactly this reason, and this is the test that says
+the two have not been quietly merged."
+  (let ((p (temp-prefs-path "noloadwrite"))
+        (*write-prefs* t)
+        (leticl::*prefs* (make-prefs)))
+    (unwind-protect
+         (progn
+           (setf (prefs-path leticl::*prefs*) p)
+           (ensure-directories-exist p)
+           ;; a file with a rung in it, and a marker line a save would have to preserve
+           (with-open-file (o p :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-line "# the operator's own note" o)
+             (write-line "verbosity = \"loud\"" o))
+           (let ((before (uiop:read-file-string p))
+                 (leticl::*verbosity* :normal))
+             (multiple-value-bind (fresh notes) (load-prefs p)
+               (declare (ignore notes))
+               (prefs-into-head (%on-head :cols 100 :rows 30) fresh))
+             (is (eq :loud leticl::*verbosity*) "the rung is applied")
+             (is (string= before (uiop:read-file-string p))
+                 "**and the file is BYTE-FOR-BYTE what it was** — a load is a read")))
+      (forget-prefs-file p))))
+
+(def-test the-file-reads-either-heads-word-for-the-rung-and-keeps-one (:suite leticl)
+  "**R37's NAME row is still outstanding, and this is how the difference is carried meanwhile.**
+
+letibot spells the rung `conversation`; this head spells it `reading`. **Writing this head's word
+into a file letibot reads would put a value IT cannot read in front of it on every start** — and
+letibot reports an unknown value by name and LEAVES IT IN THE FILE, so the complaint would be
+permanent. So the read is generous and the write is this head's own spelling: a file either head
+wrote is understood here, and nothing this head saves can confuse the other.
+
+**And a word neither head spells is NAMED and kept**, which is letibot's own rule for its rungs: a
+typo and a deliberate value must not be the same screen, and silently writing a different word back
+is how they become one."
+  (flet ((in-file (text)
+           (let ((p (temp-prefs-path "word")))
+             (unwind-protect
+                  (progn (ensure-directories-exist p)
+                         (with-open-file (o p :direction :output :if-exists :supersede
+                                              :if-does-not-exist :create)
+                           (write-line text o))
+                         (load-prefs p))
+               (forget-prefs-file p)))))
+    (is (string= "reading" (prefs-verbosity (in-file "verbosity = \"reading\"")))
+        "this head's own word")
+    (is (string= "reading" (prefs-verbosity (in-file "verbosity = \"conversation\"")))
+        "**and letibot's word for the same rung is READ** — a file either head wrote is understood")
+    (is (string= "loud" (prefs-verbosity (in-file "verbosity = \"loud\"")))
+        "the three rungs both heads agree on are read as themselves")
+    (multiple-value-bind (p notes) (in-file "verbosity = \"chatty\"")
+      (is (string= "normal" (prefs-verbosity p)) "an unknown word keeps the DEFAULT")
+      (is (some (lambda (n) (search "chatty" n)) notes)
+          (format nil "**and it is NAMED rather than swallowed**: ~s" notes))
+      (is (some (lambda (n) (search "normal" n)) notes)
+          "with the four it could have been, so a reader cannot guess wrong twice"))))
 
 (def-test prefs-keeps-what-it-does-not-own (:suite leticl)
   "A comment, a section, and a key from a NEWER build all survive a save.
@@ -4713,7 +4818,12 @@ screen the pane is `config`, a blank, a dim section name, `▸ ✎ diff view
 split` reversed with `       from PATH` dim under it, the other head rows, a blank,
 `session — the daemon` with `✎` only on the rows a verb changes, then the daemon's
 files, then the closing sentence."
-  (let ((h (%pane-head)))
+  (let ((h (%pane-head))
+        ;; **the rung is a GLOBAL and not a head pref**, so the pane's verbosity row reads it
+        ;; from there while the other four come from `head-prefs`. Bound for the same reason the
+        ;; other four are set: a suite runs hundreds of heads in one image, and the rung a
+        ;; preceding test left is not this one's.
+        (leticl::*verbosity* :normal))
     (setf (head-prefs h) (list :show-reasoning nil :show-tools t :raw-calls nil :diff "split")
           (head-picker-sel h) 0)
     (multiple-value-bind (lines sel-line) (config-lines h (head-settings h) 210)
@@ -4725,30 +4835,47 @@ files, then the closing sentence."
         (is (string= "▸ ✎ diff view        split" (nth 3 text)) "the cursor row, keyed to the longest key")
         (is (equal '(:reverse t) (cdr (first (nth 3 lines)))) "reversed whole")
         (is (uiop:string-prefix-p "       from " (nth 4 text)) "its source under it")
-        (is (string= "  ✎ thinking         folded" (nth 5 text)))
-        (is (string= "  ✎ tool output      open" (nth 6 text)) "the live fold's word")
-        (is (string= "  ✎ raw tool calls   hidden" (nth 7 text)) "shown/hidden, the reference's words")
-        (is (string= "" (nth 8 text)) "a blank between sections")
-        (is (string= "  session — the daemon" (nth 9 text)))
-        (is (string= "  ✎ mode             allow-all (this box, consented)" (nth 10 text))
+        ;; **the rung, second, and in letibot's own order** — its pane lists diff view,
+        ;; verbosity, thinking, tool output, raw tool calls, and two panes for one box should be
+        ;; read the same way. **No `✎`, and that is deliberate**: the pane's mark means *Enter
+        ;; changes this and keeps it*, and the rung's row does not — its Enter points at the verb.
+        ;; letibot keeps the pencil because every head row goes through one path; this pane has a
+        ;; shape for *not from here* and uses it, so the mark is not a small lie.
+        (is (string= "    verbosity        normal" (nth 5 text))
+            "the rung, named by `verbosity-name`, and marked as NOT editable here")
+        (is (string= "  ✎ thinking         folded" (nth 6 text)))
+        (is (string= "  ✎ tool output      open" (nth 7 text)) "the live fold's word")
+        (is (string= "  ✎ raw tool calls   hidden" (nth 8 text)) "shown/hidden, the reference's words")
+        (is (string= "" (nth 9 text)) "a blank between sections")
+        (is (string= "  session — the daemon" (nth 10 text)))
+        (is (string= "  ✎ mode             allow-all (this box, consented)" (nth 11 text))
             "a daemon row a verb changes carries ✎")
-        (is (string= "    session          s-1789639478142928813" (nth 13 text))
+        (is (string= "    session          s-1789639478142928813" (nth 14 text))
             "one that takes a restart does not")
         (is (some (lambda (l) (search "files — edit with an editor" l)) text) "the daemon's files")
         (is (some (lambda (l) (search "permission.json" l)) text) "by name")
         (is (search "✎ changes now and is kept" (car (last text))) "and the closing sentence")
         (is (not (some (lambda (l) (search "NIL" l)) text)) "and nothing prints NIL"))
-      (is (= 3 sel-line) "the cursor's line: title, blank, section, row"))
+      (is (= 3 sel-line) "the cursor's line: title, blank, section, row")
+      ;; **the rung's row POINTS AT THE VERB rather than cycling** (R38, and letibot's sentence
+      ;; word for word): four values are chosen from the card, and a pane row that walked through
+      ;; them one Enter at a time would be the interface R38 removed.
+      (flet ((row (label) (find-if (lambda (r) (string= label (getf r :key))) (config-rows h))))
+        (is (equal '(:no "`/verbosity` with nothing after it opens the card")
+                   (getf (row "verbosity") :edit))
+            "**the rung's row POINTS AT THE VERB** — letibot's sentence, word for word, because
+ a four-value setting walked through one Enter at a time is the interface R38 removed")))
     ;; the cursor walks EVERY row, and the source follows it
-    (setf (head-picker-sel h) 4)
+    (setf (head-picker-sel h) 5)
     (multiple-value-bind (lines sel-line) (config-lines h (head-settings h) 210)
-      (is (search "▸ ✎ mode" (nth sel-line (lines-text lines))) "the fifth row is the daemon's mode")
-      (is (= 9 sel-line) "on line 9 — the blank and the second section name are counted, and the source line only follows the cursor"))
+      (is (search "▸ ✎ mode" (nth sel-line (lines-text lines)))
+          "**the sixth row is the daemon's mode** — five head rows, then its section")
+      (is (= 10 sel-line) "on line 10 — the blank and the second section name are counted, and the source line only follows the cursor"))
     ;; enter on a daemon row goes through the verb, not around it
-    (setf (head-picker-sel h) 6)        ; supervise
+    (setf (head-picker-sel h) 7)        ; supervise
     (leticl::config-change h)
     (is (search "supervise off" (head-status-note h)) "supervise flips through its own verb")
-    (setf (head-picker-sel h) 7)        ; session, not editable
+    (setf (head-picker-sel h) 8)        ; session, not editable
     (leticl::config-change h)
     (is (search "takes a restart" (head-status-note h)) "a read-only row says why")))
 

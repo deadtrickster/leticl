@@ -166,6 +166,23 @@ head that guessed would offer names it cannot check. It offers its own and stays
   (push text (head-queued head))
   (%send head (make-prompt (session-expected-seq (head-session head)) text)))
 
+(defun %choose-verbosity (head level)
+  "Set the rung AND write it down — the ONE interactive writer (R42's sibling).
+
+**Not `set-verbosity`, and the difference is the file discipline.** A LOAD applies what the file
+said and must not save back: a head that could not read the file (`load-prefs`'s unreadable case)
+would otherwise write over a file it never saw — *never write what you did not read first*. So the
+rung has two writers by necessity: `set-verbosity` for the value, and this for the value AND the
+file, which the card's Enter and `/verbosity NAME` both come through. One interactive writer rather
+than a `(save-head-prefs)` at each site, for the reason `%flip-fold` exists: *the fifth site is the
+one that would forget*.
+
+Returns the save's complaint, or NIL when it landed — a setting that did not persist is a
+different fact from one that did, and the caller owns the sentence."
+  (set-verbosity level)
+  (handler-case (progn (save-head-prefs head) nil)
+    (error (e) (format nil " (not saved: ~a)" e))))
+
 (defun %command (head line)
   "One verb per slash command; anything the head does not handle goes to the
 daemon as the line the operator typed, without the leading slash (protocol.rs
@@ -241,24 +258,27 @@ on ClientFrame::Slash)."
       ;; here — and the card's own hint row says *or type a name or the number on the left*, so the
       ;; typed path and the ladder have to agree.
       ((member verb '("verbosity" "v") :test #'string=)
-       (let ((name (string-downcase (string-trim " " rest))))
+       (let ((name (string-trim " " rest))
+             (rung nil))
          (cond
            ((zerop (length name)) (open-pick head :verbosity))
-           ((member name (mapcar (lambda (v) (string-downcase (symbol-name v)))
-                                 +verbosity-ladder+)
-            :test #'string=)
-            (let ((was *verbosity*))
-              (set-verbosity (intern (string-upcase name) :keyword))
+           ;; **A WORD either head spells is read here** (`verbosity-for-word`), and it writes
+           ;; THIS head's spelling back: letibot's name for R37's rung is `conversation` and
+           ;; this head's is `reading`, so a reader who typed the other head's word gets the
+           ;; rung rather than a refusal — and the file keeps one spelling.
+           ((setf rung (verbosity-for-word name))
+            (let ((was *verbosity*)
+                  (note (%choose-verbosity head rung)))
               (say head (if (eq was *verbosity*)
-                            (format nil "verbosity is already ~a" name)
-                            (format nil "verbosity → ~a — the whole transcript, including everything above this line"
-                                    name)))))
+                            (format nil "verbosity is already ~a~@[~a~]"
+                                    (verbosity-name) note)
+                            (format nil "verbosity → ~a — the whole transcript, including everything above this line~@[~a~]"
+                                    (verbosity-name) note)))))
            ;; **an unknown rung is a sentence, not a silence** — and it names the four, because a
            ;; reader who typed one cannot guess the others from a refusal
            (t (say head (format nil "`~a` is not a verbosity — the four are ~{~a~^, ~}; `/verbosity` with no argument opens the card"
                                 name
-                                (mapcar (lambda (v) (string-downcase (symbol-name v)))
-                                        +verbosity-ladder+)))))))
+                                (mapcar #'verbosity-name +verbosity-ladder+)))))))
       ((member verb '("config" "settings") :test #'string=)
        ;; Ask, and open the pane. The REPLY does not open it (a head asks for
        ;; settings on attach now, and a reply that opened the pane would pop

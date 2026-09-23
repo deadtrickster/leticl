@@ -320,8 +320,8 @@ fourteen-column indent, then a blank. 26 rows against our 18."
       (when *last-render-error*
         (row "render" (format nil "~a" (type-of *last-render-error*))
              (format nil "THE LAST FRAME FAILED TO RENDER: ~a — the failure is painted into the screen and this line is the same fact in a place that survives it. Fix the definition and re-push; clearing it is not the fix." *last-render-error*)))
-      (row "verbosity" (string-downcase (symbol-name *verbosity*))
-           "What reaches the transcript at the current filter. /verbosity walks terse → normal → loud. It used to sit on the composer's border, which was a row of attention paid for ever for a fact read once.")
+      (row "verbosity" (verbosity-name)
+           "What reaches the transcript at the current filter. /verbosity opens a card of four rungs. It used to sit on the composer's border, which was a row of attention paid for ever for a fact read once.")
       (let ((ws (getf (session-wiring s) :workspace)))
         (when (plusp (length (or ws "")))
           (row "workspace" (tilde-path ws)
@@ -332,13 +332,17 @@ fourteen-column indent, then a blank. 26 rows against our 18."
 ;;; --------------------------------------------------------- the config pane ;;;
 
 (defparameter *head-setting-rows*
-  '("diff" "thinking" "tools" "raw_calls")
+  '("diff" "verbosity" "thinking" "tools" "raw_calls")
   "The settings the HEAD owns, in the config pane's own order.
 
 The daemon's rows are its own and read-only here — this head cannot change what a
-daemon flag is. But the four above are the head's own choices, they live in
+daemon flag is. But the five above are the head's own choices, they live in
 `head.toml` (S5), and a pane that lists them and cannot change them is a pane that
-teaches the operator the wrong thing about what is editable.")
+teaches the operator the wrong thing about what is editable.
+
+**`verbosity` is second, and that is letibot's order** (its pane lists diff view, verbosity,
+thinking, tool output, raw tool calls) — two panes for one box should be read the same way. It is
+also the one row here that is not a toggle, which its `:edit` below says.")
 
 (defun %head-setting-value (head key)
   "One of the HEAD's own settings, READ FROM THE LIVE PLIST rather than from the
@@ -355,6 +359,7 @@ hidden` where ours said `raw_calls = off`."
          (if (getf (head-prefs head) :show-tools) "open" "folded"))
         ((string= key "raw_calls")
          (if (getf (head-prefs head) :raw-calls) "shown" "hidden"))
+        ((string= key "verbosity") (verbosity-name))
         (t "?")))
 
 (defun %save-head-prefs-note (head)
@@ -417,7 +422,7 @@ neither variable is set."
 
 (defun config-rows (head &optional (settings (head-settings head)))
   "The config pane's rows, the reference's `config_rows` (app.rs:5579): the HEAD's
-four, then the daemon's SETTINGS, then the daemon's files.
+five, then the daemon's SETTINGS, then the daemon's files.
 
 Each row is a plist: `:section`, `:key`, `:value`, `:source` (where the value came
 from, shown under the selected row; \"\" when nobody tracks it), `:choices` (the
@@ -433,13 +438,20 @@ row's label."
          (dir (daemon-config-dir)))
     (append
      (loop for key in *head-setting-rows*
-           for label in '("diff view" "thinking" "tool output" "raw tool calls")
+           for label in '("diff view" "verbosity" "thinking" "tool output" "raw tool calls")
            collect (list :section "head — this window"
                          :key label
                          :value (%head-setting-value head key)
                          :source head-source
                          :choices nil
-                         :edit (list :head key)))
+                         ;; **A row with more than two values POINTS AT THE VERB rather than
+                         ;; cycling** (R38). Four rungs walked through one Enter at a time is the
+                         ;; interface R38 removed, one screen over; the other four rows are true
+                         ;; toggles, which the rule permits cycling. letibot's pane says the same
+                         ;; sentence, word for word.
+                         :edit (if (string= key "verbosity")
+                                   (list :no "`/verbosity` with nothing after it opens the card")
+                                   (list :head key))))
      (mapcar (lambda (r)
                (let ((editable (or (getf r :editable) "")))
                  (list :section "session — the daemon"
@@ -472,6 +484,7 @@ row's label."
       head — this window
     ▸ ✎ diff view        split
            from /home/dead/.config/leticl/head.toml
+      ✎ verbosity        reading
       ✎ thinking         folded
       ✎ tool output      open
       ✎ raw tool calls   hidden
@@ -1722,7 +1735,7 @@ value is `allow-all (this box, consented)` and the list says `allow-all`, so the
 first word; the model row's is `local (qwen-3.8-27b)` or `deepseek/…`, and the
 list says the bare form the header shows."
   (ecase which
-    (:verbosity (string-downcase (symbol-name *verbosity*)))
+    (:verbosity (verbosity-name))
     (:mode (let ((v (or (setting-value head "mode") "")))
              (subseq v 0 (or (position #\space v) (length v)))))
     (:model (%header-model (or (setting-value head "model") "")))
@@ -1862,15 +1875,17 @@ said and not sent; a model goes as the slash line the operator would have typed
                  (mode-action head name)))
       ;; **R38: it applies to the transcript ALREADY DRAWN, and the card says so.** Verbosity is
       ;; read at DRAW time over the whole conversation, so this is a view change and not a
-      ;; setting for what comes next — and `set-verbosity` is the one writer, which is where the
-      ;; render cache is invalidated: without that the lines already rendered would be served
-      ;; back out of the cache and the new rung would appear to do nothing.
+      ;; setting for what comes next — and the writer is where the render cache is invalidated:
+      ;; without that the lines already rendered would be served back out of the cache and the new
+      ;; rung would appear to do nothing.
+      ;;
+      ;; **`%choose-verbosity` and not `set-verbosity`** (the persistence gap): the card is the
+      ;; second interactive path to the rung, so it must write the choice down as the verb does.
       (:verbosity (if (string= name (pick-current head :verbosity))
                       (say head (format nil "verbosity is already ~a" name))
-                      (progn
-                        (set-verbosity (intern (string-upcase name) :keyword))
-                        (say head (format nil "verbosity → ~a — the whole transcript, including everything above this line"
-                                          name)))))
+                      (let ((note (%choose-verbosity head (verbosity-for-word name))))
+                        (say head (format nil "verbosity → ~a — the whole transcript, including everything above this line~@[~a~]"
+                                          (verbosity-name) note)))))
       (:model (say head (format nil "switching to ~a…" name))
               (%send-slash head (format nil "models ~a" name))
               (%send head (make-settings))))))

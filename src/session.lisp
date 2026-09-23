@@ -544,6 +544,34 @@ reasoning at both. Nothing above the rung moved."
   (>= (position *verbosity* +verbosity-ladder+)
       (position level +verbosity-ladder+)))
 
+(defun verbosity-name (&optional (v *verbosity*))
+  "The rung's own WORD — what the card, `/status`, `/config` and `head.toml` all spell.
+
+**One place a rung becomes a string**, for the reason `reasoning-line-count` is one place a block
+becomes a number: the persisted value, the card's `← now` mark and the status row's register must
+agree, and two spellings of one rung is how a setting comes back as a value this build cannot read."
+  (string-downcase (symbol-name v)))
+
+(defparameter +verbosity-other-words+
+  '( ;; **letibot's name for this rung is `conversation` and this head's is `reading`** — one rung
+    ;; under two words, which is R37's NAME row and is still outstanding between the two heads.
+    ;; READING both lets a file either head wrote be understood here; WRITING stays this head's
+    ;; word, so nothing this head saves puts a spelling letibot would report as unknown into a
+    ;; file it reads. When the word is agreed, the rename is deleting one cons.
+    ("conversation" . :reading))
+  "Spellings this head READS for a rung but does not write.
+
+A synonym and not a second name: the two heads agree on `terse`, `normal` and `loud` and differ
+only on the rung R37 added, so this is the whole of the difference.")
+
+(defun verbosity-for-word (word)
+  "WORD as a rung, or NIL when it names none — the ladder's own spellings, plus the ones in
+`+verbosity-other-words+` that this head reads and does not write."
+  (let ((w (string-downcase (or word ""))))
+    (or (find w +verbosity-ladder+
+              :key (lambda (rung) (string-downcase (symbol-name rung))) :test #'string=)
+        (cdr (assoc w +verbosity-other-words+ :test #'string=)))))
+
 
 
 (defparameter +per-turn-events+

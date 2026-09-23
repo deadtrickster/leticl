@@ -18,17 +18,26 @@
 (in-package #:leticl)
 
 (defparameter *prefs-keys*
-  '("diff" "thinking" "tools" "raw_calls")
+  '("diff" "thinking" "tools" "raw_calls" "verbosity")
   "The keys THIS build owns, in THIS head's own file. Anything else is somebody else's — a
 newer build's, or the operator's — and is preserved verbatim.
 
-**Four, and `retired` is no longer one of them (R24).** It was the fifth and the odd one:
-the other four are choices about how the head DRAWS, and that one was a memory of what the
-reader has already read. R19 part 3 put it here because this file has the right lifetime —
-it has to outlive the process. The requirement then moved it to the file EVERY head writes
-(`~/.config/letibot/head.toml`), so that a dismissal made in either head is honoured by
-both — and a set in two files is a set that disagrees with itself. The one that would go
-stale is this one, which no other head reads. See `load-retired-into`.")
+**Five, and `retired` is not one of them (R24).** `retired` was the odd one out: the others are
+choices about how the head DRAWS, and it was a memory of what the reader has already read. R19
+part 3 put it here because this file has the right lifetime — it has to outlive the process —
+and the requirement then moved it to the file EVERY head writes (`~/.config/letibot/head.toml`),
+so that a dismissal made in either head is honoured by both: a set in two files is a set that
+disagrees with itself. See `load-retired-into`.
+
+**`verbosity` is the fifth and it belongs here rather than in the shared file** (R42's sibling,
+letibot's `1da8f08`). Two reasons, and the second is a measurement rather than a preference: the
+rung is a drawing choice like the folds, and **the two heads spell R37's rung with two different
+words** — this head's `reading`, letibot's `conversation`. Writing this head's word into the file
+letibot reads would put a value IT cannot read in front of it on every start, and letibot reports
+an unknown value by name and leaves it in the file — so the bug would be permanent and visible on
+their screen. The shared `retired` line is different: its keys are opaque text both heads keep
+without parsing. `verbosity-for-word` still READS letibot's word, so a file either head wrote is
+understood here.")
 
 ;;; A PLIST, not a struct, and this is a live-update decision rather than a
 ;;; stylistic one. `defstruct` is SKIPPED by `tui-eval --file` because a changed
@@ -49,6 +58,16 @@ stale is this one, which no other head reads. See `load-retired-into`.")
         :thinking "folded"   ; `open` or `folded`
         :tools "folded"
         :raw-calls nil       ; show the model's `<function=…>` markup under a call
+        ;; **The rung this head draws at** (R42's sibling, and letibot's `1da8f08`). It was the
+        ;; one choice the CARD could change and the file did not keep — so a reader who chose
+        ;; `reading` got `normal` back on every restart, which is a setting they have to keep
+        ;; re-making. The word is `verbosity-name`'s to spell, so a rename is one edit.
+        ;;
+        ;; **`normal` is the default, and it is `*verbosity*`'s own initial value** — a head that
+        ;; starts at `reading` would hide the working of every session it opens. Measured: with
+        ;; `reading` here the whole suite went red in the tests that assert a tool or system row
+        ;; is DRAWN, which is the default being wrong rather than any of them.
+        :verbosity "normal"
         :path nil)           ; where it came from, so a save goes back there; NIL
                              ; for a head with nowhere to write, which SAYS SO
                              ; rather than writing into the working directory
@@ -64,12 +83,14 @@ stale is this one, which no other head reads. See `load-retired-into`.")
 (defun prefs-thinking (p) (getf p :thinking))
 (defun prefs-tools (p)    (getf p :tools))
 (defun prefs-raw-calls (p)(getf p :raw-calls))
+(defun prefs-verbosity (p) (getf p :verbosity))
 (defun prefs-path (p)     (getf p :path))
 
 (defun (setf prefs-diff) (v p)     (setf (getf p :diff) v))
 (defun (setf prefs-thinking) (v p) (setf (getf p :thinking) v))
 (defun (setf prefs-tools) (v p)    (setf (getf p :tools) v))
 (defun (setf prefs-raw-calls) (v p)(setf (getf p :raw-calls) v))
+(defun (setf prefs-verbosity) (v p) (setf (getf p :verbosity) v))
 (defun (setf prefs-path) (v p)     (setf (getf p :path) v))
 
 ;;; ------------------------------------------- the bridge to a running head ;;;
@@ -94,7 +115,7 @@ default struct.")
 (defun fold-on-p (name) (string= name "open"))
 
 (defun prefs-into-head (head p)
-  "Apply a loaded `prefs` to HEAD's live plist — the four choices, and nothing else.
+  "Apply a loaded `prefs` to HEAD — the five choices, and nothing else.
 
 Through the setter, so loading a file invalidates the render cache exactly as
 flipping a chord does — a head whose `head.toml` says `tools = \"open\"` must draw
@@ -107,6 +128,11 @@ shares now, by `load-retired-into`, which `load-prefs-into` calls beside this."
         (head-pref head :show-tools) (fold-on-p (prefs-tools p))
         (head-pref head :raw-calls) (prefs-raw-calls p)
         (head-pref head :diff) (prefs-diff p))
+  ;; **The rung, through `set-verbosity` and NOT through the persisting writer.** A load applies
+  ;; what the file said; saving it back here would write a file this head may never have read
+  ;; (the load's own `unreadable` case), which is the one thing the file discipline forbids.
+  (let ((rung (verbosity-for-word (prefs-verbosity p))))
+    (when rung (set-verbosity rung)))
   (setf *prefs* p)
   head)
 
@@ -135,7 +161,10 @@ saving over a list it never saw. Nothing is written here either way; this only r
     (setf (prefs-thinking p) (fold-name (getf (head-prefs head) :show-reasoning))
           (prefs-tools p) (fold-name (getf (head-prefs head) :show-tools))
           (prefs-raw-calls p) (and (getf (head-prefs head) :raw-calls) t)
-          (prefs-diff p) (or (getf (head-prefs head) :diff) "split"))
+          (prefs-diff p) (or (getf (head-prefs head) :diff) "split")
+          ;; **the rung, read from the LIVE variable** — the plist and the file disagree for the
+          ;; moment between a change and a save, and the plist is what is actually in effect.
+          (prefs-verbosity p) (verbosity-name))
     p))
 
 (defun load-prefs-into (head &optional path)
@@ -609,6 +638,17 @@ than the bad line. Returns `(values prefs notes)`."
                      (push (format nil "head.toml: raw_calls = ~s is not true or false"
                                    value) notes)
                      (setf (prefs-raw-calls p) b))))
+              ((string= key "verbosity")
+               ;; **A word this build cannot read is NAMED, and the file keeps it** (letibot's own
+               ;; rule for its rungs). The alternative — silently writing a different word back —
+               ;; is how a typo and a deliberate value become the same screen; and a reader who
+               ;; chose a rung should not have it quietly changed to another one.
+               (let ((rung (verbosity-for-word value)))
+                 (cond (rung (setf (prefs-verbosity p) (verbosity-name rung)))
+                       (t (push (format nil "head.toml: verbosity = ~s is not one of ~{~a~^, ~}"
+                                        value
+                                        (mapcar #'verbosity-name +verbosity-ladder+))
+                                notes)))))
               ((string= key "retired")
                ;; **A key that used to be ours, read as nothing and left where it is**
                ;; (R24). The retired set lives in the file every head shares now
@@ -643,7 +683,10 @@ Returns the path written, or NIL for a head with nowhere to write."
          (ours (list (cons "diff" (format nil "~s" (prefs-diff p)))
                      (cons "thinking" (format nil "~s" (prefs-thinking p)))
                      (cons "tools" (format nil "~s" (prefs-tools p)))
-                     (cons "raw_calls" (if (prefs-raw-calls p) "true" "false")))))
+                     (cons "raw_calls" (if (prefs-raw-calls p) "true" "false"))
+                     ;; **Quoted like letibot spells its own**, so the two heads' files read
+                     ;; alike for a key they share a vocabulary for.
+                     (cons "verbosity" (format nil "\"~a\"" (prefs-verbosity p))))))
     ;; **`retired` is deliberately absent** (R24): the set it names belongs to the file
     ;; every head shares, and `persist-retired` writes it there. A save of the four choices
     ;; must not drag a copy of it back into this file — that is how a set comes to have two
