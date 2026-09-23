@@ -225,6 +225,38 @@ the first thing done with the pid is a `--where` or a read of its screen to chec
 session you think it is. **A push is not a read** — `--file` at the wrong pid writes code
 into somebody else's running conversation, and a head cannot tell you it was the wrong one.
 
+### A falsification can skip the DOCSTRING and leave the body that was the point
+
+**Found 2026-09-23, while falsifying the merged-row fix, and it is the same shape as
+*the arms of an experiment that all agree* — except the experiment was the falsification
+itself.**
+
+The fix under test was a predicate. To falsify it the predicate's body was replaced by
+the old, wrong rule, spelled the obvious way:
+
+    (defun %piece-of (text row)
+      ;; FALSIFICATION: equality, which is what the tree had
+      (equal text row)
+      #+nil
+      "TEXT is a WHOLE PIECE of ROW: …"
+      (loop …))
+
+`#+nil` skips the NEXT FORM, and the next form was the **docstring**, not the loop. So
+the body became `((equal text row) (loop …))` — two forms, and a `defun` returns its
+LAST one. The rule still answered by pieces. The suite came back **5156 green**, and the
+honest reading of that is not *the fix is not needed* but *the falsification did not
+falsify*.
+
+What caught it was not the suite: it was asking the predicate the question directly
+(`(funcall piece "a" "a<newline>b")` → `T`, when it had just been set to `equal`). **A
+falsification that passes deserves the same suspicion as an experiment whose arms all
+agree.** Move the wrong rule to the END of the body, or wrap the real one:
+
+    #+nil (loop …)
+    (equal text row)
+
+and check the falsified form answers differently before believing the run.
+
 ### A probe that waits before applying its variable measures the wait
 
 **The sibling of *a measurement that takes time starves what it measures*, and it bit

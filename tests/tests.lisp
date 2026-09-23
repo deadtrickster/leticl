@@ -7501,6 +7501,119 @@ trusting a rule in a document."
         (uiop:read-file-string p)
         (uiop:read-file-string (merge-pathnames relative #p"/home/dead/Projects/leticl/")))))
 
+;;; ---------- the row that is SEVERAL prompts, which is the one that was invisible ------ ;;;
+;;;
+;;; MEASURED LIVE on the operator's own head, 2026-09-23: **28 echoes on the screen two
+;;; hours after their rows landed**, the oldest from 15:39, while letibot's pane on the same
+;;; daemon held zero. One user row's part text was 1,741 characters over 5 lines and **all
+;;; five lines were queued texts, exactly** — the daemon merges consecutive queued prompts
+;;; into ONE item joined by newlines (`app.rs:4685-4703`), which is the direction the rule
+;;; did not have: the row is not equal to any echo, it CONTAINS several of them.
+;;;
+;;; The numbers, taken from the running head: the equality rule retired **0 of 28**; the
+;;; whole-piece rule retires **28 of 28**; R16's front-piece case was **0 of 28**, so the
+;;; branch that already existed could not have saved a single one.
+
+(def-test a-row-that-is-several-queued-prompts-retires-all-of-them (:suite leticl)
+  "**The measured shape.** Five prompts queued separately — which is what the operator's
+`send-keys` produces, one per newline — and ONE row carrying all five joined by newlines.
+
+Before the fix this row retired NOTHING: every echo stayed on the screen, and stayed for
+two hours. The assertion is the whole of it: the queue empties on that one row."
+  (let* ((*queued-unconfirmed* nil)
+         (h (%make-head))
+         (texts '("fifth thing" "fourth thing" "third thing" "second thing" "first thing")))
+    ;; newest first, as `%prompt` pushes them — five enters, five prompts
+    (setf (head-queued h) texts)
+    ;; **AND THE MERGED ROW ARRIVES**, oldest-first inside the newlines, one part
+    (leticl::%handle-frame
+     h (list :frame "event" :seq 1 :event "transcript_content" :item-id "m1"
+             :item (list :type "user"
+                         :parts (list (list :text
+                                            (format nil "first thing~%second thing~%third thing~%fourth thing~%fifth thing"))))))
+    (is (null (head-queued h))
+        (format nil "**one merged row stands down every echo it holds** — still queued: ~s"
+                (head-queued h)))
+    (is (null *queued-unconfirmed*)
+        "and none of them is UNCONFIRMED: their words are in the transcript, so the head's
+ claim was not merely upheld, it was PROVED — the third mark is for the other case")
+    ;; **THE PIECE RULE IS NOT A SUBSTRING SEARCH**, which is the whole of its correctness
+    (setf (head-queued h) (list "second thing"))
+    (leticl::%handle-frame
+     h (list :frame "event" :seq 2 :event "transcript_content" :item-id "m2"
+             :item (list :type "user" :parts (list (list :text "first thing~%second thing-guess")))))
+    (is (equal '("second thing") (head-queued h))
+        "a text that is merely INSIDE a line does not retire: `second thing` is not a piece
+ of `second thing-guess`, and a head that retired it would swallow a prompt the daemon
+ has not answered")))
+
+(def-test a-merged-row-retires-the-echoes-on-the-snapshot-path-too (:suite leticl)
+  "One rule, two callers — the shape R16 was landed for, now with the direction that
+actually happens. A transcript that arrives in a SNAPSHOT carries the same merged rows a
+live one does, so a head that attached after the merge (or resynced across it) must retire
+the same echoes rather than keeping them until its own next turn."
+  (let* ((*queued-unconfirmed* nil)
+         (*snapshotted-sessions* nil)
+         (h (%make-head)))
+    (setf (session-session-id (head-session h)) "s-merge"
+          (head-queued h) (list "second thing" "first thing"))
+    (leticl::%handle-frame
+     h (list :frame "resync" :reason "auto-compaction" :dropped 0 :scrubbed nil
+             :snapshot (%snapshot-with
+                        (list (list :item-id "u1" :kind "user" :ts 0
+                                    :item (list :type "user"
+                                                :parts (list (list :kind "text"
+                                                                   :text (format nil "first thing~%second thing"))))))
+                        :id "s-merge")))
+    (is (null (head-queued h))
+        "**a RESYNC retires them too** — the same rule, so the two paths cannot disagree")
+    (is (null *queued-unconfirmed*) "and nothing is left unconfirmed, because they landed")))
+
+(def-test an-unconfirmed-echo-that-then-lands-leaves-the-unconfirmed-set (:suite leticl)
+  "**The invariant its own docstring states, and the leak the first version had.**
+
+`*queued-unconfirmed*` must always be a SUBSET of `head-queued` — the global's docstring
+says so and `queued-lines` reads it as the tag for entries of the queue. The old code
+removed the ROW's text from that set, and a merged row's text is not any queued text, so an
+echo marked unconfirmed by an earlier snapshot, whose row then landed inside a merged item,
+was retired from the queue and **left in the set for ever**."
+  (let* ((*queued-unconfirmed* (list "second thing" "first thing"))
+         (h (%make-head)))
+    (setf (head-queued h) (list "second thing" "first thing"))
+    (leticl::%handle-frame
+     h (list :frame "event" :seq 1 :event "transcript_content" :item-id "m3"
+             :item (list :type "user"
+                         :parts (list (list :text (format nil "first thing~%second thing"))))))
+    (is (null (head-queued h)) "both landed by the one merged row")
+    (is (null *queued-unconfirmed*)
+        "**and the set that marks them is empty, not left holding two texts nothing holds**")
+    (is (every (lambda (t0) (member t0 (head-queued h) :test #'equal)) *queued-unconfirmed*)
+        "the invariant, stated as itself")
+    ;; and the same statement by construction, on a case that does NOT retire
+    (setf *queued-unconfirmed* nil (head-queued h) (list "never lands"))
+    (leticl::%handle-frame
+     h (list :frame "event" :seq 2 :event "transcript_content" :item-id "m4"
+             :item (list :type "user" :parts (list (list :text "something else")))))
+    (is (equal '("never lands") (head-queued h)) "an unrelated row retires nothing")
+    (is (null *queued-unconfirmed*)
+        "and it does not invent an unconfirmed mark for it either: a live row is proof about
+ the prompt it names and SILENCE about the rest, which keeps saying `queued` honestly")))
+
+(def-test a-merged-row-retires-an-echo-whose-own-prompt-came-in-pieces (:suite leticl)
+  "The degenerate but real case: ONE queued text that itself contains a newline (a prompt
+typed with alt+enter), landing inside a merged row. The piece rule has to find it as a run
+bounded by newlines, not as a line — otherwise the multi-paragraph prompt is the one prompt
+that can never retire."
+  (let* ((*queued-unconfirmed* nil)
+         (h (%make-head)))
+    (setf (head-queued h) (list (format nil "second half~%third half") "first"))
+    (leticl::%handle-frame
+     h (list :frame "event" :seq 1 :event "transcript_content" :item-id "m5"
+             :item (list :type "user"
+                         :parts (list (list :text (format nil "first~%second half~%third half"))))))
+    (is (null (head-queued h))
+        "a two-line prompt is a RUN of the row, and the row is its proof")))
+
 (def-test a-hello-with-no-snapshot-is-a-resume-not-a-crash (:suite leticl)
   "**No reconnect and no resume had ever worked.** `%try-reconnect` re-attaches
 with `since_seq = session-seq`, which is nonzero, so the daemon serves the gap

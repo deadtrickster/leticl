@@ -211,6 +211,36 @@ one whose row is never coming.
 Invariant, kept by `%resolve-queued` and `%retire-pending`: every text here is also in
 `head-queued`. It is a `defvar` for the usual reason — a struct change is a restart.")
 
+(defun %piece-of (text row)
+  "TEXT is a WHOLE PIECE of ROW: ROW itself, or a run of ROW with a newline at each
+edge of it.
+
+**The rule this head was missing, and the defect was measured on the operator's own
+screen.** The daemon MERGES consecutive queued prompts into one user item, whose part
+text is those prompts JOINED BY NEWLINES (`app.rs:4685-4703`). So the row that lands is
+not equal to any echo — it is equal to several of them with a newline between — and a
+rule that asked *is this row the text* answered NO for every one of them.
+
+MEASURED live, 2026-09-23, on the running head: **28 echoes still on the screen two
+hours after their rows landed**, the oldest from 15:39. One user row's part text was
+1,741 characters over 5 lines, and **all five lines were queued texts, exactly**. The
+equality rule then retired **0 of 28**; this rule retires **28 of 28**. R16's own
+front-piece case — where the QUEUED TEXT is the merged thing and the row is its head —
+was **0 of 28**, which is why the existing branch could not have saved it.
+
+**A PIECE is bounded by newlines, not merely contained**, and that is the whole
+difference between this and a substring search: a prompt `second` must not be retired
+by a row that reads `first\nsecond-guess`. The boundary test is the same at the two
+ends of the row, so equality is the case where it starts at 0 and ends at the length —
+one rule, not two."
+  (loop with n = (length text)
+        with m = (length row)
+        for i = (search text row) then (search text row :start2 (1+ i))
+        while i
+        when (and (or (zerop i) (char= #\newline (char row (1- i))))
+                  (or (= (+ i n) m) (char= #\newline (char row (+ i n)))))
+          return t))
+
 (defun %resolve-queued (queued rows)
   "QUEUED (newest-first texts) resolved against ROWS (landing user texts).
 
@@ -220,8 +250,9 @@ Returns `(values KEPT UNCONFIRMED)`.
 arriving in a snapshot cannot retire different things. Three outcomes per entry, and
 each is a fact:
 
-  · the row IS this text — the transcript has taken the words over by being them, so
-    the echo has landed and goes;
+  · the row CONTAINS this text as a whole piece — the daemon merged several prompts
+    into that one item, so the transcript has taken the words over by holding them
+    (`%piece-of`, and the measurement in its docstring is why this is the rule);
   · the row is the FRONT PIECE of it — behind a running turn the daemon merges
     consecutive messages into one, so a landing row can be `text + newline + rest`;
     the front comes off and the remainder stays queued for its own row
@@ -232,7 +263,7 @@ The match walks OLDEST-first, because the row that lands first is the prompt tha
 sent first."
   (let ((kept nil) (unconfirmed nil))
     (dolist (text (reverse queued))
-      (if-let (at (position text rows :test #'equal))
+      (if (some (lambda (r) (%piece-of text r)) rows)
         nil                                  ; landed: retired
         (let ((part (find-if (lambda (r)
                                (uiop:string-prefix-p
@@ -249,14 +280,21 @@ sent first."
 (defun %retire-pending (head text)
   "Stand down the echo of the queued prompt whose row has landed, by TEXT.
 
-The transcript takes the words over by BEING them, so the exact match is the
-rule and one row retires one entry — two prompts that say the same thing stay
-queued separately until each of their rows lands. The coalescing and the
+The transcript takes the words over by BEING them, so the match is on the TEXT and not
+on an id — but **it is no longer equality, because the row is not one prompt**: the
+daemon merges consecutive queued prompts into one item joined by newlines, so ONE row
+stands down every echo it holds. That is `%piece-of`, and the coalescing and the
 oldest-first walk are in `%resolve-queued`, which the snapshot path shares.
 
 Nothing is left UNCONFIRMED by a live row: a row that arrived is proof for the prompt
-it names, and silence about the others. So the unconfirmed set only ever shrinks
-here."
+it names, and silence about the others. So the unconfirmed set only ever shrinks here.
+
+**AND IT MUST SHRINK TO A SUBSET OF THE QUEUE, which the first version did not.** It
+removed the ROW's text from the unconfirmed set, and a merged row's text is not any
+queued text — so an echo marked unconfirmed by an earlier snapshot, whose row then
+landed inside a merged item, was retired from the queue and **left in the unconfirmed
+set for ever**. The invariant is the intersection with what is still queued, which is
+the same statement as the global's docstring." 
   (let ((before (head-queued head)))
     (multiple-value-bind (kept) (%resolve-queued before (list text))
       ;; **THE LIST, not its length.** The coalesced case replaces `a\nb` with `b` —
@@ -264,7 +302,7 @@ here."
       ;; whole echo on the screen, which is the coalescing branch of this very test.
       (unless (equal kept before)
         (setf *queued-unconfirmed*
-              (remove text *queued-unconfirmed* :test #'equal))
+              (intersection *queued-unconfirmed* kept :test #'equal))
         (setf (head-queued head) kept
               (head-dirty head) t)))))
 
@@ -568,12 +606,21 @@ and a `hello` with a snapshot). Returns T when the queue moved."
        ;; words over by being them — `pop` retired the NEWEST entry for a row
        ;; that is almost certainly the OLDEST prompt, so with two queued
        ;; prompts of different lengths the wrong one came off first.
+       ;;
+       ;; **EVERY TEXT PART, and that is the snapshot path's own collection.** This arm
+       ;; read the FIRST part with a `:text` and dropped the rest, so an item carrying
+       ;; two text parts (a message and an attachment's caption) retired one echo and
+       ;; left the other — one row, two of this head's own facts, and the two paths
+       ;; disagreeing about which rows exist. `%re-resolve-queued` appends every part's
+       ;; text for exactly this reason; the rule is that the LIVE path and the SNAPSHOT
+       ;; path see the same rows, or they retire different things.
        (when (eq name :transcript-content)
          (let ((body (getf env :item)))
            (when (and (consp body) (equal (getf body :type) "user"))
-             (let ((text (loop for p in (getf body :parts)
-                               when (getf p :text) return (getf p :text))))
-               (when text (%retire-pending head text))))))
+             (dolist (p (getf body :parts))
+               (let ((text (getf p :text)))
+                 (when (and (stringp text) (plusp (length text)))
+                   (%retire-pending head text)))))))
        ;; apply-event is the classifier: :dirty means something visible moved.
        (let ((disposition (apply-event (head-session head) env)))
          ;; **A REPLY THAT ARRIVED IS SHOWN, AND THAT IS THE ONE THING THE SESSION
