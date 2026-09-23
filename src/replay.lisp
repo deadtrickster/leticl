@@ -136,6 +136,9 @@ see this file's header."
          ;; replay must answer the same bytes twice
          (*payload-view* nil)
          (*daemon-protocol* nil)
+         ;; R27's record: the daemon's heading list is read by the payload a compaction row
+         ;; builds, so a replay that inherited one session's headings would render another's
+         (*compaction-sections* nil)
          ;; the operator-call door: an ask crosses frames, and a replay must not
          ;; inherit another replay's pending call
          (*op-calls* nil)

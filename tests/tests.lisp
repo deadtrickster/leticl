@@ -13968,6 +13968,227 @@ is what stops new content from yanking the reader back to the live end."
       (is (equal leticl::*anchor-lost-said* nil)
           "nothing was reported lost on the way"))))
 
+(defun %compaction-object (&key (kind "compacted") (before 240188) (after 9181)
+                                 (sections nil) (template "compaction/2026-09-23")
+                                 (cut-off nil) (turns nil) (because "budget")
+                                 (carried 4) (dropped 0) (transcript "s-1#t2"))
+  "A `compaction` object as R28 puts it on the wire — the daemon's own JSON, decoded through
+the head's decoder, so the fixture cannot invent a spelling `json-decode` would not produce."
+  (leticl::json-decode
+   (with-output-to-string (o)
+     (format o "{\"kind\":~s,\"tokens_before\":~d,\"tokens_after\":~d,\"transcript\":~s,"
+             kind before after transcript)
+     (format o "\"resident\":~d,\"window\":262144,\"headroom\":16384,\"cut_off\":~a,"
+             (+ before 7113) (if cut-off "true" "false"))
+     (format o "\"template\":~s,\"sections\":[~{~a~^,~}],"
+             template
+             (loop for (n . b) in sections
+                   collect (format nil "{\"name\":~s,\"body\":~s}" n b)))
+     (format o "\"tail\":{\"turns\":[~{~a~^,~}],\"carried\":~d,\"because\":~s,\"dropped\":~d}}"
+             (loop for (role . text) in turns
+                   collect (format nil "{\"role\":~s,\"text\":~s}" role text))
+             carried because dropped))))
+
+(defun %compaction-warning (obj &optional (detail "compacted: 240188 → 9181 tokens, on transcript s-1#t2."))
+  "A `compacted` warning carrying OBJ, with the sentence the old daemon would have sent alone."
+  (append (list :frame "event" :seq 1 :event "warning" :code "compacted" :detail detail :ts 0)
+          (when obj (list :compaction obj))))
+
+(defun %compaction-row-text (h)
+  "The payload of the compaction ROW in H, as one string — the record the reader can expand to."
+  (let* ((sub (leticl::note-compaction (head-session h) nil)))
+    (declare (ignore sub)))
+  (loop for i across (session-items (head-session h))
+        when (getf i :compaction)
+          return (format nil "~{~a~^~%~}"
+                         (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l)))
+                                 (item-lines i 120 (head-prefs h))))))
+
+(defun %compaction-payload (h)
+  "The compaction row's PAYLOAD string — the record itself, not the row drawn from it."
+  (loop for i across (session-items (head-session h))
+        when (getf i :compaction)
+          return (getf (getf i :item) :payload)))
+
+(def-test the-record-is-drawn-from-the-fields-and-not-from-the-sentence (:suite leticl)
+  "**R27's renderer, and the whole point is that the head stops taking the sentence apart.**
+
+The wire now carries the record as FIELDS (`warning.compaction`, R28), so the row draws
+structure: the daemon's headings in the daemon's order, and the tail beside them. `detail`
+is unchanged and stays the fallback — a head that ignores the field entirely is a correct
+head — but when the field is there this head reads it, and the assertion that says so is that
+a record whose SENTENCE would parse to something else still draws the FIELDS. That is the
+measurement: the fixture's detail names no numbers at all, and the row is right."
+
+  (let* ((leticl::*compaction-sections* '("Objective" "Active" "Blocked"))
+         (h (%on-head :cols 100 :rows 30))
+         (obj (%compaction-object
+               :sections '(("Objective" . "- fix the stale echoes")
+                           ("Active" . "- measuring R36")
+                           ("Blocked" . ""))
+               :turns '(("operator" . "does the anchor hold?")
+                        ("agent" . "yes — measured at four scrolls")))))
+    (leticl::%handle-frame h (%compaction-warning obj))
+    (let ((record (%compaction-payload h))
+          (row (%compaction-row-text h)))
+      ;; **the payload is TEXT and not a list** — it is the wire's field and the fold's unit, so
+      ;; the record is rendered to it rather than the drawer being taught a second shape. The
+      ;; first version asserted `consp` and failed on a string it had itself produced.
+      (is (and (stringp record) (plusp (length record))) "the fields produced a payload")
+      ;; **the headings are the daemon's, in the daemon's order**
+      (is (search "Objective" record) "the first heading")
+      (is (search "- fix the stale echoes" record) "with its body")
+      (is (search "Active" record) "the second")
+      (is (search "measured" record) "whose body is here too")
+      (is (search "Blocked" record) "and the third, which the model left EMPTY")
+      ;; **and the row carries the numbers in its headline**, which is what R24 bought
+      (is (search "240,188" row) (format nil "the headline's numbers: ~s" row))
+      (is (search "9,181" row) "both of them"))))
+
+(def-test the-two-absences-are-two-facts (:suite leticl)
+  "**The pair the whole shape turns on**, and the operator's own ruling: *an empty body and an
+absent section are different facts*.
+
+  · the model wrote the heading and nothing under it — *nothing is blocked*
+  · the model wrote no such heading at all — *nobody said*
+
+**The daemon's settings row is what makes the second tellable**, because a head that only had
+the report would have to guess whether a heading was left out or never written. So the fixture
+supplies the row, and the assertion is on the two MARKERS being different words."
+
+  (let* ((leticl::*compaction-sections* '("Objective" "Blocked" "Next Move"))
+         (h (%on-head :cols 100 :rows 30))
+         ;; Objective written with a body, Blocked written EMPTY, Next Move never written
+         (obj (%compaction-object
+               :sections '(("Objective" . "- the work")
+                           ("Blocked" . "")))))
+    (leticl::%handle-frame h (%compaction-warning obj))
+    (let ((record (%compaction-payload h)))
+      (is (search "Objective" record) "the heading that has a body")
+      (is (search "(none)" record)
+          (format nil "**a heading written and left empty says so** — nothing is under it: ~s" record))
+      (is (search "Next Move" record)
+          "and a heading in the daemon's list that the record has not got is still NAMED")
+      (is (search "(not stated)" record)
+          "**with a different word** — nobody said, which is not the same as nothing being there")
+      (is (not (equal (search "(none)" record) (search "(not stated)" record)))
+          "and the two are not one rendering of the other"))))
+
+(def-test the-tail-is-its-own-block-and-an-empty-tail-says-why (:suite leticl)
+  "**R27's ruled split, drawn.** The tail is what was carried VERBATIM — a different kind of thing
+from what was summarised — so it is a block of its own and never folded into the last section: a
+tail appended to `Relevant Files` would read as more of that section.
+
+**An empty tail says WHY it is empty**, which is the requirement's third clause and the state a
+LOCAL compaction is always in: *the local artefact is the remote one with an empty tail*, so a
+tail that drew nothing at all would read as a bug rather than as the ruling."
+
+  (let* ((leticl::*compaction-sections* '("Objective"))
+         (h (%on-head :cols 100 :rows 30))
+         (obj (%compaction-object
+               :sections '(("Objective" . "- the work"))
+               :turns '(("operator" . "a question") ("agent" . "an answer"))
+               :carried 7 :because "budget")))
+    (leticl::%handle-frame h (%compaction-warning obj))
+    (let* ((record (%compaction-payload h))
+           (lines (uiop:split-string record :separator '(#\newline)))
+           (at (position-if (lambda (l) (search "tail" l)) lines)))
+      ;; ***"the tail beside and never folded in"* is a STRUCTURAL claim**, and the first version
+      ;; of this assertion only searched for the word — which a tail appended to the last
+      ;; section's body would also satisfy. Measured by mutating the separator away: the test
+      ;; passed on a record where the tail ran straight on from `- the work`. What has to be true
+      ;; is that the tail opens its OWN line and that nothing above it is still running.
+      (is (not (null at)) "the tail has a line of its own")
+      (is (and (> at 0) (string= "" (string-trim " " (nth (1- at) lines))))
+          (format nil "**and a blank line separates it from the record above** — a tail folded
+ into the last section would read as more of that section: ~s" record))
+      (is (string= "tail" (subseq (nth at lines) 0 (min 4 (length (nth at lines)))))
+          "the block opens with its own header rather than continuing a body")
+      (is (search "a question" record) "with the operator's own words, verbatim")
+      (is (search "an answer" record) "and the agent's")
+      (is (search "operator:" record) "each turn labelled with its role")
+      (is (search "budget" record) "and the reason it is this much and no more")))
+  ;; --- and the LOCAL case: no turns, and the reason is on the screen
+  (let* ((leticl::*compaction-sections* '("Objective"))
+         (h (%on-head :cols 100 :rows 30))
+         (obj (%compaction-object :sections '(("Objective" . "- x"))
+                                  :turns nil :carried 0 :because "local_model")))
+    (leticl::%handle-frame h (%compaction-warning obj))
+    (let ((record (%compaction-payload h)))
+      (is (search "nothing carried" record)
+          "**an empty tail says what it is**, not nothing")
+      (is (search "local_model" record)
+          (format nil "**and names the reason** — a local compaction carries no turns by RULING,
+ so silence would read as a bug: ~s" record)))
+    ;; --- an unknown reason is printed RAW, which is R28's own rule
+    (let* ((leticl::*compaction-sections* '("Objective"))
+           (h2 (%on-head :cols 100 :rows 30))
+           (obj2 (%compaction-object :sections '(("Objective" . "- x"))
+                                     :turns nil :carried 0 :because "some_new_reason")))
+      (leticl::%handle-frame h2 (%compaction-warning obj2))
+      (is (search "some_new_reason" (%compaction-payload h2))
+          "a reason this build has never met is shown rather than dropped or replaced"))))
+
+(def-test a-cut-off-record-is-marked-where-a-fold-cannot-hide-it (:suite leticl)
+  "**`cut_off` on the HEADLINE, and that placement is the requirement's own argument.**
+
+A templated record is exactly where *truncated* stops being readable out of any one section — the
+cut falls wherever the model ran out, which with seven headings can be inside `Relevant Files`.
+And the row is FOLDED by default: it shows one payload line and a seam. So a fact only visible
+after expanding the fold is a fact the reader who did not expand it does not have — which is why
+R28 carries it as a bool rather than as a phrase in a section."
+
+  (let* ((leticl::*compaction-sections* '("Objective"))
+         (h (%on-head :cols 100 :rows 30)))
+    (leticl::%handle-frame h (%compaction-warning
+                              (%compaction-object :sections '(("Objective" . "- x"))
+                                                  :cut-off t)))
+    (let ((row (%compaction-row-text h)))
+      (is (search "cut off" row)
+          (format nil "**the row says it, folded** — the reader does not have to expand: ~s" row)))
+    ;; and a record that finished says nothing of the kind
+    (let* ((h2 (%on-head :cols 100 :rows 30)))
+      (leticl::%handle-frame h2 (%compaction-warning
+                                 (%compaction-object :sections '(("Objective" . "- x"))
+                                                     :cut-off nil)))
+      (is (not (search "cut off" (%compaction-row-text h2)))
+          "a record that finished claims nothing"))))
+
+(def-test a-compaction-without-the-fields-draws-exactly-what-it-always-drew (:suite leticl)
+  "**The old daemon, and the fallback is asserted rather than promised.**
+
+`compaction` is absent on every daemon older than R28 and on every warning that is not a
+compaction. The sentence is then all there is, and the row must draw exactly what it drew
+before — same headline from the sentence's numbers, same payload. That is the *absent field
+costs nothing* half of R28's reasoning, measured from this side.
+
+**And the headings row being absent is the same fact**: a daemon that sends the report and not
+the list is a daemon with no vocabulary to compare against, and the head then draws the sections
+it was sent, in their order, and says nothing about any other heading — rather than inventing a
+`(not stated)` for headings it was never told about."
+
+  (let* ((leticl::*compaction-sections* nil)
+         (h (%on-head :cols 100 :rows 30)))
+    ;; no `compaction` key at all: the sentence path, which is every daemon before R28
+    (leticl::%handle-frame h (%compaction-warning nil))
+    (let ((row (%compaction-row-text h))
+          (payload (%compaction-payload h)))
+      (is (search "240,188" row) "the numbers still come off the sentence")
+      (is (search "9,181" row) "both of them")
+      (is (equal "compacted: 240188 → 9181 tokens, on transcript s-1#t2." payload)
+          "and the payload is the daemon's sentence, byte for byte"))
+    ;; the report WITH sections but no headings row: drawn in the report's own order
+    (let* ((h2 (%on-head :cols 100 :rows 30)))
+      (leticl::%handle-frame h2 (%compaction-warning
+                                 (%compaction-object
+                                  :sections '(("Alpha" . "- one") ("Beta" . "- two")))))
+      (let ((record (%compaction-payload h2)))
+        (is (search "Alpha" record) "the sections it was sent are drawn")
+        (is (search "Beta" record) "all of them")
+        (is (not (search "(not stated)" record))
+            "**and no heading is reported missing** when the daemon never listed any —
+ an absence of the vocabulary is not evidence about the record")))))
+
 (def-test the-deposit-says-what-it-costs-before-it-lands (:suite leticl)
   "**R31 (e): *it spends the window, visibly. A 40k-token page is 40k of context the operator
 chose to buy — the size is shown before it lands, because the alternative is discovering it at

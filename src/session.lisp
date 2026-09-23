@@ -1121,6 +1121,197 @@ or `:reseat`. NIL means *this head cannot read that sentence*."
              :headroom (%number-after d " tokens resident, leaving less than the ")))
       (t nil))))
 
+;;; ### R27's record: the structure the wire now carries beside the sentence
+;;;
+;;; **`detail` stays exactly as it is** — it is the sentence every reader falls back to, and a
+;;; head that ignores `compaction` entirely is a correct head (R28). This is the same compaction
+;;; as FIELDS, and what it buys is that the head no longer takes the sentence apart: the section
+;;; list, the tail, the truncation and the template are all facts on the frame.
+
+(defparameter +compaction-sections-key+ "compaction.sections"
+  "The settings row carrying the headings a record has, comma-joined with no spaces.
+
+**A row and not a list here**, for the reason `head-run.tools` exists: a head holding its own
+copy of the headings would drift the first time the template gained one. It is also what makes
+the TWO ABSENCES tellable apart — a name in this row with no section on the report is *nobody
+said*, and it can only be known by asking the daemon's list. An absent row is a daemon older
+than this one, and then the head draws the sections the report carries and says nothing about
+the rest, which is the same shape as every other absent row in this tree.")
+
+(defvar *compaction-sections* nil
+  "The headings a compaction record has, off the daemon's own row — or NIL when it has not said.
+
+**A `defvar` and not a slot in the session, and this is the same choice `*daemon-protocol*`
+makes for the same two reasons.** The names are needed by a function that has no head in hand:
+`note-compaction` files the row from a SESSION, on the `apply-event` path, and the payload it
+builds has to know which headings nobody wrote. A session slot would also be a struct layout
+change, and this tree's own note is that a layout change is a restart while a push must survive —
+so live daemon state read by the renderer lives in a global, as `*daemon-protocol*` does.
+
+It is set in ONE place (`%fold-settings`, beside `(head-settings head)`) and rebound by
+`with-replay-globals`, because a replay folds frames and a stale list would put one session's
+headings into another's record.")
+
+(defun compaction-section-names (settings)
+  "The headings a compaction record has, as the DAEMON lists them, or NIL when it has not said.
+
+Read from the row and never from a constant here, for the reason `head-run-tools` reads its own
+row: a head holding its own copy of the headings would drift the first time the template gained
+one. An absent row is a daemon older than R28 and is the same NIL as a daemon that named none."
+  (let ((row (and settings
+                  (find +compaction-sections-key+ settings
+                        :key (lambda (r) (getf r :key)) :test #'string=))))
+    (when row (%split-commas (or (getf row :value) "")))))
+
+(defun %fold-settings (settings)
+  "Take the daemon's rows: store them, and take the two facts this head uses BELOW the head.
+The settings frame is the only place `head-settings` is written, so it is the only place these
+can go stale — and putting the fold here rather than at each reader is what keeps one writer."
+  (setf *compaction-sections* (compaction-section-names settings))
+  settings)
+
+(defun compaction-report (w)
+  "W's `compaction` object as a plist this head can draw, or NIL when there is none.
+
+**NIL is a fact about the daemon, not about the compaction**: every warning that is not a
+compaction has no such object, and so does every daemon older than R28. The caller then draws
+what it always drew — the sentence — which is why this returns NIL rather than an empty shape.
+R28 is explicit that the wire is `null`/missing and never `{}`: *a present-but-empty object
+would be a compaction nobody could describe.*
+
+**The two absences are made explicit HERE rather than at the drawing**, so that a section list
+with a heading nobody wrote and a heading written empty cannot be confused one level down. A
+section present with an empty body keeps its entry — *nothing is under it* — and a heading in the
+daemon's list with no entry at all is not manufactured here: the drawer asks
+`compaction-section-names` about it.
+
+The fields are read defensively: this is the other half's grammar, and a field that arrives in a
+shape this build does not expect is DROPPED rather than drawn as a blank — the same rule the
+`head-run.tools` descriptors keep."
+  (let ((c (getf w :compaction)))
+    (when (consp c)
+      (list :kind (getf c :kind)
+            :tokens-before (getf c :tokens-before)
+            :tokens-after (getf c :tokens-after)
+            :transcript (getf c :transcript)
+            :resident (getf c :resident)
+            :window (getf c :window)
+            :headroom (getf c :headroom)
+            :cut-off (and (getf c :cut-off) t)
+            :template (and (stringp (getf c :template)) (getf c :template))
+            :sections (loop for s in (getf c :sections)
+                            when (and (consp s) (stringp (getf s :name)))
+                              collect (cons (getf s :name) (or (getf s :body) "")))
+            :tail (let ((t* (getf c :tail)))
+                    (and (consp t*)
+                         (list :turns (loop for tn in (getf t* :turns)
+                                            when (and (consp tn) (stringp (getf tn :text)))
+                                              collect (cons (or (getf tn :role) "") (getf tn :text)))
+                               :carried (getf t* :carried)
+                               :because (or (getf t* :because) "")
+                               :dropped (getf t* :dropped))))))))
+
+(defun compaction-record (w)
+  "The record W's `compaction` carries, as TEXT for the row's payload, or NIL when there is none.
+
+**This IS what the row draws when the structure is present**, and the sentence is what it draws
+when it is not — one row, one record, and no reader sees the same compaction twice. The sentence
+stays on the item (`:compaction`), so nothing is lost by preferring the fields: it is the
+fallback and the thing `/diagnostic`-style readers can still reach, not a second copy on the
+glass. R24's own counting rule, which the operator wrote: *how many times is nothing-ran
+needed* — once.
+
+**Sections are drawn in the DAEMON'S order, which is the settings row's order**, so a heading
+nobody wrote keeps its place in the shape rather than being appended to the bottom. Each heading
+draws its body, or `(none)` when the model wrote the heading and nothing under it, or
+`(not stated)` when the daemon's list names it and the record has no such section. **Those two
+are different facts and the whole shape turns on them**: a reader that renders the second as the
+first has reported silence as a clean bill of health.
+
+**The tail is a block of its own and never folded into the last section.** It is what was carried
+VERBATIM, which is a different kind of thing from what was summarised — and a tail appended to
+`Relevant Files` would read as more of that section.
+
+**An unknown `because` is printed raw.** The daemon's vocabulary, and a head that met a fifth
+reason must show it rather than choose between dropping the fact and inventing one — R28's own
+rule, and the reason it is a string on the wire."
+  (let ((r (compaction-report w)))
+    (when r
+      (let* ((names *compaction-sections*)
+             (found (getf r :sections))
+             ;; the daemon's list when it sent one, else the sections it found, in its order
+             (order (or names (mapcar #'car found)))
+             (seen nil)
+             (out nil))
+        (dolist (name order)
+          (let* ((hit (assoc name found :test #'string=))
+                 (body (and hit (cdr hit))))
+            ;; **ONE wrap, not two.** The first cut wrote `(list (list :heading …))`, so
+            ;; `(car piece)` was a LIST rather than `:heading` and every heading fell through the
+            ;; text renderer's `case` — the record drew its bodies with no names over them, which
+            ;; is the one thing a section list is for. Found by the probe that printed the
+            ;; record's own pieces, not by reading the code.
+            (push (list :heading name (not hit)) out)
+            (cond
+              ((not hit) nil)                       ; `(not stated)` is the heading's own mark
+              ((zerop (length (string-trim " " body))) (push (list :empty) out))
+              (t (dolist (l (%payload-lines body))
+                   (push (list :body l) out))))
+            (push name seen)))
+        ;; **sections the daemon sent and its own list does not name.** A template that gained a
+        ;; heading, or a row written by a newer daemon: drawn after the known ones rather than
+        ;; dropped, because a head that hid a section because it could not place it would be
+        ;; withholding the record it was sent.
+        (dolist (s found)
+          (unless (member (car s) seen :test #'string=)
+            (push (list :heading (car s) nil) out)
+            (dolist (l (%payload-lines (cdr s)))
+              (push (list :body l) out))))
+        ;; --- the tail, its own block, introduced by its own header
+        (let* ((t* (getf r :tail))
+               (turns (getf t* :turns))
+               (because (getf t* :because))
+               (carried (getf t* :carried))
+               (dropped (getf t* :dropped)))
+          (push (list :tail-head
+                      (format nil "tail — ~a~@[ · ~d item~:p of the newest exchange left off the front~]"
+                              (cond
+                                ;; an EMPTY tail says WHY, which is the requirement's third
+                                ;; clause: a local compaction carries no turns by ruling, and a
+                                ;; tail that drew nothing at all would read as a bug
+                                (turns (format nil "~d turn~:p carried~@[ (~a)~]"
+                                               (length turns) because))
+                                (t (format nil "nothing carried (~a)" because)))
+                              dropped))
+                out)
+          (dolist (tn turns)
+            (push (list :turn (car tn) (cdr tn)) out)))
+        (when (getf r :template)
+          (push (list :template (getf r :template)) out)
+          (push (list :blank) out))
+        (nreverse out)))))
+
+(defun compaction-record-text (record)
+  "RECORD (from `compaction-record`) as the text a tool row's payload is, or NIL.
+
+**The payload is text** — that is the wire's field and the fold's unit — so the record is
+rendered to it here rather than the drawer being taught a second shape. The MARKS are the
+record's own: a heading, `(none)` for a heading the model wrote and left empty, `(not stated)`
+for one the daemon's list names and the record has not got."
+  (when record
+    (let ((out nil))
+      (dolist (piece record)
+        (case (car piece)
+          (:heading (push (cadr piece) out)
+                    (when (caddr piece) (push "      (not stated)" out)))
+          (:empty (push "      (none)" out))
+          (:body (push (format nil "      ~a" (cadr piece)) out))
+          (:blank (push "" out))
+          (:tail-head (push "" out) (push (cadr piece) out))
+          (:turn (push (format nil "      ~a: ~a" (cadr piece) (caddr piece)) out))
+          (:template (push (format nil "template ~a" (cadr piece)) out))))
+      (format nil "~{~a~^~%~}" (nreverse out)))))
+
 (defun compaction-row-p (w)
   "Is W a compaction this head renders as a TOOL ROW rather than a note?
 
@@ -1163,6 +1354,18 @@ off. `:failed` was never run. letibot's severity table calls both failures, and 
 carries the same red the note did."
   (member (getf facts :kind) '(:no-progress :failed) :test #'eq))
 
+(defun %compaction-cut-off-said (w)
+  "` · cut off` when the record ran out of room before it finished, and the empty string otherwise.
+
+**On the HEADLINE and not only in the payload**, which is the whole reason R28 carries it as a
+bool: a templated record is exactly where *truncated* stops being readable out of any one section
+— the cut falls wherever the model ran out, which with seven headings can be inside `Relevant
+Files` — and a FOLDED row shows one payload line and a seam. A fact only visible after expanding
+the fold is a fact the reader who did not expand it does not have. The daemon's sentence carries
+the same fact in words; this is the fact, where it cannot be missed."
+  (let ((r (compaction-report w)))
+    (if (and r (getf r :cut-off)) " · cut off" "")))
+
 (defun note-compaction (session w)
   "FILE W as a TOOL ROW. T when one was filed; NIL when W is not a compaction row.
 
@@ -1186,6 +1389,14 @@ count it, and the retired set does not apply. The ROW is its record — the whol
 is its payload, which is more than a note ever kept."
   (when (compaction-row-p w)
     (let* ((facts (compaction-facts (getf w :detail)))
+           ;; **R27: the record the wire carries, when it carries one.** The row draws the
+           ;; STRUCTURE then — sections, tail, template — and falls back to the daemon's sentence
+           ;; when there is no such object, which is every daemon before R28 and every warning
+           ;; that is not a compaction. One row, one record: the sentence stays on the item rather
+           ;; than being drawn under the structure, because it is the same numbers said twice and
+           ;; R24 already settled how many times is enough.
+           (record (and (compaction-report w)
+                        (compaction-record-text (compaction-record w))))
            (bad (%compaction-failed-p facts))
            (id (format nil "leticl-compaction-~d" (incf *filed-notes*)))
            (row (list :item-id id
@@ -1198,9 +1409,10 @@ is its payload, which is more than a note ever kept."
                                   :call-id (format nil "compaction-~a" id)
                                   :name "compact"
                                   :verb (%compaction-verb facts)
-                                  :subject (%compaction-subject facts)
+                                  :subject (concatenate 'string (%compaction-subject facts)
+                                                        (%compaction-cut-off-said w))
                                   :outcome (list :outcome (if bad "failed" "ok"))
-                                  :payload (or (getf w :detail) "")))))
+                                  :payload (or record (getf w :detail) "")))))
       (push-item session row)
       row)))
 
@@ -1903,8 +2115,14 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
        ;; **A warning is a DISCLOSURE** (R10). See the note above `note-warning`:
        ;; the record is `session-warnings`, the disclosure is a row filed where the
        ;; envelope arrived, and three codes have a better home than a plain row.
+       ;; **`compaction` rides across too** (R27/R28). The plist is built from named keys rather
+       ;; than copied, which is right — a warning is three facts and a head that kept the whole
+       ;; envelope would be keeping every frame's shape — but a new field then has to be carried
+       ;; BY NAME or it is dropped on the way in. Measured: the record was on the wire, the row
+       ;; drew the sentence, and the only thing missing was this line.
        (let ((w (list :code (getf env :code) :detail (getf env :detail)
-                      :ts (getf env :ts))))
+                      :ts (getf env :ts)
+                      :compaction (getf env :compaction))))
          (cond
            ;; 1. **`turn_failed` has a better home: the turn's own terminal state.**
            ;;    The daemon publishes both on purpose — one is state, the other is
