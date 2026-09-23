@@ -1006,43 +1006,63 @@ the rail stay faint; the code inside them does not."
     (is (equal "let x = 1;" (car first-seg)) "the text survives verbatim")
     (is (null (cdr first-seg)) "and is plain, neither dimmed nor dropped")))
 
-;;; ------------------- §3.3: `truncate-target` must agree with the reference ------- ;;;
+;;; ------------------- §3.3/R25: the unit is columns, the number is the viewport --- ;;;
 ;;;
-;;; The claim: **a display target is cut to the same cap in both heads.** They agreed
-;;; on 120 and disagreed about what of.
+;;; §3.3's claim: **a subject is measured in COLUMNS, not bytes and not characters.**
+;;; Both heads agreed on 120 and disagreed about what of.
+;;;
+;;; R25's change, and the reason this test moved: **the 120 was a DISPLAY width, and a
+;;; display width is not the head's to decide.** It is now a KEEP bound (2048 columns),
+;;; and the elision a reader sees happens in `%shorten-subject` at the width of the row
+;;; being drawn. The unit half of §3.3 is unchanged and is what this test still pins;
+;;; the number half is `the-headline-follows-the-viewport`, below.
 
-(def-test a-display-target-is-cut-to-a-column-budget-not-a-byte-count (:suite leticl)
-  "**Columns, and the unit is the whole of the requirement.**
+(def-test a-subject-is-measured-in-columns-not-bytes-or-characters (:suite leticl)
+  "**Columns, and the unit is the whole of §3.3.**
 
-The reference counts BYTES (`s.len()`, `is_char_boundary`, `event.rs:428-439`) and
-this head counted CHARACTERS (`(length clean)`); both are wrong for text that is not
-ASCII, in opposite directions. MEASURED on the same target, before the fix:
+The reference counts BYTES (`s.len()`, `is_char_boundary`, `event.rs`) and this head
+counted CHARACTERS (`(length clean)`); both are wrong for text that is not ASCII, in
+opposite directions. MEASURED on the same subject, before the fix:
 
-| target | reference | this head, before |
+| subject | reference | this head, before |
 |---|---|---|
 | 121 ASCII characters | 117 + an ellipsis, 118 columns | 117 + an ellipsis, the same |
-| a target carrying `0x9B` | stripped | **kept** — the two measured it differently |
+| a subject carrying `0x9B` | stripped | **kept** — the two measured it differently |
 | 61 CJK characters (122 columns) | 39 + a mark, 79 columns | **all 61, 122 columns**, untruncated |
 | 61 emoji (122 columns) | 39 + a mark, 79 columns | **all 61, 122 columns** |
 
-Counting characters lets a wide target EXCEED the budget — 61 CJK characters are 122
-columns — which is the exact failure the cap exists to prevent and the one this tree
+Counting characters lets a wide subject EXCEED the budget — 61 CJK characters are 122
+columns — which is the exact failure a bound exists to prevent and the one this tree
 spent `W1` learning about rendering; counting bytes under-fills it by a factor of two.
-The cap is about how much room the row has, so it is measured in the unit the row is
+The bound is about how much room the row has, so it is measured in the unit the row is
 drawn in.
 
-**And the ellipsis counts**, which both heads already agreed on: a cap that forgets
-the mark is a cap the output is allowed to exceed."
+**And the ellipsis counts**, which both heads already agreed on: a bound that forgets
+the mark is a bound the output is allowed to exceed."
   (let ((cap leticl::*target-max-cols*))
-    (is (= 120 cap) "the cap is the number both heads agreed on")
-    (is (= 120 (length (leticl::truncate-target (make-string 121 :initial-element #\a))))
-        "121 ASCII characters become 119 and an ellipsis — the FULL budget, where the
- reference's byte-counted cut stops at 118 columns on the same input")
-    (is (equal 120 (length (leticl::truncate-target (make-string 120 :initial-element #\a))))
-        "and 120 characters are not touched at all")
+    ;; **the number is not a display width any more** (R25), and this is the assertion
+    ;; that says so: a subject a 227-column pane can hold is kept whole.
+    (is (>= cap 2048)
+        "**the keep bound is at least the daemon's wire bound, in this head's unit** —
+ 2048 BYTES is at most 2048 COLUMNS, so this head keeps everything a daemon can send,
+ whole, and the bound can never be the binding constraint")
+    (is (equal 300 (length (leticl::truncate-target (make-string 300 :initial-element #\a))))
+        "**a 300-column subject is not cut at all** — the operator's own headline width,
+ which the old 120-column bound cut in half. This is R25 in one assertion")
+    ;; the unit: characters would overshoot and bytes would under-fill, on the same input
+    (let ((cjk (make-string 1025 :initial-element #\中)))   ; 2050 columns, 3075 bytes
+      (is (<= (leticl::string-width (leticl::truncate-target cjk)) cap)
+          "a subject over the bound in COLUMNS is cut to it — counting characters would
+ leave 2050 columns, and counting bytes would leave 682")
+      (is (char= #\… (char (leticl::truncate-target cjk)
+                           (1- (length (leticl::truncate-target cjk)))))
+          "and the cut is disclosed"))
+    (let ((emoji (make-string 1025 :initial-element (code-char #x1f642))))  ; 2050 columns
+      (is (<= (leticl::string-width (leticl::truncate-target emoji)) cap)
+          "and the same for text whose characters are not one column wide each"))
     ;; **the C1 half of the requirement.** `0x9B` is 8-bit CSI: the reference strips it
     ;; (Rust's `is_control` covers U+0080–U+009F) and this head did not, so the two
-    ;; measured the same target differently
+    ;; measured the same subject differently
     (is (leticl::%control-char-p (code-char #x9b)) "C1 is a control character")
     (is (leticl::%control-char-p (code-char #x80)) "from the bottom of the range")
     (is (leticl::%control-char-p (code-char #x9f)) "to the top of it")
@@ -1052,23 +1072,195 @@ the mark is a cap the output is allowed to exceed."
     (is (not (leticl::%control-char-p #\a)) "nor an ordinary letter")
     (is (not (search (string (code-char #x9b))
                      (leticl::truncate-target (format nil "a~c b" (code-char #x9b)))))
-        "and one inside a target is flattened before anything is measured")
-    (is (= 119 (string-width (leticl::truncate-target (make-string 61 :initial-element #\中))))
-        "61 CJK characters (122 columns) are cut to 118 columns and a mark")
-    (is (= 119 (string-width (leticl::truncate-target (make-string 61 :initial-element #\🙂))))
-        "and 61 emoji (122 columns) to the same")
-    ;; a target that exactly fits is not touched, on either measure
-    (is (= 120 (string-width (leticl::truncate-target (make-string 60 :initial-element #\中))))
-        "120 columns of CJK fit exactly")
-    (dolist (case (list (make-string 61 :initial-element #\中)
-                        (make-string 61 :initial-element #\🙂)
-                        (make-string 121 :initial-element #\a)))
-      (is (<= (string-width (leticl::truncate-target case)) cap)
-          (format nil "never over the cap: ~d columns" (string-width (leticl::truncate-target case)))))
+        "and one inside a subject is flattened before anything is measured")
     (is (not (find #\newline (leticl::truncate-target (format nil "a~%b"))))
         "a newline in a header is not a row the head did not count")
     (is (not (find #\tab (leticl::truncate-target (format nil "a~cb" #\tab))))
         "nor a tab, which measures as one column and draws as eight")))
+
+;;; ------------------------------- R25: the viewport decides the elision ---------- ;;;
+;;;
+;;; The operator, 2026-09-22: *"some commands head lines like 'Ran blabla' truncate too
+;;; early — they dont use the whole conversation history viewport, unlike say thinking."*
+;;;
+;;; **The subject is DERIVED through the real path in every test below**: a snapshot with
+;;; an assistant row carrying the call's `arguments`, which is what a head that attached
+;;; to an existing session has, and which runs `note-snapshot-targets` →
+;;; `note-assistant-targets` → `display-target` → `truncate-target`. Poking the subject
+;;; into `*call-targets*` would test the renderer and skip the derivation, and the
+;;; derivation is where the constant was.
+
+(defun %r25-subject (n &optional (digit #\0))
+  "N characters of a repeating pattern, so how much came through is countable."
+  (with-output-to-string (s)
+    (dotimes (i n) (write-char (code-char (+ (char-code digit) (mod i 10))) s))))
+
+(defun %head-with-a-long-subject (subject &key (name "bash") (payload "one line")
+                                          (call-id "r25-c1"))
+  "A head whose one settled tool row has SUBJECT as its derived display subject.
+
+The call id is `r25-c1` and not `c1` on purpose: `*call-targets*` and `*answered-calls*`
+are `defvar`s that outlive a test, so a fixture that borrowed the payload tests' ids
+would leave a long subject under them and those tests' rows would grow a `…`. Caught by
+the suite when these tests first ran."
+  (let ((h (%on-head :cols 80 :rows 24)))
+    (ingest-snapshot (head-session h)
+                     (list :session-id "s-r25" :seq 5 :dropped 0 :items-dropped 0
+                           :turn nil :open-decisions nil :settled-decisions nil
+                           :heads nil :warnings nil
+                           :items (list
+                                   (list :item-id "a1" :kind "assistant" :ts 0
+                                         :item (list :type "assistant" :text "looking"
+                                                     :tool-calls
+                                                     (list (list :id call-id :name name
+                                                                 :arguments
+                                                                 (format nil "{\"command\":~s}"
+                                                                         subject)))))
+                                   (list :item-id "i1" :kind "tool_result" :ts 0
+                                         :item (list :type "tool_result" :call-id call-id
+                                                     :name name
+                                                     :outcome (list :outcome "ok")
+                                                     :payload payload)))))
+    h))
+
+(defun %r25-tool-row (h)
+  "The head's one settled tool_result row."
+  (find "tool_result" (session-items (head-session h))
+        :key (lambda (i) (getf (leticl::item-body i) :type)) :test #'string=))
+
+(defun %headline-at (h cols)
+  "The headline that row DRAWS at COLS, as text."
+  (segs-of (list (first (item-lines (%r25-tool-row h) cols (head-prefs h))))))
+
+(def-test the-headline-follows-the-viewport (:suite leticl)
+  "**R25's criterion, and the operator's own measurement.**
+
+A settled tool row's subject is elided to **what the row has left after its own mark,
+verb, outcome and duration** — the viewport's arithmetic and nothing else. Before the
+fix the subject was cut to a constant 120 COLUMNS at the moment the head derived it, so
+one event produced 77 columns of headline at 80, 137 at 140 and **156 at 227** — it grew
+and then stopped, and the seventy columns between 156 and 227 belonged to nobody.
+
+The subject here is 300 characters of a repeating digit pattern, so *how much came
+through* is countable rather than eyeballed."
+  (let* ((subject (%r25-subject 300))
+         (h (%head-with-a-long-subject subject))
+         (at (lambda (cols) (%headline-at h cols)))
+         (digits (lambda (cols) (count-if #'digit-char-p (funcall at cols)))))
+    (is (= 300 (length subject)) "the premise: a 300-column subject")
+    ;; --- it GROWS with the viewport, which is the whole claim
+    (is (< (funcall digits 80) (funcall digits 140))
+        (format nil "at 140 columns the headline is wider than at 80: ~d against ~d"
+                (funcall digits 80) (funcall digits 140)))
+    (is (< (funcall digits 140) (funcall digits 227))
+        (format nil "and wider again at 227: ~d against ~d"
+                (funcall digits 140) (funcall digits 227)))
+    ;; --- **THE REGRESSION ASSERTION**: past the old constant.
+    (is (> (funcall digits 227) 120)
+        (format nil "**at 227 columns more than 120 characters of subject reach the
+ screen** (~d), where the old constant capped it there: ~s"
+                (funcall digits 227) (funcall at 227)))
+    ;; --- and the row never exceeds the viewport it was given
+    (dolist (cols '(80 140 227 400))
+      (is (<= (string-width (funcall at cols)) cols)
+          (format nil "at ~d columns the headline fits: ~d wide"
+                  cols (string-width (funcall at cols)))))
+    ;; --- **the elision is DISCLOSED, and a subject that FITS is marked not at all**
+    (dolist (cols '(80 140 227))
+      (is (search "…" (funcall at cols))
+          (format nil "at ~d columns 300 characters cannot fit, so the cut is disclosed" cols)))
+    (is (not (search "…" (funcall at 400)))
+        (format nil "**at 400 columns the whole subject fits and is marked NOT AT ALL** —
+ a `…` on a complete subject is the same class of lie as hiding a cut: ~s"
+                (funcall at 400)))
+    (is (= 300 (funcall digits 400)) "and every one of the 300 characters is on the row")))
+
+(def-test a-resize-re-elides-the-subject-on-the-screen (:suite leticl)
+  "**A wider window gets more of the subject BACK, and it is the SCREEN that says so.**
+
+The elision is computed at draw time from `cols`, so a resize is not a re-render of a
+stored decision — there is no stored decision. What could still have frozen it is the
+line cache, whose key is `(generation, width, items)`; the width is one of the three
+terms, so a resize invalidates. This asserts the *visible* consequence at all three
+widths, in order, including the return to a width already used: a cache keyed on
+something narrower than the width would show the 227-column row again at 80."
+  (let* ((h (%head-with-a-long-subject (%r25-subject 300)))
+         (*stdout* (make-string-output-stream)))
+    (labels ((headline-on-screen (cols)
+               (setf (head-cols h) cols (head-rows h) 24)
+               (screen-resize (head-screen h) cols 24)
+               (screen-resize (head-prev-screen h) cols 24)
+               (leticl::%render h)
+               (find-if (lambda (l) (search "0123456789" l))
+                        (uiop:split-string (%screen-text h) :separator '(#\newline))))
+             (digits (cols) (count-if #'digit-char-p (or (headline-on-screen cols) ""))))
+      (let ((narrow (digits 80)))
+        (is (plusp narrow) "the headline is on the screen at 80")
+        (let ((wide (digits 227)))
+          (is (> wide narrow)
+              (format nil "**widening the same head gives the subject back**: ~d
+ characters at 227 against ~d at 80" wide narrow))
+          (let ((narrow-again (digits 80)))
+            (is (= narrow narrow-again)
+                (format nil "**and narrowing it takes them away again**: ~d, the same as
+ the first time at 80 — a cached 227-column row would have shown ~d"
+                        narrow-again wide)))
+          (is (= wide (digits 227))
+              "and back at 227 it is the wide one again, so nothing was cached against it"))))))
+
+(def-test a-cut-subject-lands-on-a-cluster-boundary-not-half-the-width (:suite leticl)
+  "**The unit, on a subject whose characters are two cells wide.**
+
+A cut of `120` in BYTES would leave 40 CJK characters — 80 columns, a little over half
+the room — and a cut in CHARACTERS would leave 120 of them, 240 columns, past the edge
+of the pane. So neither failure can pass this: the visible subject has to *use the room
+it was given*, and every kept cluster has to be whole, which for `中` means the
+segment's column count is exactly twice its length.
+
+200 of them (400 columns) is the subject, so that it does not fit a 227-column pane and
+there is a cut to inspect at all."
+  (let* ((cjk (make-string 200 :initial-element #\中))
+         (h (%head-with-a-long-subject cjk))
+         (at (lambda (cols) (%headline-at h cols))))
+    (is (= 400 (string-width cjk)) "the premise: 200 of them are 400 columns")
+    (let ((wide (funcall at 227)))
+      (let ((kept (remove-if-not (lambda (c) (char= c #\中)) wide)))
+        (is (plusp (length kept)) "some of the subject is on the row")
+        (is (= (* 2 (length kept)) (string-width kept))
+            (format nil "**every kept cluster is whole** — the segment is ~d columns for
+ ~d characters, and a cut inside one would make those disagree"
+                    (string-width kept) (length kept)))
+        ;; **not half the room.** The subject's share at 227 is ~199 columns; a byte-counted
+        ;; cut would leave 80, and a character-counted one 240 (which would also overflow)
+        (is (> (string-width kept) 190)
+            (format nil "**the subject uses the room it was given, not half of it**: ~d
+ columns of a ~d-column allowance" (string-width kept) 199)))
+      (is (<= (string-width wide) 227) "and the row still fits its pane")
+      (is (search "…" wide) "with the cut disclosed")
+      (is (not (find #\space (remove-if (lambda (c) (member c '(#\space)))
+                                        (subseq wide (1+ (search "Ran" wide))))))
+          "as one unbroken run of the subject, not re-wrapped"))))
+
+(def-test the-raw-call-block-wraps-to-the-viewport-too (:suite leticl)
+  "**The same defect, one control away, and the same fix.**
+
+`ctrl-x`'s raw block wrapped at `(1- *target-max-cols*)` — 119 columns whatever the pane
+was — so on a 227-column window it drew a 119-column column of text with a hundred
+columns of nothing beside it. A wrapper on a display path that does not know its width
+cannot wrap honestly, so the width is now a required argument and both call sites pass
+the viewport."
+  (let ((raw (format nil "bash {\"command\":\"~a\"}" (%r25-subject 300))))
+    (is (search "raw tool call · ctrl-x" (segs-of (leticl::raw-call-lines raw 227)))
+        "the block is still labelled")
+    (dolist (cols '(40 80 227))
+      (let ((lines (leticl::raw-call-lines raw cols)))
+        (is (every (lambda (l) (<= (leticl::%segs-width l) cols)) lines)
+            (format nil "every line fits ~d columns" cols))
+        (is (> (length lines) 2) "and the long call wrapped rather than being clipped"))
+      ;; the wrap follows the width: a wider block is FEWER lines for the same text
+      (let ((wider (leticl::raw-call-lines raw (max 40 (* 4 cols)))))
+        (is (<= (length wider) (length (leticl::raw-call-lines raw cols)))
+            (format nil "a wider block is not more lines than a narrow one at ~d" cols))))))
 
 (def-test fence-language-names-map-to-the-highlighter (:suite leticl)
   "A fence carries a NAME; the shim takes a PATH. Both spellings work."
@@ -3650,8 +3842,21 @@ position; and it was three columns short of the box's edge, with a trailing spac
   "A head whose transcript is one settled `bash` result per SIZE, OLDEST FIRST.
 
 The item ids are `t1`, `t2` … in that order, so the LAST is the newest and the one a
-window is seeded on."
+window is seeded on.
+
+**The call ids are cleared before use, and that is a GLOBAL showing through.** These
+rows carry no assistant row and no `arguments`, so their subject is the call-id
+fallback — `(c1)` — which is what every assertion below was written against. But
+`*call-targets*` is a `defvar`, so a target some OTHER test left under `c1` would be
+picked up here and the fixture would stop being the fixture: measured 2026-09-22, when
+the R25 tests wrote a 300-character subject under `c1` and two seam assertions in this
+file failed with a `…` on the header. A fixture that depends on what ran before it is
+the same defect as a global that survives between tests."
   (let ((h (%make-head)))
+    (loop for i from 1 to (length sizes)
+          do (setf (alexandria:assoc-value *call-targets* (format nil "c~d" i)
+                                          :test #'string=)
+                   nil))
     (setf (session-items (head-session h))
           (coerce
            (loop for n in sizes
@@ -8133,7 +8338,7 @@ control."
   (let ((h (%make-head)))
     ;; the block itself, which is labelled, fenced and faint: it is EVIDENCE, and
     ;; evidence that looks like prose is how the defect started
-    (let ((block (leticl::raw-call-lines "{\"path\": \"a.rs\"}")))
+    (let ((block (leticl::raw-call-lines "{\"path\": \"a.rs\"}" 80)))
       (is (search "raw tool call · ctrl-x" (segs-of block)) "the block is labelled")
       (is (search "│ " (segs-of block)) "and the text is railed")
       (is (search "└─" (segs-of block)) "and closed"))

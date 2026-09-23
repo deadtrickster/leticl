@@ -534,6 +534,55 @@ error anyone looks at, just a redefinition that did not happen.
 exists so a multi-line definition can be pushed as a whole form. The test suite
 asserts the cut is real, so the rule cannot quietly rot.
 
+**And collapsing the newlines is not enough — a COMMENT turns the rest of the form
+into prose.** The obvious workaround is to flatten the form before sending it:
+
+```sh
+FORM=$(cat <<'EOF' | tr '\n' ' '
+(let ((h leticl::*head*))
+  ;; note the thing
+  (list :a 1 :b 2))
+EOF
+)
+```
+
+The newline is gone, so `;; note the thing` now runs to the end of the form, and
+the head answers `#<END-OF-FILE>` — which reads like a syntax error and is not
+one. Measured 2026-09-23 while probing R25, twice, in both spellings of the
+workaround: the first attempt used comments inside the form, and the second tried
+to strip them with `sed 's/;.*//'`, **which also ate `~;` inside a format string**
+and mangled a `format` call in the same probe. **Comments go outside the form.**
+If a form must be built by a programme, strip comments only with something that
+knows a string literal when it sees one — or, better, do not put them in.
+
+**Two more shapes of the same injury, for the same reason.** A form that came back
+`#<UNDEFINED-FUNCTION GET-OUTPUT-STRING>` was not a missing function: the eval's
+package has no binding for that name, so a form should use what the head itself
+uses or take the text as a **literal spliced in by the caller**. And a form that
+carries a JSON string needs its double quotes escaped **for the Lisp reader**
+before it is spliced — the raw text `{` `"command": …` `}` has its quotes eaten
+by the outer string, and the head answers `#<UNBOUND-VARIABLE COMMAND>`, which is
+the tell.
+
+### A fixture that borrows another test's keys inherits its state
+
+**How.** Two sets of tests, each building a head whose tool rows are keyed `c1`,
+`c2` … — the payload-window fixtures and, later, R25's subject fixtures. Both write
+into `*call-targets*`, which is a `defvar`.
+
+**What happened.** R25's tests put a 300-character subject under `c1`; the payload
+tests' rows, which carry no `arguments` and so are supposed to fall back to `(c1)`,
+picked the long subject up and two seam assertions failed with a `…` on a header
+that has nothing to do with them. **Both files were right and the suite was wrong**, in
+the way this file keeps describing: a global that survives between tests is not
+state, it is an *environment*.
+
+**What changed.** The R25 fixtures use their own keys (`r25-c1`), and `%payload-head`
+clears the targets for the ids it is about to use, so its fixture is deterministic
+whatever ran before it. The general rule is the one `run-all` already applies to
+files: a fixture declares everything its assertions depend on, including the parts
+of it that live in a global.
+
 ### The wrong daemon, from a direct invocation
 
 **How.** Running `bin/leticl-head --session <id>` directly, without

@@ -42,26 +42,58 @@
 ;;;    the row would otherwise be empty or a bare modifier — `todo_write` sends
 ;;;    `{todos: […]}` and nothing else, and that label has no other source.
 
-(defparameter *target-max-cols* 120
-  "How many COLUMNS of a display target a person reads before the rest is an ellipsis.
+(defparameter *target-max-cols* 2048
+  "How many COLUMNS of a call's subject this head will KEEP for a row.
 
-**Columns, and the unit is the whole of §3.3.** The two heads agreed on 120 and
-disagreed about what of: the reference counts BYTES (`s.len()`, `is_char_boundary`,
-`event.rs:428-439`) and this head counted CHARACTERS (`(length clean)`), and both are
-wrong in opposite directions for text that is not ASCII — measured on the same target:
+**Not a display width, and that is R25.** This parameter was 120 and was where the
+elision happened: `display-target` cut every subject to 120 columns at the moment the
+head derived it, and the row then drew that string. So a 227-column pane drew a
+120-column subject with ~36 columns of headline around it and **threw away seventy
+columns of the viewport it had been given** — the operator's report: *\"some commands
+head lines like 'Ran blabla' truncate too early — they dont use the whole conversation
+history viewport, unlike say thinking.\"* Measured before the fix, one event, three
+viewports: the headline was 77 columns at 80, 137 at 140, and **156 at 227** — it grew
+and then stopped, pinned by this number instead of by the room the row had.
 
-| target | reference | this head, before |
+**The elision is the VIEWPORT's now, and it happens at DRAW time.** `%shorten-subject`
+in `%tool-result-lines` cuts the subject to `(cols - gutter - indent - lead - tail)`,
+which is exactly what that row has left after its own mark, verb, outcome and
+duration — so the subject gets the whole remainder and no more. Two consequences worth
+naming: a wider pane gets more of the subject back, and a narrower one gives it up,
+because nothing stored here remembers a width.
+
+**Why a bound at all, when the daemon has one.** Two of the three sources are bounded
+by the wire (`TARGET_MAX_BYTES`, 2048 bytes) but the third is not: the head re-derives
+a subject from an assistant row's `arguments` JSON, and `ToolCall.arguments` is
+uncapped BY DESIGN on letibot's side — *\"the exact bytes are what must be replayed to
+keep the prefix stable\"*. So one string per call id would otherwise be as long as the
+model's largest argument, for the life of the session.
+
+**The number is letibot's own wire bound, in this head's unit**, and it is chosen so
+that this bound can never be the binding constraint: **2048 BYTES is at most 2048
+COLUMNS** (ASCII is one column per byte, CJK two columns per three bytes, emoji two per
+four), so the head keeps everything a daemon can send, whole. The same argument from
+the other side fixes it too: an 8K display at a small monospace font is ~960 columns,
+and 2048 covers that with 2× spare — letibot's own reasoning for the byte bound,
+applied to the unit this head counts in.
+
+**Columns, and the unit is still the point (§3.3).** The two heads agreed on 120 and
+disagreed about what *of*: the reference counts BYTES (`s.len()`, `is_char_boundary`,
+`event.rs`) and this head counted CHARACTERS (`(length clean)`), and both are wrong in
+opposite directions for text that is not ASCII — measured on the same subject:
+
+| subject | reference | this head, before |
 |---|---|---|
 | 121 ASCII characters | 117 + `…` (118 columns) | 117 + `…` — the same |
-| 61 `中` | 39 + `…` (79 columns) | **all 61 (122 columns)**, untruncated |
-| 40 `🙂` | 29 + `…` (59 columns) | **all 40 (80 columns)** |
+| a subject carrying `0x9B` | stripped | **kept** — the two measured it differently |
+| 61 `中` (122 columns) | 39 + `…` (79 columns) | **all 61 (122 columns)**, untruncated |
+| 40 `🙂` (80 columns) | 29 + `…` (59 columns) | **all 40 (80 columns)** |
 
-Counting characters lets a wide target EXCEED the budget — 61 CJK characters are 122
-columns — which is the exact failure the cap exists to prevent, and the one this tree
+Counting characters lets a wide subject EXCEED the budget — 61 CJK characters are 122
+columns — which is the exact failure a cap exists to prevent and the one this tree
 spent `W1` learning about rendering. Counting bytes under-fills it by a factor of two.
-The cap is about how much room the row has, so it is measured in the unit the row is
-drawn in; `truncate-to-width` is the same instrument every other row here uses, and it
-spends a column on saying it cut rather than cutting silently.")
+The bound is about how much room a row has, so it is measured in the unit the row is
+drawn in, and `truncate-to-width` is the same instrument every other row here uses.")
 
 (defparameter *subject-keys* '(:path :file-path :file)
   "The keys that name a call's subject, in preference order.
@@ -158,13 +190,16 @@ are written out rather than reached for through a Unicode table."
       (<= #x80 (char-code c) #x9f)))
 
 (defun truncate-target (s)
-  "S cut to `*target-max-cols*` columns, control characters flattened.
+  "S flattened of control characters, then cut to `*target-max-cols*` columns.
 
-**The ellipsis counts**, which both heads already agreed on and which
-`truncate-to-width` is written around: a cap that forgets the mark is a cap the output
-is allowed to exceed, which is the off-by-a-few that puts a line one column past the
-terminal and scrolls the frame. The unit is COLUMNS for the same reason — see
-`*target-max-cols*` for the three-row table that decided it.
+**The cut here is the KEEP bound, not the elision** (R25). It bounds what the head
+holds per call; the elision a reader sees is `%shorten-subject`'s, at the width of the
+row being drawn. See `*target-max-cols*`.
+
+The ellipsis counts, which both heads already agreed on and which `truncate-to-width`
+is written around: a bound that forgets the mark is a bound the output is allowed to
+exceed, which is the off-by-a-few that puts a line one column past the terminal and
+scrolls the frame. The unit is COLUMNS for the same reason.
 
 Control characters go FIRST, before anything is measured: a newline inside a header
 would put a row on the screen the head did not count, and a tab measures as one column
@@ -174,7 +209,12 @@ and draws as eight (`%control-char-p`)."
    *target-max-cols*))
 
 (defun display-target (arguments)
-  "The one argument a person reads, from a tool call's ARGUMENTS string."
+  "The one argument a person reads, from a tool call's ARGUMENTS string.
+
+**It composes the subject and does not elide it for a screen** (R25): the result is
+bounded only by `*target-max-cols*`, the head's keep bound, and the elision a reader
+sees happens in `%shorten-subject` at the width of the row being drawn. A caller that
+is about to DRAW this must give it a width."
   (let ((json (ignore-errors (json-decode (or arguments "")))))
     (cond
       ;; not JSON at all: the model wrote it, so it is still the most
@@ -725,6 +765,13 @@ state and it is chrome's file, so it is noted rather than done."
 
 (defun %shorten-subject (subject max)
   "SUBJECT cut to MAX columns the way a person reads it.
+
+**This is where a subject is elided for the screen, and MAX is the viewport's**
+(R25). `%tool-result-lines` computes it as *everything the row has left after its own
+mark, verb, outcome and duration*, so a wider pane gets more of the subject back and a
+narrower one gives it up — the cut is a function of the row's room and of nothing that
+was stored. It used to be `display-target`'s job at a constant 120 columns, which is
+what made a 227-column pane draw a 156-column headline; see `*target-max-cols*`.
 
 A path is shortened from its LEFT at a separator, because the end of a path is
 what identifies it and `crates/tui/src/…` names nothing. Anything with a glob or a
@@ -1400,7 +1447,8 @@ a terminal-native palette."
                                (plusp (length (or (getf tc :arguments) ""))))
                        append (raw-call-lines
                                (format nil "~a ~a" (getf tc :name)
-                                       (getf tc :arguments)))))
+                                       (getf tc :arguments))
+                               cols)))
              (loop for tc in (getf body :tool-calls)
                    unless (call-answered-p (getf tc :id))
                      collect (let* ((tgt (display-target (getf tc :arguments)))
@@ -1956,10 +2004,10 @@ first and was drawn that way."
         (when (getf prefs :raw-calls)
           (let ((raw (getf turn :raw-calls)))
             (when (and (stringp raw) (plusp (length raw)))
-              (emit (raw-call-lines raw))))))
+              (emit (raw-call-lines raw cols))))))
       out)))
 
-(defun raw-call-lines (raw)
+(defun raw-call-lines (raw cols)
   "The raw, unparsed text of a tool call, behind `ctrl-x` — the reference's
 `raw_call_lines` (`app.rs:10135-10152`).
 
@@ -1977,10 +2025,18 @@ trap.
 them: the LIVE turn draws the `<function=…>` markup as the model writes it
 (`turn.lines`, from the deltas), and a SETTLED row has no markup left — the parser
 ate it — so it draws `{name} {arguments}` instead. Two renderers would have drifted
-into two different-looking blocks for one control."
+into two different-looking blocks for one control.
+
+**COLS is required, and it is R25's other half.** This wrapped at
+`(1- *target-max-cols*)` — 119 columns whatever the pane was — so a 227-column window
+drew a raw call as a 119-column column of text with a hundred columns of nothing
+beside it. That is the same defect as the headline's and it showed up in the same
+audit: **a wrapper on a display path that does not know its width cannot wrap
+honestly.** The rail costs two columns, so the text gets `(- cols 2)`, and the
+remainder is disclosed by `wrap-text` rather than clipped by the painter."
   (let ((out (list (list (cons "┌─ raw tool call · ctrl-x" '(:dim t))))))
     (dolist (l (uiop:split-string (or raw "") :separator '(#\newline)))
-      (dolist (w (wrap-text l (max 1 (1- *target-max-cols*))))
+      (dolist (w (wrap-text l (max 1 (- cols 2))))
         (push (list (cons "│ " '(:dim t)) (cons w nil)) out)))
     (push (list (cons "└─" '(:dim t))) out)
     (nreverse out)))
