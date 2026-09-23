@@ -423,7 +423,15 @@ prevent, reintroduced from the other end. Measured: a 40-row transcript scrolled
 thirty rows appended, and the view jumped to `row-62`."
   (let* ((key (%hist-key head cols))
          (s (head-session head))
-         (items (session-items s))
+         ;; **WHICH RUN IS THE NEWEST**, for the seam's own wording (R40): the newest run's names
+         ;; `ctrl-t`, and every other run's names `/verbosity`, the verb that does reach it. Computed
+         ;; once from the SESSION (the unjoined items), because the run the walk flushes is a slice of
+         ;; whichever vector it was handed.
+         (newest-run (newest-hidden-run-id s))
+         (items (let ((raw (session-items s)))
+                  ;; **R37's open question, as a switch** - see `%reading-joined-items`: with it on,
+                  ;; a narration and the report it points at are ONE paragraph rather than two.
+                  (if *reading-join-prose* (%reading-joined-items raw cols) raw)))
          (cached (and *hist-cache* (%hist-key= key (first *hist-cache*)) *hist-cache*))
          (lines (if cached (second cached) nil))
          (next-i (if cached (third cached) (1- (length items))))
@@ -435,41 +443,141 @@ thirty rows appended, and the view jumped to `row-62`."
     ;; moved — the arithmetic that decides which row a line belongs to is the arithmetic that
     ;; decided what the lines are.
     (let ((bounds (if cached (fifth cached) nil))
-          (raw nil))
+          (raw nil)
+          ;; **THE RUN OF HIDDEN ROWS** (R37 amended): consecutive items this rung hides, counted
+          ;; here because this is the function that turns a SEQUENCE of items into lines and a run
+          ;; is a property of the sequence. `item-lines` cannot see it — it is handed one item.
+          (run nil))
     (loop while (and (>= next-i 0)
                      (or (< (length lines) (1+ need))
                          ;; the anchor's row has not been reached yet: keep walking down to it
                          (and until-id
-                              (not (find until-id bounds :key #'first :test #'string=)))))
-          do (let* ((item (aref items next-i))
-                    (il (item-lines item cols (head-prefs head)))
-                    (class (item-row-class item))
-                    (before (length lines)))
-               (unless (every #'%line-blank-p il)
-                 (when (and lines class-above
-                            (not (and (eq class :activity) (eq class-above :activity))))
-                   (setf lines (cons nil lines)))
-                 (setf class-above class))
-               ;; `append`, NOT `revappend`. `(append il lines)` copies IL — the
-               ;; one item just rendered, a handful of lines — and SHARES the
-               ;; accumulated tail, so it is O(len il) and the walk is linear.
-               ;; `revappend` is `(append (reverse il) lines)`: it reverses the
-               ;; item's own lines as well, so every tool card rendered
-               ;; upside-down. Measured: a six-line payload came back
-               ;; `line 6 … line 1` with the header last.
-               ;;
-               ;; An earlier comment here claimed `append` was O(depth²). It is
-               ;; not, and acting on that claim is what introduced the reversal —
-               ;; the quadratic copy was in `%viewport-lines`' `(append hist …)`,
-               ;; which `%window-of` fixed.
-               (setf lines (append il lines))
-               ;; `before` to `(length lines)` is THIS row's stretch, blank line included —
-               ;; **counted from the NEWEST end**, because that is how the walk accumulates, and
-               ;; `raw` holds them that way until the total is known and they can be flipped.
-               ;; INSIDE the `let*`, because `item` is what names it: one line lower it was
-               ;; outside the binding and every render died on an unbound variable.
-               (push (cons (getf item :item-id) (cons before (length lines))) raw))
-             (decf next-i))
+                              (not (find until-id bounds :key #'first :test #'string=)))
+                         ;; **and a run in hand is finished before the window stops.** A reader
+                         ;; whose viewport ends inside a run of hidden work must still be told how
+                         ;; much of it there was; a marker dropped for being past `need` is a run
+                         ;; that vanishes at the edge of the screen.
+                         run))
+          ;; **ONE `do` FORM, AND IT IS A `progn`.** `loop`'s `do` takes MANY forms, and each is
+          ;; a body form — so `do (let* …) (decf …)` reads as though the `decf` merely FOLLOWS the
+          ;; `let*` while both are inside the loop, and a form written after them is inside it too.
+          ;; Measured, and it is not a style point: the block that draws a run's marker was such a
+          ;; form, so the marker fired ONCE PER HIDDEN ROW — the very wall this rung exists to
+          ;; abolish. The `progn` says where the body ENDS, so what is written after the loop is
+          ;; after the loop.
+          do (progn
+               (let* ((item (aref items next-i))
+                      (il (item-lines item cols (head-prefs head)))
+                      (class (item-row-class item))
+                      ;; **ONE ANSWER TO *IS THIS ROW ON THE SCREEN*** — the same predicate
+                      ;; `newest-hidden-run-id` cuts the run with, so the run the walk flushes and the
+                      ;; run the seam names cannot disagree about their extent.
+                      (blank (%row-invisible-p item cols)))
+                 (cond
+                   ;; **HIDDEN: it joins the run** and contributes no lines of its own.
+                   ((reading-hides-p item)
+                    (push item run))
+                   ;; **A ROW THIS RUNG DOES NOT DRAW IS INVISIBLE TO THE RUN** (R37 amended).
+                   ;; It neither joins a run nor ENDS one. Prose the reader can SEE ends a run; an
+                   ;; empty assistant part, a whitespace-only text row, or any item whose only
+                   ;; content this rung hides does not. **Contiguity is a property of the RENDERED
+                   ;; SCREEN, not of the item list** — computing it over the list broke one turn's
+                   ;; work into eight markers with no prose between any of them, which is the wall
+                   ;; this rung exists to abolish, now with brackets.
+                   ;;
+                   ;; It still gets a bounds entry, so an anchor parked on it is not called lost.
+                   (blank
+                    (push (cons (getf item :item-id) (cons (length lines) (length lines))) raw))
+                   ;; **A ROW THE READER SEES.** The run of NEWER hidden rows belongs to its prose:
+                   ;; its counts end this row's last line, so the sentence the row closes on runs
+                   ;; into the numbers (R37 final). A run still in hand when the walk ends has no
+                   ;; visible row older than it and stands on its own line below.
+                   (t
+                    (let* ((open (and run (equal (%hidden-run-id run) *hidden-run-open*)))
+                           (newest (and run (equal (%hidden-run-id run) newest-run)))
+                           ;; **THE COUNTS CONTINUE THE MODEL'S SENTENCE AND NOTHING ELSE** (R37
+                           ;; final): only an assistant row with visible text takes them. See
+                           ;; `%run-continues-prose-p` for the screen that named the rule.
+                           (glue (and run (not open) (%run-continues-prose-p item)))
+                           ;; **and the room is LEFT for them before the sentence wraps** — render the
+                           ;; introducing row narrower by the marker's width, so a sentence that
+                           ;; fills its line does not push the counts onto a line of their own. That
+                           ;; was the operator's *"sometimes you do it same line - sometimes dont"*.
+                           (il (if glue
+                                   (%marker-onto-last-line
+                                    (item-lines item
+                                                (max 20 (- cols (hidden-run-marker-width run cols newest)))
+                                                (head-prefs head))
+                                    run cols newest)
+                                   il)))
+                      ;; **an OPEN run draws its rows between this row and the newer one** — this
+                      ;; row is prepended after them, so they land in the gap the counts would have
+                      ;; filled. They are real lines now, and the anchor may name them.
+                      (when (and run open)
+                        (let ((rb (length lines)))
+                          (setf lines (append (hidden-run-lines run cols) lines))
+                          (dolist (it run)
+                            (push (cons (getf it :item-id) (cons rb (length lines))) raw))))
+                      ;; **a run that cannot glue stands on its own line, WITH THE BLANK PROSE
+                      ;; GETS** — the operator asked for exactly that empty line (*"add an empty
+                      ;; line between them"*), and it is what says the counts are not part of the
+                      ;; sentence above them.
+                      ;;
+                      ;; **AND ONLY ONE BLANK.** The air rule below gives this row a blank of its
+                      ;; own when its class changes, and that blank already separates the row from
+                      ;; the marker standing above it — so a second one is a hole. Measured on the
+                      ;; operator's own message: two blank lines between it and the counts.
+                      (when (and run (not open) (not glue))
+                        (let* ((air-above (and lines class-above
+                                               (not (and (eq class :activity)
+                                                         (eq class-above :activity)))))
+                               (prefix (if air-above
+                                           (list (hidden-run-marker run cols newest))
+                                           (list nil (hidden-run-marker run cols newest))))
+                               (rb (length lines))
+                               ;; the marker's own line, in the newest-end numbering the walk
+                               ;; accumulates in — the bounds flip it with everything else
+                               (at (+ rb (1- (length prefix)))))
+                          (setf lines (append prefix lines))
+                          (dolist (it run)
+                            (push (cons (getf it :item-id) (cons at (1+ at))) raw))))
+                      (let ((before (length lines)))
+                        (when (and lines class-above
+                                   (not (and (eq class :activity) (eq class-above :activity))))
+                          (setf lines (cons nil lines)))
+                        (setf class-above class)
+                        ;; `append`, NOT `revappend`. `(append il lines)` copies IL — the
+                        ;; one item just rendered, a handful of lines — and SHARES the
+                        ;; accumulated tail, so it is O(len il) and the walk is linear.
+                        ;; `revappend` is `(append (reverse il) lines)`: it reverses the
+                        ;; item's own lines as well, so every tool card rendered
+                        ;; upside-down. Measured: a six-line payload came back
+                        ;; `line 6 … line 1` with the header last.
+                        ;;
+                        ;; An earlier comment here claimed `append` was O(depth²). It is
+                        ;; not, and acting on that claim is what introduced the reversal —
+                        ;; the quadratic copy was in `%viewport-lines`' `(append hist …)`,
+                        ;; which `%window-of` fixed.
+                        (setf lines (append il lines))
+                        ;; `before` to `(length lines)` is THIS row's stretch, blank line included —
+                        ;; **counted from the NEWEST end**, because that is how the walk accumulates,
+                        ;; and `raw` holds them that way until the total is known and they can be
+                        ;; flipped. INSIDE the `let`, because `item` is what names it: one line lower
+                        ;; it was outside the binding and every render died on an unbound variable.
+                        (push (cons (getf item :item-id) (cons before (length lines))) raw)
+                        ;; **a CLOSED run's rows anchor to the line its counts were appended to** —
+                        ;; this row's last line, which is the nearest surviving row by construction
+                        ;; (R36). Without this an anchor parked on a hidden row finds nothing and the
+                        ;; view silently falls back to the count.
+                        (when (and run (not open))
+                          (dolist (it run)
+                            (push (cons (getf it :item-id) (cons before (1+ before))) raw))))
+                      ;; **THE RUN IS SPENT** — this row's own prose now carries its counts, so the
+                      ;; next hidden row begins a NEW run. Without this the run never clears and
+                      ;; every visible row after it takes the same marker again: three markers on
+                      ;; one screen, which is the eight-marker wall one notch quieter.
+                      (setf run nil))))
+               (decf next-i)))
     ;; **THE OFFSETS ARE FLIPPED TO OLDEST-FIRST HERE**, once the total is known: a row whose
     ;; stretch ended `e` lines from the newest end starts `total - e` lines from the oldest, and
     ;; that is the numbering the viewport and the anchor both speak in. The first cut stored the
@@ -479,6 +587,20 @@ thirty rows appended, and the view jumped to `row-62`."
     ;; cut recomputed from `raw` unconditionally — which wiped the cached bounds on the second
     ;; frame of every cache, so the anchor worked on the frame that built the list and vanished
     ;; on the one after it. The measured symptom was a viewport that jumped to the live end.
+    ;; **A RUN WITH NO SENTENCE TO CONTINUE STANDS ON ITS OWN LINE.** The only run that reaches
+    ;; here is the very oldest thing in the transcript — nothing the reader can see is older than
+    ;; it — so there is no narration for its counts to end. This is the one case the marker is a
+    ;; row, and it is not the shape the operator's turn produces (prompt → narration → work →
+    ;; report always has a narration above the work).
+          ;; **`finally`, so the block runs AFTER the loop.** It was a second `do` form — `loop`'s
+          ;; `do` takes many forms and each is a body form — which made the marker fire once per
+          ;; hidden row. A `finally` clause cannot be a body form.
+          finally (when run
+                    (let* ((newest (equal (%hidden-run-id run) newest-run))
+                           (before (length lines)))
+                      (setf lines (append (list (hidden-run-marker run cols newest)) lines))
+                      (dolist (it run)
+                        (push (cons (getf it :item-id) (cons before (1+ before))) raw)))))
     (when raw
       (let ((total (length lines)))
         (setf bounds (mapcar (lambda (r)
@@ -676,6 +798,9 @@ to decide when the reader has asked for the rows above the window (`fetch-row-ab
          ;; from somewhere. Set here, in the one place that draws rows, and read only inside the
          ;; frame it is set for.
          (*payload-head* head)
+         ;; **and the head the OPEN run renders with** (R37 amended): the open form calls
+         ;; `item-lines` on the hidden rows at the rung above, and that needs the same head.
+         (*hidden-run-head* head)
          (hist (multiple-value-bind (lines bounds)
                    ;; **the anchored row is walked to, not assumed to be in the window** — see
                    ;; `%history-until`'s note: a reader parked on a row is the case the window

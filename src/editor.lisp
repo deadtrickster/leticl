@@ -892,9 +892,18 @@ Esc was a second thing to remember per pane."
          ;; The window follows the newest long result for the reason `payload-view-seed` gives
          ;; (that is the row a reader is looking at), and the seam names this chord only on that
          ;; row — every other row names `/t`, because a chord may only be named where it acts.
-         (if (payload-view-open-p)
-             (payload-view-close)
-             (payload-view-seed (head-session head)))
+         ;; **AT `:reading` THE SAME CHORD ACTS ON THE RUN MARKER** (R37 amended). The marker's
+         ;; own seam says `ctrl-t opens it`, and at that rung the long rows it would otherwise
+         ;; open ARE the run — a hidden tool result draws no per-row seam at all. So the chord
+         ;; closes an open run first, else opens the newest run; only when nothing is hidden does
+         ;; it fall through to the payload window it has always opened.
+         (cond
+           (*hidden-run-open* (%set-hidden-run-open nil))
+           ((reading-p)
+            (let ((id (newest-hidden-run-id (head-session head))))
+              (when id (%set-hidden-run-open id))))
+           ((payload-view-open-p) (payload-view-close))
+           (t (payload-view-seed (head-session head))))
          t)
         ((#\l) (setf (head-full-repaint head) t (head-dirty head) t) t)
         ;; `o` on the subagents pane switches INTO the row under the cursor

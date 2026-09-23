@@ -1355,6 +1355,344 @@ owned."
           +call-origin-cols+)))
       (t nil))))
 
+(defun %tool-row-verb (body)
+  "The word a tool result draws first — its own, or the tool's name through `verb-label`.
+One function, because R37's marker names the same acts the rows do."
+  (or (getf body :verb) (verb-label (getf body :name))))
+
+(defun %tool-row-subject (body)
+  "What a tool result draws after its verb — the row's own subject, the call's target, or the
+call id when there is nothing better. Extracted with the verb so the marker and the row cannot
+disagree about what a hidden row was."
+  (or (getf body :subject)
+      (call-target-of (getf body :call-id))
+      (format nil "(~a)" (getf body :call-id))))
+
+;;; ------------------------------- a run of hidden rows: R37, amended (the marker) ------ ;;;
+;;;
+;;; **R37 was filed as *hide completely*, and the amendment is that hiding completely breaks the
+;;; prose.** The operator read a screen where the model's sentence ended *"…and the one where
+;;; R22's arithmetic has to give**:**"* — a colon pointing at the work that follows it — and in
+;;; the rung as built the work was gone, so the sentence pointed at nothing. Their words: *"if
+;;; toolcalls and thinking are just hidden completely the narrative breaks. something like [5
+;;; tool calls and 43 thinking lines, "summary line"] would fit better here."*
+;;;
+;;; So a **contiguous run** of hidden rows collapses to **ONE line**, and it OPENS — *a marker
+;;; that cannot be opened is the elision this document refuses everywhere else.*
+
+(defvar *hidden-run-open* nil
+  "The id of the hidden run this rung has OPEN, or NIL. One at a time, like the payload window.
+
+Bound by `with-replay-globals`, because it changes what a row RENDERS TO and a replay that
+inherited one would draw another session's work expanded.")
+
+(defvar *hidden-run-head* nil
+  "The head whose preferences the OPEN form renders with, for the same reason `*payload-head*`
+exists: a row's line function is handed an item and a preference list, and the open form has to ask
+for the rows the rung above would draw. Set by `%viewport-lines`, read only inside a frame.")
+
+(defun reading-hides-p (item)
+  "Does the `:reading` rung hide this ITEM?
+
+**One predicate and two readers.** `item-lines` asks it before drawing a row, and `%history-until`
+asks it to find the RUNS — and a second opinion about which rows are hidden would put a marker
+beside a row that is still on the screen, or collapse a run that is not one."
+  (let ((body (item-body item)))
+    (and (reading-p)
+         body
+         (member (%key-from-wire (getf body :type)) +reading-hides+))))
+
+(defun %hidden-run-id (items)
+  "A stable id for a run of ITEMS, and stability is the whole requirement.
+
+**Derived from the run's own content, not from a counter**: the window state and the anchor both
+name a run across frames, and a run's first item is the same item next frame unless the run itself
+grew — in which case the id changing is honest. `(first items)` is the OLDEST row in the run, which
+is the end that does not move when new work arrives."
+  (format nil "leticl-run-~a" (getf (first items) :item-id)))
+
+(defun %row-invisible-p (item cols)
+  "Is there NOTHING for the reader to see in ITEM? — the one question the run's contiguity asks.
+
+**A run is broken only by a row this rung actually DRAWS** (R37 amended), so a hidden row and a row
+that renders to nothing are both *invisible* and neither ends a run. Extracted because TWO readers ask
+it — the walk that builds the runs and `newest-hidden-run-id` — and a second answer to *is this row on
+the screen* is how a seam comes out naming the wrong chord for a run that is in fact the newest.
+Measured: the interleaved fixture's single run named `/verbosity` (the every-other-run wording) because
+the id-finder had stopped the run at a whitespace-only assistant row the walk stepped over."
+  (every #'%line-blank-p (item-lines item cols nil)))
+
+(defun newest-hidden-run-id (session)
+  "The id of the NEWEST run of hidden rows in SESSION, or NIL when there is none.
+
+Symmetric with `newest-payload-item-id`: the chord follows the newest run for the same reason the
+payload window follows the newest long row — that is where a reader reaching for the key is. The
+walk is newest-first and stops at the first hidden item; the id names that run's OLDEST end, which
+is the end that does not move as new work arrives.
+
+**The run is cut by the same rule the renderer cuts it with** — `%row-invisible-p` — so the run this
+names and the run `%history-until` flushes cannot disagree about their extent. Only the HIDDEN rows go
+into the id: an invisible row inside a run is stepped over, exactly as the walk steps over it."
+  (let ((items (session-items session)))
+    (flet ((hidden-p (i) (reading-hides-p (aref items i)))
+           (invisible-p (i) (%row-invisible-p (aref items i) 120)))
+      (loop with n = (length items)
+            for i from (1- n) downto 0
+            when (hidden-p i)
+              return (let ((newest i))
+                       (loop while (and (>= i 0) (or (hidden-p i) (invisible-p i)))
+                             do (decf i))
+                       (%hidden-run-id
+                        (loop for k from (1+ i) to newest
+                              when (hidden-p k) collect (aref items k))))))))
+
+(defun %hidden-run-counts (items cols)
+  "`(:calls N :thinking M)` for a run — the two numbers the marker carries, and there are only two.
+
+**Thinking is counted in SCREEN lines** (`reasoning-line-count`) because that is what the reader is
+being told the price of, and it is the same arithmetic the reasoning row's own `▸ Thought · 43 lines`
+header uses — one function, so the marker and the header cannot disagree about the block between
+them."
+  (let ((calls 0) (thinking 0) (events 0))
+    (dolist (item items)
+      (let* ((body (item-body item))
+             (type (%key-from-wire (getf body :type))))
+        (case type
+          (:tool-result (incf calls))
+          (:reasoning (incf thinking (reasoning-line-count (or (getf body :text) "") cols)))
+          (t (incf events)))))
+    (list :calls calls :thinking thinking :events events)))
+
+(defun %hidden-run-counts-text (items cols)
+  "`[N tool calls, M thinking lines]` — the counts alone, and the ONE place they are spelled.
+
+**A zero clause is dropped**, which is letibot's own `counts.join(\", \")`: a run of tool calls says
+`[2 tool calls]`, not `[2 tool calls, 0 thinking lines]` — the second number is ceremony about a row
+nobody hid. A run neither count can describe — this rung also hides head arrivals — falls back to
+their count, because `[]` is not a marker.
+
+Extracted because the marker and the merged paragraph both need it, and two spellings of the counts
+is how they come to disagree about the same run."
+  (let* ((counts (%hidden-run-counts items cols))
+         (parts (remove nil
+                        (list (when (plusp (getf counts :calls))
+                                (format nil "~d tool call~:p" (getf counts :calls)))
+                              (when (plusp (getf counts :thinking))
+                                (format nil "~d thinking line~:p" (getf counts :thinking)))))))
+    (if parts
+        (format nil "[~{~a~^, ~}]" parts)
+        (format nil "[~d head event~:p]" (getf counts :events)))))
+
+(defun hidden-run-marker (items cols &optional newest)
+  "The marker's SEGMENTS — `[N tool calls, M thinking lines] · ctrl-t opens it`.
+
+**Two registers, and they say two different things.** The counts are a FACT — how much work there
+was — and they are drawn in the PROSE's own register, because they are punctuation INSIDE the model's
+sentence: `…has to give: [11 tool calls, 246 thinking lines]`. The seam is the HEAD talking about its
+own keys, the same thing every other elided row says with `… +N lines · /t unfolds it`, and it is
+**faint**: a note about a key rendered as more of the sentence it sits in is the one thing it is not.
+That split is letibot's `marker_painted` plus the fact that only the seam is the head's voice.
+
+**The counts are the two counts and nothing else** — no verbs, no targets, no summary line. The
+narration above and the report below carry the act and the conclusion, so the marker carries neither;
+this SUPERSEDES the verb-and-target sources R37's amendment first named.
+
+**A zero clause is dropped**, which is letibot's own `counts.join(\", \")`: a run of tool calls says
+`[2 tool calls]`, not `[2 tool calls, 0 thinking lines]`. The spelling itself lives in
+`%hidden-run-counts-text`, so the marker and the merged paragraph cannot disagree about a run.
+
+**The seam names the chord only on the run it acts on** (R40): the newest run's says
+`ctrl-t opens it`; every other run's says ` · /verbosity`, the verb that does reach it. letibot lands
+the same two strings, which is why they are here rather than invented."
+  (%truncate-segs
+   (list (cons (%hidden-run-counts-text items cols) nil)
+         (cons (if newest " · ctrl-t opens it" " · /verbosity") +role-faint+))
+   (max 20 cols)))
+
+(defun %marker-onto-last-line (il items cols &optional newest)
+  "IL with the run's marker **appended to its last line**, split by ONE SPACE.
+
+**The space is the join, and it is what makes the counts read as part of the sentence.** letibot
+writes `format!(\"{} {}\", prose, marker)`; the operator's screen without it read
+`…commits.[3 tool calls, 7 thinking lines]` — *\"you miss spaces between [] and the sentence\"* —
+where the bracket looks like it belongs to the last word rather than to the work the sentence
+promised.
+
+**Wrapping, not truncating**, because the alternative is a marker the reader cannot see: a narration
+line already near the frame's width would push the counts off the edge, and a count that is not on the
+screen is a marker that did nothing. When they fit, the line is one line and the sentence runs
+straight into the numbers."
+  (let* ((marker (hidden-run-marker items cols newest))
+         (last (car (last il)))
+         (joined (append last (list (cons " " nil)) marker)))
+    (append (butlast il) (wrap-segments joined (max 20 cols)))))
+
+(defun hidden-run-lines (items cols)
+  "The ROWS a run stands for, for when it is OPEN — the rung lifted for these rows and no others.
+
+**Opening is not a second rendering.** What this rung hides is exactly what `:terse` draws, so
+binding the rung and calling the same renderer is the definition of *the work*. A bespoke *expanded
+run* view would be a second way to draw a tool row, which is the copy this file keeps refusing to
+make. The seam under them says how to fold it back.
+
+**Only the OPEN case is lines.** Closed, the run is not lines at all — its counts are appended to the
+sentence that points at it (`%marker-onto-last-line`), because a marker drawn as its own row is
+exactly what the operator's final reading rejects. The one exception is a run with no visible row
+older than it, which has no sentence to continue and stands on its own line (`%history-until`)."
+  (let ((faint +role-faint+))
+    (append
+     (let ((*verbosity* :terse))
+       (loop for item in items
+             append (item-lines item cols (head-prefs *hidden-run-head*))))
+     (list (list (cons (format nil "  … ctrl-t folds this back into ~d line~:p" (length items))
+                       faint))))))
+
+(defun %set-hidden-run-open (id)
+  "The ONE writer of `*hidden-run-open*`, and it invalidates the rendered history.
+
+**The same defect the payload window has, and the same fix**: whether a run is open changes what
+those rows RENDER TO without moving the generation, the width or the items vector's identity — so
+without the bump the cache serves the previous state back and the key looks dead. This tree has now
+found that at six surfaces; the note here is that it is the price of a cached renderer, and the
+place to pay it is the writer."
+  (setf *hidden-run-open* id)
+  (incf *hist-generation*))
+
+;;; ------------------- R37's OPEN QUESTION, AS A SWITCH: one prose or two messages? ----- ;;;
+;;;
+;;; **From the operator, on the shape this produces:** *"so it will be then like this from model:
+;;; Blablabla bla: [2 tool calls, 36 thinking lines]. Ok, now i understand blablabla:. and here I
+;;; wonder if we have to render those two sentences like we do now - different messages because they
+;;; arrived this way or we can compose a prose."*
+;;;
+;;; The narration and the report are TWO assistant items because a tool call split them. In this
+;;; rung they sit next to each other with only the counts between. Two answers, and this file can
+;;; draw both so the operator compares SCREENS rather than paragraphs:
+;;;
+;;;   · **two messages** (the default) - each its own paragraph, which is the blank line between
+;;;     them; the item boundary is visible;
+;;;   · **one prose** - the two texts merged into a SINGLE assistant row, so the paragraph wraps
+;;;     once and the counts sit inside it. The item boundary is gone.
+;;;
+;;; Neither is obviously right, which is why the switch exists and the ruling is not this file's.
+
+(defvar *reading-join-prose* nil
+  "When true, `:reading` draws a narration and its report as ONE paragraph rather than two.
+
+Off is the default and the shape this tree has always drawn: two rows, a blank between them.")
+
+(defun %set-reading-join-prose (on)
+  "The ONE writer: whether consecutive narration and report are joined into one paragraph.
+
+It bumps the generation for the reason `set-verbosity` does - the switch changes what rows RENDER
+TO without moving any of the line cache's three terms, so a frame would serve the old shape back."
+  (setf *reading-join-prose* (and on t))
+  (incf *hist-generation*)
+  *reading-join-prose*)
+
+(defvar *reading-joined* nil
+  "`(SOURCE-VECTOR . JOINED-VECTOR)` - the merge memo, so a frame does not rebuild it.
+
+Keyed on the SOURCE vector's identity, so a session that gains a row misses and a frame that does
+not hits. Without it the joined vector would be a fresh object every call, `%hist-key` would differ
+every frame, and the whole line cache would be dead - a toggle that made the head slow.")
+
+(defun %reading-joined-items (items cols)
+  "ITEMS with each `narration -> run -> report` merged into ONE assistant row.
+
+**The merge is at the TEXT level, which is what *compose a prose* has to mean**: the two sentences
+become one string - `narration` ++ the counts ++ the report - so a single `markdown-lines` call wraps
+them as one paragraph. Two rows joined by deleting a blank line would still wrap as two paragraphs
+and would still be two messages with the air turned off.
+
+**Only the shape the operator named is merged**: an assistant row, a run of hidden rows, then
+another assistant row. A row that is merely invisible does not break it (the run's own rule), and
+anything the reader can SEE that is not assistant text - a report from a different kind of row, a
+user message - ends the possibility, because there the item boundary is carrying real information.
+
+The merged row is a COPY: the session's own plist is the session's, and this is a rendering."
+  (if (and *reading-joined* (eq (car *reading-joined*) items))
+      (cdr *reading-joined*)
+      (let* ((n (length items))
+             (out nil)
+             (gap nil)
+             (last nil))
+        (labels ((assistant-text-p (it)
+                   (let ((b (item-body it)))
+                     (and b
+                          (eq (%key-from-wire (getf b :type)) :assistant)
+                          (plusp (length (string-trim " " (or (getf b :text) "")))))))
+                 (invisible-p (it)
+                   ;; **the same predicate the walk cuts runs with** — an invisible row neither joins
+                   ;; a run nor ends one, so the merged paragraph and the drawn one agree.
+                   (%row-invisible-p it cols))
+                 (join-into (it)
+                   (let* (;; **the COUNTS alone, with no seam**: in the merged paragraph the seam
+                          ;; would sit mid-sentence, between the model's two halves, naming a chord
+                          ;; for work the reader has not been shown yet. The counts are the sentence's
+                          ;; punctuation; a key advertisement is not.
+                          (marker (%hidden-run-counts-text gap cols))
+                          ;; **the PLIST in a variable**: `(setf (getf (item-body last) :text) …)` is a
+                          ;; `(setf item-body)` — a function call is not a place, and the head says
+                          ;; so at the first eval rather than at the first frame.
+                          (body (item-body last)))
+                     (setf (getf body :text)
+                           ;; **ONE SPACE before the counts and one after** — the merged paragraph is
+                           ;; a sentence, and the operator's screen without the first space read
+                           ;; `…commits.[3 tool calls]`, the bracket looking like it belonged to the
+                           ;; last word. letibot writes `format!("{} {}", prose, marker)`.
+                           (format nil "~a ~a ~a"
+                                   (getf body :text)
+                                   marker
+                                   (getf (item-body it) :text))))))
+          (dotimes (i n)
+            (let ((it (aref items i)))
+              (cond
+                ((reading-hides-p it) (push it gap))
+                ;; invisible: it neither joins a run nor ends one (the run's own rule)
+                ((invisible-p it) nil)
+                ;; **the merge** - narration, a run, report
+                ((and last (assistant-text-p last) (assistant-text-p it) gap)
+                 (join-into it)
+                 (setf gap nil))
+                (t (push (list :item-id (getf it :item-id)
+                               :kind (getf it :kind)
+                               :ts (getf it :ts)
+                               :item (copy-list (item-body it)))
+                         out)
+                   (setf last (first out)
+                         gap nil)))))
+        (let ((joined (coerce (nreverse out) 'vector)))
+          (setf *reading-joined* (cons items joined))
+          joined)))))
+
+(defun hidden-run-marker-width (items cols &optional newest)
+  "How wide the marker's segments are — what a sentence must LEAVE for the counts (R37 final).
+
+**The room is reserved before the sentence wraps**, and that is letibot's own fix for the operator's
+*\"interesting - sometimes you do it same line - sometimes dont\"*: a sentence that filled its line
+pushed the counts onto a line of their own, so the same transcript read two ways depending on where
+the prose happened to break. The introducing row is rendered narrower by this much and the counts
+then fit in the room it left."
+  (%segs-width (hidden-run-marker items cols newest)))
+
+(defun %run-continues-prose-p (item)
+  "Does a run continue THIS row's sentence? — the rule is one-sided, and the bug named it.
+
+**Only the MODEL's own prose carries a run's counts.** The operator's message does not. The screen
+that named this rule was `▌ make verbosity a config option [2 tool calls] · ctrl-t opens it` — the
+counts glued to the reader's OWN sentence, on any turn where the model worked without narrating
+first. The operator: *\"the [] thing comes right after my message … add an empty line between them\"*,
+and then, correcting the reading of when, *\"literally just happened without mid turns.\"*
+
+So the row above the run must be an ASSISTANT row with text the reader can actually see. After
+anything else — their own message, a system row, the top of the transcript — the marker stands as a
+line of its own, **with the blank line prose gets**."
+  (let ((body (item-body item)))
+    (and body
+         (eq (%key-from-wire (getf body :type)) :assistant)
+         (plusp (length (string-trim " " (or (getf body :text) "")))))))
+
 (defun %tool-result-lines (item body cols prefs)
   "One settled tool-result row — the reference's `TranscriptItem::ToolResult` arm,
 followed step for step, because a screen comparison showed ours had folded the
@@ -1384,10 +1722,8 @@ header, also printed `· 1 line` — a count for a fold with nothing to fold."
          ;; neither. A compaction is one: the daemon runs it, no row proposed it, and
          ;; what belongs on the headline is its numbers. Both fields are optional, and
          ;; every other tool result takes exactly the path it took before.
-         (verb (or (getf body :verb) (verb-label name)))
-         (subject (or (getf body :subject)
-                      (call-target-of (getf body :call-id))
-                      (format nil "(~a)" (getf body :call-id))))
+         (verb (%tool-row-verb body))
+         (subject (%tool-row-subject body))
          (decision (getf facts :decision))
          ;; Sanitised FIRST and filtered second, the reference's order
          ;; (app.rs:9712) — a payload's bytes are the command's, not this
@@ -1572,6 +1908,17 @@ its title, an elision count and its tail.")
 (defparameter +reasoning-lines-budget+ 8
   "The reference's `Budget::reasoning_lines`, the same bound for a reasoning block.")
 
+(defun reasoning-line-count (text width)
+  "How many SCREEN lines TEXT costs at WIDTH — the reference's count, and the only one used.
+
+Extracted from `reasoning-header` when R37's marker needed the same number: the marker says *43
+thinking lines* and a header beside it says *43 lines*, and two pieces of arithmetic for one
+quantity is how they come to disagree. The model writes its working-out as a handful of very long
+paragraphs, so *lines* means what the terminal will spend, not how many newlines are in the text."
+  (max 1 (reduce #'+ (mapcar (lambda (l) (max 1 (ceiling (string-width l) (max 1 width))))
+                             (uiop:split-string (or text "") :separator '(#\newline)))
+                 :initial-value 0)))
+
 (defun reasoning-header (text cols open running)
   "`▸ Thought · 13 lines · ctrl-r` — the fold's own header, which is also where
 its key is advertised: there is no pointer here and no selection, so the header
@@ -1583,9 +1930,7 @@ beside a fold that opens to half a screen answers the wrong question. And the
 mark is PLAIN, not dim — measured against letibot's row, where only the tail after
 the word is faint."
   (let* ((w (max 20 (- cols (activity-indent cols))))
-         (n (max 1 (reduce #'+ (mapcar (lambda (l) (max 1 (ceiling (string-width l) w)))
-                                       (uiop:split-string (or text "") :separator '(#\newline)))
-                           :initial-value 0))))
+         (n (reasoning-line-count text w)))
     (%truncate-segs
      (list (cons (if open "▾ " "▸ ") nil)
            (if running
@@ -1793,9 +2138,7 @@ a terminal-native palette."
     ;; the list holds: the row was drawn and the test said so. `%key-from-wire` is the tree's
     ;; own answer to exactly this, and `apply-event` already uses it for the same reason
     ;; (`"tool_call" must become :tool-call to match`).
-    (when (and (reading-p)
-               body
-               (member (%key-from-wire (getf body :type)) +reading-hides+))
+    (when (reading-hides-p item)
       (return-from item-lines nil))
     (cond
       ;; **The announcement arrived and the body has not — so draw NOTHING**

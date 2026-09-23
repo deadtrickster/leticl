@@ -182,6 +182,13 @@
    ;; the payload window (T1): what makes the rest of a long result reachable
    #:*payload-view* #:*payload-page* #:payload-view-page #:payload-view-close
    #:payload-view-seed #:payload-view-open-p
+   ;; R37 amended: the run marker — the two counts a run of hidden rows collapses to, and its opener
+   #:reading-hides-p #:hidden-run-lines #:newest-hidden-run-id #:hidden-run-marker
+   #:*hidden-run-open* #:%set-hidden-run-open #:*hidden-run-head*
+   #:%hidden-run-id #:%marker-onto-last-line #:%hidden-run-counts #:%hidden-run-counts-text #:%row-invisible-p
+   ;; R37's OPEN QUESTION, as a switch: two messages or one prose (the operator rules)
+   #:*reading-join-prose* #:%set-reading-join-prose #:%reading-joined-items #:*reading-joined*
+   #:reasoning-line-count
    #:protocol-skew-said #:unreadable-said #:file-head-note
    #:%send-slash
    #:setting-choices #:setting-value

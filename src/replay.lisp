@@ -135,6 +135,10 @@ see this file's header."
          ;; the payload window: a page offset changes what a row renders to, and a
          ;; replay must answer the same bytes twice
          (*payload-view* nil)
+         ;; the hidden-run marker (R37 amended): whether a run is OPEN changes what its rows
+         ;; render to, so a replay that inherited one would draw another session's work expanded
+         (*hidden-run-open* nil)
+         (*hidden-run-head* nil)
          (*daemon-protocol* nil)
          ;; R27's record: the daemon's heading list is read by the payload a compaction row
          ;; builds, so a replay that inherited one session's headings would render another's
