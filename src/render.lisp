@@ -525,27 +525,52 @@ thirty rows appended, and the view jumped to `row-62`."
                           (setf lines (append (hidden-run-lines run cols) lines))
                           (dolist (it run)
                             (push (cons (getf it :item-id) (cons rb (length lines))) raw))))
-                      ;; **a run that cannot glue stands on its own line, WITH THE BLANK PROSE
-                      ;; GETS** — the operator asked for exactly that empty line (*"add an empty
+                      ;; **a run that cannot glue stands on its own line, WITH THE BLANK
+                      ;; PROSE GETS** — the operator asked for exactly that empty line (*"add an empty
                       ;; line between them"*), and it is what says the counts are not part of the
                       ;; sentence above them.
                       ;;
-                      ;; **AND ONLY ONE BLANK.** The air rule below gives this row a blank of its
-                      ;; own when its class changes, and that blank already separates the row from
-                      ;; the marker standing above it — so a second one is a hole. Measured on the
-                      ;; operator's own message: two blank lines between it and the counts.
+                      ;; **AND ON BOTH SIDES OF IT.** The blank above was the first half and it was not
+                      ;; enough: the operator's screen showed the counts separated from THEIR message
+                      ;; and then glued to the model's report — `[2 tool calls, 31 thinking lines] ·
+                      ;; /verbosity` running straight into `You're right, and it is a fair hit.`
+                      ;; **The report keeps its paragraph break** wherever the marker went, and with
+                      ;; the marker glued into the model's own sentence that break arrives for free
+                      ;; (the air rule's blank lands after the counts, because the counts are at the
+                      ;; END of that row) — so a standalone marker has to supply it, or the report's
+                      ;; air would depend on which side the marker happened to land.
+                      ;;
+                      ;; **One blank each side and never two.** The air rule below supplies its own
+                      ;; blank above when the class changes, so ours is added only when it will not:
+                      ;; two nils there is the hole the first cut of this measured.
                       (when (and run (not open) (not glue))
-                        (let* ((air-above (and lines class-above
-                                               (not (and (eq class :activity)
-                                                         (eq class-above :activity)))))
-                               (prefix (if air-above
-                                           (list (hidden-run-marker run cols newest))
-                                           (list nil (hidden-run-marker run cols newest))))
+                        (let* (;; **THE BLANK ABOVE IS THE AIR RULE'S, and this must not add a
+                               ;; second one.** The walk prepends OLDER rows, so at this moment the
+                               ;; row that will sit above the marker has not been seen yet — a blank
+                               ;; added here is on the marker's NEWER side, and the air rule then adds
+                               ;; its own when the older row arrives: measured, two blanks between the
+                               ;; operator's own message and the counts, which is one too many. The
+                               ;; separation above is bought by `class-above :other` below instead.
+                               (prefix (append
+                                        (list (hidden-run-marker run cols newest))
+                                        ;; the blank BELOW is this branch's to add: the row under it
+                                        ;; has already been drawn (`lines` holds it), so nothing else
+                                        ;; will supply the break.
+                                        (when lines (list nil))))
                                (rb (length lines))
                                ;; the marker's own line, in the newest-end numbering the walk
                                ;; accumulates in — the bounds flip it with everything else
                                (at (+ rb (1- (length prefix)))))
-                          (setf lines (append prefix lines))
+                          (setf lines (append prefix lines)
+                                ;; **AND THE MARKER IS NOW WHAT THE NEXT ROW SITS UNDER** — its own
+                                ;; class, `:other`, or the air rule has nothing to compare with. The
+                                ;; walk's `class-above` was the last VISIBLE row's, which is not the
+                                ;; frontier any more: the marker is. Without this a report arriving
+                                ;; after a marker at the TOP of the screen was glued to it, because
+                                ;; there was no earlier visible row to have set a class at all —
+                                ;; measured as `[1 tool call…]` then the report with no blank, which
+                                ;; is the operator's `[] … glued together` shape one case further out.
+                                class-above :other)
                           (dolist (it run)
                             (push (cons (getf it :item-id) (cons at (1+ at))) raw))))
                       (let ((before (length lines)))
@@ -604,10 +629,19 @@ thirty rows appended, and the view jumped to `row-62`."
           ;; hidden row. A `finally` clause cannot be a body form.
           finally (when run
                     (let* ((newest (equal (%hidden-run-id run) newest-run))
-                           (before (length lines)))
-                      (setf lines (append (list (hidden-run-marker run cols newest)) lines))
+                           (before (length lines))
+                           ;; **the SAME shape the in-walk flush lands** — the marker, and a blank
+                           ;; below it whenever there is a row underneath. The two paths must
+                           ;; agree or the report's paragraph break would depend on whether the
+                           ;; run came first or last in the walk; measured, this path drew
+                           ;; `[1 tool call…]` glued to the report while the other separated them.
+                           (prefix (if lines
+                                       (list (hidden-run-marker run cols newest) nil)
+                                       (list (hidden-run-marker run cols newest))))
+                           (at (+ before (1- (length prefix)))))
+                      (setf lines (append prefix lines))
                       (dolist (it run)
-                        (push (cons (getf it :item-id) (cons before (1+ before))) raw)))))
+                        (push (cons (getf it :item-id) (cons at (1+ at))) raw)))))
     (when raw
       (let ((total (length lines)))
         (setf bounds (mapcar (lambda (r)

@@ -14769,6 +14769,86 @@ the operator asked to be rid of. Three properties, and each is a way the naming 
   transcript, so leaving the rung restores even the span it was on"))
     (setf leticl::*verbosity* :normal)))
 
+(def-test the-report-keeps-its-break-wherever-the-marker-landed (:suite leticl)
+  "**The operator's second report on the same line, and it was the other half of requirement TWO.**
+
+Their screen: `[2 tool calls, 31 thinking lines] · /verbosity` running straight into `You're right,
+and it is a fair hit.` — the counts separated from THEIR message and then GLUED to the model's
+report. Their own words for the shape: *\"you did an empty line between my messages and [calls,
+thinking] but in that cases there is no empty line AFTER and we have things like [2 tool calls, 31
+thinking lines] · /verbosity … glued together\"*, and the observation that names the cause: *\"while
+your rendered respone the emptyline was here, it disasapears when you add [] to the sentence.\"*
+
+**That last sentence is the whole defect**: with no marker the report is a plain paragraph and the
+air rule gives it its blank; add a marker and the blank moves ABOVE the counts — because a
+standalone marker's blank is pushed onto the frontier by whichever row arrives next, and the row
+that arrives next is the report. So the report's paragraph break depended on where the marker
+happened to land. **A standalone marker now puts a blank on BOTH sides of itself.**
+
+The three shapes are asserted together because they are one rule — the marker is the model's
+working, so what follows it is the model speaking again, and it gets prose's own air either way."
+  (let* ((leticl::*verbosity* :reading) (leticl::*scroll-anchor* nil)
+         (leticl::*hist-cache* nil) (leticl::*hist-generation* 0)
+         (leticl::*hidden-run-open* nil)
+         (call (list :item-id "t1" :kind "tool_result" :ts 0
+                     :item (list :type "tool_result" :call-id "c1" :name "bash" :verb "ran"
+                                 :subject "\"x\"" :outcome (list :outcome "ok") :payload "o")))
+         (think (list :item-id "r1" :kind "reasoning" :ts 0
+                      :item (list :type "reasoning" :text "thinking")))
+         (report "You're right, and it is a fair hit."))
+    (flet ((rows (items)
+             (mapcar (lambda (l) (if (consp l) (format nil "~{~a~}" (mapcar #'car l)) ""))
+                     (leticl::%viewport-lines
+                      (let ((h (%on-head :cols 72 :rows 30)))
+                        (setf (head-connected h) t)
+                        (setf (session-items (head-session h)) (coerce items 'vector))
+                        h)
+                      120 24))))
+      ;; --- (1) THEIR message, a standalone marker, and the report
+      (let* ((rs (rows (list (list :item-id "u" :kind "user" :ts 0
+                                   :item (list :type "user"
+                                               :parts (list (list :text "you did the summary output"))))
+                             call think
+                             (list :item-id "a1" :kind "assistant" :ts 0
+                                   :item (list :type "assistant" :text report)))))
+             (marker (position-if (lambda (s) (search "[1 tool call" s)) rs))
+             (msg (position-if (lambda (s) (search "you did the summary" s)) rs))
+             (rep (position-if (lambda (s) (search "fair hit" s)) rs)))
+        (is (and msg marker rep) (format nil "all three are on the screen: ~s" rs))
+        ;; **adjacency, not index arithmetic**: a wrap would make the counts two lines and an
+        ;; offset assertion would then be measuring the width rather than the rule.
+        (is (string= "" (nth (1- marker) rs))
+            (format nil "a blank between THEIR message and the counts: ~s" (subseq rs msg (1+ marker))))
+        (is (string= "" (nth (1+ marker) rs))
+            (format nil "**and a blank between the counts and the report** — this is the one that was\n missing, so the counts ran straight into the model's next sentence: ~s"
+                    (subseq rs msg (1+ rep))))
+        (is (string= "" (nth (1- rep) rs)) "the report is a paragraph")
+        (is (not (search "you did the summary" (nth marker rs)))
+            "the marker is on a line of its own, not glued into their message"))
+      ;; --- (2) THE MODEL's own sentence: the counts are PART of it, and the report keeps its air
+      (let* ((rs (rows (list (list :item-id "a0" :kind "assistant" :ts 0
+                                   :item (list :type "assistant"
+                                               :text "Let me look at the four places this has to give:"))
+                             call think
+                             (list :item-id "a1" :kind "assistant" :ts 0
+                                   :item (list :type "assistant" :text report)))))
+             (marker (position-if (lambda (s) (search "[1 tool call" s)) rs))
+             (rep (position-if (lambda (s) (search "fair hit" s)) rs)))
+        (is (search "has to give: [1 tool call" (nth marker rs))
+            (format nil "**the counts are glued into the model's sentence**, as before: ~s" rs))
+        (is (string= "" (nth (1+ marker) rs))
+            (format nil "**and the report still gets its blank** — the air arrives for free here\n (the marker is at the END of the sentence row) and it must not depend on which side the marker\n landed: ~s" (subseq rs 0 (1+ rep)))))
+      ;; --- (3) a run at the very TOP has nothing above it, and still separates itself from below
+      (let* ((rs (rows (list call think
+                             (list :item-id "a1" :kind "assistant" :ts 0
+                                   :item (list :type "assistant" :text report)))))
+             (marker (position-if (lambda (s) (search "[1 tool call" s)) rs))
+             (rep (position-if (lambda (s) (search "fair hit" s)) rs)))
+        (is (= 0 marker) "the marker is the first thing on the screen")
+        (is (string= "" (nth 1 rs)) "with a blank under it")
+        (is (string= "" (nth (1- rep) rs))
+            (format nil "**and the report is still a paragraph below it** — the end-of-walk path,\n which drew it glued before this was fixed: ~s" rs))))))
+
 (def-test the-ladder-is-one-ring-including-the-new-rung (:suite leticl)
   "The rung is a rung of the SAME ladder, so the order must be one list and the cycle must close.
 Four presses of `/verbosity` return the reader where they started, and `verbosity-at-least` still
