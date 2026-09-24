@@ -868,6 +868,39 @@ is worse than no hint at all."
         (list armed (cons (format nil " · ~a" tail) '(:dim t)))
         (list (cons tail '(:dim t))))))
 
+(defparameter +turn-status-slots+
+  '((:since . 6) (:count . 12))
+  "The columns the running-turn legend RESERVES for its growing fields, and the reason is the same
+axiom the header's tail slots serve (R43): **nothing must jump.**
+
+The operator: *\"Responding spinner itself jumps because of the time label\"*. It did, and it does in
+letibot too — `duration` grows `1.5s` → `12.3s` → `1m05s`, and `thousands` grows `1 tok` → `1.2k tok`
+→ `12.3k tok`. The legend is pinned to the RIGHT of the composer's bottom edge, so the spinner —
+FIRST in that legend, by `turn_status`'s own ordering — slides left a column the moment either field
+gains one.
+
+So both grow inside a fixed place. **The duration is right-aligned** (`1.5s` is drawn `  1.5s`) so the
+`·` before it and the spinner above it never move. **The count is left-aligned and carries its own
+` · `**, so the dot is at a fixed column whenever there is a count at all, and the number grows
+rightward into the rest of the slot — which is the right way round for the last field on the line,
+where the rightmost column is the only one that can be given away.")
+
+(defun %turn-status-slot (text slot &key (sep "") (align :left))
+  "TEXT as SLOT columns, with nothing at all when TEXT is NIL.
+
+**`NIL` is not padded into the field**, deliberately, where the header's own slots are: the header's
+tail reserves a place for a field whose neighbours are to its right, and this is the LAST field on
+its line — so an absent count is simply absent, and the empty slot is not drawn. What must not move
+is the place of the fields that ARE drawn, and the caller charges the slot's columns either way."
+  (if (null text)
+      (make-string slot :initial-element #\space)
+      (let* ((text (format nil "~a~a" sep text))
+             (text (if (> (string-width text) slot) (truncate-to-width text slot) text))
+             (pad (max 0 (- slot (string-width text)))))
+        (ecase align
+          (:left (concatenate 'string text (make-string pad :initial-element #\space)))
+          (:right (concatenate 'string (make-string pad :initial-element #\space) text))))))
+
 (defun turn-status (head &optional (cols 40))
   "The running turn in a few words, or NIL when no turn is running — the
 reference's `turn_status` (app.rs:7501-7566).
@@ -896,23 +929,33 @@ reference's `turn_status` (app.rs:7501-7566).
             ;; prefilling: the bar says everything the words would have
             (format nil "~a ~a" spin (prefill-line pp (max 1 (- cols 6))))
             (let ((since (if *turn-started-ms*
-                             (format nil " · ~a" (duration (- (internal-real-time-ms)
-                                                              *turn-started-ms*)))
-                             " · started before this head attached"))
+                             ;; **the measured duration grows inside a fixed place**
+                             (%turn-status-slot
+                              (duration (- (internal-real-time-ms) *turn-started-ms*))
+                              (cdr (assoc :since +turn-status-slots+))
+                              :align :right)
+                             ;; **and this sentence is the case that does not need one.** A turn that
+                             ;; came out of a snapshot has no start time, and the fact is the same
+                             ;; width for the whole of it — it never grows, so there is nothing for a
+                             ;; slot to keep still, and truncating it into six columns would throw
+                             ;; away the only thing that can be said about that turn.
+                             "started before this head attached"))
                   (tokens (getf turn :tokens)))
               (concatenate
                'string
                spin
-               " Responding"
+               " Responding · "
                since
-               (if (and (numberp tokens) (plusp tokens))
-                   (format nil " · ~a tok" (thousands tokens))
-                   ;; the character count where the server has not spoken, or a
-                   ;; messages-backend turn whose seam carries no token count
-                   (let ((chars (length (or (getf turn :text) ""))))
-                     (if (plusp chars)
-                         (format nil " · ~a chars" (thousands chars))
-                         ""))))))))))
+               ;; **nothing measured is NOTHING**, and that is the rule `count` keeps in the
+               ;; reference too: a zero is a zero wearing a measurement's clothes.
+               (%turn-status-slot
+                (cond ((and (numberp tokens) (plusp tokens))
+                       (format nil "~a tok" (thousands tokens)))
+                      ((plusp (length (or (getf turn :text) "")))
+                       (format nil "~a chars" (thousands (length (getf turn :text)))))
+                      (t nil))
+                (cdr (assoc :count +turn-status-slots+))
+                :sep " · "))))))))
 
 ;;; --------------------------------------------------------- the composer ;;;
 ;;;

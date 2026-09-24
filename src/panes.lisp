@@ -121,7 +121,23 @@ Second value is the cursor's LINE: two lines per session, after a two-line heade
                     (stored (or (getf s :stored-items) 0))
                     (rows-n (if (plusp stored) stored (or (getf status :items) 0)))
                     (heads (or (getf status :heads) 0))
-                    (model (or (getf (getf s :wiring) :model) ""))
+                    ;; **THE MODEL ON THE ROW THE HEAD IS IN COMES FROM THE HEAD, NOT FROM THE
+                    ;; DAEMON'S ROW.** `wiring.model` is the daemon's word from its own attach, and
+                    ;; it is never revised — `ServerFrame::Settings` has one send site and it is the
+                    ;; ANSWER to a request (see `%model-name`), so a session whose provider changed
+                    ;; mid-life has a stale model on every daemon row forever. That is the same fact
+                    ;; `%model-name` was written for the HEADER, and leaving the picker on the raw
+                    ;; `wiring` field made the two surfaces disagree about one session on one
+                    ;; screen: the operator's *"in sessions list this session presented as qwen"*
+                    ;; while the header of the same head said `deepseek/deepseek-flash`.
+                    ;;
+                    ;; The head only knows better about the session it is IN; for every other row
+                    ;; the daemon's own word is the only thing anyone has.
+                    (model (or (and here
+                                    (let ((m (%model-name session)))
+                                      (and (plusp (length m)) m)))
+                               (getf (getf s :wiring) :model)
+                               ""))
                     (workspace (or (getf (getf s :wiring) :workspace) ""))
                     (facts (remove nil
                                    (list (and running "generating")

@@ -4834,7 +4834,12 @@ plan, a peeked scrollback and a workspace with this repo's TODO.md."
          (s (head-session h)))
     (setf (session-session-id s) "s-1789639478142928813"
           (session-head-id s) "h3"
-          (session-wiring s) (list :workspace "/home/dead/Projects/leticl" :model "qwen")
+          ;; **the head's own wiring and the daemon's row for the SAME session agree**, which is the
+          ;; truth in a real daemon: both are the config at the moment this session was set up. The
+          ;; case where they disagree — a provider switched after this head attached — is its own
+          ;; test (`the-picker-and-the-header-agree-about-the-session-you-are-in`), because that is
+          ;; the one the operator saw.
+          (session-wiring s) (list :workspace "/home/dead/Projects/leticl" :model "qwen-3.8-27b")
           (session-sessions s)
           (list (list :session-id "s-1789639478142928813" :title "hello, what we are doing here"
                       :live t :stored-items 2647
@@ -5264,6 +5269,43 @@ to the pane's width and the full id under every row; ours were ` ● name`."
       (is (member :bold (cdr (second (third lines)))) "and the session we are in keeps its bold name")
       (is (= 2 sel-line) "the cursor's line is the first row's"))
     (is (= 4 (nth-value 1 (picker-lines s 1 210))) "two lines per row: the second is line 4")))
+
+(def-test the-picker-and-the-header-agree-about-the-session-you-are-in (:suite leticl)
+  "**One session, two surfaces, one answer.** The operator: *\"in sessions list this session
+presented as qwen\"* — while the header of the same head, on the same screen, said
+`deepseek/deepseek-flash`.
+
+The daemon's sessions row carries its `wiring.model`, written when THAT session was set up and never
+revised — `ServerFrame::Settings` has exactly one send site and it is the ANSWER to a request (see
+`%model-name`), so a provider switched after a head attached leaves every daemon row stale forever.
+The head has more than that: a `TurnStarted` arrives unprompted and names the model answering it.
+So for the one session this head is IN, the head's answer wins; for every other row the daemon's
+word is the only thing anyone has, and using nothing else would be inventing."
+  (let* ((h (%pane-head))
+         (s (head-session h))
+         ;; **the daemon's row for this session still says what it said at attach** — `qwen-3.8-27b`
+         ;; — while this head has since been told the provider changed: its own `model` settings row
+         ;; says `deepseek/deepseek-flash`, and it was told LATER than the row was written.
+         ;;
+         ;; `%model-from-settings` reads the head's settings through the global `*head*` (the paint
+         ;; has it bound; a test of the render does not), and `%pane-head`'s settings carry exactly
+         ;; that row — so binding it here is the whole of what the live paint does.
+         (leticl::*head* h)
+         (leticl::*model-from-settings-at* 40)
+         (leticl::*model-from-turn-at* 41))
+    (let ((header (format nil "~{~a~}" (mapcar #'car (top-border h (head-cols h))))))
+      (is (search "deepseek/deepseek-flash" header)
+          "the header says what this head is actually talking to"))
+    (multiple-value-bind (lines sel) (picker-lines s 0 206)
+      (declare (ignore sel))
+      (let ((here (third (lines-text lines)))
+            (other (fifth (lines-text lines))))
+        (is (search "deepseek/deepseek-flash" here)
+            (format nil "**and so does the picker's row for the same session**: ~s" here))
+        (is (not (search "qwen-3.8-27b" here))
+            "not the daemon's stale row, which the header has already disagreed with")
+        (is (search "glm-5.3-flash" other)
+            "**while a session this head is NOT in keeps the daemon's own word** — the only one there is")))))
 
 (def-test a-heading-with-no-items-sits-six-in-and-dim (:suite leticl)
   "letibot draws `      Dependency graph` — six in, dim, no box — where ours drew it
