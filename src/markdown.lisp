@@ -1019,15 +1019,31 @@ a copy-paste, and the columns before it already say where it starts."
       ;; fence says so: code that vanishes until the closing backticks arrive is
       ;; bad, and code whose box looks finished when it is not is worse.
       (:code
-       (let ((lang (getf block :lang)))
+       (let* ((lang (getf block :lang))
+              ;; **the name, or NIL for a bare fence** — a grammar we can colour, or the word
+              ;; the model wrote, or nothing at all. `nil` is what the branch below turns into
+              ;; the unlabelled box; it is deliberately not a third name like `code`.
+              (named (or (fence-grammar-name lang)
+                         (and (plusp (length lang)) lang))))
          (append
           ;; the header names the GRAMMAR that ran, not the token the model
           ;; typed: `┌─ bash` over ```sh, `┌─ rust` over ```rs. A name nobody
           ;; can colour is printed as written — naming a language we are not
           ;; colouring is honest, inventing one we are is not.
-          (list (list (cons (let ((named (or (fence-grammar-name lang)
-                                             (and (plusp (length lang)) lang))))
-                              (if named (format nil "┌─ ~a" named) "┌─ code"))
+          ;;
+          ;; **AND A BARE FENCE GETS NO NAME AT ALL** — just `┌─`. The operator:
+          ;; *"when you render code blocks and no particular language is set … it shows the
+          ;; bracket and 'code' as the highlight language - we dont need to show 'code' in
+          ;; this case."* They are right, and the word fails the test the two cases above
+          ;; pass: `bash` and `brainfuck` EARN their label by saying which grammar ran, and
+          ;; `code` says only *this is a code block* — which the box already says, on every
+          ;; row of it, in a column of its own. A label that names nothing is a label that
+          ;; teaches the reader to stop reading labels.
+          ;;
+          ;; **This DEPARTS from letibot** (`render.rs:378`: `None => "┌─ code"`, with a test
+          ;; asserting it), so it is recorded as ours and not as parity — the one divergence
+          ;; a reader of both heads will see on an unlabelled block.
+          (list (list (cons (if named (format nil "┌─ ~a" named) "┌─")
                             +md-faint+)))
           (mapcar (lambda (l) (cons (cons "│ " +md-faint+) l))
                   (highlight-fence (getf block :lines) lang))

@@ -17805,8 +17805,22 @@ and `zsh` — the same grammar — read as four different boxes."
   (is (equal "┌─ brainfuck"
              (car (first (first (markdown-lines (format nil "```brainfuck~%+~%```") :width 80)))))
       "an unknown name is printed as written")
-  (is (equal "┌─ code" (car (first (first (markdown-lines (format nil "```~%x~%```") :width 80)))))
-      "and a bare fence is `code`"))
+  ;; **and a bare fence is UNLABELLED** — just the bracket. The operator: *"when you render
+  ;; code blocks and no particular language is set … it shows the bracket and 'code' as the
+  ;; highlight language - we dont need to show 'code' in this case."* `bash` and `brainfuck`
+  ;; above earn their label by naming the grammar that ran; `code` names nothing the box does
+  ;; not already say on every row of it.
+  (is (equal "┌─" (car (first (first (markdown-lines (format nil "```~%x~%```") :width 80)))))
+      "a bare fence is just the bracket, with no word after it")
+  ;; ...and the box is still a box: the open and close are still there, so nothing is lost
+  ;; but the label
+  (let ((ls (markdown-lines (format nil "```~%x~%```") :width 80)))
+    (is (equal "┌─" (car (first (first ls)))) "the box opens")
+    (is (equal "└─" (car (first (car (last ls))))) "and closes")
+    ;; the content row is `│ ` + the line, as TWO segments — the wall is faint and the code is
+    ;; not — so the assertion is on the joined text and not on the first segment
+    (is (equal "│ x" (format nil "~{~a~}" (mapcar #'car (second ls))))
+        "with the content between them")))
 
 (def-test a-bounded-blocks-title-is-its-text-and-not-its-source (:suite leticl)
   "M10. `Block::title` is `runs_text` — the markers are already gone
