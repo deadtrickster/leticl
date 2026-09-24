@@ -1580,6 +1580,22 @@ the difference between a quiet head and a silent one, and the whole point of
 ;;; cleared the moment the count is complete — a bar left at `total of total` would sit
 ;;; on the screen for ever, and a bar that cannot end is worse than no bar.
 
+(defparameter *stall-ms* 15000
+  "How long a silence before the head says so — the reference's own number
+(`stuck_line`, app.rs:7594: `if quiet > 15_000`). Ours was 20 000, which is five
+seconds of a dead turn nobody is told about; long enough that a slow model
+thinking is not a stall, short enough that a dead socket is not a mystery.
+
+**Two questions, one number.** `stall-text` (chrome.lisp) asks it about the turn — has the
+daemon said anything about the work it is running — and `filling-active-p` asks it about a
+counted operation — has the daemon ticked the bar lately. Both are *has the daemon stopped
+talking to me*, both are measured from RECEIVED-at, and this file owns it because the
+filling state does and because it loads first. A second window is how the two would come to
+disagree about what silence means.
+
+A `defparameter` and not a `defconstant`: the file pusher skips constants, so a constant
+could never be moved on a running head.")
+
 (defvar *filling* nil
   "The counted operation in flight, or NIL: a plist
 `(:what W :unit U :done D :total T :at-ms M)`.
@@ -1591,14 +1607,37 @@ bytes twice.")
 (defun filling-active-p ()
   "Is a counted operation in flight that the head should draw?
 
-Two ways it ends, and both are facts rather than timers: the count COMPLETES
-(`done >= total`), or the connection does. The second matters because the daemon
-publishes ticks while it works, so a socket that goes mid-import would otherwise leave
-a bar claiming progress for ever — and *a bar that cannot end is worse than no bar*."
+**Three ways it ends, and the third was found on the operator's screen.** The first two are
+facts rather than timers: the count COMPLETES (`done >= total`), or the connection does —
+a socket that goes mid-import would otherwise leave a bar claiming progress for ever. The
+file's own rule has always been *a bar that cannot end is worse than no bar*.
+
+**What the third closes is a bar that DID not end.** Measured on a live head: `republish`
+(a resume's carry) published 57 ticks and stopped — and because the loop emits one tick per
+row that has a BODY, a session whose rows and items disagree ends the walk without ever
+sending `done == total`. The head holds no completing tick, `done < total` stays true, and
+the bar sat at *57 of 1790 rows* for **three and a half minutes** while the operator watched
+a frozen screen. The tick's own arrival time was in `*filling*`'s `:at-ms` the whole time and
+nothing read it.
+
+So a tick older than `*stall-ms*` is not news, and the bar is not drawn. That is the same
+sentence the stall line makes — *the daemon has gone quiet* — applied to the other thing on
+this screen that claims the daemon is working. It is deliberately the SAME number and the
+same clock: both measure received-at, and one window means the two cannot disagree.
+
+**A tick with no clock does not expire.** `:at-ms` is NIL in a replay and in any test that
+has not told the head what time it is (`note-filling` only stamps it when `*now-ms*` is
+positive), and expiring on an unknown age would make the bar's behaviour depend on whether a
+clock was running rather than on the operation." 
   (and *filling*
        (let ((done (or (getf *filling* :done) 0))
-             (total (or (getf *filling* :total) 0)))
-         (and (plusp total) (< done total)))))
+             (total (or (getf *filling* :total) 0))
+             (at (getf *filling* :at-ms)))
+         (and (plusp total) (< done total)
+              ;; **the news test**: a stamped tick must be recent, an unstamped one is
+              ;; not aged at all — see the docstring
+              (or (null at) (not (plusp *now-ms*))
+                  (< (- *now-ms* at) *stall-ms*))))))
 
 (defun note-filling (env)
   "Fold one `filling` tick. Returns `:dirty` when the line should be redrawn.

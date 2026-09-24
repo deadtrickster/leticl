@@ -575,12 +575,12 @@ yellow are spent on something going wrong."
 ;;; are received-at, not the event's own `ts`: taking it from the event's clock
 ;;; would measure the daemon's opinion of how long it had been quiet, which is
 ;;; exactly the number that is missing when it has stopped talking.
-
-(defparameter *stall-ms* 15000
-  "How long a silence before the head says so — the reference's own number
-(`stuck_line`, app.rs:7594: `if quiet > 15_000`). Ours was 20 000, which is five
-seconds of a dead turn nobody is told about; long enough that a slow model
-thinking is not a stall, short enough that a dead socket is not a mystery.")
+;;;
+;;; **`*stall-ms*` lives in `session.lisp`** — moved there the day the filling bar needed the
+;;; same number. Two things ask the identical question (*has the daemon stopped talking to
+;;; me?*) and one of them is folded in `session.lisp`, which loads before this file; a second
+;;; spelling of the window here is how the stall sentence and the bar would come to disagree
+;;; about what silence means. One number, one place, both callers.
 
 (defvar *now-ms* 0 "Wall clock, fed by the loop. 0 means nobody told us.")
 (defvar *last-event-ms* nil "When the last frame arrived, or NIL before any.")

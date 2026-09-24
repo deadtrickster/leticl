@@ -7620,6 +7620,74 @@ the function's own output was always right."
     (is (null (carry-line h 100))
         "and the line goes with it, so a finished import does not leave a bar at 100%")))
 
+(def-test a-stale-tick-stops-the-bar-instead-of-lying-for-ever (:suite leticl)
+  "**The third way a counted operation ends, and it was found on the operator's screen.**
+
+`filling-active-p` ended a bar two ways, both facts: the count COMPLETES, or the connection
+goes. The file's rule has always been *a bar that cannot end is worse than no bar* — and what
+the operator saw was a bar that DID NOT end: *\"and it looks stalled at 57 anyway\"*.
+
+Measured on the live head, 2026-09-24:
+
+    *filling* = (:WHAT \"carrying the conversation onto the new prompt\" :UNIT \"rows\"
+                 :DONE 57 :TOTAL 1790 :AT-MS 347)
+    *now-ms*  = 221202
+
+That tick was **three and a half minutes old** and still drawing, because `done < total` was
+still true. The daemon's `republish` emits one tick per row that has a BODY, and stops; a
+session whose rows and items disagree ends the walk without ever sending `done == total`, so
+no completing tick exists and the bar waits for news that is not coming. `:at-ms` was in the
+plist the whole time and nothing read it.
+
+**Three claims**, and the third is the one that makes this safe rather than a timer bolted on:
+
+  · a tick stamped now draws, as it always did;
+  · the same tick, with the head's clock past `*stall-ms*`, does not — and the line
+    `carry-line` returns is NIL, which is the glass, not the predicate;
+  · **a tick with NO clock does not expire.** `note-filling` stamps `:at-ms` only when
+    `*now-ms*` is positive, so a replay and a test that has not told the head the time carry
+    NIL — and expiring on an unknown age would make the bar depend on whether a clock was
+    running rather than on the operation."
+  (let ((*filling* nil) (*now-ms* 1000) (*carry-outstanding* nil)
+        (*carry-last-done* nil) (*carry-moved-at* nil) (*pane-scroll* 0)
+        (*stdout* (make-string-output-stream))
+        (h (%on-head :cols 100 :rows 24)))
+    ;; the daemon's own event, built as the daemon sends it — `what` included, because the
+    ;; operation this test is about is the carry and the name is part of what was measured
+    (flet ((tick (done total)
+             (apply-event
+              (head-session h)
+              (json-decode
+               (format nil "{\"frame\":\"event\",\"seq\":1,\"event\":\"filling\",\"what\":\"carrying the conversation onto the new prompt\",\"unit\":\"rows\",\"done\":~d,\"total\":~d}"
+                       done total)))))
+      ;; --- 1. fresh news draws
+      (let ((*now-ms* 1000)) (tick 57 1790))
+      (is (filling-active-p) "a tick stamped now is an operation in flight")
+      (is (search "57 of 1790 rows" (segs-of (carry-line h 100))) "and it draws")
+      ;; --- 2. **the operator's screen**: the same tick, four minutes later
+      (let ((*now-ms* (+ 1000 *stall-ms*)) (*filling* (copy-list *filling*)))
+        (is (not (filling-active-p))
+            (format nil "**a tick older than *stall-ms* is not news** — the daemon has stopped
+ talking, and this is the same sentence and the same number the stall line makes"))
+        (is (null (carry-line h 100))
+            "**and the bar is GONE from the screen** — measured at 57 of 1790 for three and a
+ half minutes on the operator's terminal; the line, not the predicate, is the claim"))
+      ;; --- 2b. it comes back the moment the daemon ticks again: this is not a one-way latch
+      (let ((*now-ms* (+ 1000 *stall-ms* 5000)))
+        (tick 58 1790)
+        (is (filling-active-p) "**a fresh tick revives the bar** — the test is the AGE of the
+ news, not a flag that was set once")
+        (is (search "58 of 1790 rows" (segs-of (carry-line h 100))) "and it draws again"))
+      ;; --- 3. and an UNSTAMPED tick is not aged at all, so a replay is unaffected
+      (let ((*now-ms* 0))
+        (tick 57 1790)
+        (is (null (getf *filling* :at-ms))
+            "`note-filling` does not stamp a tick when no clock is running")
+        (let ((*now-ms* 999999))
+          (is (filling-active-p)
+              "**and an unstamped tick does not expire** — expiring on an unknown age would
+ make the bar depend on whether a clock was running rather than on the operation"))))))
+
 ;;; ------------------------------ the carry line (§2.5) --------------------- ;;;
 ;;;
 ;;; `/reseat` and `/compact` announce every carried row before a single body follows.
