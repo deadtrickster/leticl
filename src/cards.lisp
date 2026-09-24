@@ -2275,7 +2275,23 @@ a terminal-native palette."
       ;; placeholders is not a diagnostic — it is noise with the shape of one.
       ;; Both callers drop a render with no lines, so no lines is how a row says
       ;; "not yet".
-      ((null body) nil)
+      ((null body)
+       ;; **UNLESS IT IS A PENDING PROMPT, WHICH DRAWS ITS OWN WORDS IN ITS OWN PLACE.** The
+       ;; operator: *"you start replying while my message still queued."* This head knew the
+       ;; text — it is in `head-queued` — and drew it only at the TAIL, **below the running
+       ;; turn**, so their sentence sat under the reply already streaming above it. The row draws
+       ;; it here instead, at the position the transcript gave it, which is above that reply.
+       ;;
+       ;; It is the SAME renderer as the tail echo (`queued-lines`), handed the one text this row
+       ;; is drawing: one pending message, two places it can sit, and one shape for both.
+       ;;
+       ;; `*payload-head*` because `item-lines` is handed an item and a preference list and nothing
+       ;; else — the arrangement every other row-level global here has. With no head in scope (a
+       ;; test, a pane, a file measuring rows) the row draws NOTHING, which is what it drew before:
+       ;; the fallback is the old behaviour rather than a guess.
+       (let ((bound (bound-prompt-for item)))
+         (when (and bound *payload-head*)
+           (queued-lines *payload-head* cols (list bound)))))
       (t
        (step-in-lines
         (case (intern (string-upcase (getf body :type)) :keyword)
@@ -2841,8 +2857,13 @@ truncated, because the reason is the whole content of the event."
           ;; running: the numbers belong on the box's edge, not here
           (t nil))))))
 
-(defun queued-lines (head cols)
+(defun queued-lines (head cols &optional texts)
   "Prompts sent that the transcript does not hold yet, marked `queued`.
+
+**TEXTS is which pending prompts to draw, and it defaults to the head's whole queue.** The tail
+echoes and an ANNOUNCED row are the same message at two moments — see `*bound-prompts*` — so the
+one renderer takes the list rather than a second shape being built beside it. The tail passes the
+queue minus everything a bound row is already drawing; the bound row passes just its own text.
 
 A prompt sent while a turn runs is queued as a FOLLOW-UP USER ITEM, and the item is
 appended only at the next step boundary — which for a turn with no tool calls is
@@ -2877,8 +2898,13 @@ thing would leave the `queued` line on the screen for the rest of the session."
     ;; text, by `width(tag) + 3` (`app.rs:9017-9046`). So an `unconfirmed` echo
     ;; measures its own word rather than being padded to the other's — the reference's
     ;; arithmetic, on a tag it does not have.
-    (let ((open (getf (head-prefs head) :show-tools)))
-      (loop for text in (reverse (head-queued head))
+    (let ((open (getf (head-prefs head) :show-tools))
+          ;; **NOTHING A BOUND ROW IS ALREADY DRAWING IS DRAWN HERE** — the tail is for the queue,
+          ;; which is what is NOT in the conversation yet (letibot's rule; see `*bound-prompts*`).
+          (bound (mapcar #'cdr *bound-prompts*)))
+      (loop for text in (reverse (or texts
+                                    (remove-if (lambda (q) (member q bound :test #'equal))
+                                               (head-queued head))))
             for tag = (if (member text *queued-unconfirmed* :test #'equal)
                           "unconfirmed"
                           "queued")

@@ -3497,6 +3497,90 @@ swallowed them. Not lost and VISIBLE are different requirements."
   ;; nothing queued is nothing drawn
   (is (null (queued-lines (%make-head) 80)) "an empty queue draws no rows"))
 
+(defun %queued-mid-turn-head ()
+  "A head with an EARLIER answer on the transcript, a RUNNING turn, and one prompt queued.
+
+That is the operator's screen when they send a message behind a running turn — the shape that
+drew their sentence under a reply that had not finished being written."
+  (let ((h (%on-head :cols 70 :rows 30)))
+    (setf (head-connected h) t)
+    (setf (session-items (head-session h))
+          (make-array 2 :adjustable t :fill-pointer 2
+                        :initial-contents
+                        (list (list :item-id "u1" :kind "user" :ts 0
+                                    :item (list :type "user"
+                                                :parts (list (list :text "the first question"))))
+                              (list :item-id "a1" :kind "assistant" :ts 0
+                                    :item (list :type "assistant" :text "an earlier answer")))))
+    (setf (session-turn (head-session h))
+          (list :turn-id "t1" :model "m" :state (list :state "running")
+                :text "I am still writing the answer" :reasoning "" :calls nil))
+    (setf (head-queued h) (list "and now my second question"))
+    h))
+
+(defun %rows (h &optional (cols 70))
+  (mapcar (lambda (l) (if (consp l) (format nil "~{~a~}" (mapcar #'car l)) ""))
+          (leticl::%viewport-lines h cols 24)))
+
+(def-test a-prompt-queued-mid-turn-is-drawn-above-the-reply (:suite leticl)
+  "**The operator's third report, in their own words: *\"you start replying while my message still
+queued.\"***
+
+Their message sent behind a running turn is queued, and the daemon eventually ANNOUNCES its row.
+This head drew that announcement as NOTHING — `item-lines` gives no lines to a row with no body —
+so the only copy of their sentence was the TAIL echo, and the tail is drawn **below** the running
+turn. Their words ended up under the reply that was already streaming above them.
+
+**letibot had it right and its comment is the requirement**: *the row is drawn from the words the
+head already holds, at the position the transcript gave it — above the reply it caused — instead
+of being invisible until its body catches up while the reply streams above it.* Two halves, and
+this asserts both plus the retirement."
+  (let ((leticl::*bound-prompts* nil) (leticl::*queued-unconfirmed* nil)
+        (leticl::*scroll-anchor* nil) (leticl::*hist-cache* nil)
+        (leticl::*hist-generation* 0) (leticl::*hidden-run-open* nil)
+        (leticl::*verbosity* :normal))
+    (let ((h (%queued-mid-turn-head)))
+      ;; --- 1. BEFORE the announcement: the only copy is the tail echo, below the turn
+      (let* ((rs (%rows h))
+             (echo (position-if (lambda (s) (search "queued · and now" s)) rs))
+             (turn (position-if (lambda (s) (search "still writing" s)) rs)))
+        (is (and echo turn) (format nil "the echo and the running turn are both up: ~s" rs))
+        (is (> echo turn)
+            "**and this is the defect**: the echo is BELOW the reply, so a message typed mid-turn
+ reads as one that arrived after the answer."))
+      ;; --- 2. THE ANNOUNCEMENT: the row draws the words, in its own place
+      (leticl::%handle-frame h (list :frame "event" :seq 1 :event "transcript_appended"
+                                     :item-id "u2" :kind "user" :ledger-head "" :ts 1))
+      (is (equal "and now my second question" (cdr (assoc "u2" leticl::*bound-prompts*
+                                                          :test #'string=)))
+          "**the announced row is bound to the oldest unbound queued prompt**")
+      (let* ((rs (%rows h))
+             (row (position-if (lambda (s) (search "queued · and now" s)) rs))
+             (turn (position-if (lambda (s) (search "still writing" s)) rs)))
+        (is (and row turn) (format nil "their row and the reply are both up: ~s" rs))
+        (is (< row turn)
+            (format nil "**their message is now ABOVE the reply** — the row draws the words the
+ head already held, at the position the transcript gave it: ~s" rs))
+        (is (= 1 (count-if (lambda (s) (search "and now my second question" s)) rs))
+            (format nil "**and it is drawn ONCE** — the tail must not draw an echo a bound row is
+ already drawing: ~s" rs)))
+      ;; --- 3. THE BODY: their own row, and both the binding and the echo are gone
+      (leticl::%handle-frame h (list :frame "event" :seq 2 :event "transcript_content"
+                                     :item-id "u2"
+                                     :item (list :type "user"
+                                                 :parts (list (list :kind "text"
+                                                                    :text "and now my second question")))))
+      (is (null leticl::*bound-prompts*)
+          "**the binding goes with the body** — the row carries its own words now")
+      (is (null (head-queued h)) "and the echo is retired, as it always was")
+      (let* ((rs (%rows h))
+             (row (position-if (lambda (s) (search "and now my second question" s)) rs))
+             (turn (position-if (lambda (s) (search "still writing" s)) rs)))
+        (is (not (search "queued" (nth row rs)))
+            (format nil "**and it is their REAL row now** — a timestamp, not the pending mark: ~s"
+                    (nth row rs)))
+        (is (< row turn) "in the place above the reply, where the transcript put it")))))
+
 ;;; ------------------------------------------------- cluster-aware width (P7) ;;;
 
 (defun %ch (code) (code-char code))

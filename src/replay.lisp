@@ -139,6 +139,9 @@ see this file's header."
          ;; render to, so a replay that inherited one would draw another session's work expanded
          (*hidden-run-open* nil)
          (*hidden-run-head* nil)
+         ;; and the announced row's bound prompt: a replay that inherited one would draw another
+         ;; session's sentence on a row that never carried it
+         (*bound-prompts* nil)
          (*daemon-protocol* nil)
          ;; R27's record: the daemon's heading list is read by the payload a compaction row
          ;; builds, so a replay that inherited one session's headings would render another's

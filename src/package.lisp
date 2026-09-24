@@ -181,6 +181,8 @@
    #:tilde-path #:short-id #:bytes-human #:split-row
    #:*rendered-total* #:*scrubbed-total* #:*filtered-total* #:*unreadable-total*
    #:*seq-gaps* #:note-seq-gap #:*hack-accept-errors*
+   ;; R16's follow-up: the queued prompt an ANNOUNCED row draws, in its own place
+   #:*bound-prompts* #:%bind-echo #:%unbind-echo #:bound-prompt-for
    #:rows-above #:note-row-fetched #:rows-above-line #:prepend-item
    #:fetch-row-above #:*row-fetch* #:*rows-above-gone* #:+row-fetch-len+ #:*scroll-max*
    #:*daemon-protocol*

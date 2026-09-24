@@ -211,6 +211,62 @@ one whose row is never coming.
 Invariant, kept by `%resolve-queued` and `%retire-pending`: every text here is also in
 `head-queued`. It is a `defvar` for the usual reason — a struct change is a restart.")
 
+(defvar *bound-prompts* nil
+  "`(ITEM-ID . TEXT)` — the queued prompt each ANNOUNCED row is drawing.
+
+**The operator's own report is what this fixes, and letibot had it right first:** *\"you start
+replying while my message still queued.\"* Their message was sent while a turn ran, so the daemon
+queued it; the row was announced, and this head drew the announcement as NOTHING (`item-lines`
+returns no lines for a row with no body) while the words stayed in the TAIL echo — which is drawn
+BELOW the running turn. So their sentence sat under the reply that was already streaming above it.
+
+letibot's rule, from its own comment: *the row is drawn from the words the head already holds, at
+the position the transcript gave it — **above the reply it caused** — instead of being invisible
+until its body catches up while the reply streams above it.* Two halves, and both are needed:
+
+  · **bind** — the announcement says a user row exists, and this head knows which of its queued
+    texts has not been claimed by one yet; the oldest unbound one is bound to that item id, and the
+    row draws from it in the transcript's own place;
+  · **skip** — an echo a bound row is already drawing must not be drawn a second time at the tail.
+
+**The binding is a DRAWING and not a retirement.** The echo stays in `head-queued` until its row's
+body lands (that is what `%retire-pending` is for), because the words are still this head's to show
+if the row goes away — a snapshot can replace the whole vector and take the announcement with it.
+
+A `defvar` for the usual reason, and reset by `with-replay-globals` because a replay that
+inherited one would draw another session's prompt on a row that never carried it.")
+
+(defun %bind-echo (head item-id)
+  "Bind the OLDEST queued prompt no announced row has claimed to ITEM-ID.
+
+**Oldest first, because that is the order their rows are announced in** — several prompts in the
+air at once is ordinary behind a running turn, and pairing the newest with the first announcement
+would swap two sentences on the screen. A text already bound is skipped, so two announcements
+take two different prompts.
+
+An echo the head cannot resolve (`*queued-unconfirmed*`) is the same kind of thing and is bound
+the same way: the row is on the screen and the words are what it draws."
+  (let ((taken (mapcar #'cdr *bound-prompts*)))
+    (let ((text (find-if (lambda (q) (not (member q taken :test #'equal)))
+                         ;; oldest first: the order their rows are announced in
+                         (reverse (head-queued head)))))
+      (when (and item-id text)
+        (setf *bound-prompts* (acons item-id text *bound-prompts*))
+        (setf (head-dirty head) t)
+        t))))
+
+(defun %unbind-echo (item-id)
+  "Forget ITEM-ID's bound prompt — its body has arrived and the row draws its own words now."
+  (when item-id
+    (setf *bound-prompts* (remove item-id *bound-prompts* :key #'car :test #'equal))))
+
+(defun bound-prompt-for (item)
+  "The text this ANNOUNCED row is drawing, or NIL.
+
+Read by `item-lines` — which is handed an item and nothing else — so the binding is a global, the
+same arrangement `*payload-head*` and `*hidden-run-open*` have and for the same reason."
+  (cdr (assoc (getf item :item-id) *bound-prompts* :test #'equal)))
+
 (defun %piece-of (text row)
   "TEXT is a WHOLE PIECE of ROW: ROW itself, or a run of ROW with a newline at each
 edge of it.
@@ -601,6 +657,14 @@ and a `hello` with a snapshot). Returns T when the queue moved."
                     (getf row :elapsed-ms) (getf env :elapsed-ms)
                     (head-dirty head) t))))
          (t))
+       ;; **AN ANNOUNCED USER ROW DRAWS THE WORDS THIS HEAD IS HOLDING** — see `*bound-prompts*`
+       ;; for the operator's report and letibot's rule. The announcement carries no body, so
+       ;; without this the row draws nothing and the only copy of their sentence is the tail echo,
+       ;; which sits BELOW the running turn: their message under the reply it never got to start.
+       (when (and (eq name :transcript-appended)
+                  (equal (getf env :kind) "user")
+                  (getf env :item-id))
+         (%bind-echo head (getf env :item-id)))
        ;; a queued prompt's row has landed: stop announcing it. The ROW's TEXT
        ;; is the match (app.rs:4744-4751), because the transcript takes the
        ;; words over by being them — `pop` retired the NEWEST entry for a row
@@ -615,6 +679,9 @@ and a `hello` with a snapshot). Returns T when the queue moved."
        ;; text for exactly this reason; the rule is that the LIVE path and the SNAPSHOT
        ;; path see the same rows, or they retire different things.
        (when (eq name :transcript-content)
+         ;; **the body is here, so the binding goes: the row draws its own words now.** Leaving it
+         ;; would draw the echo a second time on a row that already carries the text.
+         (%unbind-echo (getf env :item-id))
          (let ((body (getf env :item)))
            (when (and (consp body) (equal (getf body :type) "user"))
              (dolist (p (getf body :parts))
