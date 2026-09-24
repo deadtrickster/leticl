@@ -9290,8 +9290,18 @@ for one whose row is never coming."
                                     :item (list :type "assistant" :text "the summary"
                                                 :tool-calls nil)))
                         :id "s-r16d" :dropped 40)))
-    (is (equal '("also gone" "summarised away") (head-queued h))
-        "the echoes are HELD — the head cannot prove they landed")
+    ;; **AND IN THE ORDER THEY WERE ALREADY IN.** This assertion used to read
+    ;; `("also gone" "summarised away")`, and that was not the queue's order at all: the old
+    ;; `%resolve-queued` walked the entries oldest-first and rebuilt `kept` with `nreverse`,
+    ;; which reverses a NEWEST-first list into NEWEST-first only if nothing was dropped — and
+    ;; with nothing dropped here, nothing was. It flipped, and the test recorded the flip as
+    ;; the requirement, so the queue on the screen would have RENDERED BACKWARDS the moment
+    ;; one prompt was retired out of the middle. A round trip through a filter is not allowed
+    ;; to reorder what it keeps: `%resolve-queued` folds each row over the list and returns
+    ;; `kept` in the caller's own order, which is what makes this line about holding the
+    ;; echoes and not about an accident of the fold.
+    (is (equal '("summarised away" "also gone") (head-queued h))
+        "the echoes are HELD, in the order they were queued — the head cannot prove they landed")
     (is (equal (head-queued h) leticl::*queued-unconfirmed*)
         "and every one of them is marked unresolved")
     ;; **the invariant**, and it is what keeps the two from drifting
@@ -9361,6 +9371,63 @@ one row per entry, with the prefix rule for the daemon's coalescing."
      h (list :frame "event" :seq 3 :event "transcript_content" :item-id "i3"
              :item (list :type "user" :parts (list (list :text "somebody else's")))))
     (is (equal '("only") (head-queued h)) "another head's prompt retires nothing")))
+
+(def-test a-joined-echo-retires-piece-by-piece-as-its-rows-land (:suite leticl)
+  "**THE OPERATOR'S OWN MESSAGE, STUCK SAYING `queued` — and this is the case the head could not
+retire at all.**
+
+`%prompt` joins prompts typed behind a running turn into ONE echo, exactly as the daemon joins them
+into one held item (`steering.rs:210`). But the daemon's join is *within one `absorb`*: messages
+separated by a turn — or by anything else that flushes the held item — land as their OWN rows even
+though this head had already merged their echoes. So the head holds `a\\nb\\nc` and the transcript
+delivers `a`, and then later `c`, as two rows of one line each.
+
+The old `%resolve-queued` asked, for the whole entry, *does some row contain this as a piece*, and
+then *is some row a prefix of this* — and the answer was NO for both, because the entry is three
+lines long and no row is more than one of them. **Neither row could retire it, so it never retired,
+and it stayed on the screen for the rest of the session.** MEASURED on the running head: one entry
+held `\"lol, it is a bug\\nyeah, i tried to take…\\nright, and thie fixed…\"`, rows `#t20.2966` and
+`#t20.2979` had both landed, and no row had ever landed for the first line — so the echo said
+`queued` over a conversation that had already answered two of the three messages.
+
+letibot's rule is piece-wise (`app.rs:14509`): split the entry at its newlines and claim each piece
+that an unclaimed line of the row equals. What is left is the words still owed. That is what makes
+the operator's entry collapse to its one unlanded line here — and, just as important, the tail of
+this test is that **a row cannot spend a line twice and cannot claim out of order**, or two prompts
+reading the same words would retire each other."
+  (let ((h (%make-head)))
+    ;; three messages typed behind one turn: ONE echo, oldest first, as `%prompt` builds it
+    (setf (head-queued h) (list (format nil "a~%b~%c")))
+    ;; `a` lands — its own row, as the daemon sent it
+    (leticl::%handle-frame
+     h (list :frame "event" :seq 1 :event "transcript_content" :item-id "i1"
+             :item (list :type "user" :parts (list (list :text "a")))))
+    (is (equal (list (format nil "b~%c")) (head-queued h))
+        "the piece that landed came off and the rest of the echo stays queued")
+    ;; **and it is still ONE echo** — the head must not scatter it into two lines it never held
+    (is (= 1 (length (head-queued h)))
+        "the remainder is one entry, not two: the head only ever held one")
+    ;; `c` lands too, so only `b` is owed
+    (leticl::%handle-frame
+     h (list :frame "event" :seq 2 :event "transcript_content" :item-id "i2"
+             :item (list :type "user" :parts (list (list :text "c")))))
+    (is (equal '("b") (head-queued h))
+        "the second row retired its own piece, out of the middle of the entry")
+    ;; `b` lands and the echo stands down WHOLE, so nothing is left on the screen
+    (leticl::%handle-frame
+     h (list :frame "event" :seq 3 :event "transcript_content" :item-id "i3"
+             :item (list :type "user" :parts (list (list :text "b")))))
+    (is (null (head-queued h))
+        "every piece accounted for, so the echo is gone — not an empty line left standing")
+    ;; **A LINE IS SPENT ONCE, and the search only runs forward.** Two prompts reading the same
+    ;; words are two prompts, and ONE row may not retire both — else the second echo sits there
+    ;; claiming a message that has not landed.
+    (setf (head-queued h) (list "same" "same"))
+    (leticl::%handle-frame
+     h (list :frame "event" :seq 4 :event "transcript_content" :item-id "i4"
+             :item (list :type "user" :parts (list (list :text "same")))))
+    (is (equal '("same") (head-queued h))
+        "one row retires ONE of two identical prompts, never both")))
 
 (def-test a-refused-head-does-not-claim-the-session-is-quiet (:suite leticl)
   "**The screen after a `Bye` must not say the conversation is empty.**

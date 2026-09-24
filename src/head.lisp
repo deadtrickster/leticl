@@ -267,35 +267,60 @@ Read by `item-lines` — which is handed an item and nothing else — so the bin
 same arrangement `*payload-head*` and `*hidden-run-open*` have and for the same reason."
   (cdr (assoc (getf item :item-id) *bound-prompts* :test #'equal)))
 
-(defun %piece-of (text row)
-  "TEXT is a WHOLE PIECE of ROW: ROW itself, or a run of ROW with a newline at each
-edge of it.
+;;; **`%piece-of` USED TO LIVE HERE**, and it was deleted when `%strip-landed` subsumed it. It asked
+;;; whether the LANDING ROW contained a queued text as a whole piece, and its docstring carried the
+;;; measurement that put it there — **28 echoes still on the screen two hours after their rows
+;;; landed**, the oldest from 15:39, where one row's part text was 1,741 characters over 5 lines and
+;;; all five lines were queued texts exactly. The equality rule retired 0 of 28 and that rule retired
+;;; 28 of 28.
+;;;
+;;; **The piece-wise walk retires the same 28 and the mirror case besides**, which is why the
+;;; function has no second caller to keep: splitting the queued entry at its own newlines and
+;;; matching each piece against the row's lines is the same rule stated whole. A piece is bounded by
+;;; newlines because the entries ARE newline-separated, so `second` can still never be retired by a
+;;; row reading `first\\nsecond-guess` — the boundary is now the split rather than a character test.
+;;;
+(defun %strip-landed (entry lines claimed cursor)
+  "ENTRY against the LINES a landing row holds — as letibot's `strip_landed` does it.
 
-**The rule this head was missing, and the defect was measured on the operator's own
-screen.** The daemon MERGES consecutive queued prompts into one user item, whose part
-text is those prompts JOINED BY NEWLINES (`app.rs:4685-4703`). So the row that lands is
-not equal to any echo — it is equal to several of them with a newline between — and a
-rule that asked *is this row the text* answered NO for every one of them.
+Returns `(values REST HIT CURSOR)`. REST is the words still owed, HIT says whether any piece
+landed at all, and CURSOR is where the next entry's search should start.
 
-MEASURED live, 2026-09-23, on the running head: **28 echoes still on the screen two
-hours after their rows landed**, the oldest from 15:39. One user row's part text was
-1,741 characters over 5 lines, and **all five lines were queued texts, exactly**. The
-equality rule then retired **0 of 28**; this rule retires **28 of 28**. R16's own
-front-piece case — where the QUEUED TEXT is the merged thing and the row is its head —
-was **0 of 28**, which is why the existing branch could not have saved it.
+**PIECE-WISE, and that is the correction.** The old rule asked whether the LANDING ROW contained
+the whole queued text (`%piece-of`) and, failing that, whether the queued text began with the row.
+Both are about ONE side of the mirror:
 
-**A PIECE is bounded by newlines, not merely contained**, and that is the whole
-difference between this and a substring search: a prompt `second` must not be retired
-by a row that reads `first\nsecond-guess`. The boundary test is the same at the two
-ends of the row, so equality is the case where it starts at 0 and ends at the length —
-one rule, not two."
-  (loop with n = (length text)
-        with m = (length row)
-        for i = (search text row) then (search text row :start2 (1+ i))
-        while i
-        when (and (or (zerop i) (char= #\newline (char row (1- i))))
-                  (or (= (+ i n) m) (char= #\newline (char row (+ i n)))))
-          return t))
+  · a row that is `a\\nb` retires the separate echoes `a` and `b` — the daemon merged them;
+  · but the daemon does NOT always merge, and a head that joined `a\\nb\\nc` into one entry then
+    needs the reverse: a row that is just `b` retires that PIECE of it and leaves the rest owed.
+
+The operator found the second half on their own screen: three messages were typed, two landed as
+their own rows, and the joined entry matched neither — so it stayed queued for ever, showing
+*\"i still see queued messages\"*. letibot's answer is this walk, and it is exact:
+
+  · split the entry at its newlines, and claim each piece that an UNCLAIMED line of the row equals;
+  · **a line is spent once** (`CLAIMED`) and the search runs forward from `CURSOR`, so two prompts
+    that say the same thing retire separately and in the order they were sent;
+  · what is left is the words still owed — empty means the echo stands down whole.
+
+**A blank piece is not a claim and is not content.** It matches nothing (so it can never be
+claimed) and it is dropped from REST: an entry whose only remaining pieces are blank has had every
+word accounted for, and keeping the newlines would hand the caller a string that is truthy and
+empty — an echo left on the screen for the rest of the session showing nothing."
+  (let ((pieces (uiop:split-string entry :separator '(#\newline)))
+        (kept nil) (hit nil) (cur cursor))
+    (dolist (piece pieces)
+      (when (plusp (length piece))
+        (let ((at (loop for k from cur below (length lines)
+                        when (and (not (aref claimed k))
+                                  (string= (elt lines k) piece))
+                          return k)))
+          (if at
+              (setf (aref claimed at) t
+                    cur (1+ at)
+                    hit t)
+              (push piece kept)))))
+    (values (format nil "~{~a~^~%~}" (nreverse kept)) hit cur)))
 
 (defun %resolve-queued (queued rows)
   "QUEUED (newest-first texts) resolved against ROWS (landing user texts).
@@ -303,35 +328,32 @@ one rule, not two."
 Returns `(values KEPT UNCONFIRMED)`.
 
 **The ONE place the rule lives**, so a row arriving on the socket and a transcript
-arriving in a snapshot cannot retire different things. Three outcomes per entry, and
-each is a fact:
+arriving in a snapshot cannot retire different things. Each landing row is applied to every
+entry in turn — oldest entry first, because the row that lands first is the prompt that was
+sent first — and `%strip-landed` is the whole of what *retires* means.
 
-  · the row CONTAINS this text as a whole piece — the daemon merged several prompts
-    into that one item, so the transcript has taken the words over by holding them
-    (`%piece-of`, and the measurement in its docstring is why this is the rule);
-  · the row is the FRONT PIECE of it — behind a running turn the daemon merges
-    consecutive messages into one, so a landing row can be `text + newline + rest`;
-    the front comes off and the remainder stays queued for its own row
-    (`app.rs:4685-4703`);
-  · neither — nothing here says it landed, and nothing here says it did not.
-
-The match walks OLDEST-first, because the row that lands first is the prompt that was
-sent first."
-  (let ((kept nil) (unconfirmed nil))
-    (dolist (text (reverse queued))
-      (if (some (lambda (r) (%piece-of text r)) rows)
-        nil                                  ; landed: retired
-        (let ((part (find-if (lambda (r)
-                               (uiop:string-prefix-p
-                                (concatenate 'string r (string #\newline)) text))
-                             rows)))
-          (cond (part (let ((rest (subseq text (1+ (length part)))))
-                        (when (plusp (length rest))
-                          (push rest kept)
-                          (push rest unconfirmed))))
-                (t (push text kept)
-                   (push text unconfirmed))))))
-    (values (nreverse kept) (nreverse unconfirmed))))
+**A row neither CONFIRMS nor DENIES what it does not name.** An entry whose pieces did not
+match keeps its place untouched, which is why a row for a later message cannot retire an
+earlier one that has not landed yet."
+  (let ((entries (reverse queued))       ; OLDEST first — the order rows land in
+        (unconfirmed nil))
+    (dolist (row rows)
+      (let* ((lines (uiop:split-string row :separator '(#\newline)))
+             ;; **A line is spent once**, and the set is per-ROW: two entries that say the same
+             ;; thing retire separately, in the order they were sent.
+             (claimed (make-array (length lines) :initial-element nil))
+             (cursor 0)
+             (next nil))
+        (dolist (entry entries)
+          (multiple-value-bind (rest hit cur) (%strip-landed entry lines claimed cursor)
+            (setf cursor cur)
+            (cond ((not hit) (push entry next))              ; nothing of it is in this row
+                  ((zerop (length rest)) nil)               ; every piece landed: stands down
+                  (t (push rest next)))))                   ; some did: the echo shrinks
+        (setf entries (nreverse next))))
+    (let ((kept (nreverse entries)))     ; back to NEWEST-first, the caller's order
+      (dolist (text kept) (push text unconfirmed))
+      (values kept (nreverse unconfirmed)))))
 
 (defun %retire-pending (head text)
   "Stand down the echo of the queued prompt whose row has landed, by TEXT.
