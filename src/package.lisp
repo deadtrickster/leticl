@@ -79,7 +79,7 @@
    #:*resyncs* #:*spent-micros* #:*spent-seen* #:*now-ms* #:*last-event-ms*
    #:note-frame-arrived #:stalled-ms #:stall-text #:stall-row #:notice-line
    #:tick-notice #:say
-   #:turn-status #:composer-title #:composer-wiring #:turn-report-row #:turn-report-text #:composer-boxed-p
+   #:turn-status #:composer-title #:composer-wiring #:turn-report-row #:turn-report-text #:composer-boxed-p #:running-jobs
    #:attach-lines #:cat-frame #:attaching-p #:*attach-started-ms* #:+cat-frames+
    #:+attach-wait-ms+ #:attach-overdue-p #:attach-gave-up-said
    ;; the carry line — one row for a fork in flight, in the cat and the bar

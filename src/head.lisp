@@ -710,6 +710,39 @@ and a `hello` with a snapshot). Returns T when the queue moved."
                (let ((text (getf p :text)))
                  (when (and (stringp text) (plusp (length text)))
                    (%retire-pending head text)))))))
+       ;; **THE JOB COUNT IS ONLY AS FRESH AS THE LAST TIME SOMETHING ASKED FOR IT.**
+       ;;
+       ;; `head-jobs` is filled by the daemon's answer to `list_jobs`, and until this
+       ;; existed the only asker was `/jobs` — the pane's opener — so a count drawn from
+       ;; it would sit at zero for the whole life of a background job unless the operator
+       ;; happened to open that pane. That is the difference between a readout and a
+       ;; souvenir, and the operator asked for the readout.
+       ;;
+       ;; **Three events, and the third is the one I got wrong first.** A job SETTLED drops
+       ;; the count; a TOOL FINISHED with a `backgrounded` outcome is **the job starting**,
+       ;; and it is the only event that says so — there is no `JobStarted` on the wire (see
+       ;; `event.rs`: the job vocabulary is `JobSettled` and nothing else).
+       ;;
+       ;; I first put this on `:turn-finished`, on the reasoning that a backgrounded call's
+       ;; result lands inside the turn and the turn's end is near enough. **MEASURED, and it
+       ;; is not:** the operator asked for four jobs and watched the status line stay empty
+       ;; for the whole turn that started them, because "the turn ends soon" is however long
+       ;; the model keeps working — minutes, when it is doing the thing the job is for. A
+       ;; count that arrives after the work it counts is a souvenir.
+       ;;
+       ;; `:turn-finished` stays as well, for the one case the tool result cannot cover: a
+       ;; job that was already running when this head attached, which no event announces.
+       ;;
+       ;; It lives HERE and not in `apply-event`, which is the pure fold and sends
+       ;; nothing: a fold that wrote to the socket would make the same event produce
+       ;; different bytes depending on what else was in flight.
+       (when (or (member name '(:job-settled :turn-finished))
+                 ;; **THE JOB'S OWN HANDLE IS THE PROOF**, not a guess from the tool's name:
+                 ;; only a call that was actually backgrounded carries one, and the daemon
+                 ;; minted it a moment ago.
+                 (and (eq name :tool-finished)
+                      (equal (outcome-name (getf env :outcome)) "backgrounded")))
+         (%send head (make-list-jobs)))
        ;; apply-event is the classifier: :dirty means something visible moved.
        (let ((disposition (apply-event (head-session head) env)))
          ;; **A REPLY THAT ARRIVED IS SHOWN, AND THAT IS THE ONE THING THE SESSION

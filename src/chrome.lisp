@@ -1166,6 +1166,21 @@ that is happening, which is the register the spinner on the bottom edge is
 already in, and ours painted it bold, which is the header's register."
   (box-edge cols #\╭ #\╮ "" (composer-title head) '(:fg :yellow)))
 
+(defun running-jobs (head)
+  "How many background jobs have not settled — the number `turn-report-row` reports.
+
+**`:running` is the daemon's own flag** on a `JobEntry`, the same one the jobs pane draws as its
+yellow `[~]` mark, so this count and that pane cannot disagree about a job: the pane lists them and
+this says how many are still going.
+
+Counted rather than derived from `:state`, because `state` is a sentence (`exited 0`, `running`,
+`not run (could not join its scope)`) and a sentence is not a predicate — parsing one back into a
+question the daemon already answered is the same mistake as re-deriving a duration from prose.
+
+Cleared jobs leave `head-jobs` when the daemon's next `Jobs` reply omits them, so this needs no
+notion of its own about what a job's lifetime is."
+  (count-if (lambda (j) (getf j :running)) (head-jobs head)))
+
 (defun turn-report-row (head cols)
   "The one row ABOVE the composer box: the running turn, or the last turn's report.
 
@@ -1204,11 +1219,22 @@ form cannot both be true at once."
     ;; column over wraps in a terminal and pushes the whole frame down a line. The pad is PLAIN
     ;; while the text is dim, so the trail of spaces carries no colour — the same choice the box's
     ;; own fill makes.
-    (let* ((text (truncate-to-width (or (turn-status head cols) (turn-report-text)) cols))
-           (pad (- cols (string-width text))))
-      (list (append (list (cons text '(:dim t)))
-                    (when (plusp pad)
-                      (list (cons (make-string pad :initial-element #\space) nil))))))))
+    ;;
+    ;; **AND THE BACKGROUND JOBS SIT AT THE RIGHT EDGE.** They are RIGHT-anchored and the turn's
+    ;; status is LEFT-anchored, and that is not decoration: the left text is `Responding · 1.2s ·
+    ;; 3 tok` on one frame and `Responded in 12.4s at 21:07` on the next, so anything placed after
+    ;; it would move with it. Anchored from the right edge, neither can move the other — which is
+    ;; the same reason the spinner is anchored left in the first place.
+    (let* ((jobs (running-jobs head))
+           (said (if (plusp jobs) (format nil "~d job~:p running" jobs) ""))
+           (room (- cols (if (plusp (length said)) (1+ (string-width said)) 0)))
+           (status (truncate-to-width (or (turn-status head cols) (turn-report-text))
+                                      (max 1 room)))
+           (pad (max 0 (- cols (string-width status) (string-width said)))))
+      (list (append (list (cons status '(:dim t))
+                          (cons (make-string pad :initial-element #\space) nil))
+                    (when (plusp (length said))
+                      (list (cons said '(:dim t)))))))))
 
 (defun turn-report-text ()
   "`Responded in 12.4s at 21:07` for the last turn this head watched finish, or empty.
