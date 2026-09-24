@@ -399,6 +399,21 @@ assigns the id explicitly on that path and keeps the state it already has
 (defun turn-state-name (turn)
   (getf (getf turn :state) :state))
 
+(defun turn-running-p (head)
+  "Is a turn running on HEAD's session?
+
+**One predicate, because four callers open-coded this string comparison and a fifth was about to.**
+They are the same question — *is the model working right now* — asked by the header, the marker's
+live work, the composer's edge and the take-back, and the take-back is where the copy finally cost
+something: `↑` may only withdraw while a turn runs, because the daemon honours a take-back at its
+steering poll and IGNORES one that reaches the worker (`sessions.rs:1600`).
+
+A turn that has finished keeps its state plist for the header's sake — `:state finished` — so
+`turn` being non-NIL says nothing about whether anything is running, which is the distinction every
+one of those four callers needed and each of them spelled out separately."
+  (let ((turn (session-turn (head-session head))))
+    (and turn (string= (or (turn-state-name turn) "") "running"))))
+
 (defun call-view (turn call-id)
   (when turn
     (find call-id (getf turn :calls) :key (lambda (c) (getf c :call-id))

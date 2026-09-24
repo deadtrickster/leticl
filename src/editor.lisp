@@ -1494,16 +1494,38 @@ for the lists)."
       (t (%normal-key head key)))))
 
 (defun %withdraw-queued (head)
-  "Take the last queued prompt back into the composer (v19).
+  "Take the queued prompts back into the composer (v19) — **the WHOLE queue, not the last one.**
 
-On `↑` with an empty composer at the tail, which is where the reference puts it
-(app.rs:3851-3861). It used to be on `ctrl-u` — which also means kill-to-start,
-so one chord carried two meanings — and the one key readline taught for *the
-previous entry* did not do it."
-  (let ((text (first (last (head-queued head)))))
+On `↑` with an empty composer at the tail, which is where the reference puts it (app.rs:3851-3861).
+
+**Three things were wrong with ours and letibot's is the specification for all three** — the
+operator, after taking a message back to fix a typo: *\"taking a message back is broken\"*, and
+*\"the fixed 'lol, it is a bug' stays queued\"*.
+
+  · **THE WHOLE QUEUE COMES BACK, JOINED BY A NEWLINE.** Ours took only the newest entry and put
+    it in the composer, while the daemon's take-back drops **every** queued prompt from that head
+    (`hub.rs:1298`) plus the held operator text (`steering.rs:210`). So a second queued
+    message stayed drawn on the screen with nothing behind it — a PHANTOM, which is exactly what
+    the operator was looking at. letibot joins them oldest-first (`pending_prompts.join`),
+    and this head's queue is newest-first, so the join reverses.
+  · **THE COMPOSER IS REPLACED, NOT INSERTED INTO.** letibot's `set_composer` is Home, KillToEnd,
+    insert — the whole line. Ours called `composer-insert`, which appends at the cursor, so taking
+    a message back into a composer that already had something put the two together.
+  · **AND THE TURN-RUNNING GUARD is what makes the take-back legal at all**: the daemon honours a
+    withdraw only at its steering poll (a take-back reaching the worker is `Outcome::Ignored` —
+    *\"whatever prompts it named have already run as their own turns\"*). So the frame is only
+    worth sending while a turn is running, which is the condition this is called under."
+  (let ((texts (reverse (head-queued head))))
+    ;; the frame first: the daemon drops its own copy, and only then does the screen forget
     (%send head (make-withdraw-prompts (session-expected-seq (head-session head))))
-    (setf (head-queued head) (butlast (head-queued head)))
-    (composer-insert (head-composer head) (or text ""))
+    (setf (head-queued head) nil
+          *bound-prompts* nil)
+    ;; **REPLACE the line**, as letibot's `set_composer` does — Home, kill to end, insert. A
+    ;; composer with something half-typed in it is not thrown away silently; it is replaced by
+    ;; what the operator just asked to have back.
+    (%undo-push (head-composer head))
+    (setf (composer-buffer (head-composer head)) (format nil "~{~a~^~%~}" texts)
+          (composer-cursor (head-composer head)) (length (composer-buffer (head-composer head))))
     (setf (head-dirty head) t)))
 
 (defun %ctrl-c (head)
@@ -1597,10 +1619,19 @@ of R36 keeps — the anchor is a record of the top row of the last frame, never 
       ((:redo) (when (composer-redo c) (setf (head-dirty head) t)))
       ((:up)
        (cond
-         ;; an EMPTY composer at the tail with a prompt queued: take it back
+         ;; **AN EMPTY COMPOSER AT THE TAIL WITH SOMETHING QUEUED: TAKE IT ALL BACK.**
+         ;;
+         ;; **AND ONLY WHILE A TURN IS RUNNING**, which is letibot's own condition and the reason
+         ;; the gesture works at all: the daemon honours a take-back at its steering poll, and a
+         ;; withdraw that reaches the worker instead is `Outcome::Ignored` — *"whatever prompts it
+         ;; named have already run as their own turns"* (`sessions.rs:1600`). With no turn running
+         ;; there is nothing to steer, so the frame would be a no-op and the screen would forget a
+         ;; message the daemon had already accepted. The queue exists BECAUSE a turn is running;
+         ;; this is the same fact read from the other side.
          ((and (zerop (length (composer-buffer c)))
                (zerop (head-scroll head))
-               (head-queued head))
+               (head-queued head)
+               (turn-running-p head))
           (%withdraw-queued head))
          ;; inside a multi-line prompt ↑ moves one VISUAL row, and only walks
          ;; history from the top one — what every editor does, and what `/help`

@@ -11140,22 +11140,60 @@ multi-line prompt you cannot navigate is a prompt you retype (editor.rs:500-516)
         "and a second ↑, from the top row, walks history")))
 
 (def-test up-recalls-the-queued-prompt-and-withdraws-it (:suite leticl)
-  "G6. Recall-and-withdraw was on `ctrl-u`, which also means kill-to-start — two
-meanings on one chord, and the one key readline taught for *the previous entry*
-did not do it. The reference puts it on `↑` with an empty composer at the tail
-(app.rs:3851-3861)."
+  "G6. Recall-and-withdraw was on `ctrl-u`, which also means kill-to-start — two meanings on one
+chord, and the one key readline taught for *the previous entry* did not do it. The reference puts
+it on `↑` with an empty composer at the tail (app.rs:3851-3861).
+
+**And R47 is what it took back being wrong about.** Ours took only the NEWEST queue entry while
+the daemon's take-back drops every queued prompt from that head (`hub.rs:1298`) — so a second
+waiting message stayed on the screen with nothing behind it, which is the phantom the operator
+found after taking a message back to fix a typo: *\"taking a message back is broken\"*, and
+*\"the fixed 'lol, it is a bug' stays queued\"*.
+
+Four claims, and the third and fourth are the ones a one-entry implementation fails:
+
+  · **↑ on an empty composer takes the WHOLE queue back**, oldest first, joined by newlines —
+    letibot's `pending_prompts.join(\"\\n\")`;
+  · **the composer is REPLACED**, not appended to (letibot's `set_composer`: Home, KillToEnd,
+    insert);
+  · **the daemon is told**, once, with `withdraw_prompts`;
+  · **and nothing is left behind** — no queue entry survives to draw a row whose prompt the
+    daemon has already dropped."
   (let* ((h (%on-head :cols 80 :rows 24))
          (wire (%wire h)))
-    (setf (head-queued h) (list "the prompt I sent"))
+    ;; **A TURN MUST BE RUNNING**, which is letibot's own condition and the reason the gesture
+    ;; works at all: the daemon honours a take-back at its steering poll, and one that reaches the
+    ;; worker is `Outcome::Ignored`. With no turn there is nothing to steer, so the frame is a
+    ;; no-op and the screen would forget a message the daemon had already accepted.
+    (setf (session-turn (head-session h))
+          (list :turn-id "t1" :model "m" :state (list :state "running")
+                :text "a reply" :reasoning "" :calls nil))
+    ;; the queue is newest-first here, so this list is "second" typed after "first"
+    (setf (head-queued h) (list "the second prompt" "the first prompt"))
     (leticl::%handle-key h (list :type :up))
-    (is (string= "the prompt I sent" (composer-buffer (head-composer h)))
-        "↑ on an empty composer takes the queued prompt back")
+    (is (string= (format nil "the first prompt~%the second prompt")
+                 (composer-buffer (head-composer h)))
+        "**↑ takes the WHOLE queue back, oldest first** — one entry per line, as letibot joins them")
+    (is (null (head-queued h))
+        "**and nothing is left behind** — a surviving entry would draw a row whose prompt the
+ daemon has already dropped")
     (is (equal "withdraw_prompts" (getf (first (%sent wire)) :frame))
-        "and tells the daemon to drop it")
+        "and tells the daemon to drop them")
     ;; with a line being typed it is history's key again, and sends nothing
+    (setf (composer-buffer (head-composer h)) "something")
     (setf (head-queued h) (list "another"))
     (leticl::%handle-key h (list :type :up))
-    (is (null (%sent wire)) "with a line typed, ↑ withdraws nothing")))
+    (is (null (%sent wire)) "with a line typed, ↑ withdraws nothing")
+    ;; **and with NO TURN RUNNING the queue is not the queue's to take back** — the daemon would
+    ;; ignore the frame, so the screen must not forget a message it accepted
+    (setf (composer-buffer (head-composer h)) "")
+    (setf (session-turn (head-session h))
+          (list :turn-id "t1" :model "m" :state (list :state "finished")))
+    (setf (head-queued h) (list "still the daemon's"))
+    (leticl::%handle-key h (list :type :up))
+    (is (equal '("still the daemon's") (head-queued h))
+        "**a finished turn cannot take a prompt back** — the daemon has nothing to steer and would
+ ignore the withdraw, so the row must stay")))
 
 (def-test word-motion-and-the-lines-own-ends (:suite leticl)
   "G5/G7. There was no word motion at all, and `ctrl-a`/`home` went to the start
