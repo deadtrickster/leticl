@@ -464,7 +464,10 @@ its end, and a token count is not recoverable from anywhere else on the screen."
                          (list (cons :model (and (plusp (length model)) model)))
                          (list (cons :spent (spent-text)))
                          (%usage-fields s)))
-         (name-cols (+ 2 (string-width name)))
+         ;; **the name's own columns — the `+ 2` was the bar and the space beside it**, and it is
+         ;; gone with the bar. Leaving it would have made every row two columns short of the body:
+         ;; measured, the test that asserts the width caught it immediately, which is what it is for.
+         (name-cols (string-width name))
          ;; **THE RESERVATION IS AFFORDED OR IT IS NOT, AND THAT IS DECIDED FROM COLS ALONE.**
          ;;
          ;; Every slot costs columns, and columns are what the fields LEFT of it have to move for.
@@ -492,8 +495,27 @@ its end, and a token count is not recoverable from anywhere else on the screen."
            ;; puts it whether or not every slot was drawn
            (tail-reserved (if reserved canon (string-width tail)))
            (tail-cols (if (plusp (length tail)) (+ 2 tail-reserved) 0))
-           (left (list (cons "▌ " '(:fg :blue))
-                       (cons name '(:bold t))))
+           ;; **NO BLUE BAR AND NO BOLD TITLE** — the header is FACTS, and the bar is the claim
+           ;; that the PERSON spoke.
+           ;;
+           ;; The operator: *"the project directory and session name are pinned in the first row
+           ;; with the same blue bar we use for my messages. very confusing. just make both gray
+           ;; and remove the bar.\"*
+           ;;
+           ;; They are right, and it is R42's own argument arriving at the header. `▌` in
+           ;; `UserAccent` is how this head says *a person said this* — the operator's rows wear it
+           ;; (`%operator-block-lines`), and the settled echo of the terminal's own input keeps it
+           ;; too. A bar on the header made the session's NAME look like somebody's sentence, on
+           ;; the one row the reader crosses on every return to the field.
+           ;;
+           ;; **Both halves go faint, which is the register the workspace already had.** The bar
+           ;; is deleted rather than recoloured: a grey bar would still be a bar, and this is the
+           ;; same rule the workspace has followed since the reference's `Role::Faint` — position
+           ;; and name are facts about the session, not a speaker.
+           ;;
+           ;; **This DEPARTS from letibot** (its `header_line` paints the bar `UserAccent` and the
+           ;; title `Strong`), so it is recorded as ours and not as parity.
+           (left (list (cons name '(:dim t))))
            (left-cols name-cols)
            (ws (%workspace s)))
       ;; the workspace fills whatever is left, shortened from its LEFT

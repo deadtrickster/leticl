@@ -2633,9 +2633,15 @@ ctrl+c CLOSES it, so the editor's 'again to exit' would be a lie."
 getting that order wrong scrolls the transcript by a row on every keystroke."
   (let* ((*stdout* (make-string-output-stream))
          (h (%on-head :cols 60 :rows 20)))
+    ;; **the HEADER is detected by the session's NAME**, and a title has to be set for that to mean
+    ;; anything: a bare `%on-head` has an empty title and an empty id, so the row is just the
+    ;; position. `▌` used to serve as the marker and the bar is gone — the operator: *"just make
+    ;; both gray and remove the bar"* — so a test that looked for the bar would now be testing
+    ;; something that no longer exists.
+    (setf (session-title (head-session h)) "the session marker")
     (leticl::%render h)
     (let ((text (%screen-text h)))
-      (is (search "▌" text) "the session marker is drawn")
+      (is (search "the session marker" text) "the session's name is drawn on the header")
       (is (search "╭" text) "the composer's box is drawn")
       (is (search "›" text) "and its prompt")
       (is (search "╰" text) "and its bottom edge"))
@@ -4241,8 +4247,20 @@ position; and it was three columns short of the box's edge, with a trailing spac
                                            :parent-session-id "s-1")))
     (let* ((line (top-border h 100))
            (text (segs-of (list line))))
-      (is (equal (cons "▌ " '(:fg :blue)) (first line)) "the bar is UserAccent, blue")
-      (is (equal (cons "hello" '(:bold t)) (second line)) "the title Strong")
+      ;; **NO BAR AND NO BOLD TITLE** — the operator's instruction, and R42's argument reaching the
+      ;; header: `▌` in `UserAccent` is how this head says *a person said this*, so a bar on the
+      ;; session's own name made it look like somebody's sentence. *"the project directory and
+      ;; session name are pinned in the first row with the same blue bar we use for my messages.
+      ;; very confusing. just make both gray and remove the bar."*
+      ;;
+      ;; **The bar is DELETED rather than recoloured**: a grey bar is still a bar, and the claim it
+      ;; makes about a speaker is the confusion. Both halves go faint — the register the workspace
+      ;; already had — which is also a DEPARTURE from letibot, whose `header_line` paints the bar
+      ;; `UserAccent` and the title `Strong`.
+      (is (not (equal '(:fg :blue) (cdr (first line))))
+          "**no bar**: nothing on this row claims a person spoke")
+      (is (equal "hello" (car (first line))) "the name is the first thing on the row")
+      (is (equal '(:dim t) (cdr (first line))) "**and it is gray**, like the path beside it")
       (is (search "2/2" text) "the position among the daemon's sessions, subagents not counted")
       (is (= 100 (leticl::%segs-width line)) "and the row is exactly as wide as the body")
       ;; **THE TAIL IS ITS OWN SEGMENT AND THE VISIBLE TEXT ENDS WITH IT.** The row is `cols` wide
@@ -13138,14 +13156,16 @@ chrome vector. The caret is clamped at both ends for the same reason."
         (is (>= (cdr *caret*) 0) "and never at a negative column")))
     ;; and the header is not drawn on a screen too short for it (app.rs:5231)
     (let ((h (%on-head :cols 40 :rows 5)))
+      ;; the NAME, which is what the header carries on the left — see the same note above
+      (setf (session-title (head-session h)) "hdrtest")
       (leticl::%render h)
-      (is (not (search "▌" (%screen-text h)))
+      (is (not (search "hdrtest" (%screen-text h)))
           "a five-row frame does not spend one of its five on a header")
       (setf (head-rows h) 6)
       (screen-resize (head-screen h) 40 6)
       (screen-resize (head-prev-screen h) 40 6)
       (leticl::%render h)
-      (is (search "▌" (%screen-text h)) "and at six it is back"))))
+      (is (search "hdrtest" (%screen-text h)) "and at six it is back"))))
 
 (def-test the-turn-status-leads-with-the-spinner (:suite leticl)
   "`turn_status` (app.rs:7538-7566): `{spin} Responding{since}{count}`. Ours was
