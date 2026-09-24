@@ -13120,6 +13120,120 @@ row in every log. That is a cost a new field must never impose backwards."
           "**the session's row still has no block** — the distinction the field was added for")
       (is (search "session ·" (segs-of agent)) "because it is labelled instead"))))
 
+(defparameter +job-notice-one+
+  "[job] a job you backgrounded has ended:
+  - `j152` killed by job_kill after 27.6s, wrote 15 bytes: cd /home/dead/Projects/leticl && tmux kill-session -t letiprobe2 2>/dev/null; python3 stub.py
+This is the completion arriving on its own — you do not need to wait for it, and `job_wait` would only block you for a result you already have. Read what it wrote with `job_output` (job=\"…\"), then carry on with what you were doing."
+  "A job-settlement notice as the daemon writes it (`harness.rs:649-687`) — one job, with its
+command.")
+
+(defparameter +job-notice-many+
+  "[job] 3 jobs you backgrounded have ended:
+  - `j12` exited 0 after 4.4s, wrote 1200 bytes: cargo build --release
+  - `j15` exited 101 after 12.0s, wrote 800 bytes: cargo test
+  - `j19` killed by job_kill after 34.7s, wrote 15 bytes: sleep 600
+This is the completion arriving on its own — you do not need to wait for it."
+  "The same notice when several jobs settle at once — the batch shape, which is the one that
+really buries a conversation.")
+
+(defun %settlement-row (id text &optional item-id)
+  "TEXT as the `agent` user row the daemon sends, and its first drawn line."
+  (let ((item (list :item-id (or item-id id) :kind "user" :ts 0
+                    :item (list :type "user" :speaker "agent"
+                                :parts (list (list :kind "text" :text text))))))
+    (values item (first (item-lines item 120 nil)))))
+
+(def-test a-job-settlement-is-one-line-and-it-opens (:suite leticl)
+  "**The operator, looking at two of their own screens: *\"we have to do something with this huge job
+blobs - make them one liners for conversation and Ctrl-t'able otherwise\"*** — and *\"something like
+exit code, time spent and some one-line summary will be just fine\"*.
+
+A settlement arrives as a `User` row with `speaker: agent`, so before this it was drawn as a
+`session ·` block of the WHOLE message: the daemon's facts, the entire command, and a closing
+paragraph that is a promise to the MODEL (*you do not need to wait for it*). Measured on the
+operator's screen: 22 rows for one job, 5 for another.
+
+**Every fact the reader wants is already in the daemon's own sentence** — the job, how it ended,
+how long it ran, how many bytes it wrote and its command (`harness.rs:668`) — so the line costs
+nothing and is true by construction. That is R37's ladder on a second surface, and it is why no
+model is in this path: *a model was offered and is not needed*, because a summary would be a
+slower, lossier spelling of what arrived spelled out.
+
+Three properties: **exactly one row at any width**, **the facts first and the command last** (so a
+cut eats the command's tail, not the exit code), and **the whole message one chord away**."
+  ;; --- one job: the daemon's facts, and the chord named where it acts
+  (multiple-value-bind (item line) (%settlement-row "u1" +job-notice-one+)
+    (let* ((leticl::*payload-head* nil)
+           (rows (item-lines item 200 nil)))
+      (is (= 1 (length rows))
+          (format nil "**ONE row for a job settlement** — this was 22 rows of the daemon's message:\n ~s" rows))
+      (is (search "j152" (segs-of rows)) "with the job's id")
+      (is (search "killed by job_kill" (segs-of rows)) "how it ended")
+      (is (search "27.6s" (segs-of rows)) "how long it took")
+      (is (search "15 bytes" (segs-of rows)) "and what it wrote")
+      (is (not (search "you do not need to wait" (segs-of rows)))
+          "**and none of the paragraph addressed to the MODEL** — that is the closing sentence, and
+ it is one chord away rather than on the conversation")))
+  ;; --- several at once: COUNTED, with their ids, and still one row
+  (multiple-value-bind (item rows) (let ((*payload-head* nil))
+                                     (let ((it (list :item-id "u2" :kind "user" :ts 0
+                                                     :item (list :type "user" :speaker "agent"
+                                                                 :parts (list (list :kind "text"
+                                                                                    :text +job-notice-many+))))))
+                                       (values it (item-lines it 200 nil))))
+    (is (= 1 (length rows))
+        (format nil "**a batch is ONE row too** — three settle at once and this was the worst case:\n ~s" rows))
+    (is (search "3 jobs ended" (segs-of rows)) "led by the count")
+    (is (search "j12" (segs-of rows)) "with the ids named, so a reader can find one"))
+  ;; --- a NARROW frame truncates the command and never the facts
+  (multiple-value-bind (item rows) (let ((*payload-head* nil))
+                                     (let ((it (list :item-id "u3" :kind "user" :ts 0
+                                                     :item (list :type "user" :speaker "agent"
+                                                                 :parts (list (list :kind "text"
+                                                                                    :text +job-notice-one+))))))
+                                       (values it (item-lines it 70 nil))))
+    (is (= 1 (length rows)) "**still ONE row at 70 columns** — *a one-liner that becomes four is not
+ a one-liner*")
+    (is (search "j152" (segs-of rows)) "the facts survive the cut")
+    (is (search "15 bytes" (segs-of rows)) "all of them, because they come first"))
+  ;; --- and the chord is named on the row it acts on, WITH A HEAD in scope
+  (let ((h (%on-head :cols 120 :rows 30)))
+    (let ((it (list :item-id "u1" :kind "user" :ts 0
+                    :item (list :type "user" :speaker "agent"
+                                :parts (list (list :kind "text" :text +job-notice-one+))))))
+      (setf (session-items (head-session h))
+            (make-array 1 :adjustable t :fill-pointer 1 :initial-contents (list it)))
+      (let ((leticl::*payload-head* h))
+        (is (search "ctrl-t opens it" (segs-of (item-lines it 120 nil)))
+            (format nil "**the chord is named on the row it acts on**: ~s"
+                    (segs-of (item-lines it 120 nil)))))))
+  ;; --- and with NO head in scope the seam says nothing rather than guessing (R40's safe direction)
+  (multiple-value-bind (item rows) (%settlement-row "u4" +job-notice-one+)
+    (let ((leticl::*payload-head* nil))
+      (is (not (search "ctrl-t" (segs-of (item-lines item 120 nil))))
+          "**no head, no chord named** — a row drawn outside a frame cannot claim a key acts on it"))))
+
+(def-test a-settlement-is-openable-through-the-real-seeder (:suite leticl)
+  "**The other half: *Ctrl-t'able otherwise*.** The seeder asked for a `tool_result` BY NAME, so the
+one kind of row that buries a conversation most was the one kind the chord could not open — the
+defect as measured, and it is one predicate.
+
+`leticl::%row-openable-rows` is now the ONE answer to *what would this row's chord reveal*, asked by the
+seeder and by a row's own seam, so a seam cannot promise a window the seeder would not open."
+  (let* ((h (%on-head :cols 100 :rows 30))
+         (it (list :item-id "u9" :kind "user" :ts 0
+                   :item (list :type "user" :speaker "agent"
+                               :parts (list (list :kind "text" :text +job-notice-one+))))))
+    (setf (session-items (head-session h))
+          (make-array 1 :adjustable t :fill-pointer 1 :initial-contents (list it)))
+    (is (equal "u9" (newest-payload-item-id (head-session h)))
+        "**a settlement is a row `ctrl-t` would open** — before this it was not, by name")
+    (is (plusp (length (leticl::%row-openable-rows it))) "and its rest is what it holds")
+    ;; and a row with nothing to page still answers NIL, so no window is invented
+    (is (null (leticl::%row-openable-rows (list :item-id "x" :kind "assistant" :ts 0
+                                        :item (list :type "assistant" :text "just prose"))))
+        "an assistant row has nothing to page")))
+
 (def-test a-user-rows-speaker-is-read-from-the-wire-and-names-itself (:suite leticl)
   "The three answers, the fourth case, and the daemon's own guarantee from this side of it.
 

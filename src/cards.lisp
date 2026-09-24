@@ -1276,6 +1276,31 @@ The reference's test in `newest_payload_row` (`payload.lines().count() > 2`), an
 same number for a reason rather than by coincidence: a folded row already draws one
 line and the seam, so two is the point past which paging gains anything.")
 
+(defun %row-openable-rows (item)
+  "The rows THIS row's `ctrl-t` would reveal, or NIL when it has nothing to page.
+
+**ONE ANSWER, because two readers ask it** — the seeder that decides which row the chord opens, and
+a row's own drawing, which must know whether its seam may name the chord at all (R40). A second
+opinion would let a seam promise a window the seeder would not open.
+
+Two kinds of row can open, and they are the two the reader gets buried by:
+
+  · **a tool result**, whose rest is its payload (`%tool-payload-rows`);
+  · **a job settlement** — the daemon's completion notice, which arrives as a `User` row with
+    `speaker: agent` and is a paragraph of blather on the conversation (R41's own message).
+
+Everything else answers NIL, and the callers drop a row with nothing to page rather than inventing
+one — the same rule `payload-view-seed` already keeps."
+  (let ((body (item-body item)))
+    (cond
+      ((null (consp body)) nil)
+      ((string= (getf body :type) "tool_result") (%tool-payload-rows body))
+      ((and (string= (getf body :type) "user")
+            (eq (%user-speaker body) :agent))
+       (let ((text (%user-parts-text body)))
+         (and (%job-notice-p text) (%job-notice-rows text))))
+      (t nil))))
+
 (defun newest-payload-item-id (session)
   "WHICH row a window would open on — the newest with something to page — or NIL.
 
@@ -1290,9 +1315,11 @@ so the command just run is at the end. Only ONE row has a window at a time, and 
 which is also the whole limit of the mechanism, written down rather than implied."
   (loop for i of-type fixnum from (1- (length (session-items session))) downto 0
         for item = (aref (session-items session) i)
-        for body = (item-body item)
-        when (and (consp body) (string= (getf body :type) "tool_result")
-                  (> (length (%tool-payload-rows body)) +payload-pageable-lines+))
+        ;; **via `%row-openable-rows`, so a job settlement is openable too** (the operator: *"make
+        ;; them one liners for conversation and Ctrl-t'able otherwise"*). This asked for a
+        ;; `tool_result` by name, which is how the one row type that buries a conversation most
+        ;; was the one kind the chord could not open.
+        when (> (length (%row-openable-rows item)) +payload-pageable-lines+)
           return (getf item :item-id)))
 
 (defun payload-view-seed (session)
@@ -2050,7 +2077,87 @@ differences are all things a screenshot shows and a test would not:
                         (cons (if (and (= i 0) (plusp (length stamp))) stamp "")
                               '(:reverse t))))))
 
-(defun %session-block-lines (text stamp cols label)
+(defparameter +job-notice-prefix+ "[job] "
+  "The daemon's own opening for a job-settlement notice (`harness.rs:661`, `completion_notice`).
+
+**The prefix is the daemon's, not this head's invention** — the same discipline as keying a note's
+remedy on its CODE: a settlement arrives as a `User` row with `speaker: agent` and nothing else to
+identify it, so the text is what says what it is, and this is the one word in it that is the
+daemon's own voice rather than a job's.")
+
+(defun %job-notice-p (text)
+  "Is TEXT the daemon's job-completion notice? — R41's own message, in its own voice."
+  (and (stringp text)
+       (uiop:string-prefix-p +job-notice-prefix+ text)))
+
+(defun %job-notice-parts (text)
+  "TEXT split into `(values OPENING FACTS REST)`.
+
+  · **OPENING** — the daemon's first line, as written (`a job you backgrounded has ended:`);
+  · **FACTS** — the `  - \`ID\` …` lines, one per settled job, in the daemon's own words;
+  · **REST** — the closing paragraph, which is a promise TO THE MODEL (*you do not need to wait for
+    it*) rather than anything the reader needs told.
+
+The split is on the daemon's own shape and not on a guess: the fact lines are the ones that begin
+with `- ` after trim, and everything after them is the closing sentence."
+  (let* ((lines (uiop:split-string text :separator '(#\newline)))
+         (opening (or (first lines) ""))
+         (tail (rest lines))
+         (facts (remove-if-not (lambda (l) (uiop:string-prefix-p "- " (string-left-trim " " l)))
+                               tail))
+         (rest (remove-if (lambda (l) (uiop:string-prefix-p "- " (string-left-trim " " l)))
+                          tail)))
+    (values opening
+            (mapcar (lambda (l) (string-left-trim " -" l)) facts)
+            (string-trim " " (format nil "~{~a~^ ~}" rest)))))
+
+(defun %job-notice-facts (text)
+  "The settlement's facts as ONE line — `j152 killed by job_kill after 27.6s, wrote 15 bytes`.
+
+**Built from the daemon's own sentence and not from a summary of it**, which is R37's ladder
+applied to a second surface: the source that costs nothing is the one already computed, and a
+settlement arrives with the job, its ending, its duration and its byte count already spelled out.
+The backticks go because they are markdown for the MODEL — the reader is looking at a rendered
+screen, not at the prompt.
+
+**A model was offered for this and is not needed**, and the measurement is the reason: every fact
+the reader wants is in this line before anything reads it. That is worth writing down because *a
+model could summarize it* is the shape of answer that adds a latency and a failure mode to a path
+that has neither."
+  (let* ((facts (multiple-value-bind (o f r) (%job-notice-parts text)
+                  (declare (ignore o r)) f))
+         ;; **the backticks are REMOVED, not blanked.** `substitute` put a space where each one was,
+         ;; which read ` j152  killed by job_kill` — two spaces for every quote, measured on the
+         ;; first run of this. They are markdown for the MODEL; the reader is looking at a
+         ;; rendered screen.
+         (one (mapcar (lambda (f)
+                        (string-trim " "
+                                     (remove #\` (string-trim " " f))))
+                      facts)))
+    (cond ((null one) nil)
+          ;; **ONE JOB NAMES ITSELF**; several are COUNTED and their ids listed. Sized to what it
+          ;; describes — the same adaptivity R37's marker has, and the same reason.
+          ((= 1 (length one)) (first one))
+          (t (format nil "~d jobs ended (~{~a~^, ~})"
+                     (length one)
+                     ;; **the IDS**, which is what a reader scanning for one of them wants — the
+                     ;; first token of each fact line is the daemon's job id and nothing else.
+                     (mapcar (lambda (f) (subseq f 0 (or (position #\space f) (length f))))
+                             one))))))
+
+(defun %job-notice-rows (text)
+  "The daemon's notice as rows a reader can OPEN — R41's own vocabulary, verbatim.
+
+**The full message is what `ctrl-t` reveals**, minus nothing: the facts, the command in full, and
+the closing sentence. Re-wording any of it here would be a second copy of the daemon's meaning, and
+the point of the one-liner is that the reader may choose to read the whole thing."
+  ;; **the backticks go here as well as in the one-liner.** They are markdown for the MODEL, and
+  ;; this is the screen: a reader opening the window to read the command should not be reading the
+  ;; quoting the prompt needed.
+  (mapcar (lambda (l) (remove #\` l))
+          (uiop:split-string text :separator '(#\newline))))
+
+(defun %session-block-lines (text stamp cols label &optional item)
   "TEXT as a row THIS SESSION appended — R42's `agent` speaker, and letibot's `session_block`.
 
 **The opposite of the operator's block in the three ways that block is made of**: no `▌` accent
@@ -2065,7 +2172,66 @@ unknown speaker can name itself in the same place."
   (let* ((indent (make-string (length label) :initial-element #\space))
          (w (max 20 cols))
          (head-cols (max 8 (- w (length label) (length stamp) 2)))
-         (rows (wrap-segments (list (cons text nil)) head-cols))
+         (settlement (%job-notice-p text))
+         (window (and settlement item (payload-view-for item)))
+         (texts
+           (cond
+             ;; **A JOB SETTLEMENT IS ONE LINE, AND IT OPENS.** The operator, looking at two of
+             ;; their own screens: *"we have to do something with this huge job blobs - make them
+             ;; one liners for conversation and Ctrl-t'able otherwise"* — and *"something like exit
+             ;; code, time spent and some one-line summary will be just fine."*
+             ;;
+             ;; Every one of those facts is ALREADY IN THE DAEMON'S OWN SENTENCE — the job, how it
+             ;; ended, how long it ran, how many bytes it wrote and its command (see
+             ;; `%job-notice-facts`) — so the line costs nothing and is true by construction. That
+             ;; is R37's ladder on a second surface, and it is why no model is in the path: a
+             ;; summary would be a slower, lossier spelling of what arrived spelled out.
+             ;;
+             ;; The closing paragraph is dropped from the line because it is a promise TO THE
+             ;; MODEL (*you do not need to wait for it*) and not something the reader needs told.
+             ;; It is still there in full behind the chord, which is the point of the door.
+             ((and settlement (not window))
+              ;; **the SEAM'S ROOM IS RESERVED BEFORE THE FACTS ARE CUT.** The first cut built the
+              ;; line as one string and truncated it, so on a notice whose facts fill the frame the
+              ;; `· ctrl-t opens it` was cut away — the door invisible on exactly the rows that
+              ;; needed it, and `Ctrl-t'able` is the operator's own word for what this owes them.
+              ;; The facts give up the seam's width first, and the seam is ALWAYS kept.
+              (let* (;; **the seam SHORTENS before the facts do.** At a narrow frame the full
+                     ;; sentence costs sixteen of the reader's columns, and the facts are the
+                     ;; content — so the door gives way to `· ctrl-t`, which still names the key.
+                     ;; R29 asks that a remedy be visible; it does not ask that it be verbose.
+                     (seam (if (>= head-cols 60) " · ctrl-t opens it" " · ctrl-t"))
+                     (named (and item (newest-payload-row-p item) t))
+                     (room (if named (max 8 (- head-cols (length seam))) head-cols))
+                     ;; **the chord only on the row it acts on** (R40): the window opens on the
+                     ;; NEWEST openable row, so a seam elsewhere would name a key that does
+                     ;; nothing. Silence is the honest seam; a lie is not.
+                     (facts-segs (%truncate-segs
+                                  (list (cons (format nil "~a~a"
+                                                      +job-notice-prefix+
+                                                      (or (%job-notice-facts text) "a job settled"))
+                                              nil))
+                                  room)))
+                (list (if named
+                          (append facts-segs (list (cons seam +role-faint+)))
+                          facts-segs))))
+             ;; opened: the daemon's own message, whole, and the key that folds it back
+             ((and settlement window)
+              (append (%job-notice-rows text) (list "  … esc closes")))
+             (t (list text))))
+         (rows
+           (cond
+             ;; **ONE ROW, WHATEVER THE WIDTH.** A settlement's line is truncated to the frame
+             ;; rather than wrapped, because *a one-liner that becomes four lines on a narrow pane
+             ;; is not a one-liner* — and the facts come FIRST, so the cut eats the tail of the
+             ;; command rather than the exit code, the duration or the byte count. The whole thing
+             ;; is one chord away. The same rule the echo's seam keeps (R33): the ellipsis is the
+             ;; fallback, never a second row.
+             ((and settlement (not window)) texts)
+             (t (mappend (lambda (s)
+                           (or (wrap-segments (list (cons s nil)) head-cols)
+                               (list (list (cons "" nil)))))
+                         texts))))
          (rows (if rows rows (list (list (cons "" nil)))))
          (n (length rows)))
     (loop for row in rows
@@ -2320,7 +2486,9 @@ a terminal-native palette."
               ;; exactly the rendering it always had. The distinction the field adds is a MARK — for
               ;; the session's own rows and for a speaker this build cannot name.
               ((or (eq who :operator) (eq who :unrecorded)) (%operator-block-lines text stamp cols))
-              ((eq who :agent) (%session-block-lines text stamp cols +session-label+))
+              ;; **`item` travels, because a settlement's `ctrl-t` window is keyed on the row's id** —
+              ;; the same arrangement the tool-result rows use, and the reason this takes one now.
+              ((eq who :agent) (%session-block-lines text stamp cols +session-label+ item))
               ;; **AN UNKNOWN WORD NAMES ITSELF** rather than falling back to the operator's — the
               ;; rule `%call-origin-said` keeps for `origin`: a wrong speaker is worse than an
               ;; unusual one, and the row must not be drawn as the person's.
