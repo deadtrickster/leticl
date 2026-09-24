@@ -7,6 +7,7 @@ Covers the three things that have actually broken here:
   - --file: the form is ONE balanced line, it names the file, and it skips
     the forms that cannot be re-evaluated into a live image (unless --all)
 """
+import errno
 import json
 import os
 import re
@@ -215,5 +216,37 @@ run("--pid", str(MYPID), "--no-verify", "(list 1\n2)")
 print("multiline ->", repr(received[-1]) if len(received) > before else "NOTHING RECEIVED")
 assert len(received) == before + 1, "a multi-line form still costs one request"
 assert received[-1] == "eval (list 1", "the wire carries only the first line, as documented"
+
+# **The two ways a head can stop listening, and the ONE message they must not share.**
+#
+# `unreachable` is a verdict about the repair, so a wrong one costs more than a vague one:
+# "cannot reach" says start a head, "WEDGED" says THIS head is alive and has stopped
+# accepting, and the difference was worth an hour on the live head (2026-09-24) where
+# every push hung and every one of them was silently discarded.
+class FakeErr(Exception):
+    def __init__(self, errno):
+        self.errno = errno
+
+
+eagain = ns["unreachable"]("/tmp/x.sock", FakeErr(errno.EAGAIN))
+assert "WEDGED" in eagain, eagain
+assert "not ACCEPTING" in eagain, eagain
+assert "NOTHING PUSHED SINCE THE WEDGE" in eagain, "the form did not run — say so"
+
+refused = ns["unreachable"]("/tmp/x.sock", FakeErr(errno.ECONNREFUSED))
+assert "cannot reach" in refused and "WEDGED" not in refused, (
+    "a head that is GONE and a head that is stuck need opposite repairs: " + refused
+)
+
+# and the deadline really does cover the connect, which is where the first cut of this
+# hung for ever: a listener whose backlog is full blocks `connect` with no error at all.
+assert ns["EVAL_TIMEOUT_S"] > 0, "there is a deadline"
+src_eval = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "tui-eval")).read()
+i_timeout = src_eval.index("s.settimeout(")
+i_connect = src_eval.index("s.connect(")
+assert i_timeout < i_connect, (
+    "settimeout must come BEFORE connect: a full backlog blocks connect, and a "
+    "deadline set afterwards never applies"
+)
 
 print("PASS")

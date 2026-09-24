@@ -130,6 +130,48 @@ connection. The guard has to be a `handler-case`."
   (declare (ignore condition))
   nil)
 
+(defparameter +hack-lock-timeout+ 5
+  "Seconds an eval will wait for the paint lock before giving up and saying so.
+
+Five, because a legitimate eval holds it for milliseconds — `--tree` re-evaluates fifty
+forms in well under one — so anything near this number is a wedge and not a slow push. See
+`%with-paint-lock` for the measurement that put a deadline here at all.")
+
+(defmacro %with-paint-lock ((mutex) &body body)
+  "Run BODY holding MUTEX, or signal a clear error after `+hack-lock-timeout+`.
+
+**A macro rather than `with-mutex`, because `with-mutex` cannot time out** and a lock held
+by a thread that is itself blocked is held for the life of the process. Preferring
+`sb-thread:grab-mutex` with `:timeout` keeps the safety property that put the lock here (no
+redefinition lands mid-frame) while removing the one it did not have (a single bad eval
+taking the whole channel with it).
+
+The fallback is deliberate and not tidiness: `grab-mutex`'s keyword set differs across SBCL
+versions, and a head that cannot time out should still be able to eval — the wedge is the
+lesser evil next to a live-modification surface that refuses to work at all."
+  (let ((m (gensym "MUTEX")) (got (gensym "GOT")))
+    `(let ((,m ,mutex)
+           (,got nil))
+       ;; **`:timeout` and NOT `:wait-p`** — the latter is not a keyword on this SBCL and an
+       ;; unknown keyword is a WARNING, which this tree's build treats as fatal (measured:
+       ;; the whole compile aborted). VERIFIED on this box, across two threads: a second
+       ;; `grab-mutex` on a held lock with `:timeout` answers NIL rather than blocking,
+       ;; which is the property the deadline rests on.
+       ;;
+       ;; The `handler-case` is for a Lisp that has neither keyword: taking the lock the old
+       ;; way is the lesser evil next to a live-modification surface that refuses to work.
+       (setf ,got
+             (handler-case (sb-thread:grab-mutex ,m :timeout +hack-lock-timeout+)
+               (error () (sb-thread:grab-mutex ,m) t)))
+       (unless ,got
+         (error "the eval channel is BLOCKED on the paint lock (waited ~as): an earlier ~
+                 eval is wedged holding it, very likely blocked on something that needs the ~
+                 head's own loop. This form did NOT run. Nothing pushed since the wedge has ~
+                 run either. Restart the head — it resumes from the store."
+                +hack-lock-timeout+))
+       (unwind-protect (progn ,@body)
+         (sb-thread:release-mutex ,m)))))
+
 (defun hack-handle (head line)
   "One request, one JSON reply. `eval <form>` — the rest of the line is one
 s-expression, read and evaluated in :leticl with *head* bound. Compiler notes
@@ -156,9 +198,32 @@ to *standard-output* would corrupt the TUI and desync it from the screen."
                               ;; error in the MAIN thread, which quits the head.
                               ;; Measured twice, at a different file each time.
                               ;;
-                              ;; An eval must NOT paint: taking this lock again
-                              ;; inside one deadlocks. Nothing here does.
-                              (sb-thread:with-mutex ((paint-lock))
+                              ;; **BUT NOT FOR EVER, AND THAT IS A CORRECTION.** An eval
+                              ;; must not paint — taking this lock again inside one
+                              ;; deadlocks — and there is a second way to deadlock it
+                              ;; that the sentence above did not cover: an eval that,
+                              ;; while holding the lock, blocks on something that needs
+                              ;; the LOOP (writing the session socket, waiting on the
+                              ;; daemon). The loop then waits for the lock, the eval
+                              ;; waits for the loop, and every later eval waits in
+                              ;; `with-mutex`.
+                              ;;
+                              ;; MEASURED on the live head, 2026-09-24: one `%send` from
+                              ;; a probe did exactly that. The channel was dead for an
+                              ;; hour — the socket LISTENED but never ACCEPTED again
+                              ;; (backlog full, `connect` returning EAGAIN) — and every
+                              ;; push in that hour was silently discarded while the head
+                              ;; went on painting the screen, so the pushes looked
+                              ;; applied.
+                              ;;
+                              ;; A deadline turns that permanent wedge into one bad
+                              ;; eval that says so. It does not free the lock — nothing
+                              ;; can, the thread is stuck — but the SURFACE survives:
+                              ;; the next eval is told the channel is blocked rather
+                              ;; than joining it. `grab-mutex` with a timeout is the
+                              ;; only way to ask, and the fallback keeps this working
+                              ;; on a Lisp where the keyword is absent.
+                              (%with-paint-lock ((paint-lock))
                                 (eval form))))))
               ;; visible immediately is a property of the loop: the eval marks
               ;; the head dirty, the loop repaints on its next tick

@@ -85,6 +85,7 @@ failing obscurely.
 Trust: this is arbitrary code execution in the head's image, by design —
 the same trust a person at a REPL has. Per-user socket, mode 0600.
 """
+import errno
 import glob
 import json
 import os
@@ -157,10 +158,56 @@ def list_heads():
     return sorted(seen)
 
 
+EVAL_TIMEOUT_S = float(os.environ.get("TUI_EVAL_TIMEOUT", "30"))
+
+
+def unreachable(target, e):
+    """What to say when the eval socket will not take a connection.
+
+    **`EAGAIN` IS THE DIAGNOSIS, and *"cannot reach"* was the wrong words for it.** A unix
+    socket that is LISTENING but whose accept loop has stopped answers `connect` with
+    `Resource temporarily unavailable` — not `Connection refused`, which is what a head that
+    is GONE gives. The two read the same to a caller and mean opposite things: one says
+    start a head, the other says THIS head is alive, painting, and no longer listening to
+    you. MEASURED on the live head, 2026-09-24, after an eval took the paint lock and then
+    blocked: every later push hung, and this message would have said *cannot reach* — which
+    points at the wrong repair and cost an hour of believing pushes had landed.
+    """
+    if getattr(e, "errno", None) == errno.EAGAIN:
+        return (
+            "WEDGED: {} is listening but not ACCEPTING (the backlog is full), so this form\n"
+            "  never ran. The head is very likely still painting the screen you are looking\n"
+            "  at — it is the eval channel that is stuck, and NOTHING PUSHED SINCE THE WEDGE\n"
+            "  HAS LANDED. Restart the head; it resumes from the store.".format(target)
+        )
+    return "cannot reach {}: {}".format(target, e)
+
+
 def eval_form(pid, form, path=None):
-    """Send `eval <form>` to the head and return the reply line."""
+    """Send `eval <form>` to the head and return the reply line.
+
+    **The socket has a DEADLINE, and its absence cost an hour.** Without one a wedged
+    head and a slow one are the same observation: the client connects, sends, and waits
+    forever, so a push that never ran looks exactly like a push that is taking a while.
+    MEASURED — the eval thread had taken the paint lock for a form that then blocked on
+    the session socket, so every later eval sat in `with-mutex` for ever, and several
+    rounds of edits were believed applied while the running head still had the code from
+    before them.
+
+    WEDGED is its own verdict, because `--no-verify` and a live push are the two halves
+    of the live-modification contract and a caller that cannot tell them apart will trust
+    a screen the head is not drawing. The timeout is generous (30 s) because a legitimate
+    `--tree` re-evaluates fifty-odd forms and a wedged head never answers at any timeout.
+    """
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
+        # **THE TIMEOUT GOES ON BEFORE `connect`, and that is not tidiness.** A unix
+        # socket whose listener has stopped accepting fills its backlog, and then
+        # `connect` BLOCKS — for ever, with no error. MEASURED: with the timeout set
+        # after the connect (where it was first written), the client sat in `connect`
+        # and never reached the deadline at all, which is the same silent hang the
+        # timeout exists to end, one syscall earlier.
+        s.settimeout(EVAL_TIMEOUT_S)
         s.connect(path or socket_path(pid))
         s.sendall(("eval " + form + "\n").encode("utf-8"))
         buf = b""
@@ -170,8 +217,29 @@ def eval_form(pid, form, path=None):
                 break
             buf += chunk
         return buf.decode("utf-8").rstrip("\n")
+    except socket.timeout:
+        raise Wedged(
+            "the head at pid {} accepted the connection and did not answer within {}s.\n"
+            "  That is the EVAL CHANNEL being stuck, not a slow eval: the head is very likely\n"
+            "  still painting the screen you are looking at, and has done NOTHING with this\n"
+            "  form. A previous eval that took the paint lock and then blocked on the session\n"
+            "  socket leaves every later one waiting in `with-mutex` for ever.\n"
+            "  NOTHING YOU PUSHED SINCE THEN HAS LANDED — including this.\n"
+            "  The head must be restarted; it resumes from the store.".format(pid, EVAL_TIMEOUT_S)
+        )
     finally:
         s.close()
+
+
+class Wedged(Exception):
+    """The head is alive and its eval channel is stuck. See `eval_form`.
+
+    One exception for both halves of the same fact: the head is not reading the channel.
+    A blocked `connect` means it has stopped ACCEPTING (the listener's backlog is full),
+    a silent `recv` means it took a connection and stopped ANSWERING — and either way the
+    caller's form has not run. Naming them together is deliberate: what the caller must do
+    is identical, and it is to restart the head.
+    """
 
 
 #; ------------------------------------------------- the gate after every eval ;;;
@@ -657,7 +725,7 @@ def main(argv):
         try:
             reply = eval_form(pid, where_form(do_where), target)
         except OSError as e:
-            print("cannot reach {}: {}".format(target, e), file=sys.stderr)
+            print(unreachable(target, e), file=sys.stderr)
             return 1
         try:
             value = reply_value(reply)
@@ -692,7 +760,7 @@ def main(argv):
         try:
             reply = eval_form(pid, form, target)
         except OSError as e:
-            print("cannot reach {}: {}".format(target, e), file=sys.stderr)
+            print(unreachable(target, e), file=sys.stderr)
             return 1
         try:
             print(json.dumps(json.loads(reply), indent=2))
