@@ -1057,8 +1057,11 @@ sized to the border it is inlaid into (`app.rs:5183`, `turn_status(w)`).
 An alarm is `⚠` alone, because the counters behind it are `/status`'s and were
 never worth a resident sentence of bright yellow. With nothing running and nothing
 wrong, the edge is bare."
-  (let ((parts (remove nil (list (and (alarmed-p head) "⚠")
-                                 (turn-status head cols)))))
+  ;; **THE TURN'S STATUS IS NOT HERE ANY MORE — it is the row ABOVE the box** (`turn-report-row`),
+  ;; on the operator's word: *"responding has to be brought back up to the left on top of the input
+  ;; area and stay here."* The alarm stays: it is about the SESSION and not about a turn, and it is
+  ;; the one thing on this edge that must be visible while nothing is running.
+  (let ((parts (remove nil (list (and (alarmed-p head) "⚠")))))
     ;; NOTHING is nothing: returning a space put a stray `─ ╯` on the box where
     ;; letibot draws `──╯`. Same defect as `composer-title`'s, one function over —
     ;; and only a column-precise diff shows a one-column difference.
@@ -1163,6 +1166,75 @@ that is happening, which is the register the spinner on the bottom edge is
 already in, and ours painted it bold, which is the header's register."
   (box-edge cols #\╭ #\╮ "" (composer-title head) '(:fg :yellow)))
 
+(defun turn-report-row (head cols)
+  "The one row ABOVE the composer box: the running turn, or the last turn's report.
+
+**The operator's spec, verbatim:** *\"responding has to be brought back up to the left on top
+of the input area and stay here. It will permanently occupy the row for now and will be either
+Responding spinner we have now or 'Responded in <full turn time> at <end-timestamp> as hh:mm'.\"*
+
+Three requirements in that sentence, and each is a different kind of decision:
+
+  · **LEFT-ANCHORED**, which is where this legend started before it was moved to the box's
+    bottom edge — *\"please move Responding back to the right side\"* — and the operator has now
+    moved it back. The left is also the only side where the spinner cannot move: it is the FIRST
+    glyph, so a right-pinned legend slides leftward every time the duration or the count gains a
+    digit. Anchored here, growth runs rightward into empty columns and the spinner is fixed by
+    construction (see `+turn-status-head+`, which explains why nothing is held open for it).
+  · **IT STAYS AFTER THE TURN**, with the two facts nothing else on the screen carries: the whole
+    turn's wall time and the clock time it ended.
+  · **IT PERMANENTLY OCCUPIES THE ROW.** This is the axiom read as a layout rule — *nothing must
+    jump* — and it is why the row exists when there is nothing to say. A row that appeared with
+    the turn and vanished with it would move the transcript up and down on every exchange; a row
+    that is always there costs one line and moves nothing, ever.
+
+**NIL when the composer has no box**, because there is no row to occupy: a short frame drops the
+box (it costs two rows and the composer must never eat the last of them), and a bare `›` line has
+no `above` to be above.
+
+The states are mutually exclusive by CONSTRUCTION and not by a test: the running-turn arm clears
+the report when a turn starts (`note-turn-finished nil`), so the running form and the finished
+form cannot both be true at once."
+  (when (composer-boxed-p head)
+    ;; **a LINE is a list of SEGMENTS** — one row here, and one segment in it. Returned as a bare
+    ;; `(cons text style)` first, which the painter took for a list of lines and died on:
+    ;; `TYPE-ERROR expected-type: LIST datum: "Responded in 0ms at "`, measured.
+    ;;
+    ;; **and exactly COLS wide**, which is the composer's own rule and the same reason: a row one
+    ;; column over wraps in a terminal and pushes the whole frame down a line. The pad is PLAIN
+    ;; while the text is dim, so the trail of spaces carries no colour — the same choice the box's
+    ;; own fill makes.
+    (let* ((text (truncate-to-width (or (turn-status head cols) (turn-report-text)) cols))
+           (pad (- cols (string-width text))))
+      (list (append (list (cons text '(:dim t)))
+                    (when (plusp pad)
+                      (list (cons (make-string pad :initial-element #\space) nil))))))))
+
+(defun turn-report-text ()
+  "`Responded in 12.4s at 21:07` for the last turn this head watched finish, or empty.
+
+The DURATION is the full turn — `*turn-last*` records `now - *turn-started-ms*` at `turn_finished` —
+and the stamp is `HH:MM` LOCAL, which is the operator's own format for it. Empty for a turn nobody
+watched: an absent measurement shows NOTHING rather than a fabricated zero, the same rule the
+settled tool row keeps for a duration it did not see."
+  (let ((last *turn-last*))
+    ;; **BOTH facts or neither.** A duration with no stamp, or a stamp with no duration, is half a
+    ;; report — and the row is always on the screen, so half a report is a half-sentence left there
+    ;; for the rest of the session. `%clock-hm` answers empty for a value it cannot read (a replay's
+    ;; clock has no wall epoch), and that emptiness is the signal to say nothing.
+    (let ((at (and last (%clock-hm (getf last :at)))))
+      (if (and last (numberp (getf last :ms)) (plusp (length at)))
+          (format nil "Responded in ~a at ~a" (duration (getf last :ms)) at)
+          ""))))
+
+(defun composer-boxed-p (head)
+  "Does HEAD's composer draw its box at this frame size?
+
+One predicate for the two places that must agree: the box's own rows and the status row above it. A
+row drawn above a box that was not drawn is a stray line on a short terminal."
+  (and (>= (head-rows head) 8)
+       (plusp (head-cols head))))
+
 (defun composer-box-bottom (head cols)
   "The box's bottom edge, with the alarm and the turn's status **pinned RIGHT** — the reference's
 side for both edges, restored on the operator's word: *\"please move Responding back to the right
@@ -1257,7 +1329,7 @@ reference's editor does."
                                    (min (+ start show) (length all)))
                            start inner))))
 
-(defun composer-line (head cols &key (boxed (>= (head-rows head) 8)) max-rows ghost)
+(defun composer-line (head cols &key (boxed (composer-boxed-p head)) max-rows ghost)
   "The composer, as the rows it occupies — box plus body, or one bare line.
 
 Returns a LIST of rows, because the box is three or more rows tall; the caller
@@ -1294,12 +1366,18 @@ it is a typing aid, not a message. What changed is only where the row lands."
                   (when ghost
                     (list (list (cons "  " nil)
                                 (cons (truncate-to-width ghost (max 1 (- cols 2))) '(:dim t)))))))
-        (append (list (composer-box-top head cols))
+        (append
+                ;; **THE STATUS ROW GOES ABOVE THE BOX, AND IT IS ALWAYS THERE.** See
+                ;; `turn-report-row` for the operator's spec and for why a permanent row is the
+                ;; axiom read as a layout rule: a row that came and went with the turn would move
+                ;; the transcript on every exchange.
+                (turn-report-row head cols)
+                (list (composer-box-top head cols))
                 (composer-box-body head cols max-rows)
                 (when ghost (list (composer-ghost-row ghost cols)))
                 (list (composer-box-bottom head cols))))))
 
-(defun composer-caret (head cols &key (boxed (>= (head-rows head) 8)) max-rows)
+(defun composer-caret (head cols &key (boxed (composer-boxed-p head)) max-rows)
   "Where the terminal's own caret goes, as (ROW . COL) inside the composer's own
 rows — the reference's `composer_rows` third value.
 
@@ -1329,16 +1407,21 @@ character lands."
                 ;; how many rows the window has scrolled past
                 (cons (1+ (- row start)) (+ 4 col))))))))
 
-(defun composer-rows-needed (head cols &key (boxed (>= (head-rows head) 8)) max-rows ghost)
+(defun composer-rows-needed (head cols &key (boxed (composer-boxed-p head)) max-rows ghost)
   "How many rows `composer-line` will return. The render needs this BEFORE it
 composes the frame, because the transcript gets what is left.
 
 GHOST is counted here for the reason it is drawn at all: a caller asking how tall the composer will
 be is asking about the frame's arithmetic, and a ghost that is a row of the box is a row of the
-answer."
+answer.
+
+**AND THE STATUS ROW IS ONE OF THEM** (`turn-report-row`), which is the half that would have gone
+wrong silently: this function is how the transcript is told how much room is left, so a row drawn and
+not counted gives the transcript one row too many and pushes the box — or the status row itself — off
+the bottom of the frame."
   (if (not boxed)
       (if ghost 2 1)
-      (+ 2 (nth-value 1 (composer-window head cols max-rows)) (if ghost 1 0))))
+      (+ 2 (nth-value 1 (composer-window head cols max-rows)) (if ghost 1 0) 1)))
 
 ;;; --------------------------------------------------------------- notice ;;;
 ;;;

@@ -122,6 +122,9 @@ see this file's header."
          (*last-event-ms* nil)
          (*attach-started-ms* nil)
          (*turn-started-ms* nil)
+         ;; **and the last turn's report**, for the same reason: a replay that inherited one would
+         ;; draw *Responded in 12.4s at 21:07* above a composer that never answered anything
+         (*turn-last* nil)
          (*spent-micros* 0)
          (*spent-seen* nil)
          (*resyncs* 0)

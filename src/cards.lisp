@@ -3744,3 +3744,18 @@ midnight is a time nobody took — the same rule the duration on a card follows.
           (decode-universal-time (+ (floor ts 1000) 2208988800))
         (format nil "~2,'0d:~2,'0d:~2,'0d" h m s))
       ""))
+
+(defun %clock-hm (ts)
+  "TS (epoch ms) as `HH:MM` — the operator's own format for the row above the composer:
+*\"Responded in <full turn time> at <end-timestamp> as hh:mm\"*.
+
+The same LOCAL-time decoding as `%clock-time`, and for the same measured reason — an explicit 0 here
+is UTC and the stamp is then wrong by the offset, which is worse than no stamp because it looks like a
+measurement. Seconds are dropped because the question this row answers is *when*, to the minute, and
+two more digits on a line that is otherwise about a duration is precision nobody reads."
+  (if (and (numberp ts) (plusp ts))
+      (multiple-value-bind (s m h)
+          (decode-universal-time (+ (floor ts 1000) 2208988800))
+        (declare (ignore s))
+        (format nil "~2,'0d:~2,'0d" h m))
+      ""))

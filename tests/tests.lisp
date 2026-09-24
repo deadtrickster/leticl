@@ -2474,8 +2474,8 @@ against a framed one."
     ;; the box grows with a multi-line buffer
     (let ((h2 (%on-head :rows 20)))
       (composer-insert (head-composer h2) (format nil "one~%two~%three"))
-      (is (= 5 (length (composer-line h2 60)))
-          "three lines of buffer means three body rows, plus two edges")
+      (is (= 6 (length (composer-line h2 60)))
+          "three lines of buffer means three body rows, plus two edges and the status row")
       (dolist (row (composer-line h2 60))
         (is (= 60 (string-width
                    (apply #'concatenate 'string (mapcar #'car row))))
@@ -13476,38 +13476,85 @@ naive implementation:
         "and a counter that goes BACKWARDS is still acknowledged — the rule is `<=`, so nothing
  re-points at a value already read")))
 
-(def-test both-box-edges-carry-their-legend-on-the-right (:suite leticl)
-  "**The operator's own call, and the cost is written where the side is chosen.**
+(def-test the-turn-status-is-a-permanent-row-above-the-box (:suite leticl)
+  "**The operator's spec:** *\"responding has to be brought back up to the left on top of the input
+area and stay here. It will permanently occupy the row for now and will be either Responding spinner
+we have now or 'Responded in <full turn time> at <end-timestamp> as hh:mm'.\"*
 
-*\"please move Responding back to the right side\"* — after a spell at the left corner. It was
-anchored left for one reason: the spinner is the legend's FIRST glyph, so on a right-pinned legend
-every digit the duration or the count gains slides it leftward. Anchored left it cannot move,
-because the row grows rightward into the border's own fill — and the two alternatives that would
-keep both were measured and rejected (*\"look at the responding gap\"*, then *\"I guss remove those
-bottom char entirely\"*).
+This test replaces one that asserted the opposite — `both-box-edges-carry-their-legend-on-the-right`,
+which pinned the running turn to the box's bottom edge on the operator's earlier word (*\"please move
+Responding back to the right side\"*). **Both of their instructions are met by what is asserted here
+and the older one is superseded**: the legend has moved OFF both box edges and onto a row of its own
+above the box, where it is LEFT-anchored.
 
-**So this asserts the SIDE and nothing about stillness**, because stillness is what it gives up.
-Both edges carry their legend on the right, which is the reference's side for both — and a
-turn's own status really does move the spinner as it grows, which is the accepted cost and not a
-regression a future reader should 'fix' back."
+Four claims, and the last two are the ones a cosmetic reading would miss:
+
+  · the running turn's status is on the row ABOVE the box, and nowehere on either edge;
+  · it is on the **LEFT**, which is also the only side where the spinner cannot move — it is the
+    legend's FIRST glyph, so a right-pinned legend slides leftward with every digit the duration or
+    the count gains;
+  · **the row EXISTS when no turn is running**, which is the axiom as a layout rule: a row that came
+    and went with the turn would move the transcript on every exchange;
+  · and after a turn it reports **the whole turn's time and the clock time it ended** — the two facts
+    that exist nowhere else on the screen, because the wire carries neither."
   (let* ((h (%on-head :cols 100 :rows 30))
-         (turn (list :turn-id "t" :model "m" :state (list :state "running")
-                     :text "x" :reasoning "" :calls nil))
-         (leticl::*now-ms* 5000)
-         (leticl::*turn-started-ms* (- (leticl::internal-real-time-ms) 724)))
-    (setf (session-turn (head-session h)) turn)
-    (let* ((edge (car (lines-text (list (leticl::composer-box-bottom h 96)))))
-           (at (search "Responding" edge)))
-      (is (integerp at) (format nil "the running turn's legend is on the bottom edge: ~s" edge))
-      (is (> at (/ 96 2))
-          (format nil "**and it is on the RIGHT half of the edge**, which is the reference's side
- and the operator's instruction: ~s" edge))
-      (is (search "╯" (subseq edge (1- (length edge))))
-          "with the corner after it, so the legend is framed by the border and not by the edge"))
-    ;; the top edge is right-pinned too, so the two agree
-    (let ((top (car (lines-text (list (leticl::composer-box-top h 96))))))
-      (is (search "╮" (subseq top (1- (length top))))
-          "the top edge's legend is pinned right as well"))))
+         (row-above (lambda () (car (lines-text (leticl::turn-report-row h 96)))))
+         ;; **where the box STARTS in the composer's own rows** — the status row is what precedes
+         ;; it, and asserting the INDEX is what says the row is above the box rather than in it
+         (box-start (lambda ()
+                      (position-if (lambda (r) (search "╭" (car (lines-text (list r)))))
+                                   (leticl::composer-line h 96)))))
+    ;; --- 1. NOTHING RUNNING: the row is still there, and it is empty
+    (setf leticl::*turn-last* nil)
+    (setf (session-turn (head-session h)) nil)
+    (is (stringp (funcall row-above)) "the row is THERE with no turn at all")
+    (is (string= "" (string-trim " " (funcall row-above))) "and says nothing, which is not a lie")
+    ;; **above the box, and there is a box**: the composer's rows are the status row and then the
+    ;; box's three, so the top edge is at index 1 in a zero-based walk
+    (is (= 4 (length (leticl::composer-line h 96)))
+        "the composer is the status row plus the box's three")
+    (is (= 1 (funcall box-start))
+        "**and the box starts at row ONE**, so row zero is the status row above it")
+    ;; --- 2. A TURN RUNNING: the spinner, left-anchored
+    (let ((leticl::*now-ms* 5000)
+          (leticl::*turn-started-ms* (- (leticl::internal-real-time-ms) 724)))
+      (setf (session-turn (head-session h))
+            (list :turn-id "t" :model "m" :state (list :state "running")
+                  :text "x" :reasoning "" :calls nil))
+      (let ((row (funcall row-above)))
+        (is (search "Responding" row) (format nil "the running turn is on that row: ~s" row))
+        ;; **LEFT-ANCHORED means the row starts with the SPINNER** — the word `Responding` is
+        ;; preceded by the glyph and a space, so the test is that nothing is padded in front of it,
+        ;; which is the property that keeps it still. On the right it would start with spaces.
+        (is (not (char= #\space (char row 0)))
+            (format nil "**at the LEFT EDGE** — no leading pad, so the spinner cannot move: ~s" row))
+        (is (search "Responding" row) "and the word is there, after the spinner")
+        (is (not (search "Responding" (car (lines-text (list (leticl::composer-box-bottom h 96))))))
+            "**and NOT on the box's bottom edge any more**, which is the half that moved")
+        (is (not (search "Responding" (car (lines-text (list (leticl::composer-box-top h 96))))))
+            "nor on the top edge")))
+    ;; --- 3. THE TURN IS OVER: the report, with both facts
+    (setf (session-turn (head-session h))
+          (list :turn-id "t" :model "m" :state (list :state "finished")
+                :text "x" :reasoning "" :calls nil))
+    (let ((leticl::*turn-started-ms* (- (leticl::internal-real-time-ms) 12450))
+          (leticl::*now-ms* 20000))
+      ;; what the finished-turn arm does, driven the way the frame is
+      (leticl::note-turn-finished "finished")
+      (let ((row (funcall row-above)))
+        (is (search "Responded in" row) (format nil "the report is on the row: ~s" row))
+        (is (search "12.4s" row)
+            (format nil "**the FULL turn's time**, not the last round's: ~s" row))
+        (is (search " at " row) (format nil "and the wall-clock stamp: ~s" row))
+        (is (not (search "Responding" row)) "the spinner is gone with the turn"))))
+  ;; --- 4. and an INTERRUPTED turn reports nothing rather than a borrowed sentence
+  (let ((h (%on-head :cols 100 :rows 30)))
+    (let ((leticl::*turn-started-ms* (- (leticl::internal-real-time-ms) 5000)))
+      (leticl::note-turn-finished "finished")
+      (is (plusp (length (leticl::turn-report-text))) "a finished turn reports")
+      (leticl::note-turn-finished "interrupted")
+      (is (string= "" (leticl::turn-report-text))
+          "**a turn nobody answered does not report a response**"))))
 
 (def-test the-completions-row-lists-what-tab-would-take (:suite leticl)
   "`completions_line` (app.rs:4342-4358). Tab has completed since this head was
@@ -13812,16 +13859,21 @@ SEGMENTS, because that is where the register lives and because the row's WIDTH i
 edge one column over wraps, and a border that wraps scrolls the whole frame."
   (let ((h (%on-head :cols 100 :rows 24 :buffer "/he")))
     (let* ((rows (leticl::composer-line h 96 :ghost "/help the key and command reference"))
-           (ghost (third rows)))
-      (is (= 4 (length rows)) "the box is a row taller with the ghost in it")
+           ;; **THE STATUS ROW IS FIRST**, and it is the operator's: *"responding has to be brought
+           ;; back up to the left on top of the input area and stay here. It will permanently occupy
+           ;; the row."* So the box's rows start at the SECOND one and this is `fourth`, not `third`
+           ;; — the index moved because the composer grew a row above the box, not because the
+           ;; ghost moved inside it.
+           (ghost (fourth rows)))
+      (is (= 5 (length rows)) "the box is a row taller with the ghost in it, plus the status row")
       (is (string= "│" (car (first ghost))) "the wall opens the ghost's row")
       (is (equal '(:dim t) (cdr (first ghost))) "and the wall is faint, as the body's walls are")
       (is (equal '(:dim t) (cdr (fourth ghost)))
           (format nil "**the matches are faint** — a ghost is advice, not a message: ~s" (fourth ghost)))
       (is (= 96 (loop for sg in ghost sum (string-width (car sg))))
           (format nil "**and the row is the box's width**, so it cannot wrap: ~s" ghost))
-      ;; and with nothing to ghost, the box is its ordinary three rows
-      (is (= 3 (length (leticl::composer-line h 96))) "no ghost, no row"))))
+      ;; and with nothing to ghost, the box is its ordinary three rows plus the status row
+      (is (= 4 (length (leticl::composer-line h 96))) "no ghost, no row"))))
 
 (def-test an-empty-session-says-what-it-is (:suite leticl)
   "app.rs:6112-6131: `an empty screen with a status line under it is

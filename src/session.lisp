@@ -19,6 +19,37 @@
 watch start — one that came out of a snapshot. NIL is why the composer's edge can
 say *started before this head attached* instead of a duration nobody measured.")
 
+(defvar *turn-last* nil
+  "The LAST turn this head watched finish, as `(:ms DURATION :at EPOCH-MS)`, or NIL.
+
+**What the row above the composer says once the turn is over:** *Responded in 12.4s at 21:07*.
+The operator's spec, verbatim — *\"either Responding spinner we have now or 'Responded in <full turn
+time> at <end-timestamp> as hh:mm'\"* — and BOTH halves are about the same row, which is why they
+are two states of one piece of state and not two features.
+
+**The DURATION is the whole turn**, `now - *turn-started-ms*` at `turn_finished`, not the last
+round's: the row answers *how long did that take me*, and the model's last round is only the tail
+of it. That is also why it cannot be reconstructed later — nothing on the wire carries it, so a turn
+nobody watched has no duration and the row says nothing rather than a zero.
+
+**`at` is the END timestamp, on the wall clock**, which is the other thing the wire does not carry:
+the daemon's frames have a `ts` for ROWS and none for a turn's end.
+
+Cleared when a new turn starts, so the row can never show a report about the turn BEFORE the one
+that is running — the two states are mutually exclusive by construction rather than by a test.")
+
+(defun note-turn-finished (state)
+  "Record what the row needs about a turn that just ended — see `*turn-last*`.
+
+STATE is the turn's terminal state name: only `finished` is a *responding*, so an interrupted or
+failed turn does not report one. It CLEARS the slot instead, which is the honest thing to do with a
+row that is always on the screen: the turn that just ended did not answer, and the previous turn's
+`Responded in …` would be a claim about a turn that is no longer the last one."
+  (setf *turn-last*
+        (when (and (string= (or state "") "finished") *turn-started-ms*)
+          (list :ms (max 0 (- (internal-real-time-ms) *turn-started-ms*))
+                :at (unix-now-ms)))))
+
 (defvar *job-out* nil
   "The job-output overlay: what the jobs pane's Enter asked for and what came
 back, or NIL when no overlay is open. A plist —
@@ -166,7 +197,11 @@ walking under the new session's composer."
         (session-jobs session) nil
         (session-denials session) nil
         (session-notices session) nil)
-  (setf *turn-started-ms* nil)
+  (setf *turn-started-ms* nil
+        ;; **and the report about the turn we just left.** It is a measurement of the OLD session's
+        ;; turn, and the row it is drawn on is still on the screen — a `/switch` that carried it
+        ;; would put *Responded in 12.4s at 21:07* under a conversation that never asked anything.
+        *turn-last* nil)
   ;; the staged call facts are keyed by a call id that only existed over there
   (%round-boundary))
 
@@ -2003,6 +2038,11 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
               ;; rather than the three fields blinking on every cancelled turn.
               (prev (getf old :state)))
          (setf *turn-started-ms* (and (not (getf env :snapshot)) (internal-real-time-ms)))
+         ;; **THE REPORT ABOUT THE PREVIOUS TURN GOES WITH IT.** The row above the composer is
+         ;; ALWAYS on the screen (the operator: *"permanently occupy the row"*), so its two states
+         ;; — `Responding …` and `Responded in …` — are mutually exclusive by construction rather
+         ;; than by a test at the drawing end.
+         (note-turn-finished nil)
          ;; the turn names the model answering it, unprompted — the one word about
          ;; the model a head is told after attach, so the header ranks it by seq
          (when (plusp (length (or (getf env :model) "")))
@@ -2113,6 +2153,9 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
                  (list :state "finished"
                        :finish-reason (getf env :finish-reason)
                        :usage (getf env :usage) :timings (getf env :timings))))
+         ;; **what the row above the composer reports from here on** — the full turn's wall time and
+         ;; the clock time it ended, neither of which is on the wire (see `*turn-last*`)
+         (note-turn-finished "finished")
          :dirty))
       ((:turn-interrupted)
        (let ((turn (session-turn session)))
@@ -2121,6 +2164,9 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
            (setf (getf turn :state)
                  (list :state "interrupted" :reason (getf env :reason)
                        :partial-kept (getf env :partial-kept))))
+         ;; a turn nobody answered did not *respond*, so the row reports nothing rather than
+         ;; borrowing the previous turn's sentence
+         (note-turn-finished "interrupted")
          :dirty))
       ((:turn-failed)
        (let ((turn (session-turn session)))
@@ -2129,6 +2175,7 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
            (setf (getf turn :state)
                  (list :state "failed" :error (getf env :error)
                        :partial-kept (getf env :partial-kept))))
+         (note-turn-finished "failed")
          :dirty))
       ((:transcript-appended)
        ;; THE ROWS THIS TURN HAS PUBLISHED, in order. The field was initialised
