@@ -2075,6 +2075,52 @@ of the difference."
              (is (string= "terse" (prefs-verbosity back)) "the rung round-trips")))
       (forget-prefs-file p))))
 
+(def-test a-prefs-plist-that-predates-a-key-still-takes-it (:suite leticl)
+  "**A bug I wrote, and the shape of it is worth keeping because it will be written again.**
+
+The operator's own `head.toml` came back with `verbosity = \"NIL\"` in it, and the next start of
+their head failed to load that line. The cause is not the rung; it is how a PLIST takes a NEW key:
+
+    (setf (getf p k) v)   mutates P in place only when K is ALREADY THERE
+
+With no K it conses a fresh list onto the accessor's LOCAL variable, so the caller's plist is
+untouched and the write vanishes silently. `diff`/`thinking`/`tools`/`raw_calls` never met this —
+every plist in the tree already carried them — and `:verbosity` is the first key added since there
+were files and running heads in the world. It broke on exactly the plists that predate it: a live
+head PUSHED ONTO rather than restarted still held the plist its build had loaded, so
+`prefs-verbosity` stayed NIL and the save wrote NIL into the operator's file.
+
+**So this asserts the whole path on a plist with no `:verbosity` in it**, which is the state that
+was never reachable in a test before: save, and the file must carry the LIVE rung. Both doors are
+covered — the save path (`%prefs-with-every-key` in `head-into-prefs`) and the adoption path (the
+same normaliser on `*prefs*`)."
+  (let ((p (temp-prefs-path "oldplist"))
+        (*write-prefs* t))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist p)
+           ;; **a plist as an OLD BUILD left it**: the four keys it knew, no `:verbosity`, and the
+           ;; path so a save goes back where it came from.
+           (let ((leticl::*prefs* (list :diff "split" :thinking "folded" :tools "folded"
+                                        :raw-calls nil :path p))
+                 (leticl::*verbosity* :reading))
+             (let ((h (%on-head :cols 100 :rows 30)))
+               (setf (head-pref h :show-tools) t)
+               (save-head-prefs h))
+             (is (string= "reading" (prefs-verbosity leticl::*prefs*))
+                 "**the head's own plist is whole after the save** — adopted through the normaliser,\n so the NEXT preference change can be set into it in place")
+             (let ((text (uiop:read-file-string p)))
+               (is (not (search "\"NIL\"" text))
+                   (format nil "**and nothing wrote NIL into the file**: ~s" text))
+               (is (search "verbosity = \"reading\"" text)
+                   "the rung that was in EFFECT is the rung that was written down")))
+           ;; and the saved file is one a fresh head loads without complaint
+           (let ((leticl::*verbosity* :normal))
+             (multiple-value-bind (fresh notes) (load-prefs p)
+               (is (string= "reading" (prefs-verbosity fresh)) "the file carries the rung")
+               (is (null notes) "**and the next start has nothing to complain about** — the note was\n the symptom the operator would have seen"))))
+      (forget-prefs-file p))))
+
 (def-test choosing-a-rung-writes-it-down-and-the-next-head-comes-back-on-it (:suite leticl)
   "**The persistence gap, driven the way a restart drives it.**
 

@@ -86,6 +86,31 @@ understood here.")
 (defun prefs-verbosity (p) (getf p :verbosity))
 (defun prefs-path (p)     (getf p :path))
 
+(defun %prefs-with-every-key (p)
+  "P with every key in `*prefs-defaults*` present, a missing one pushed on the FRONT.
+
+**Because `(setf (getf p k) v)` only mutates IN PLACE when K is already there.** On a plist with
+no K it conses a fresh list onto the LOCAL variable the accessor was handed, so the caller's
+plist is untouched and the write vanishes silently. The four older keys never met this because
+every plist in the tree already carried them — `:verbosity` is the first key added SINCE there
+were files and running heads in the world, and it broke on exactly the plists that predate it:
+
+  · **a live head pushed onto rather than restarted.** Its `*prefs*` was loaded by a build that
+did not know the key, so `head-into-prefs` consed and discarded, `prefs-verbosity` stayed NIL,
+    and `save-prefs` wrote `verbosity = \"NIL\"` into the OPERATOR'S OWN `head.toml`. Measured,
+    and that file then failed to load on the next start.
+
+**The fix is to make the key exist before anything sets it**, at the two doors a plist enters
+through (`load-prefs` already builds on `make-prefs`, so the third door is complete by
+construction). A normaliser rather than a cleverer setter: no accessor can add a pair to a plist
+the caller still holds, so the honest place to repair it is where the plist is adopted."
+  (let ((missing (loop for (k v) on *prefs-defaults* by #'cddr
+                       unless (loop for (k2 v2) on p by #'cddr thereis (eq k k2))
+                         collect (cons k v))))
+    (if missing
+        (append (loop for (k . v) in missing append (list k v)) p)
+        p)))
+
 (defun (setf prefs-diff) (v p)     (setf (getf p :diff) v))
 (defun (setf prefs-thinking) (v p) (setf (getf p :thinking) v))
 (defun (setf prefs-tools) (v p)    (setf (getf p :tools) v))
@@ -133,7 +158,9 @@ shares now, by `load-retired-into`, which `load-prefs-into` calls beside this."
   ;; (the load's own `unreadable` case), which is the one thing the file discipline forbids.
   (let ((rung (verbosity-for-word (prefs-verbosity p))))
     (when rung (set-verbosity rung)))
-  (setf *prefs* p)
+  ;; **ADOPTED THROUGH THE NORMALISER, so a later pref change can be SET on it.** A plist
+  ;; missing a key cannot take that key's `(setf (getf …))` — see `%prefs-with-every-key`.
+  (setf *prefs* (%prefs-with-every-key p))
   head)
 
 (defun load-retired-into (head)
@@ -156,8 +183,11 @@ saving over a list it never saw. Nothing is written here either way; this only r
                      "retired this run, and it will not be written over"))))
 
 (defun head-into-prefs (head)
-  "HEAD's live plist as a `prefs`, for saving."
-  (let ((p (or *prefs* (make-prefs))))
+  "HEAD's live plist as a `prefs`, for saving.
+
+  **Adopted through `%prefs-with-every-key` first**, so a plist that predates a key still takes
+  the setf below — without it the new key silently did not stick and the SAVE wrote `NIL`."
+  (let ((p (%prefs-with-every-key (or *prefs* (make-prefs)))))
     (setf (prefs-thinking p) (fold-name (getf (head-prefs head) :show-reasoning))
           (prefs-tools p) (fold-name (getf (head-prefs head) :show-tools))
           (prefs-raw-calls p) (and (getf (head-prefs head) :raw-calls) t)
@@ -200,9 +230,17 @@ site, for the reason the preference setter gives: *the fifth site is the one tha
 would forget*.")
 
 (defun save-head-prefs (head &optional path)
-  "Write HEAD's live choices, unless this image is a test. Returns the path, or NIL."
+  "Write HEAD's live choices, unless this image is a test. Returns the path, or NIL.
+
+**The normalised plist is ADOPTED back onto `*prefs*`**, so a head that started with an
+incomplete plist is whole from its first save on — and a later preference change can then be
+`(setf (getf …))`'d into it in place, which is the only way a plist takes a NEW key. See
+`%prefs-with-every-key`: without this, every save would normalise a fresh copy and the head
+would keep the incomplete one for ever."
   (when *write-prefs*
-    (save-prefs (head-into-prefs head) path)))
+    (let ((p (head-into-prefs head)))
+      (setf *prefs* p)
+      (save-prefs p path))))
 
 (defun persist-retired (head)
   "Write the session's retired set to the file every head shares. NIL when it wrote.
