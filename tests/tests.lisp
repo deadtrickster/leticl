@@ -13507,6 +13507,56 @@ three")
     (is (= (+ (funcall body-row) 2) (funcall caret-row))
         "the caret follows the line the cursor is on, off that base")))
 
+(def-test the-clock-counts-the-whole-turn-and-does-not-reset-per-round (:suite leticl)
+  "**The operator: *\"it should be still responding even while you do tools calls and such, and not
+reset, currently it resets.\"***
+
+He is describing the arithmetic, and the cause is structural. `TurnStarted` fires once per ROUND —
+the engine's `run_turn_steered` is called inside the daemon's round loop — so a head that took
+`internal-real-time-ms` when the event arrived restarted its clock at every round. A turn three
+rounds and two tool calls deep read `0.4s`, and a turn a minute old read `2.1s`.
+
+A turn is ONE PROMPT however many rounds it takes, so the emitter stamps the turn's real start on
+every round's `TurnStarted` (`:began-ms`, Unix ms) and the head counts from that. Both halves are
+asserted here: the conversion, and the fold that uses it."
+  (let ((leticl::*turn-started-ms* nil))
+    ;; **a stamp from the wire becomes a base on OUR clock** — the same one-conversion rule
+    ;; `wire-deadline->monotonic` keeps, because two clocks in one subtraction is a number wrong
+    ;; by their offset
+    (let ((four-s-ago (- (leticl::unix-now-ms) 4000)))
+      (let ((base (leticl::wire-stamp->started-ms four-s-ago)))
+        (is (numberp base) "a real stamp converts")
+        (is (<= 3900 (- (leticl::internal-real-time-ms) base) 4300)
+            "and lands ~4s back on our own clock")))
+    ;; **a stamp nobody took is NIL**, not zero: epoch 0 is not an instant any daemon means, and
+    ;; the row must be able to say *started before this head attached*
+    (is (null (leticl::wire-stamp->started-ms nil)) "no stamp, no base")
+    (is (null (leticl::wire-stamp->started-ms 0)) "and epoch 0 is not a start either"))
+  ;; **and the FOLD uses it**: a round arriving with a stamp from a minute ago must not reset to now
+  (let* ((h (%on-head :cols 100 :rows 30))
+         (began (- (leticl::unix-now-ms) 60000))
+         (leticl::*turn-started-ms* nil)
+         (leticl::*now-ms* 5000))
+    (leticl::%handle-frame
+     h (list :frame "event" :seq 1 :event "turn_started" :turn-id "t1" :model "m"
+             :ledger-head "" :began-ms began))
+    (is (numberp leticl::*turn-started-ms*) "the fold took the stamp")
+    (is (<= 59000 (- (leticl::internal-real-time-ms) leticl::*turn-started-ms*) 63000)
+        "**and it counts from the PROMPT, not from this round** — a minute, not zero")
+    ;; a SECOND round of the same turn: same stamp, so the clock does not move
+    (let ((first leticl::*turn-started-ms*))
+      (leticl::%handle-frame
+       h (list :frame "event" :seq 2 :event "turn_started" :turn-id "t1" :model "m"
+               :ledger-head "" :began-ms began))
+      (is (= first leticl::*turn-started-ms*)
+          "**a later round does not restart it** — this is the fix, in one assertion")
+      ;; and a turn the daemon could not stamp still measures something rather than nothing
+      (leticl::%handle-frame
+       h (list :frame "event" :seq 3 :event "turn_started" :turn-id "t2" :model "m"
+               :ledger-head ""))
+      (is (numberp leticl::*turn-started-ms*)
+          "an unstamped turn falls back to arrival, which is no worse than before"))))
+
 (def-test responding-is-the-present-tense-until-the-turn-is-really-done (:suite leticl)
   "**The operator: *\"our 'responded, responding' is off — while your turn not finished you are
 'Responding' regardless of the tool calls or thinking or ongoing replies.\"***

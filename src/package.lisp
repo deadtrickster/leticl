@@ -19,7 +19,7 @@
    #:truncate-to-width #:fit-to-width
    ;; progress — the numbers a turn produces, said in a way a person reads
    #:thousands #:duration #:spinner #:internal-real-time-ms
-   #:unix-now-ms #:wire-deadline->monotonic #:deadline-remaining-ms #:deadline-said
+   #:unix-now-ms #:wire-deadline->monotonic #:wire-stamp->started-ms #:deadline-remaining-ms #:deadline-said
    #:on-timeout-said #:+deadline-coarse-ms+ #:+on-timeout-said+ #:*unix-offset-ms*
    #:prefill-fraction #:prefill-cached-fraction #:prefill-computed
    #:prefill-rate #:prefill-eta-ms #:progress-bar #:prefill-line #:decode-line

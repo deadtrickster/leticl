@@ -2062,7 +2062,17 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
               ;; failure): the newer turn's state says nothing, so the older slot still answers
               ;; rather than the three fields blinking on every cancelled turn.
               (prev (getf old :state)))
-         (setf *turn-started-ms* (and (not (getf env :snapshot)) (internal-real-time-ms)))
+         ;; **FROM THE EMITTER'S STAMP, not from the event's arrival.** `:began-ms` is the
+         ;; whole turn's start (see `wire-stamp->started-ms`); taking our own clock here is what
+         ;; restarted the duration at every round, because this event fires once per round.
+         ;;
+         ;; A snapshot still measures nothing — its `:snapshot` flag says so — and a wire value
+         ;; nobody set falls back to our own arrival, which is the old behaviour and no worse for
+         ;; a turn whose start was not stamped.
+         (setf *turn-started-ms*
+               (and (not (getf env :snapshot))
+                    (or (wire-stamp->started-ms (getf env :began-ms))
+                        (internal-real-time-ms))))
          ;; **THE REPORT ABOUT THE PREVIOUS TURN GOES WITH IT.** The row above the composer is
          ;; ALWAYS on the screen (the operator: *"permanently occupy the row"*), so its two states
          ;; — `Responding …` and `Responded in …` — are mutually exclusive by construction rather

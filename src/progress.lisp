@@ -99,6 +99,26 @@ guard the secret card already had (`(plusp deadline)`), kept rather than moved."
   (when (and (numberp deadline) (plusp deadline))
     (+ (internal-real-time-ms) (- deadline (unix-now-ms)))))
 
+(defun wire-stamp->started-ms (began)
+  "BEGAN, as the daemon sent it (Unix ms), as a value `*turn-started-ms*` can hold — or NIL.
+
+**The whole turn's start, not the round's.** `TurnStarted` fires once per ROUND (the engine's
+`run_turn_steered` is called inside the daemon's round loop), so a head that simply took
+`internal-real-time-ms` at the event restarted its clock every round: the operator watched the
+composer read `2.1s` a minute into a turn and reported it — *\"it should be still responding even
+while you do tools calls and such, and not reset, currently it resets.\"*
+
+So the emitter stamps the turn's real start and this converts it once, at the fold, into the
+monotonic base the duration is subtracted from — the same one-conversion rule
+`wire-deadline->monotonic` keeps, and for the same reason: two clocks in one subtraction is a
+number that is wrong by their offset.
+
+**NIL for a value nobody measured**, which is §11.5's *wait forever* read the other way: a
+non-positive stamp is not an instant any daemon means, so the head keeps its own NIL and the row
+says *started before this head attached* rather than inventing a start."
+  (when (and (numberp began) (plusp began))
+    (+ (internal-real-time-ms) (- began (unix-now-ms)))))
+
 (defun deadline-remaining-ms (deadline)
   "Milliseconds left before DEADLINE, or NIL when there is none. NEGATIVE once past.
 
