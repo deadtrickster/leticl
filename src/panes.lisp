@@ -1060,6 +1060,30 @@ Headings roll up the rows beneath them and have nothing to unfold, so the cursor
 skips them: the reference's `stops` (app.rs:3268)."
   (loop for r in rows for i from 0 when (getf r :item) collect i))
 
+(defun %todo-item-lines (item author show-detail)
+  "ITEM as the pane's lines: the mark, the words, and whose they are — plus the description under
+them when SHOW-DETAIL and the item has one.
+
+**The author label is on the ROW and not in a heading**, because the two lists interleave in one
+list and a reader scanning it needs to know which is which per line, not per section. `  — you` /
+`  — model` is the whole of the distinction the operator asked for: *\"it should be marked as
+created by me, and created by model as created by model.\"*
+
+The description hangs under the title at six columns, which is two past the mark, so the item's
+words and its detail read as a block rather than as two entries."
+  (let ((st (cond ((string= (or (getf item :status) "") "in_progress") :doing)
+                  ((string= (or (getf item :status) "") "completed") :done)
+                  (t :open))))
+    (append
+     (list (list (cons "    " nil)
+                 (cons (%todo-mark-text st) (%todo-mark-style st))
+                 (cons (format nil " ~a" (getf item :content)) nil)
+                 (cons (format nil "  — ~a" author) '(:dim t))))
+     (let ((detail (getf item :detail)))
+       (when (and show-detail detail (plusp (length detail)))
+         (list (list (cons "      " nil)
+                     (cons detail '(:dim t)))))))))
+
 (defun todos-lines (head cols)
   "The todos pane, row for row the reference's `todos_lines` (app.rs:5859):
 
@@ -1097,23 +1121,37 @@ unfolded, because only the row under it can be."
          (todos (session-todos s))
          (rows (repo-todo-rows-cached (getf (session-wiring s) :workspace)))
          (sel (if rows (min (head-picker-sel head) (1- (length rows))) 0))
-         (out (list (list (cons "  this session — the model's plan, live:" '(:dim t)))
+         ;; **THE CURSOR'S FIRST POSITION IS THE ADD ROW, AND IT IS `-1`** (R44). The repo's rows
+         ;; are indexed from 0 and `repo-todo-stops` is a list of those indices, so a sentinel
+         ;; BELOW them cannot collide with anything and the repo's whole arithmetic is untouched.
+         (on-add (minusp (head-picker-sel head)))
+         (out (list (list (cons "  this session — the plan, and who wrote each line:" '(:dim t)))
                     nil
                     (list (cons "todos" '(:bold t))))))
-    (if todos
-        (dolist (t2 todos)
-          (let ((st (cond ((string= (getf t2 :status) "in_progress") :doing)
-                          ((string= (getf t2 :status) "completed") :done)
-                          (t :open))))
-            ;; a LINE is a list of SEGMENTS — `(list (cons …) (cons …))`, NOT
-            ;; `(list (list (cons …)))`, which is a line containing a line
-            (push (list (cons "    " nil)
-                        (cons (%todo-mark-text st) (%todo-mark-style st))
-                        (cons (format nil " ~a" (getf t2 :content)) nil))
-                  out)))
-        (push (list (cons "    none written yet. The model writes them with todo_write."
+    ;; **the add row**, first so that opening the pane lands on it: the thing an operator does
+    ;; here most often is add.
+    (push (list (cons (if on-add "  ▸ " "    ") (and on-add '(:reverse t)))
+                (cons "add todo item" (if on-add '(:reverse t :bold t) nil)))
+          out)
+    (let ((any nil))
+      ;; **ONE ROW PER ITEM, AND THE AUTHOR ON IT** (R44). `%todo-item-lines` is where the author
+      ;; label and the description's indent are spelled, so the model's rows and the operator's
+      ;; cannot drift apart in shape.
+      ;;
+      ;; **THE OPERATOR'S ITEMS COME FIRST**, and that is a reading order rather than a ranking:
+      ;; theirs are the asks they just made, the model's are the plan it is working through, and a
+      ;; turn's list is long enough that a new line at the bottom of it is a line they will not
+      ;; find. Oldest first within each, so the last thing they typed sits nearest the model's list.
+      (dolist (t2 *operator-todos*)
+        (dolist (line (%todo-item-lines t2 "you" t)) (push line out))
+        (setf any t))
+      (dolist (t2 todos)
+        (dolist (line (%todo-item-lines t2 "model" nil)) (push line out))
+        (setf any t))
+      (unless any
+        (push (list (cons "    none written yet. The model writes them with todo_write, and the row above adds one of yours."
                           '(:dim t)))
-              out))
+              out)))
     (push nil out)
     (push (list (cons "  the repo's TODO.md — the operator's queue, read-only here:" '(:dim t)))
           out)
@@ -2367,6 +2405,53 @@ knows a door's name, and a test asserts exactly that.
                               (and (null name) door))
                       (max 8 (- w 10))))
        (row "esc" (wrap-text "cancels, and asks for nothing" (max 8 (- w 10))))))))
+
+(defun todo-card-lines (head cols)
+  "The new-todo card: the two fields, which one is being typed, and the three keys.
+
+    adding a todo item
+
+      title    add a way to edit todos
+      detail   a modal with a title and a description
+
+      tab      moves between the fields
+      enter    adds it to the session's plan, as yours
+      esc      cancels, and adds nothing
+
+**The card is the modal and the composer is the field**, which is this head's one text widget —
+`op-call-card-lines` has the same shape for the same reason. The focused field is drawn from the
+DRAFT's copy and the other from the composer, so the row under the cursor is never a keystroke
+behind: `%todo-draft-focus` stores the one it is leaving.
+
+**The last line says who this is for**, because that is the limitation of the whole feature and the
+place the reader will look for it: an item added here is the head's, and the model does not see it.
+A screen that let them believe otherwise would be the same defect class as a disclosure that
+guesses."
+  (let* ((w (max 20 cols))
+         (field (%todo-draft-field))
+         (composer (composer-buffer (head-composer head)))
+         (title (if (eq field :title) composer (or (getf *todo-draft* :title) "")))
+         (detail (if (eq field :detail) composer (or (getf *todo-draft* :detail) "")))
+         (indent (make-string 11 :initial-element #\space)))
+    (flet ((fld (name key value)
+             (list (cons (format nil "  ~7a " key) '(:dim t))
+                   (cons (if (plusp (length value)) value "(empty)")
+                         (if (eq field name) '(:fg :bright-white) '(:dim t))))))
+      (append
+       (list (list (cons "adding a todo item" '(:bold t))))
+       (list nil)
+       (list (fld :title "title" title))
+       (list (fld :detail "detail" detail))
+       (list nil)
+       (list (list (cons (format nil "  ~7a" "tab") '(:dim t))
+                   (cons "moves between the fields" nil)))
+       (list (list (cons (format nil "  ~7a" "enter") '(:dim t))
+                   (cons "adds it to the session's plan, marked as yours" nil)))
+       (list (list (cons (format nil "  ~7a" "esc") '(:dim t))
+                   (cons "cancels, and adds nothing" nil)))
+       (list nil)
+       (list (list (cons "  the model does not see these — the wire has no frame that writes a todo"
+                         '(:dim t))))))))
 
 (defun %size-said (n)
   "N BYTES as a person reads it, with the unit named. Nothing for zero, which is not a

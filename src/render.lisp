@@ -1256,6 +1256,11 @@ scrolls the transcript by a row every keystroke.
           ;; something that owns the keyboard would be a picture of a key that does not work.
           ((op-call-draft-open-p)
            (setf card-lines (op-call-card-lines head cols)))
+          ;; **the new-todo card**, beside it and for the same reason: both are modal dialogs whose
+          ;; field is the composer, and a card drawn above a field that is not its own is a picture
+          ;; of a key that does not work.
+          ((todo-draft-open-p)
+           (setf card-lines (todo-card-lines head cols)))
           (*pick-open*
            (setf card-lines (pick-card-lines head cols))))
     ;; a card with no ladder is all content, and the mode-confirm question rides

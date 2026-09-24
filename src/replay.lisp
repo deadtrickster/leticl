@@ -152,6 +152,14 @@ see this file's header."
          ;; and the composer the chord opens — a render READS it, so a draft left open
          ;; by one test would otherwise put its card into the next replay's golden
          (*op-call-draft* nil)
+         ;; **R44's two, and the second one taught this the hard way.** A `*todo-draft*` left
+         ;; open is not only a card in the next replay: it TAKES Esc and Tab on the key ladder, so
+         ;; a leaked draft made every later pane test's Esc go to a card nobody could see. Measured
+         ;; — eight tests failed on `esc closes the listing` and none of them mentions a todo. And
+         ;; the operator's own items are drawn in the pane, so a replay that inherited them would
+         ;; draw this session's lines on a screen recorded before they existed.
+         (*todo-draft* nil)
+         (*operator-todos* nil)
          ;; R11's read: a `diagnostic` frame is answered into this, and a replay must not
          ;; inherit another replay's read
          (*diag* nil)

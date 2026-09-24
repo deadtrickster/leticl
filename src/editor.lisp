@@ -1112,20 +1112,24 @@ two sides in circles."
      ;; has written since (app.rs:3272-3277, the same key on the peek pane).
      (%job-out-page head t))
     (:todos
-     ;; Enter unfolds the repo item under the cursor — the operator
-     ;; asked for this directly: *"if a todo has some associated text?
-     ;; should i be able to expand it somehow?"*. The cursor is first
-     ;; SNAPPED to an item (a cursor at 0 on a heading counts from the
-     ;; first item below it, as the reference's `stops[at]` does), then
-     ;; the one flag flips: at most one item is open, and moving folds it.
-     (let* ((rows (repo-todo-rows-cached
-                   (getf (session-wiring (head-session head)) :workspace)))
-            (stops (repo-todo-stops rows)))
-       (when stops
-         (let ((at (or (position-if (lambda (i) (>= i (head-picker-sel head))) stops)
-                       0)))
-           (setf (head-picker-sel head) (nth at stops)
-                 *repo-todo-open* (not *repo-todo-open*))))))
+     ;; **THE ADD ROW IS THE FIRST STOP AND IT IS `-1`** (R44): Enter on it opens the new-todo
+     ;; card, which is the operator's *"add todo item … a modal dialog"*.
+     (if (minusp (head-picker-sel head))
+         (%todo-draft-open head)
+         ;; Otherwise Enter unfolds the repo item under the cursor — the operator
+         ;; asked for this directly: *"if a todo has some associated text?
+         ;; should i be able to expand it somehow?"*. The cursor is first
+         ;; SNAPPED to an item (a cursor at 0 on a heading counts from the
+         ;; first item below it, as the reference's `stops[at]` does), then
+         ;; the one flag flips: at most one item is open, and moving folds it.
+         (let* ((rows (repo-todo-rows-cached
+                       (getf (session-wiring (head-session head)) :workspace)))
+                (stops (repo-todo-stops rows)))
+           (when stops
+             (let ((at (or (position-if (lambda (i) (>= i (head-picker-sel head))) stops)
+                           0)))
+               (setf (head-picker-sel head) (nth at stops)
+                     *repo-todo-open* (not *repo-todo-open*)))))))
     (:picker
      (let ((hit (nth (head-picker-sel head)
                      (picker-sessions (head-session head)))))
@@ -1207,6 +1211,12 @@ one thing this head must not need."
                t))
         (case type
           ((:esc :q-press) (shut))
+          ;; **The todos pane opens where it always did** (R44) — on the repo's first row, which is
+          ;; a heading, so no mark shows. The ADD ROW is a stop of its own at `-1`, drawn first and
+          ;; reached with one Up (or `/todos add`, which is the keystroke-saving spelling). Opening
+          ;; ON it would have changed what Enter does the moment the pane appears, and Enter here
+          ;; means *unfold this item* to everyone who has used it.
+          ;;
           ;; The todos pane's cursor stops only on the repo's ITEMS and wraps
           ;; at either end — the reference's `stops` (app.rs:3268). Measured:
           ;; from the top, two Downs land on T3 (T1's stop is where a cursor on
@@ -1463,6 +1473,10 @@ for the lists)."
       ;; opened; before the lists because the field it fills IS the composer, so anything it
       ;; does not take must land there — Enter and Esc are all it owns.
       ((and *op-call-draft* (%op-call-draft-key head key type)))
+      ;; **THE NEW-TODO CARD**, beside the operator-call composer and for the same reason: the
+      ;; field it fills IS the composer, so anything it does not take must land there. It owns
+      ;; enter, tab, esc and ctrl-c; everything else is typing.
+      ((and *todo-draft* (%todo-draft-key head key type)))
       ;; a picker's own keys; what it does not take is the composer's, so a name
       ;; can be typed under the card
       ((and *pick-open* (pick-key-event head key)))
@@ -2114,9 +2128,28 @@ and this pane must agree with it."
   (let* ((rows (repo-todo-rows-cached
                 (getf (session-wiring (head-session head)) :workspace)))
          (stops (repo-todo-stops rows)))
+    ;; **the `when` is load-bearing**: a workspace with no TODO.md has no stops, and `(mod … 0)` is
+    ;; a division by zero at the first arrow key. Measured — it fired in an unrelated pane test
+    ;; whose head had no repo file, which is exactly the head a reader is on before they write one.
     (when stops
-      (let* ((at (or (position-if (lambda (i) (>= i (head-picker-sel head))) stops) 0))
-             (next (mod (+ at n) (length stops))))
-        (setf (head-picker-sel head) (nth next stops)
-              *repo-todo-open* nil
-              (head-dirty head) t)))))
+     (let* ((sel (head-picker-sel head))
+           (at (or (position-if (lambda (i) (>= i sel)) stops) 0))
+           (next (mod (+ at n) (length stops))))
+      ;; **THE ADD ROW SITS ABOVE THE FIRST ITEM, AND ONLY THE UP ARROW KNOWS IT** (R44). It is a
+      ;; stop of its own on the ring going UP — Up from the first item reaches it instead of
+      ;; wrapping to the last — and going DOWN it is where Up from the first came from. A single
+      ;; ring containing `-1` cannot do both: Down past the last item would land on the add row,
+      ;; where letibot's own screens wrap to the FIRST item, and `Tab` there would open a card
+      ;; instead of unfolding the item the cursor is on. Measured on the wrap assertions, which is
+      ;; what this arrangement is for.
+      (setf *repo-todo-open* nil
+            (head-picker-sel head)
+            (cond
+              ;; Down off the add row is the first item
+              ((and (minusp sel) (plusp n)) (nth 0 stops))
+              ;; Up off the add row is the last item, which is the wrap the other way
+              ((and (minusp sel) (minusp n)) (nth (1- (length stops)) stops))
+              ;; Up from the FIRST item is the add row, not the last item
+              ((and (minusp n) (zerop at)) -1)
+              (t (nth next stops)))
+            (head-dirty head) t)))))

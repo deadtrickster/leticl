@@ -66,7 +66,7 @@
     ("model" . "which model answers — the same as /models")
     ("jobs" . "the background-jobs pane")
     ("subagents" . "the subagent tree")
-    ("todos" . "the model's plan, and the repo's TODO.md — ask, then open it")
+    ("todos" . "the plan and the repo's TODO.md — or /todos add for one of your own")
     ("peek" . "SESSION-ID — read a subagent's output without leaving this session")
     ;; the session's own machinery
     ("cells" . "MESSAGE — send it with a copy of this screen")
@@ -308,12 +308,19 @@ on ClientFrame::Slash)."
        (%toggle-pane head :jobs (lambda () (%send head (make-list-jobs)))))
       ((string= verb "subagents") (%open-pane head :subagents))
       ((string= verb "todos")
-       ;; Ask for the list AND open the pane. The session's plan is carried by
-       ;; `todos_updated` events, so a head that attached after the model wrote
-       ;; them has none — the bootstrap read is what makes the pane honest about
-       ;; a plan written before this head existed.
-       (%send head (make-list-todos))
-       (%open-pane head :todos))
+       ;; **`/todos add` opens the card without opening the pane** (R44): the verb is the
+       ;; keystroke-saving spelling of the pane's own first row, and `add` is a word this verb
+       ;; takes because it is the thing an operator reaches for. Anything else after `/todos` is
+       ;; still ignored, as it always was.
+       (if (string= (string-trim " " (or rest "")) "add")
+           (%todo-draft-open head)
+           (progn
+             ;; Ask for the list AND open the pane. The session's plan is carried by
+             ;; `todos_updated` events, so a head that attached after the model wrote
+             ;; them has none — the bootstrap read is what makes the pane honest about
+             ;; a plan written before this head existed.
+             (%send head (make-list-todos))
+             (%open-pane head :todos))))
       ((string= verb "peek")
        ;; One subagent's output without leaving this session: the daemon answers
        ;; with `Peeked`, and `%handle-frame` opens the pane from that. The screen
@@ -629,6 +636,136 @@ T only for a key it took, or the field would stop taking letters."
     ;; **`ctrl-d` is NOT the composer's here.** On an empty field it would leave the head
     ;; with an argument half typed; on a filled one it does nothing already, because the
     ;; quit is guarded on an empty composer. Falling through keeps both.
+    (t nil)))
+
+;;; ----------------------- the operator's own todo items (R44) ----------------------- ;;;
+;;;
+;;; **The operator, on the shape they want:** *"I want to be able to edit todo list alongside you.
+;;; it should be marked as created by me, and created by model as created by model. so /todos gains
+;;; 'add todo item' and this gets me to a modal dialog - Title and descript and ok and cancel."*
+;;;
+;;; **What this can and cannot be, said here because it is a boundary and not an oversight.**
+;;; The wire has no frame that writes a todo: `ClientFrame::ListTodos` is the only one and the
+;;; protocol calls it what it is — *"read-only … a list is a question, not an act"* — while the
+;;; model's list is written by its own `todo_write` tool and arrives as `TodosUpdated`. The
+;;; operator-call door would be the way round that (`*op-call-draft*`), and the daemon's published
+;;; door on this box does not include `todo_write` — measured against the live row rather than
+;;; assumed, and NOT written out here: `the-door-is-the-daemons-list-and-not-a-copy-in-this-head`
+;;; forbids this tree from naming a door tool anywhere, and it is right to — a copy in the head is
+;;; the drift the row exists to stop.
+;;;
+;;; So the operator's items are **the head's own**, drawn in the same list and marked by author.
+;;; Two honest consequences, both of which the screen and the docs say rather than hide:
+;;;
+;;;   · **the MODEL does not see them.** They steer the reader, not the turn. Making them steer
+;;;     the model needs a frame letibot does not have, and that is an ask to file (like R40/R41),
+;;;     not something to fake by writing them into the model's own list under its name;
+;;;   · **they are this head's memory of this session**, not a file. A restart forgets them. A
+;;;     todo that owned real work would need to be persisted somewhere the daemon reads.
+
+(defvar *operator-todos* nil
+  "The todos the OPERATOR added: plists `(:content TITLE :detail TEXT :status STRING)`.
+
+Oldest first, which is the order they were written and the order the pane draws them in. A
+`defvar` for the reason every other piece of live state here is — a struct layout change is a
+restart — and reset by `with-replay-globals`, because a replay that inherited one would draw this
+session's items on a screen recorded before they existed.")
+
+(defun operator-todo-add (title &optional detail)
+  "Add the operator's item. T when it was added, NIL when TITLE was blank.
+
+**A blank title is refused rather than stored**, and it is refused HERE rather than at the card:
+an item with no words is a row that says nothing, and the one place that can decide what *nothing*
+is, is the place that owns the list."
+  (let ((title (string-trim " " (or title ""))))
+    (when (plusp (length title))
+      (setf *operator-todos*
+            (append *operator-todos*
+                    (list (list :content title
+                                :detail (string-trim " " (or detail ""))
+                                :status "open"))))
+      t)))
+
+(defvar *todo-draft* nil
+  "The new-todo card: `(:title TEXT :detail TEXT :field :title)`, or NIL when it is closed.
+
+**Two fields and one composer**, which is this head's arrangement rather than a second text widget:
+the field being typed is the one in the composer below the card, and `tab` moves it. The modal the
+operator asked for — *\"a modal dialog - Title and descript and ok and cancel\"* — is the card, the
+two fields, and three keys.")
+
+(defun todo-draft-open-p () (and *todo-draft* t))
+
+(defun %todo-draft-field () (getf *todo-draft* :field))
+
+(defun %todo-draft-store (head)
+  "The composer's text into the field being typed. The ONE writer of the draft's two fields."
+  (setf (getf *todo-draft* (%todo-draft-field)) (composer-buffer (head-composer head)))
+  head)
+
+(defun %todo-draft-focus (head field)
+  "Put FIELD's text in the composer and make it the field being typed."
+  (%todo-draft-store head)
+  (setf (getf *todo-draft* :field) field
+        (composer-buffer (head-composer head)) (or (getf *todo-draft* field) "")
+        (composer-cursor (head-composer head)) (length (composer-buffer (head-composer head)))
+        (head-dirty head) t))
+
+(defun %todo-draft-open (head)
+  "Open the new-todo card — the `add todo item` row on `/todos`.
+
+**A picker is closed and the composer is the draft's now**, for the reasons
+`%op-call-draft-open` gives: one field has one owner, and a half-typed prompt left under a card
+whose Enter adds an item is the shape that costs somebody a message."
+  (setf *todo-draft* (list :title "" :detail "" :field :title)
+        *pick-open* nil
+        (composer-buffer (head-composer head)) ""
+        (composer-cursor (head-composer head)) 0
+        (head-dirty head) t)
+  (say head "adding a todo item — title, then tab for the description; enter adds it to the session's plan as yours, esc cancels")
+  t)
+
+(defun %todo-draft-close (head)
+  "Take the card and its field down. The ONE place the card's state is cleared."
+  (setf *todo-draft* nil
+        (composer-buffer (head-composer head)) ""
+        (composer-cursor (head-composer head)) 0
+        (head-dirty head) t))
+
+(defun %todo-draft-cancel (head)
+  "Esc (or ctrl-c): nothing was added."
+  (%todo-draft-close head)
+  (say head "nothing added")
+  t)
+
+(defun %todo-draft-submit (head)
+  "Enter: add the item, or say why not.
+
+**A title is required and the card stays up without one**, which is the only field rule: the
+description is optional and the title is the item. Saying so beats storing a row of nothing."
+  (%todo-draft-store head)
+  (let ((title (getf *todo-draft* :title)))
+    (if (operator-todo-add title (getf *todo-draft* :detail))
+        (progn
+          (%todo-draft-close head)
+          (say head (format nil "added `~a` to the plan — it is yours, and the model does not see it"
+                            (string-trim " " title)))
+          t)
+        (progn
+          (say head "a todo item needs a title — type one, or esc to cancel")
+          t))))
+
+(defun %todo-draft-key (head key type)
+  "The keys the new-todo card owns: enter adds, tab moves the field, esc and `ctrl-c` cancel.
+
+**Everything else is the composer's**, so the title and the description are typed, edited, pasted
+and undone with the keys the operator already has — the same split `%op-call-draft-key` keeps. T
+only for a key it took, or the field would stop taking letters."
+  (case type
+    (:enter (%todo-draft-submit head))
+    (:tab (%todo-draft-focus head (if (eq (%todo-draft-field) :title) :detail :title)))
+    (:esc (%todo-draft-cancel head))
+    (:ctrl (and (eql (getf key :ch) #\c) (%todo-draft-cancel head)))
     (t nil)))
 
 (defun %json-text-p (text)

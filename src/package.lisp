@@ -221,6 +221,9 @@
    ;; the operator-call door (R24 part two), the head's half
    #:*head-tool-runners* #:*op-calls* #:+op-call-wait-ms+ #:tick-op-calls #:%op-call-ask
    #:*op-call-draft* #:op-call-draft-open-p #:op-call-card-lines #:%op-call-draft-key
+   ;; R44: the operator's own todo items — the list, the add verb, and the modal card
+   #:*operator-todos* #:operator-todo-add #:*todo-draft* #:todo-draft-open-p #:todo-card-lines
+   #:%todo-draft-open #:%todo-draft-key #:%todo-draft-field
    ;; R11's locator
    #:*diag* #:diagnostic-listing-lines #:open-diagnostic-listing #:%diagnostic-ask
    ;; hack

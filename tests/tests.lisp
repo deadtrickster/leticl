@@ -5150,6 +5150,12 @@ and Enter did nothing to the file's items."
          (path (make-pathname :name "TODO" :type "md"
                               :directory (pathname-directory dir-pathname)))
          (*repo-todo-open* nil)
+         ;; **BOUND, AND IT IS NOT DECORATION** (R44): this test walks the cursor onto the ADD
+         ;; ROW and presses Enter, which opens the new-todo card — and the card's global TAKES Esc
+         ;; and Tab on the key ladder, so one leaked draft made every later pane test's Esc go to
+         ;; a card nobody could see. Measured: eight failures in tests that do not mention a todo.
+         ;; A test that opens a card binds it, like every other global these tests touch.
+         (*todo-draft* nil) (*operator-todos* nil)
          (*pane-scroll* 0) (*pane-room* 40) (*pane-lines* 0)
          (h (%make-head)))
     (unwind-protect
@@ -5196,13 +5202,133 @@ and Enter did nothing to the file's items."
              (key :tab)
              (is (some (lambda (l) (string= "              pinned abc" l)) (text))
                  "Tab unfolds too, as the operator asked")
+             ;; **R44 changes this one step, and the reason is a row letibot does not have.** The
+             ;; cursor is on the FIRST item here (it wrapped there from below), and Up from it is
+             ;; the ADD ROW now — it is drawn above the items, so that is where Up from the top
+             ;; goes. One more Up wraps to the last item, so the ring is still circular and nothing
+             ;; is unreachable; letibot's screens have no add row to reach, which is why its Up from
+             ;; the first went straight to the last.
+             (key :up)
+             (is (some (lambda (l) (string= "  ▸ add todo item" l)) (text))
+                 "Up from the first item reaches the ADD ROW")
+             ;; **and Enter on it is the modal the operator asked for** — the cursor is left back on
+             ;; the item below, so the rest of this test keeps walking the repo's rows.
+             (key :enter)
+             (is (leticl::todo-draft-open-p) "Enter on the add row opens the new-todo card")
+             (is (eq :title (leticl::%todo-draft-field)) "on the title field, with nothing in it")
+             (key :esc)
+             (is (not (leticl::todo-draft-open-p)) "and Esc closes it again, adding nothing")
+             (is (null leticl::*operator-todos*) "with no item stored")
+             (setf (head-picker-sel h) -1)
              (key :up)
              (is (some (lambda (l) (string= "      ▸ [ ] T4 fourth" l)) (text))
-                 "Up from the first wraps to the last")
+                 "and Up from the add row wraps to the last item")
+             ;; **R44: the ADD ROW is a stop of its own, above every repo index.** It is reachable
+             ;; with Up from the first item and with Down past the last, and it is drawn reversed
+             ;; like any other row the cursor is on — the cursor's ring is `(-1 0 3 6 9…)`, so the
+             ;; repo's own stop arithmetic is untouched by it.
+             (is (some (lambda (l) (search "add todo item" l)) (text))
+                 "the add row is in the list, above the repo's items")
              (multiple-value-bind (lines sel-line) (todos-lines h 210)
                (is (search "▸ [ ] T4" (nth sel-line (lines-text lines)))
                    "and the cursor's LINE names the row it is on"))))
       (ignore-errors (delete-file path)))))
+
+(def-test the-operator-can-add-a-todo-and-it-is-marked-as-theirs (:suite leticl)
+  "**R44, in the operator's own words:** *\"I want to be able to edit todo list alongside you. it
+should be marked as created by me, and created by model as created by model. so /todos gains 'add
+todo item' and this gets me to a modal dialog - Title and descript and ok and cancel.\"*
+
+Four claims, and the second is the one that makes the feature honest rather than clever:
+
+  · **the modal is two fields and three keys** — title, description, and enter / tab / esc;
+  · **an added item is drawn in the same list, marked `— you`**, while the model's rows say
+    `— model`: one list, and the author on every line, because the two interleave;
+  · **the model's items and the operator's cannot be confused** — asserted together, so neither
+    can drift into the other's shape;
+  · **and the wire is not faked.** There is no frame that writes a todo — `ListTodos` is the only
+    one and the protocol calls it *a question, not an act* — so the operator's items are the
+    HEAD's, they do not reach the model, and the card says so on the screen. The alternative was
+    writing them into the model's own list under the model's name, which is the lie this asserts
+    against."
+  (let ((leticl::*todo-draft* nil) (leticl::*operator-todos* nil)
+        (leticl::*repo-todo-open* nil) (leticl::*pane-scroll* 0)
+        (leticl::*pane-room* 40) (leticl::*pane-lines* 0)
+        (h (%on-head :cols 90 :rows 30)))
+    ;; --- the verb opens the card, without opening the pane
+    (leticl::%handle-frame h (list :frame "event" :seq 1 :event "transcript_appended"
+                                   :item-id "u1" :kind "user" :ledger-head "" :ts 1))
+    (setf (head-mode h) :normal)
+    (leticl::%command h "todos add")
+    (is (leticl::todo-draft-open-p) "`/todos add` opens the card")
+    (is (eq :normal (head-mode h)) "**and does not open the pane** — the verb is the fast path")
+    (is (eq :title (leticl::%todo-draft-field)) "the cursor starts on the title")
+    ;; --- the card draws both fields and the three keys
+    (let ((text (lines-text (leticl::todo-card-lines h 90))))
+      (is (search "adding a todo item" (first text)) "the card is titled")
+      (is (some (lambda (l) (search "title" l)) text) "the title field is drawn")
+      (is (some (lambda (l) (search "detail" l)) text) "and the description")
+      (is (some (lambda (l) (search "(empty)" l)) text) "an empty field says so rather than nothing")
+      (is (some (lambda (l) (search "enter" l)) text) "enter is named")
+      (is (some (lambda (l) (search "tab" l)) text) "tab is named")
+      (is (some (lambda (l) (search "esc" l)) text) "esc is named")
+      (is (some (lambda (l) (search "the model does not see these" l)) text)
+          "**and the card says the model does not see them** — the limitation, where the reader looks"))
+    ;; --- typing goes into the focused field; tab moves it
+    (flet ((type (text) (setf (composer-buffer (head-composer h)) text
+                              (composer-cursor (head-composer h)) (length text)))
+           (key (k) (leticl::%handle-key h (list :type k))))
+      (type "check the logs")
+      (key :tab)
+      (is (eq :detail (leticl::%todo-draft-field)) "tab moves to the description")
+      (is (string= "check the logs" (getf leticl::*todo-draft* :title))
+          "**and the title was STORED on the way** — the field you leave keeps what you typed")
+      (is (string= "" (composer-buffer (head-composer h))) "the new field starts empty")
+      (type "the daemon log, not the head's")
+      (key :tab)
+      (is (eq :title (leticl::%todo-draft-field)) "tab moves back")
+      (is (string= "check the logs" (composer-buffer (head-composer h)))
+          "and the title comes back into the field with what it had")
+      (is (string= "the daemon log, not the head's" (getf leticl::*todo-draft* :detail))
+          "while the description kept its own")
+      ;; --- enter adds it, closes the card, and the composer is free
+      (key :enter)
+      (is (not (leticl::todo-draft-open-p)) "enter closes the card")
+      (is (string= "" (composer-buffer (head-composer h))) "and hands the composer back empty")
+      (is (= 1 (length leticl::*operator-todos*)) "one item, stored")
+      (let ((it (first leticl::*operator-todos*)))
+        (is (string= "check the logs" (getf it :content)) "with the title it was given")
+        (is (string= "the daemon log, not the head's" (getf it :detail)) "and the description")
+        (is (string= "open" (getf it :status)) "**open** — the model's statuses are the model's"))
+      ;; --- esc cancels and stores nothing
+      (leticl::%command h "todos add")
+      (type "never mind")
+      (key :esc)
+      (is (not (leticl::todo-draft-open-p)) "esc closes the card")
+      (is (= 1 (length leticl::*operator-todos*)) "**and adds nothing**")
+      ;; --- a blank title is refused, and the card STAYS UP to say so
+      (leticl::%command h "todos add")
+      (key :enter)
+      (is (leticl::todo-draft-open-p) "enter with no title leaves the card up")
+      (is (search "needs a title" (head-status-note h)) "and says why")
+      (is (= 1 (length leticl::*operator-todos*)) "nothing was stored")
+      (key :esc))
+    ;; --- **and the pane draws it in the same list, marked as theirs**
+    (setf (session-todos (head-session h))
+          (list (list :content "the model's own item" :status "in_progress")))
+    (setf (head-mode h) :todos
+          (session-wiring (head-session h)) (list :workspace "/nonexistent-for-this-test"))
+    (let ((text (lines-text (leticl::todos-lines h 90))))
+      (is (some (lambda (l) (search "check the logs" l)) text) "the operator's item is in the list")
+      (is (some (lambda (l) (search "the model's own item" l)) text) "beside the model's")
+      (is (some (lambda (l) (string= "    [ ] check the logs  — you" l)) text)
+          (format nil "**marked as YOURS**: ~s" (remove-if-not (lambda (l) (search "check the logs" l)) text)))
+      (is (some (lambda (l) (search "the model's own item  — model" l)) text)
+          "and the model's as the model's — one row each, and the author on both")
+      (is (some (lambda (l) (string= "      the daemon log, not the head's" l)) text)
+          "**the description hangs under its title**, indented under the mark")
+      (is (some (lambda (l) (string= "    add todo item" l)) text)
+          "and the add row is in the pane, unmarked while the cursor is elsewhere"))))
 
 (def-test the-help-is-the-references-row-for-row (:suite leticl)
   "letibot's help against ours, stripped: 41 non-blank rows against 50. Theirs is
