@@ -1195,10 +1195,11 @@ scrolls the transcript by a row every keystroke.
          (gutter (frame-gutter term-cols))
          (cols (max 20 (- term-cols (* 2 gutter))))
          (rows (max 1 (head-rows head)))
-         ;; the chrome's candidates, each nil or one line
+         ;; the chrome's candidates, each nil or one line — and the ghost, which is the one
+         ;; candidate that is not a chrome row at all: it is the composer's (`:ghost` below)
          (stall (stall-row head cols))
          (notice (notice-line head cols))
-         (completions (completions-line head cols))
+         (completions (%completions-text head))
          (card-lines nil)
          ;; **R20: the ladder is a SECOND list, and it is the pinned one.** NIL for
          ;; every card that does not have one, which is all of them but the decision.
@@ -1241,14 +1242,36 @@ scrolls the transcript by a row every keystroke.
         ;; counted the content, so a card whose content exactly filled the room came out
         ;; with a one-row viewport and a seam, on a screen with thirty rows to spare.
         ;; The total is what has to fit, and the ladder is what the floor is made of.
+        ;;
+        ;; **THE COMPLETIONS ARE NO LONGER A ROW THE LADDER CAN SPEND** — they are the box's own
+        ;; last row now, paid for by the hint bar's row (below), so there is nothing here to give
+        ;; up. Telling the ladder about a row that is not drawn made it one row conservative and
+        ;; cost the transcript a line; that is the same jump in a quieter coat.
         (%fit-ladder head cols rows (+ (length card-lines) (length card-ladder))
                      (length card-ladder)
-                     (and stall t) (and notice t) (and completions t))
-      (let* ((composer (composer-line head cols :boxed boxed :max-rows body-rows))
+                     (and stall t) (and notice t) nil)
+      (declare (ignore comp-p))
+      (let* (;; **THE GHOST TAKES THE HINT BAR'S ROW.** Both are one line of live advice about what
+             ;; you can do next, and the completions are the better answer to that question —
+             ;; the hint bar's own `tab completes /commands` is exactly what the ghost is showing.
+             ;; So they are ONE row in the frame, whichever one it is, and the frame's height does
+             ;; not change when a `/` goes in.
+             ;;
+             ;; **That is the whole fix for the operator's jump** — *"this grey help ghost appears
+             ;; above the area and the conversation is jumping again"*. The viewport is
+             ;; bottom-anchored, so any row the chrome gains pushes the conversation up one line
+             ;; and drops its oldest line; taking the ghost's row from the hint bar rather than
+             ;; from the transcript is what stops it. And when the frame is too short for the hint
+             ;; bar at all, the ghost goes WITH it: the ladder's rule is that the completions are
+             ;; the first thing given up, and a typing aid may not cost a row the frame has not
+             ;; got.
+             (ghost (and hint-p completions))
+             (hint-shown (and hint-p (not ghost)))
+             (composer (composer-line head cols :boxed boxed :max-rows body-rows :ghost ghost))
              (composer-rows (length composer))
              ;; the hint bar owns the LAST row when it survived the ladder; when
              ;; it did not, the composer does
-             (hint-row (if hint-p (1- rows) rows))
+             (hint-row (if hint-shown (1- rows) rows))
              ;; the alarm falls back to a row of its own only when there is no
              ;; box to carry the triangle on its bottom edge — and it goes
              ;; BETWEEN the composer and the hint, which is where the reference
@@ -1257,10 +1280,13 @@ scrolls the transcript by a row every keystroke.
              (alarm-row (and alarm (1- hint-row)))
              (cursor (- (or alarm-row hint-row) composer-rows))
              ;; the chrome above the box, in the reference's order: the card, the
-             ;; stall sentence, the head's note, the completions
-             (chrome-top (- cursor
-                            (if comp-p 1 0) (if notice-p 1 0) (if stall-p 1 0)
-                            card-rows))
+             ;; stall sentence, the head's note — and NO completions row, because
+             ;; there is no such row any more. **THE GHOST IS IN THE BOX, AND THIS
+             ;; IS THE SECOND HALF OF WHY THE CONVERSATION STOPS JUMPING**: the
+             ;; composer is one row taller, so it starts one row higher
+             ;; (`cursor`, above), and the hint bar's row has already been given to
+             ;; that same composer.
+             (chrome-top (- cursor (if notice-p 1 0) (if stall-p 1 0) card-rows))
              ;; **the header is not drawn on a screen too short for it.** The
              ;; reference gates it on `h >= 6 && !session_id.is_empty()`
              ;; (app.rs:5231); ours drew it at row 0 unconditionally, so a
@@ -1362,10 +1388,12 @@ scrolls the transcript by a row every keystroke.
             (dolist (line card-ladder) (row line))
             (when stall-p (row (first stall)))
             (when notice-p (row (first notice)))
-            (when comp-p (row (first completions)))
+            ;; **NO completions row here** — it is inside the box, drawn with the composer.
+            ;; See `composer-ghost-row` for the screen that moved it.
             (dolist (line composer) (row line))))
         (when alarm-row (put-segments s alarm-row gutter alarm))
-        (when hint-p (put-segments s hint-row gutter (hint-bar head cols)))
+        ;; **and the hint bar, when the ghost is not standing in its row** — see `ghost` above.
+        (when hint-shown (put-segments s hint-row gutter (hint-bar head cols)))
         ;; **and where the terminal's own caret goes.** The painter emits the move
         ;; and `ESC[?25h` after the frame; without it the head hid the cursor at
         ;; startup and never showed it again, so the composer had no caret at all.

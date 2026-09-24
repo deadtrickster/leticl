@@ -503,20 +503,13 @@ thing that is taking longer than it should, not a failure."
     (when text
       (list (list (cons (truncate-to-width text cols) '(:fg :yellow)))))))
 
-(defun completions-line (head cols)
-  "The live `/command` matches, one dim row above the composer — the reference's
-`completions_line` (app.rs:4342-4358).
+(defun %completions-text (head)
+  "The live `/command` matches as ONE STRING, or NIL — the completion row's content.
 
-Tab has completed since the beginning (`src/editor.lisp:118`) and **nothing was
-ever drawn**: `grep -rn completion src/*.lisp` found `%complete` and no renderer,
-so the only way to learn what a prefix matched was to press Tab and watch the
-buffer change under you. A bare `/` lists every verb; a prefix nothing matches
-draws NOTHING rather than an empty row, because a row that appears and
-disappears is noise, and Tab still says what went wrong when it is asked.
-
-A list of 0 or 1 lines, like `notice-line` and `stall-row`, because the fit
-ladder counts rows and this is **the first row it gives up** (app.rs:5111): it
-is a typing aid, not a message."
+Split from `completions-line` so the two callers that want it differently can have it: the frame
+draws it INSIDE the composer's box (`composer-ghost-row`), and `completions-line` is the standalone
+row the tests and a non-boxed frame read. The text itself is spelled once, which is the rule the
+counts' spelling follows for the same reason: two spellings of one thing come to disagree."
   (let ((text (composer-buffer (head-composer head))))
     (when (and (plusp (length text))
                (char= (char text 0) #\/)
@@ -529,9 +522,52 @@ is a typing aid, not a message."
                           when (alexandria:starts-with-subseq needle name)
                             collect (format nil "/~a ~a" name hint))))
         (when parts
-          (list (list (cons (truncate-to-width
-                             (format nil "  ~{~a~^  ·  ~}" parts) cols)
-                            '(:dim t)))))))))
+          (format nil "~{~a~^  ·  ~}" parts))))))
+
+(defun composer-ghost-row (text cols)
+  "TEXT — the live `/command` matches — as a row INSIDE the composer's box.
+
+**This is where the ghost lives, and the operator moved it here:** *\"when i start typing a slash
+command this grey help ghost appears above the area and the conversation is jumping again. I want
+the ghost inside the input area.\"* The row used to be a CHROME row above the box, and a chrome row
+costs the transcript one of its own — the viewport is bottom-anchored, so the whole conversation
+shifted up a line every time the ghost appeared and back down when it went. The ghost is drawn in
+the box's footprint instead, on the row the box's top edge vacates (see `%render`), so the frame's
+total height and the transcript's rows are the same whether it is up or not.
+
+The row is a body row of the box — `│` + a space + the continuation indent + the text + the pad +
+`│` — built exactly like `%composer-body-rows` builds one, and DIM, which is the register the ghost
+has always been in and the reason it reads as a ghost rather than as a message."
+  (let* ((inner (composer-inner cols))
+         (shown (truncate-to-width (or text "") inner)))
+    (list (cons "│" '(:dim t))
+          (cons " " nil)
+          (cons "  " nil)
+          (cons shown '(:dim t))
+          (cons (make-string (max 0 (1+ (- inner (string-width shown))))
+                             :initial-element #\space)
+                nil)
+          (cons "│" '(:dim t)))))
+
+(defun completions-line (head cols)
+  "The live `/command` matches as ONE dim row — the standalone form.
+
+Tab has completed since the beginning (`src/editor.lisp:118`) and **nothing was
+ever drawn**: `grep -rn completion src/*.lisp` found `%complete` and no renderer,
+so the only way to learn what a prefix matched was to press Tab and watch the
+buffer change under you. A bare `/` lists every verb; a prefix nothing matches
+draws NOTHING rather than an empty row, because a row that appears and
+disappears is noise, and Tab still says what went wrong when it is asked.
+
+**The frame does not call this any more.** The row the frame draws is
+`composer-ghost-row`'s, inside the box; this is the same text as a row of its own,
+kept because it is a named contract surface (HACKING.md) and because
+`the-completions-row-lists-what-tab-would-take` asks the CONTENT question here,
+where the content is spelled once."
+  (let ((text (%completions-text head)))
+    (when text
+      (list (list (cons (truncate-to-width (format nil "  ~a" text) cols)
+                        '(:dim t)))))))
 
 (defun stall-row (head cols)
   (let ((text (stall-text head)))
@@ -954,7 +990,7 @@ reference's editor does."
                                    (min (+ start show) (length all)))
                            start inner))))
 
-(defun composer-line (head cols &key (boxed (>= (head-rows head) 8)) max-rows)
+(defun composer-line (head cols &key (boxed (>= (head-rows head) 8)) max-rows ghost)
   "The composer, as the rows it occupies — box plus body, or one bare line.
 
 Returns a LIST of rows, because the box is three or more rows tall; the caller
@@ -963,7 +999,16 @@ places them from the bottom up. A single-row list is the degraded form.
 BOXED and MAX-ROWS are the **fit ladder's** answers (`%fit-ladder`, render.lisp):
 the ladder gives up the composer's rows one at a time and then the box itself,
 in that order, and this used to decide both for itself from `head-rows`. The
-defaults keep a caller that has not run the ladder working."
+defaults keep a caller that has not run the ladder working.
+
+**GHOST is the live `/command` matches, and they are a row of the box** (see
+`composer-ghost-row`). It goes under the body and above the bottom edge, which is where a list of
+what you could type belongs — under the line you are typing it into — and it is drawn on the row
+the box's top edge vacates, so nothing outside the input area moves when it appears.
+
+**The ghost is a ROW OF THE COMPOSER and still a row of the LADDER'S making.** `%fit-ladder` counts
+it exactly as it counted the chrome row it used to be, and gives it up first for the same reason —
+it is a typing aid, not a message. What changed is only where the row lands."
   (let ((inner (max 1 (- cols 2))))
     (declare (ignorable inner))
     (if (not boxed)
@@ -974,10 +1019,17 @@ defaults keep a caller that has not run the ladder working."
                (visible (if (> (+ 2 (string-width buf)) cols)
                             (subseq buf (max 0 (- (length buf) (- cols 2))))
                             buf)))
-          (list (list (cons prefix '(:fg :bright-cyan :bold t))
-                      (cons visible nil))))
+          (append (list (list (cons prefix '(:fg :bright-cyan :bold t))
+                              (cons visible nil)))
+                  ;; **and the ghost under it, indented by the prompt** — there is no box to put it
+                  ;; in, and the row it takes is the row it took before, so a short terminal loses
+                  ;; nothing to it either.
+                  (when ghost
+                    (list (list (cons "  " nil)
+                                (cons (truncate-to-width ghost (max 1 (- cols 2))) '(:dim t)))))))
         (append (list (composer-box-top head cols))
                 (composer-box-body head cols max-rows)
+                (when ghost (list (composer-ghost-row ghost cols)))
                 (list (composer-box-bottom head cols))))))
 
 (defun composer-caret (head cols &key (boxed (>= (head-rows head) 8)) max-rows)
@@ -1010,12 +1062,16 @@ character lands."
                 ;; how many rows the window has scrolled past
                 (cons (1+ (- row start)) (+ 4 col))))))))
 
-(defun composer-rows-needed (head cols &key (boxed (>= (head-rows head) 8)) max-rows)
+(defun composer-rows-needed (head cols &key (boxed (>= (head-rows head) 8)) max-rows ghost)
   "How many rows `composer-line` will return. The render needs this BEFORE it
-composes the frame, because the transcript gets what is left."
+composes the frame, because the transcript gets what is left.
+
+GHOST is counted here for the reason it is drawn at all: a caller asking how tall the composer will
+be is asking about the frame's arithmetic, and a ghost that is a row of the box is a row of the
+answer."
   (if (not boxed)
-      1
-      (+ 2 (nth-value 1 (composer-window head cols max-rows)))))
+      (if ghost 2 1)
+      (+ 2 (nth-value 1 (composer-window head cols max-rows)) (if ghost 1 0))))
 
 ;;; --------------------------------------------------------------- notice ;;;
 ;;;

@@ -12507,15 +12507,24 @@ is an argument; this asserts the order itself."
              (leticl::%render h)
              (%screen-text h)))
       (let ((wide (frame 20)))
-        (is (search "/help" wide) "at 20 rows the completions row is there")
-        (is (search "ctrl-s sessions" wide) "and the hint bar")
+        (is (search "/help" wide) "at 20 rows the completions are there")
+        (is (not (search "ctrl-s sessions" wide))
+            "**and they are standing on the hint bar's row** — see `%render`: one of the two is the\n last row of the frame, and while a command is being typed the completions are the better\n answer to *what can i type next*")
         (is (search "the head has something to say" wide) "and the notice")
         (is (search "nothing received for" wide) "and the stall sentence")
         (is (search "╭" wide) "and the box"))
       (let ((r7 (frame 7)))
-        (is (not (search "/help" r7)) "the completions row goes first")
-        (is (search "ctrl-s sessions" r7) "the hint bar is still there"))
+        ;; **The completions are no longer a chrome row, and this is where the order starts now.**
+        ;; They are the box's own last row, standing on the HINT BAR's row — see `%render` — so the
+        ;; row given up first is still the row the completions live on, and giving it up takes them
+        ;; with it. The operator's reason is that the two say the same kind of thing: the hint bar's
+        ;; own `tab completes /commands` is exactly what the ghost is showing.
+        (is (search "/help" r7) "at 7 rows the ghost is inside the box")
+        (is (search "│" r7) "and it is the box that carries it")
+        (is (not (search "ctrl-s sessions" r7))
+            "**the hint bar's row is what paid for it** — same kind of row, one line of advice\n about what you can type next"))
       (let ((r6 (frame 6)))
+        (is (not (search "/help" r6)) "and when that row goes, the completions go with it")
         (is (not (search "ctrl-s sessions" r6)) "the hint bar goes next")
         (is (search "the head has something to say" r6) "the notice is still there"))
       (let ((r5 (frame 5)))
@@ -12527,7 +12536,14 @@ only thing on the screen saying why nothing is happening"))
         (is (search "╭" r4) "the box outlives it"))
       (let ((r3 (frame 3)))
         (is (not (search "╭" r3)) "and the box is last of the chrome")
-        (is (search "›" r3) "the composer is what is left")))))
+        (is (search "›" r3) "the composer is what is left"))
+      ;; **and the moment the command is not being typed, the hint bar is back in that row** — which
+      ;; is the whole of what the ghost costs, and it is why this test asserts it here rather than
+      ;; while `/he` is still in the buffer.
+      (setf (composer-buffer (head-composer h)) "")
+      (let ((back (frame 20)))
+        (is (search "ctrl-s sessions" back) "the hint bar returns with the ghost gone")
+        (is (not (search "/help the key" back)) "and the completions are gone with it")))))
 
 (def-test the-frame-never-returns-more-rows-than-the-terminal-has (:suite leticl)
   "The backstop (app.rs:5206-5208): `the ladder above cannot always win — h can
@@ -12662,11 +12678,117 @@ a row that appears and disappears is noise."
         "and a line with an argument on it is not a name being completed")
     (setf (composer-buffer (head-composer h)) "hello")
     (is (null (leticl::completions-line h 200)) "nor is ordinary prose"))
-  ;; and it reaches the screen, above the composer
+  ;; and it reaches the screen, inside the composer's box
   (let* ((*stdout* (make-string-output-stream))
          (h (%on-head :cols 100 :rows 24 :buffer "/mod")))
     (leticl::%render h)
-    (is (search "/mode" (%screen-text h)) "it is drawn, above the box")))
+    (is (search "/mode" (%screen-text h)) "it is drawn")
+    (is (search "mode the mode picker" (third (last (uiop:split-string (%screen-text h)
+                                                                       :separator '(#\newline))
+                                                      4)))
+        "**and inside the box** — between the row being typed into and the bottom edge")))
+
+(defun %ghost-screen-rows (buffer &optional (cols 100) (rows 24))
+  "A [COLS x ROWS] frame's rows, as text, with BUFFER in the composer.
+
+The transcript is FOURTEEN LONG PARAGRAPHS so the viewport is full to its last row: a row stolen
+from it is a line of the conversation that is no longer on the screen, and that is the thing the
+assertion has to be able to see."
+  (let* ((*stdout* (make-string-output-stream))
+         (h (%on-head :cols cols :rows rows :buffer buffer)))
+    (setf (head-connected h) t)
+    (setf (session-items (head-session h))
+          (coerce
+           (append
+            (list (list :item-id "u" :kind "user" :ts 0
+                        :item (list :type "user" :parts (list (list :text "do the thing")))))
+            (loop for i from 1 to 14
+                  collect (list :item-id (format nil "a~d" i) :kind "assistant" :ts 0
+                                :item (list :type "assistant"
+                                            :text (format nil
+                                                          "paragraph ~d, long enough that the transcript is taller than the frame it is drawn in, which is what makes a stolen row something you can see.~%"
+                                                          i))))
+            (list (list :item-id "z" :kind "assistant" :ts 0
+                        :item (list :type "assistant" :text "and the conclusion is X."))))
+           'vector))
+    (leticl::%render h)
+    (loop for r from 0 below (head-rows h)
+          collect (let ((row (screen-row (head-screen h) r)))
+                    (if row (format nil "~{~a~}" (mapcar #'cell-ch row)) "")))))
+
+(defun %ghost-box-top (rows)
+  "Where the composer's box starts in ROWS, or NIL if it is not on the screen."
+  (position-if (lambda (r) (search "╭" r)) rows))
+
+(def-test the-completion-ghost-does-not-move-the-conversation (:suite leticl)
+  "**The operator's second jump, and the ghost is inside the input area now.**
+
+*\"when i start typing a slash command this grey help ghost appears above the area and the
+conversation is jumping again. I want the ghost inside the input area.\"*
+
+Two claims, and the first is the one that took a measurement. The transcript viewport is
+BOTTOM-anchored: whatever the chrome takes, it takes from the transcript's OLDEST line, and every
+line below it moves up one row. A ghost that is a chrome row of its own — which is what it was —
+costs exactly that on every slash, and gives it back on every space. It is the box's own row now,
+and the row it stands on is the HINT BAR's, so nothing outside the input area changes:
+
+  · **every row above the box is the same row**, word for word, whether or not a command is being
+typed — asserted at seven frame sizes and on a full transcript, because a short one cannot lose a
+line and a single size cannot show a size-dependent jump;
+  · **and the ghost is inside the box**: between the body and the bottom edge, with the walls on both
+sides of it.
+
+The price is visible in the same screen and is the hint bar's: its row is the one the ghost stands
+on. Both are one line of advice about what you can type next, and while a `/command` is being
+typed the completion list is the better answer to that question."
+  (dolist (size '((40 12) (40 30) (100 6) (100 24) (100 30) (210 20) (210 63)))
+    (destructuring-bind (cols rows) size
+      (let* ((plain (%ghost-screen-rows "" cols rows))
+             (ghosted (%ghost-screen-rows "/he" cols rows))
+             (top (%ghost-box-top plain))
+             (top-g (%ghost-box-top ghosted)))
+        (is (and top top-g) (format nil "at ~ax~a the box is on the screen" cols rows))
+        (is (= top top-g)
+            (format nil "at ~ax~a **the box's top edge does not move either**: ~a vs ~a" cols rows top top-g))
+        (is (equal (subseq plain 0 top) (subseq ghosted 0 top-g))
+            (format nil "at ~ax~a **not one row above the box moves when the ghost appears** — the\n frame is bottom-anchored, so a row the chrome gains is a line of the transcript lost. The rows\n differed at: ~s"
+                    cols rows
+                    (loop for a in (subseq plain 0 top) for b in (subseq ghosted 0 top-g) for i from 0
+                          unless (string= a b) collect i)))
+        ;; the ghost is the box's own row, between the body and the bottom edge
+        (let ((ghost-row (nth (+ top-g 2) ghosted)))
+          (is (and (search "│" ghost-row) (search "/help" ghost-row))
+              (format nil "at ~ax~a **the ghost is a row of the box**, walls included: ~s"
+                      cols rows ghost-row))
+          (is (search "│   /help" ghost-row)
+              "indented under the prompt, as a continuation row is"))
+        (is (search "╰" (car (last ghosted))) "and the bottom edge is the frame's last row"))))
+  ;; the assertion has teeth: the conversation really does reach the box
+  (let* ((plain (%ghost-screen-rows "" 100 24))
+         (top (%ghost-box-top plain)))
+    (is (search "and the conclusion is X." (format nil "~{~a~^~%~}" (subseq plain 0 top)))
+        "the conversation's own last words are on the screen above the box")))
+
+(def-test the-completion-ghost-is-faint-and-inside-the-box (:suite leticl)
+  "**The ghost keeps its register and its walls** — a dim run inside the box, and not a message.
+
+The register was ruled when the row was chrome and the move does not change it: this is a
+**ghost** — advice about what you can type, not something the head is saying — so it is faint, and
+the walls around it are faint for the same reason the body rows' are. The assertion is on the
+SEGMENTS, because that is where the register lives and because the row's WIDTH is the box's — an
+edge one column over wraps, and a border that wraps scrolls the whole frame."
+  (let ((h (%on-head :cols 100 :rows 24 :buffer "/he")))
+    (let* ((rows (leticl::composer-line h 96 :ghost "/help the key and command reference"))
+           (ghost (third rows)))
+      (is (= 4 (length rows)) "the box is a row taller with the ghost in it")
+      (is (string= "│" (car (first ghost))) "the wall opens the ghost's row")
+      (is (equal '(:dim t) (cdr (first ghost))) "and the wall is faint, as the body's walls are")
+      (is (equal '(:dim t) (cdr (fourth ghost)))
+          (format nil "**the matches are faint** — a ghost is advice, not a message: ~s" (fourth ghost)))
+      (is (= 96 (loop for sg in ghost sum (string-width (car sg))))
+          (format nil "**and the row is the box's width**, so it cannot wrap: ~s" ghost))
+      ;; and with nothing to ghost, the box is its ordinary three rows
+      (is (= 3 (length (leticl::composer-line h 96))) "no ghost, no row"))))
 
 (def-test an-empty-session-says-what-it-is (:suite leticl)
   "app.rs:6112-6131: `an empty screen with a status line under it is
