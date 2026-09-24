@@ -1691,7 +1691,22 @@ the same two strings, which is why they are here rather than invented.
 `+hidden-run-marker-ladder+` until they fit `hidden-run-marker-room`, which is fixed for the frame —
 so the counts gaining a digit cannot move the sentence above them and cannot push the seam onto a
 line of its own. That was the operator's *\"at some point the line could be split so things jump
-even more\"*, and this is the rung that answers it: growth is paid in words, not in layout."
+even more\"*, and this is the rung that answers it: growth is paid in words, not in layout.
+
+**AND THE COUNTS GO YELLOW WHILE THE WORK THEY COUNT IS STILL RUNNING** — the operator's ruling:
+*\"when you correctly do account running jobs in verbosity mode [], mark counters yellow if the tail
+job is still running.\"*
+
+A count that is still going up and a count that has stopped look exactly alike otherwise, and the
+marker is the only thing on the screen that says how much work there is — so `[2 tool calls]` frozen
+at two and `[2 tool calls]` about to become three are the same characters. Yellow is `Pending` in
+this tree's own vocabulary: *is happening*, the same register the live card's `◐` mark takes for the
+same reason. LIVE is what says so — it is non-nil exactly when this run has calls or reasoning in
+flight (`%hidden-run-live-work`), so there is no second question to ask and nothing to thread.
+
+The SEAM stays faint, and that is not an oversight: the counts are a fact about the work and the seam
+is the head talking about its own key, so a yellow affordance would be the head shouting about itself.
+When the run settles, the counts go back to the prose's own register with it."
   (let* ((room (or max-width (hidden-run-marker-room cols)))
          (limit (1- room))
          ;; **NO SEAM MEANS THE COUNTS, AND THE ROOM IS STILL THE ROOM.** The slots are kept even
@@ -1699,13 +1714,17 @@ even more\"*, and this is the rung that answers it: growth is paid in words, not
          ;; shrinking the marker because it got shorter would move the sentence — the exact jump
          ;; `hidden-run-marker-room` exists to prevent.
          (rungs (if *marker-seam* +hidden-run-marker-ladder+ '((0 . 2))))
+         ;; **YELLOW WHILE THE WORK IS STILL RUNNING, and `live` is the whole question.** It is
+         ;; non-nil exactly when this run has calls or reasoning in flight, so there is no second
+         ;; predicate to ask and nothing to thread down from the caller.
+         (counts-style (if live +role-pending+ nil))
          (segs nil))
     (dolist (step rungs)
       (let* ((seam-rung (aref +hidden-run-seam-rungs+ (cdr step)))
              (seam (if *marker-seam* (if newest (car seam-rung) (cdr seam-rung)) "")))
         (setf segs (list (cons (%hidden-run-counts-text
                                 items cols (aref +hidden-run-count-rungs+ (car step)) live)
-                               nil)
+                               counts-style)
                          (cons seam +role-faint+)))
         (when (<= (%segs-width segs) limit)
           (return))))
@@ -3372,15 +3391,26 @@ be the SAME text going in: the pending row is cleared by matching the user item
 the daemon appends, so a head that queued an abbreviation and received the real
 thing would leave the `queued` line on the screen for the rest of the session."
   (let ((w (max 20 cols)))
-    ;; **THE TAG IS PER ENTRY, not per pane** (R16): an echo a snapshot could not
-    ;; resolve is not `queued` — the head can no longer support that claim — and
-    ;; saying queued anyway is the lie R2 exists to prevent.
+    ;; **ONE WORD, and it is `queued` — the operator's ruling:** *"and remove this
+    ;; unconfirmed"*.
     ;;
-    ;; **The layout is the reference's rule applied to whichever word is there**: the
-    ;; first row shares its width with the tag and the continuations hang under the
-    ;; text, by `width(tag) + 3` (`app.rs:9017-9046`). So an `unconfirmed` echo
-    ;; measures its own word rather than being padded to the other's — the reference's
-    ;; arithmetic, on a tag it does not have.
+    ;; There used to be two. `unconfirmed` was this head's own invention (R16): an echo
+    ;; that a SNAPSHOT could not resolve was marked differently, on the argument that
+    ;; *I sent this and have not seen its row* had lost its footing once a compaction
+    ;; replaced the transcript under it. The argument was sound and the mark was still
+    ;; wrong, because **a reader has one question — is my message in or not** — and the
+    ;; answer to it did not change between the two words. What the distinction actually
+    ;; produced was a second word to learn, on the one row of the screen whose whole job
+    ;; is to say *your message is here and in flight*, and it never once told the reader
+    ;; anything they could act on.
+    ;;
+    ;; letibot has one word for this row, and the marking is the head's history rather
+    ;; than the reader's: a snapshot it could not resolve is a fact about THIS HEAD's
+    ;; confidence, and confidence is not what this row is about.
+    ;;
+    ;; The layout is the reference's rule, on the one word: the first row shares its
+    ;; width with the tag and the continuations hang under the text, by
+    ;; `width(tag) + 3` (`app.rs:9017-9046`).
     (let ((open (getf (head-prefs head) :show-tools))
           ;; **NOTHING A BOUND ROW IS ALREADY DRAWING IS DRAWN HERE** — the tail is for the queue,
           ;; which is what is NOT in the conversation yet (letibot's rule; see `*bound-prompts*`).
@@ -3388,9 +3418,7 @@ thing would leave the `queued` line on the screen for the rest of the session."
       (loop for text in (reverse (or texts
                                     (remove-if (lambda (q) (member q bound :test #'equal))
                                                (head-queued head))))
-            for tag = (if (member text *queued-unconfirmed* :test #'equal)
-                          "unconfirmed"
-                          "queued")
+            for tag = "queued"
             for head-w = (max 8 (- w 2 (string-width tag) 3))
             for indent = (make-string (+ (string-width tag) 3) :initial-element #\space)
             append (let* ((rows (or (wrap-segments

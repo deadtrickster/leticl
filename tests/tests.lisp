@@ -3547,7 +3547,7 @@ turn. Their words ended up under the reply that was already streaming above them
 head already holds, at the position the transcript gave it — above the reply it caused — instead
 of being invisible until its body catches up while the reply streams above it.* Two halves, and
 this asserts both plus the retirement."
-  (let ((leticl::*bound-prompts* nil) (leticl::*queued-unconfirmed* nil)
+  (let ((leticl::*bound-prompts* nil)
         (leticl::*scroll-anchor* nil) (leticl::*hist-cache* nil)
         (leticl::*hist-generation* 0) (leticl::*hidden-run-open* nil)
         (leticl::*verbosity* :normal))
@@ -3616,7 +3616,7 @@ reach the screen first.*
 **One prompt on the screen, not two.** The row carries the words from the binding; the tail echo is
 skipped for a text a bound row is already drawing. Without the skip the operator reads their own
 sentence twice with a reply between them, which is the same complaint wearing a louder coat."
-  (let ((leticl::*bound-prompts* nil) (leticl::*queued-unconfirmed* nil)
+  (let ((leticl::*bound-prompts* nil)
         (leticl::*scroll-anchor* nil) (leticl::*hist-cache* nil)
         (leticl::*hist-generation* 0) (leticl::*hidden-run-open* nil)
         (leticl::*verbosity* :normal))
@@ -5490,7 +5490,7 @@ follow from the transcript's own order:
   · **the announcement does not move it.** A row that has been announced and has no body yet
     still wears the `queued` mark, so the frame before the announcement and the frame after it
     are the same frame."
-  (let ((leticl::*bound-prompts* nil) (leticl::*queued-unconfirmed* nil)
+  (let ((leticl::*bound-prompts* nil)
         (leticl::*todo-draft* nil) (leticl::*operator-todos* nil)
         (leticl::*scroll-anchor* nil) (leticl::*hist-cache* nil)
         (leticl::*hist-generation* 0) (leticl::*hidden-run-open* nil)
@@ -8573,7 +8573,7 @@ trusting a rule in a document."
 
 Before the fix this row retired NOTHING: every echo stayed on the screen, and stayed for
 two hours. The assertion is the whole of it: the queue empties on that one row."
-  (let* ((*queued-unconfirmed* nil)
+  (let* (
          (h (%make-head))
          (texts '("fifth thing" "fourth thing" "third thing" "second thing" "first thing")))
     ;; newest first, as `%prompt` pushes them — five enters, five prompts
@@ -8587,9 +8587,6 @@ two hours. The assertion is the whole of it: the queue empties on that one row."
     (is (null (head-queued h))
         (format nil "**one merged row stands down every echo it holds** — still queued: ~s"
                 (head-queued h)))
-    (is (null *queued-unconfirmed*)
-        "and none of them is UNCONFIRMED: their words are in the transcript, so the head's
- claim was not merely upheld, it was PROVED — the third mark is for the other case")
     ;; **THE PIECE RULE IS NOT A SUBSTRING SEARCH**, which is the whole of its correctness
     (setf (head-queued h) (list "second thing"))
     (leticl::%handle-frame
@@ -8605,7 +8602,7 @@ two hours. The assertion is the whole of it: the queue empties on that one row."
 actually happens. A transcript that arrives in a SNAPSHOT carries the same merged rows a
 live one does, so a head that attached after the merge (or resynced across it) must retire
 the same echoes rather than keeping them until its own next turn."
-  (let* ((*queued-unconfirmed* nil)
+  (let* (
          (*snapshotted-sessions* nil)
          (h (%make-head)))
     (setf (session-session-id (head-session h)) "s-merge"
@@ -8619,45 +8616,14 @@ the same echoes rather than keeping them until its own next turn."
                                                                    :text (format nil "first thing~%second thing"))))))
                         :id "s-merge")))
     (is (null (head-queued h))
-        "**a RESYNC retires them too** — the same rule, so the two paths cannot disagree")
-    (is (null *queued-unconfirmed*) "and nothing is left unconfirmed, because they landed")))
-
-(def-test an-unconfirmed-echo-that-then-lands-leaves-the-unconfirmed-set (:suite leticl)
-  "**The invariant its own docstring states, and the leak the first version had.**
-
-`*queued-unconfirmed*` must always be a SUBSET of `head-queued` — the global's docstring
-says so and `queued-lines` reads it as the tag for entries of the queue. The old code
-removed the ROW's text from that set, and a merged row's text is not any queued text, so an
-echo marked unconfirmed by an earlier snapshot, whose row then landed inside a merged item,
-was retired from the queue and **left in the set for ever**."
-  (let* ((*queued-unconfirmed* (list "second thing" "first thing"))
-         (h (%make-head)))
-    (setf (head-queued h) (list "second thing" "first thing"))
-    (leticl::%handle-frame
-     h (list :frame "event" :seq 1 :event "transcript_content" :item-id "m3"
-             :item (list :type "user"
-                         :parts (list (list :text (format nil "first thing~%second thing"))))))
-    (is (null (head-queued h)) "both landed by the one merged row")
-    (is (null *queued-unconfirmed*)
-        "**and the set that marks them is empty, not left holding two texts nothing holds**")
-    (is (every (lambda (t0) (member t0 (head-queued h) :test #'equal)) *queued-unconfirmed*)
-        "the invariant, stated as itself")
-    ;; and the same statement by construction, on a case that does NOT retire
-    (setf *queued-unconfirmed* nil (head-queued h) (list "never lands"))
-    (leticl::%handle-frame
-     h (list :frame "event" :seq 2 :event "transcript_content" :item-id "m4"
-             :item (list :type "user" :parts (list (list :text "something else")))))
-    (is (equal '("never lands") (head-queued h)) "an unrelated row retires nothing")
-    (is (null *queued-unconfirmed*)
-        "and it does not invent an unconfirmed mark for it either: a live row is proof about
- the prompt it names and SILENCE about the rest, which keeps saying `queued` honestly")))
+        "**a RESYNC retires them too** — the same rule, so the two paths cannot disagree")))
 
 (def-test a-merged-row-retires-an-echo-whose-own-prompt-came-in-pieces (:suite leticl)
   "The degenerate but real case: ONE queued text that itself contains a newline (a prompt
 typed with alt+enter), landing inside a merged row. The piece rule has to find it as a run
 bounded by newlines, not as a line — otherwise the multi-paragraph prompt is the one prompt
 that can never retire."
-  (let* ((*queued-unconfirmed* nil)
+  (let* (
          (h (%make-head)))
     (setf (head-queued h) (list (format nil "second half~%third half") "first"))
     (leticl::%handle-frame
@@ -9236,7 +9202,7 @@ The prompt's row arriving INSIDE a snapshot is the case the live path cannot see
 transcript takes the words over by being them, and a snapshot is not a
 `transcript_content` frame. So the same TEXT match has to be made against the snapshot
 too, and through the SAME function, or the two paths retire different things."
-  (let* ((leticl::*queued-unconfirmed* nil)
+  (let* (
          (h (%on-head :cols 90 :rows 24))
          (s (head-session h)))
     (setf (session-session-id s) "s-r16"
@@ -9249,8 +9215,6 @@ too, and through the SAME function, or the two paths retire different things."
     (is (null (head-queued h))
         "every echo whose row the snapshot carried is retired; still queued: ~s"
         (head-queued h))
-    (is (null leticl::*queued-unconfirmed*)
-        "and nothing is left unresolved, because each one WAS resolved")
     ;; and the same through a HELLO, the other frame a snapshot arrives on
     (let ((h2 (%on-head :cols 90 :rows 24)))
       (setf (session-session-id (head-session h2)) "s-r16b"
@@ -9264,21 +9228,27 @@ too, and through the SAME function, or the two paths retire different things."
                                           :id "s-r16b")))
       (is (null (head-queued h2)) "a HELLO's snapshot resolves them too"))))
 
-(def-test an-echo-a-snapshot-cannot-resolve-stops-saying-queued (:suite leticl)
-  "**R16's second clause, and the reason it is a third mark and not a deletion.**
+(def-test an-echo-a-snapshot-cannot-resolve-keeps-saying-queued (:suite leticl)
+  "**A snapshot that cannot resolve an echo does not retire it — and the row still says
+`queued`.**
 
 A `queued` echo is a claim about the daemon's queue — *I sent this and have not seen
 its row* — and the head made it on the strength of a transcript that a compaction has
-just REPLACED. So when the snapshot does not carry the row, the claim has lost its
-footing in both directions: a prompt that landed may have had its row summarised away,
-and a prompt that has not landed looks exactly the same from here.
+just REPLACED. So when the snapshot does not carry the row, the head cannot prove the
+prompt landed, and it must not pretend otherwise: the echo STAYS.
 
-Neither `queued` (which the head can no longer support) nor a silent drop (the opposite
-lie, and it would lose the one signal R2 exists to give) is honest. It is
-`unconfirmed` — and **it retires the ordinary way the moment its row does land**, so
-the mark is transient for a prompt that is genuinely still queued and permanent only
-for one whose row is never coming."
-  (let* ((leticl::*queued-unconfirmed* nil)
+**It used to say `unconfirmed` instead, and that word is gone** — the operator's
+ruling, *\"and remove this unconfirmed\"*. The argument for it was sound (the claim had
+lost its footing in both directions) and the mark was still wrong: a reader has one
+question — *is my message in or not* — and the answer did not differ between the two
+words. What the second word bought was a distinction about **this head's confidence**,
+drawn on the one row of the screen whose whole job is to say *your message is here and
+in flight*. letibot has one word for the row, and the head's confidence is not what the
+row is about.
+
+So the row says `queued`, and it retires the ordinary way the moment its row DOES land —
+which the last half of this test is: the mark was never the mechanism, the QUEUE is."
+  (let* (
          (h (%on-head :cols 90 :rows 24))
          (s (head-session h)))
     (setf (session-session-id s) "s-r16d"
@@ -9302,25 +9272,19 @@ for one whose row is never coming."
     ;; echoes and not about an accident of the fold.
     (is (equal '("summarised away" "also gone") (head-queued h))
         "the echoes are HELD, in the order they were queued — the head cannot prove they landed")
-    (is (equal (head-queued h) leticl::*queued-unconfirmed*)
-        "and every one of them is marked unresolved")
-    ;; **the invariant**, and it is what keeps the two from drifting
-    (is (every (lambda (txt) (member txt (head-queued h) :test #'equal))
-               leticl::*queued-unconfirmed*)
-        "every unconfirmed text is still a held echo")
-    ;; the mark on the screen is the OTHER word
+    ;; **AND THE ROW STILL SAYS `queued` — one word, and it is the honest one.** The head
+    ;; cannot prove these landed; what it also cannot do is tell the reader something they
+    ;; cannot act on, in a vocabulary of its own invention.
     (let ((text (segs-of (leticl::queued-lines h 90))))
-      (is (search "unconfirmed · also gone" text) "the row says unconfirmed: ~s" text)
-      (is (not (search "queued · also gone" text))
-          "and does NOT say queued, which the head can no longer support"))
-    ;; and a row that lands retires it out of BOTH lists
+      (is (search "queued · also gone" text) "the row says queued: ~s" text)
+      (is (not (search "unconfirmed" text))
+          "and there is no second word left to say it in"))
+    ;; and a row that lands retires it
     (leticl::%handle-frame
      h (list :frame "event" :seq 901 :event "transcript_content" :item-id "u9"
              :item (list :type "user" :parts (list (list :kind "text"
                                                          :text "summarised away")))))
-    (is (equal '("also gone") (head-queued h)) "its row landed, so it is retired")
-    (is (equal '("also gone") leticl::*queued-unconfirmed*)
-        "and it leaves the unresolved set with it")))
+    (is (equal '("also gone") (head-queued h)) "its row landed, so it is retired")))
 
 (def-test the-coalesced-echo-is-resolved-the-same-way-on-both-paths (:suite leticl)
   "One rule, two callers. Behind a running turn the daemon merges consecutive messages
@@ -9332,7 +9296,7 @@ merged prompt stays on the screen for the rest of the session.
 This is the case my first attempt at the fix got WRONG, and the test exists because of
 it: I compared the queue's LENGTH rather than the queue, and the coalesced branch keeps
 the same number of entries with a shorter one."
-  (let* ((leticl::*queued-unconfirmed* nil)
+  (let* (
          (h (%on-head :cols 90 :rows 24))
          (s (head-session h)))
     (setf (session-session-id s) "s-r16e"
@@ -9341,9 +9305,7 @@ the same number of entries with a shorter one."
      h (list :frame "resync" :reason "auto-compaction" :dropped 0 :scrubbed nil
              :snapshot (%snapshot-with (list (%a-user-row "u1" "a")) :id "s-r16e")))
     (is (equal '("b") (head-queued h))
-        "the front piece came off and the rest stayed queued")
-    (is (equal '("b") leticl::*queued-unconfirmed*)
-        "and the remainder is unresolved, not confirmed")))
+        "the front piece came off and the rest stayed queued")))
 
 (def-test a-landed-row-retires-the-prompt-it-echoes (:suite leticl)
   "The queue was retired by `pop` on `transcript_appended` — the NEWEST entry,
@@ -13368,7 +13330,7 @@ Four claims, and the fourth is the one a cosmetic fix would miss:
     character, which is why the join is `\n` and not a separator;
   · **while IDLE they stay separate**, because each lands as its own row and merging them would put
     two turns' words in one."
-  (let ((leticl::*bound-prompts* nil) (leticl::*queued-unconfirmed* nil)
+  (let ((leticl::*bound-prompts* nil)
         (leticl::*scroll-anchor* nil) (leticl::*hist-cache* nil)
         (leticl::*hist-generation* 0) (leticl::*hidden-run-open* nil)
         (leticl::*stdout* (make-string-output-stream))
@@ -13580,6 +13542,46 @@ assertion has to be able to see."
 (defun %ghost-box-top (rows)
   "Where the composer's box starts in ROWS, or NIL if it is not on the screen."
   (position-if (lambda (r) (search "╭" r)) rows))
+
+(def-test the-marker-counts-go-yellow-while-the-work-is-still-running (:suite leticl)
+  "**The operator's ruling:** *\"when you correctly do account running jobs in verbosity mode [],
+mark counters yellow if the tail job is still running.\"*
+
+A count that is still going up and a count that has stopped are the same characters. `[2 tool calls]`
+frozen at two and `[2 tool calls]` about to become three read identically on a screen where the
+marker is the ONLY thing that says how much work there is — and the reader's question at a live
+turn's edge is precisely *is this still going*, which is the question the yellow answers.
+
+Yellow is `Pending` in this tree's own vocabulary — *is happening* — the register the live card's
+`◐` mark already takes for the same reason.
+
+**The seam stays faint.** The counts are a fact about the work; the seam is the head talking about
+its own key, and a yellow affordance would be the head shouting about itself. When the run settles,
+the counts go back with it, which is the other half of the claim."
+  (let* ((items (%counts-run-items 2 1))
+         (segs (lambda (live)
+                 (let ((leticl::*marker-seam* nil))
+                   (leticl::hidden-run-marker items 100 t live nil))))
+         (mark-of (lambda (live)
+                    (cdr (find-if (lambda (sg) (search "[" (car sg))) (funcall segs live))))))
+    (is (equal leticl::+role-pending+ (funcall mark-of (list :calls 2 :thinking 1)))
+        "a live run's counts are Pending — yellow, which is *is happening*")
+    (is (null (funcall mark-of nil))
+        "**and a settled run's counts take the prose's own register** — no colour at all")
+    ;; the seam is the head's own voice, and it does not shout
+    (let* ((leticl::*marker-seam* t)
+           (segs (leticl::hidden-run-marker items 100 t (list :calls 2 :thinking 1) nil)))
+      (is (equal leticl::+role-faint+
+                 (cdr (find-if (lambda (sg) (search "ctrl-t" (car sg))) segs)))
+          "the seam is faint even while the counts beside it are yellow"))
+    ;; **and the yellow does not change the TEXT** — the same rule the seam preference keeps,
+    ;; because a marker that re-worded itself when work started would move the sentence above it.
+    ;; Compared with `live` adding NOTHING to the counts (`0 0`), so the only difference between
+    ;; the two markers is the register: a run whose work is all already on the screen still spells
+    ;; its counts the same way, in yellow.
+    (is (string= (format nil "~{~a~}" (mapcar #'car (funcall segs nil)))
+                 (format nil "~{~a~}" (mapcar #'car (funcall segs (list :calls 0 :thinking 0)))))
+        "only the COLOUR moves; not one character of the marker does")))
 
 (def-test the-marker-seam-is-hidden-unless-asked-for (:suite leticl)
   "**The operator's own config request, and its default is the ruling.**

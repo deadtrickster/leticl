@@ -219,7 +219,7 @@
    #:head-last-rows #:head-cols #:head-rows #:head-mode #:head-composer
    #:head-farewell #:head-quit-open #:head-secret-req #:head-connected #:head-status-note
    #:head-settings #:head-queued #:head-scroll #:head-screen-reqs #:head-want-new
-   #:*queued-unconfirmed* #:%resolve-queued #:%re-resolve-queued
+   #:%resolve-queued #:%re-resolve-queued
    #:head-jobs #:head-subagents #:head-peeked #:head-picker-sel
    ;; the operator-call door (R24 part two), the head's half
    #:*head-tool-runners* #:*op-calls* #:+op-call-wait-ms+ #:tick-op-calls #:%op-call-ask
