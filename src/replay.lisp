@@ -182,8 +182,10 @@ see this file's header."
          ;; anything's.** `*snapshotted-sessions*` decides whether a snapshot's
          ;; warnings are planted or held back, so two replays in one image would
          ;; otherwise disagree about the SECOND one: the first would call it an
-         ;; attach and the second a resync.
+         ;; attach and the second a resync. `*queued-unconfirmed*` is the same shape
+         ;; one requirement earlier.
          (*snapshotted-sessions* nil)
+         (*queued-unconfirmed* nil)
          ;; **R20's viewport offset**, and it is here for the same reason the payload
          ;; window is: it changes what the frame DRAWS, so two replays in one image
          ;; would otherwise disagree about the second one.

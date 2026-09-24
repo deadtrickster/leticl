@@ -191,6 +191,26 @@ to signal a dead socket, and any code that assumes `consp` means `plist` will ca
 `getf` on it and die in the main thread — which is a head that will not start."
   (and (consp x) (keywordp (car x)) (evenp (length x)) (getf x :frame)))
 
+(defvar *queued-unconfirmed* nil
+  "The texts in `head-queued` whose binding a SNAPSHOT could not resolve (R16).
+
+**A third mark, and it is the requirement's own second clause.** A `queued` echo is a
+claim about the daemon's queue, and the head made it on the strength of its own
+transcript: *I sent this and have not seen its row*. **A snapshot replaces that
+transcript**, so when one arrives the claim has lost its footing in both directions —
+a prompt that HAS landed may have had its row summarised away, and a prompt that has
+NOT landed looks exactly the same from here.
+
+So an echo a snapshot cannot resolve is neither `queued` (the head can no longer
+support it) nor silently dropped (which would be the opposite lie, and would lose the
+one signal R2 exists to give). It is `unconfirmed`: sent, not seen, and the transcript
+changed under it. It retires the ordinary way the moment its row DOES land, so the
+mark is transient for a prompt that is genuinely still queued and permanent only for
+one whose row is never coming.
+
+Invariant, kept by `%resolve-queued` and `%retire-pending`: every text here is also in
+`head-queued`. It is a `defvar` for the usual reason — a struct change is a restart.")
+
 (defvar *bound-prompts* nil
   "`(ITEM-ID . TEXT)` — the queued prompt each ANNOUNCED row is drawing.
 
@@ -224,8 +244,8 @@ air at once is ordinary behind a running turn, and pairing the newest with the f
 would swap two sentences on the screen. A text already bound is skipped, so two announcements
 take two different prompts.
 
-Every echo is bound the same way, whatever its history: the row is on the screen and the words
-are what it draws."
+An echo the head cannot resolve (`*queued-unconfirmed*`) is the same kind of thing and is bound
+the same way: the row is on the screen and the words are what it draws."
   (let ((taken (mapcar #'cdr *bound-prompts*)))
     (let ((text (find-if (lambda (q) (not (member q taken :test #'equal)))
                          ;; oldest first: the order their rows are announced in
@@ -305,7 +325,7 @@ empty — an echo left on the screen for the rest of the session showing nothing
 (defun %resolve-queued (queued rows)
   "QUEUED (newest-first texts) resolved against ROWS (landing user texts).
 
-Returns KEPT.
+Returns `(values KEPT UNCONFIRMED)`.
 
 **The ONE place the rule lives**, so a row arriving on the socket and a transcript
 arriving in a snapshot cannot retire different things. Each landing row is applied to every
@@ -315,7 +335,8 @@ sent first — and `%strip-landed` is the whole of what *retires* means.
 **A row neither CONFIRMS nor DENIES what it does not name.** An entry whose pieces did not
 match keeps its place untouched, which is why a row for a later message cannot retire an
 earlier one that has not landed yet."
-  (let ((entries (reverse queued)))      ; OLDEST first — the order rows land in
+  (let ((entries (reverse queued))       ; OLDEST first — the order rows land in
+        (unconfirmed nil))
     (dolist (row rows)
       (let* ((lines (uiop:split-string row :separator '(#\newline)))
              ;; **A line is spent once**, and the set is per-ROW: two entries that say the same
@@ -330,7 +351,9 @@ earlier one that has not landed yet."
                   ((zerop (length rest)) nil)               ; every piece landed: stands down
                   (t (push rest next)))))                   ; some did: the echo shrinks
         (setf entries (nreverse next))))
-    (nreverse entries)))                 ; back to NEWEST-first, the caller's order
+    (let ((kept (nreverse entries)))     ; back to NEWEST-first, the caller's order
+      (dolist (text kept) (push text unconfirmed))
+      (values kept (nreverse unconfirmed)))))
 
 (defun %retire-pending (head text)
   "Stand down the echo of the queued prompt whose row has landed, by TEXT.
@@ -338,18 +361,26 @@ earlier one that has not landed yet."
 The transcript takes the words over by BEING them, so the match is on the TEXT and not
 on an id — but **it is no longer equality, because the row is not one prompt**: the
 daemon merges consecutive queued prompts into one item joined by newlines, so ONE row
-stands down every echo it holds. That is `%strip-landed`'s piece-wise walk, and the
-coalescing and the oldest-first order are in `%resolve-queued`, which the snapshot path
-shares.
+stands down every echo it holds. That is `%piece-of`, and the coalescing and the
+oldest-first walk are in `%resolve-queued`, which the snapshot path shares.
 
-Nothing is left behind by a live row: a row that arrived is proof for the prompt it
-names, and silence about the others."
+Nothing is left UNCONFIRMED by a live row: a row that arrived is proof for the prompt
+it names, and silence about the others. So the unconfirmed set only ever shrinks here.
+
+**AND IT MUST SHRINK TO A SUBSET OF THE QUEUE, which the first version did not.** It
+removed the ROW's text from the unconfirmed set, and a merged row's text is not any
+queued text — so an echo marked unconfirmed by an earlier snapshot, whose row then
+landed inside a merged item, was retired from the queue and **left in the unconfirmed
+set for ever**. The invariant is the intersection with what is still queued, which is
+the same statement as the global's docstring." 
   (let ((before (head-queued head)))
-    (let ((kept (%resolve-queued before (list text))))
+    (multiple-value-bind (kept) (%resolve-queued before (list text))
       ;; **THE LIST, not its length.** The coalesced case replaces `a\nb` with `b` —
       ;; one entry either way — so a length check calls that no change and leaves the
       ;; whole echo on the screen, which is the coalescing branch of this very test.
       (unless (equal kept before)
+        (setf *queued-unconfirmed*
+              (intersection *queued-unconfirmed* kept :test #'equal))
         (setf (head-queued head) kept
               (head-dirty head) t)))))
 
@@ -378,8 +409,9 @@ and a `hello` with a snapshot). Returns T when the queue moved."
                                     when (getf p :text) collect (getf p :text))))
          (had (head-queued head)))
     (when had
-      (let ((kept (%resolve-queued had rows)))
-        (setf (head-queued head) kept)
+      (multiple-value-bind (kept unconfirmed) (%resolve-queued had rows)
+        (setf (head-queued head) kept
+              *queued-unconfirmed* unconfirmed)
         (unless (equal kept had)
           (setf (head-dirty head) t))
         t))))
@@ -506,6 +538,7 @@ and a `hello` with a snapshot). Returns T when the queue moved."
          (setf (head-jobs head) nil
                (head-peeked head) nil
                (head-queued head) nil
+               *queued-unconfirmed* nil
                (head-picker-sel head) 0)
          ;; and the overlays, for the reason the job ROWS are cleared: a window
          ;; belongs to the session that produced it, so a `j12` carried across a
