@@ -5061,11 +5061,15 @@ files, then the closing sentence."
         (is (string= "  ✎ thinking         folded" (nth 6 text)))
         (is (string= "  ✎ tool output      open" (nth 7 text)) "the live fold's word")
         (is (string= "  ✎ raw tool calls   hidden" (nth 8 text)) "shown/hidden, the reference's words")
-        (is (string= "" (nth 9 text)) "a blank between sections")
-        (is (string= "  session — the daemon" (nth 10 text)))
-        (is (string= "  ✎ mode             allow-all (this box, consented)" (nth 11 text))
+        ;; **the sixth head row: the run marker's seam**, which is a PREFERENCE with its default
+        ;; OFF and therefore a row this pane has to be able to flip — see `*marker-seam*`.
+        (is (string= "  ✎ marker seam      hidden" (nth 9 text))
+            "the seam after the counts, hidden by default, with the same shown/hidden words")
+        (is (string= "" (nth 10 text)) "a blank between sections")
+        (is (string= "  session — the daemon" (nth 11 text)))
+        (is (string= "  ✎ mode             allow-all (this box, consented)" (nth 12 text))
             "a daemon row a verb changes carries ✎")
-        (is (string= "    session          s-1789639478142928813" (nth 14 text))
+        (is (string= "    session          s-1789639478142928813" (nth 15 text))
             "one that takes a restart does not")
         (is (some (lambda (l) (search "files — edit with an editor" l)) text) "the daemon's files")
         (is (some (lambda (l) (search "permission.json" l)) text) "by name")
@@ -5081,16 +5085,17 @@ files, then the closing sentence."
             "**the rung's row POINTS AT THE VERB** — letibot's sentence, word for word, because
  a four-value setting walked through one Enter at a time is the interface R38 removed")))
     ;; the cursor walks EVERY row, and the source follows it
-    (setf (head-picker-sel h) 5)
+    (setf (head-picker-sel h) 6)
     (multiple-value-bind (lines sel-line) (config-lines h (head-settings h) 210)
       (is (search "▸ ✎ mode" (nth sel-line (lines-text lines)))
-          "**the sixth row is the daemon's mode** — five head rows, then its section")
-      (is (= 10 sel-line) "on line 10 — the blank and the second section name are counted, and the source line only follows the cursor"))
+          "**the seventh row is the daemon's mode** — six head rows, then its section")
+      (is (= 11 sel-line)
+          "on line 11 — the blank and the second section name are counted, and the source line only follows the cursor"))
     ;; enter on a daemon row goes through the verb, not around it
-    (setf (head-picker-sel h) 7)        ; supervise
+    (setf (head-picker-sel h) 8)        ; supervise
     (leticl::config-change h)
     (is (search "supervise off" (head-status-note h)) "supervise flips through its own verb")
-    (setf (head-picker-sel h) 8)        ; session, not editable
+    (setf (head-picker-sel h) 9)        ; session, not editable
     (leticl::config-change h)
     (is (search "takes a restart" (head-status-note h)) "a read-only row says why")))
 
@@ -12844,6 +12849,37 @@ assertion has to be able to see."
   "Where the composer's box starts in ROWS, or NIL if it is not on the screen."
   (position-if (lambda (r) (search "╭" r)) rows))
 
+(def-test the-marker-seam-is-hidden-unless-asked-for (:suite leticl)
+  "**The operator's own config request, and its default is the ruling.**
+
+*\"also make showing \" dot /verbosity\" a config and switch it off.\"* The seam is the head talking
+about its own key — the one part of that line that is not a fact about the work — and it is on EVERY
+marker, which on a long session is hundreds of advertisements.
+
+Two claims: off, the counts are the whole marker; on, the seam is back exactly as it was. **And the
+counts do not change either way**: the room the sentence reserved for them is the room they keep, so
+flipping the preference cannot move a single line of prose above it — which is the axiom, applied to
+a setting rather than to a turn."
+  (let* ((items (%counts-run-items 2 1))
+         (hidden (let ((leticl::*marker-seam* nil))
+                   (format nil "~{~a~}" (mapcar #'car (leticl::hidden-run-marker items 100 t)))))
+         (shown (let ((leticl::*marker-seam* t))
+                  (format nil "~{~a~}" (mapcar #'car (leticl::hidden-run-marker items 100 t))))))
+    (is (string= "[2 tool calls, 1 thinking line]" hidden)
+        (format nil "**off means the COUNTS and nothing else**: ~s" hidden))
+    (is (not (search "verbosity" hidden)) "no verb, and no dot for one")
+    (is (not (search "ctrl-t" hidden)) "and no chord")
+    (is (string= "[2 tool calls, 1 thinking line] · ctrl-t opens it" shown)
+        "on, the seam is the reference's own two strings again")
+    ;; **the default is OFF**, which is the half a preference can get wrong and no assertion above
+    ;; would catch.
+    (is (null (symbol-value 'leticl::*marker-seam*))
+        "and the default — the ruling — is hidden")
+    ;; **and the room is the same either way**: the counts' columns are reserved by the SENTENCE,
+    ;; so a shorter marker must not shrink them.
+    (is (not (search " · " (string-trim " " hidden)))
+        "the hidden marker has no separator in it at all")))
+
 (def-test the-completion-ghost-does-not-move-the-conversation (:suite leticl)
   "**The operator's second jump, and the ghost is inside the input area now.**
 
@@ -13294,8 +13330,10 @@ from, and the reader is the other party the gate serves."
            (ag (row "agent")))
       ;; --- the operator's block, unchanged
       (is (equal '(:fg :blue) (cdr (first (first op)))) "the operator's row keeps its `▌` bar")
-      (is (some (lambda (l) (some (lambda (sg) (equal '(:reverse t) (cdr sg))) l)) op)
-          "and its raised background")
+      (is (some (lambda (l) (some (lambda (sg) (equal '(:bold t) (cdr sg))) l)) op)
+          (format nil "**and the message in the register `+operator-block-style+` names** — ours,\n and NOT letibot's reverse video: the operator read both and asked for the calm one"))
+      (is (notany (lambda (l) (some (lambda (sg) (equal '(:reverse t) (cdr sg))) l)) op)
+          "**and not the inverted block**, which is what they asked to be rid of")
       ;; --- the session's row: no bar, no background, faint, and LABELLED
       (is (not (search "▌" (segs-of ag))) "**the session's row has no accent bar**")
       (is (not (some (lambda (l) (some (lambda (sg) (equal '(:reverse t) (cdr sg))) l)) ag))
@@ -13340,8 +13378,8 @@ row in every log. That is a cost a new field must never impose backwards."
     ;; --- **the block is back**: bar, background, full-width pad, exactly as before the field
     (is (equal '(:fg :blue) (cdr (first (first old))))
         "**a row with no speaker keeps its `▌` bar** — the block is the user-kind SHAPE")
-    (is (some (lambda (l) (some (lambda (sg) (equal '(:reverse t) (cdr sg))) l)) old)
-        "and its raised background")
+    (is (some (lambda (l) (some (lambda (sg) (equal '(:bold t) (cdr sg))) l)) old)
+        "and the register `+operator-block-style+` names, which is ours and not the reference's")
     (is (search "an old row" (segs-of old)) "and its words")
     ;; --- **no claim is made**: the label is where a claim about a speaker would go
     (is (not (search "session ·" (segs-of old))) "no `session ·` label")
@@ -14756,15 +14794,29 @@ line it belongs to and the report follows."
 **The NUMBER is the subject**, because the operator's wall of markers had every marker's CONTENT
 right — what was wrong was that there were eight of them.
 
-**Counted by the SEAM**, which every marker carries exactly once and no other row does. It used to
-count `thinking line`, which stopped being reliable the moment the zero clause was dropped: a marker
-for a run of pure tool calls says `[1 tool call]` and has no `thinking line` in it at all."
+**Counted by the OPENING BRACKET**, and it had to change when the seam became a preference with its
+default OFF: the seam was the reliable thing to count (`[` was not, because a markdown link or a
+table row carries one) and a marker with no seam carries none of it. `[~d ` is what a marker opens
+with and what nothing else in these fixtures does — the two counts spellings are `tool call`/`tools`
+and `thinking line`/`thinking`, and the counts ladder only shortens the NOUN, never the `[` or the
+digits."
   (flet ((n (needle)
            (let ((c 0) (start 0))
              (loop for i = (search needle text :start2 start)
                    while i do (incf c) (setf start (1+ i)))
              c)))
-    (+ (n " · ctrl-t opens it") (n " · /verbosity"))))
+    ;; **ONE SCAN**: a marker opens with `[`, then digits, then either a space or the bracket itself
+    ;; (`[t…]`). Nothing else this suite draws does that, and unlike a search per possible count it
+    ;; is one pass over the text.
+    (loop for i from 0 below (length text)
+          for ch = (char text i)
+          when (char= ch #\[)
+            count (let ((j (1+ i)) (digits 0))
+                    (loop while (and (< j (length text)) (digit-char-p (char text j)))
+                          do (incf j) (incf digits))
+                    (and (plusp digits)
+                         (< j (length text))
+                         (or (char= (char text j) #\space) (char= (char text j) #\])))))))
 
 (def-test a-run-of-hidden-rows-is-two-counts-on-the-narration-line (:suite leticl)
   "**R37 final: the marker is `[N tool calls, M thinking lines]`, ON the line that points at it.**
@@ -14778,7 +14830,7 @@ LINE as the narration** — `segs-of` joins the row's lines, so the assertion is
 calls…]` with nothing between the colon and the bracket."
   (let ((leticl::*verbosity* :reading) (leticl::*scroll-anchor* nil)
         (leticl::*hist-cache* nil) (leticl::*hist-generation* 0)
-        (leticl::*hidden-run-open* nil))
+        (leticl::*hidden-run-open* nil) (leticl::*marker-seam* t))
     (let* ((h (%hidden-run-head))
            (view (%run-view h)))
       ;; --- the conversation stays
@@ -14814,7 +14866,7 @@ shouldnt\"*. Two things sit on that line and they are not the same kind of thing
 The assertion is on the ESCAPE, not on the words, because the words were never the defect."
   (let ((leticl::*verbosity* :reading) (leticl::*scroll-anchor* nil)
         (leticl::*hist-cache* nil) (leticl::*hist-generation* 0)
-        (leticl::*hidden-run-open* nil))
+        (leticl::*hidden-run-open* nil) (leticl::*marker-seam* t))
     (let* ((h (%hidden-run-head))
            (view (%run-view h)))
       ;; --- the counts carry no summary of any kind
@@ -14900,7 +14952,7 @@ instead of anchoring to a row (R36). So the assertion is the marker COUNT, over 
 are separated only by invisible rows: whatever the daemon interleaved, ONE run, ONE marker."
   (let ((leticl::*verbosity* :reading) (leticl::*scroll-anchor* nil)
         (leticl::*hist-cache* nil) (leticl::*hist-generation* 0)
-        (leticl::*hidden-run-open* nil))
+        (leticl::*hidden-run-open* nil) (leticl::*marker-seam* t))
     (let* ((h (%interleaved-work-head))
            (view (%run-view h)))
       (is (= 1 (%run-marker-count view))
@@ -14920,7 +14972,7 @@ meaningful if this one holds: two stretches of work with a visible sentence betw
 markers, because the reader is being shown where one run stopped."
   (let ((leticl::*verbosity* :reading) (leticl::*scroll-anchor* nil)
         (leticl::*hist-cache* nil) (leticl::*hist-generation* 0)
-        (leticl::*hidden-run-open* nil))
+        (leticl::*hidden-run-open* nil) (leticl::*marker-seam* t))
     (let* ((h (%on-head :cols 130 :rows 40))
            (items (list
                    (list :item-id "t1" :kind "tool_result" :ts 0
@@ -14962,7 +15014,7 @@ one level down. Opening is not a second rendering of the work: it is the rung li
 gets the very rows that were hidden, from the one renderer that has always drawn them."
   (let ((leticl::*verbosity* :reading) (leticl::*scroll-anchor* nil)
         (leticl::*hist-cache* nil) (leticl::*hist-generation* 0)
-        (leticl::*hidden-run-open* nil))
+        (leticl::*hidden-run-open* nil) (leticl::*marker-seam* t))
     (let* ((h (%hidden-run-head))
            (closed (%run-view h)))
       (is (not (search "FIRST PAYLOAD" closed)) "closed, the run's rows are not drawn")
@@ -14985,7 +15037,7 @@ gets the very rows that were hidden, from the one renderer that has always drawn
   "**Through the real key handler, not a `setf`.** At `:reading` the chord closes an open run, else
 opens the newest one; at every rung above, nothing is hidden so there is no run for it to open and
 it is the payload window's again."
-  (let ((leticl::*verbosity* :reading) (leticl::*hidden-run-open* nil)
+  (let ((leticl::*verbosity* :reading) (leticl::*hidden-run-open* nil) (leticl::*marker-seam* t)
         (leticl::*hist-cache* nil) (leticl::*hist-generation* 0)
         (leticl::*scroll-anchor* nil))
     (let ((h (%hidden-run-head)))
@@ -15008,7 +15060,7 @@ place."
   (let ((leticl::*verbosity* :reading) (leticl::*scroll-anchor* nil)
         (leticl::*hist-cache* nil) (leticl::*hist-generation* 0)
         (leticl::*hist-bounds* nil) (leticl::*anchor-lost-said* nil)
-        (leticl::*hidden-run-open* nil))
+        (leticl::*hidden-run-open* nil) (leticl::*marker-seam* t))
     (let ((h (%hidden-run-head)))
       (%run-view h)
       (dolist (id '("t1" "r1" "t2"))
@@ -15047,7 +15099,7 @@ and the reader is not moved when work arrives below."
   (let ((leticl::*verbosity* :reading) (leticl::*scroll-anchor* nil)
         (leticl::*hist-cache* nil) (leticl::*hist-generation* 0)
         (leticl::*hist-bounds* nil) (leticl::*anchor-lost-said* nil)
-        (leticl::*hidden-run-open* nil))
+        (leticl::*hidden-run-open* nil) (leticl::*marker-seam* t))
     (let* ((h (%run-scroll-head))
            (s (head-session h)))
       (setf (head-scroll h) 999)            ; all the way to the top
@@ -15089,7 +15141,7 @@ report continuing ON the counts' line rather than merely being adjacent to it."
   (let ((leticl::*verbosity* :reading) (leticl::*scroll-anchor* nil)
         (leticl::*hist-cache* nil) (leticl::*hist-generation* 0)
         (leticl::*reading-join-prose* nil) (leticl::*reading-joined* nil)
-        (leticl::*hidden-run-open* nil))
+        (leticl::*hidden-run-open* nil) (leticl::*marker-seam* t))
     (let ((h (%hidden-run-head)))
       (setf (head-cols h) 140)          ; the joined paragraph fits on one line, so the claim is exact
       ;; --- TWO MESSAGES: the counts end the narration, the report is its own row
@@ -15139,7 +15191,7 @@ row above must be an assistant row with text the reader can see; after their own
 row, or the top of the transcript the marker stands on its own line **with the blank prose gets**."
   (let* ((leticl::*verbosity* :reading) (leticl::*scroll-anchor* nil)
          (leticl::*hist-cache* nil) (leticl::*hist-generation* 0)
-         (leticl::*hidden-run-open* nil)
+         (leticl::*hidden-run-open* nil) (leticl::*marker-seam* t)
          (call (list :item-id "t1" :kind "tool_result" :ts 0
                      :item (list :type "tool_result" :call-id "c1" :name "bash" :verb "ran"
                                  :subject "\"x\"" :outcome (list :outcome "ok") :payload "o")))
@@ -15178,7 +15230,7 @@ and the counts sit in the room it left. **Without the reservation the join depen
 prose happened to break**, which is the same transcript reading two ways at two widths."
   (let ((leticl::*verbosity* :reading) (leticl::*scroll-anchor* nil)
         (leticl::*hist-cache* nil) (leticl::*hist-generation* 0)
-        (leticl::*hidden-run-open* nil))
+        (leticl::*hidden-run-open* nil) (leticl::*marker-seam* t))
     ;; **80 columns and not 60**: at 60 the room is 30 and the ladder has already started paying for
     ;; the counts — that is `the-room-for-the-counts-is-fixed-and-the-marker-gives-way` below, and
     ;; asserting it here would make this test's claim about the RESERVATION ambiguous with the
@@ -15242,9 +15294,15 @@ that is a function of how many digits the run produced."
                        :item (list :type "reasoning" :text "thinking about it")))))
 
 (defun %counts-marker-text (calls thinking cols &optional newest)
-  "The marker a run of CALLS and THINKING draws at COLS, as one string."
-  (format nil "~{~a~}"
-          (mapcar #'car (leticl::hidden-run-marker (%counts-run-items calls thinking) cols newest))))
+  "The marker a run of CALLS and THINKING draws at COLS, as one string.
+
+**With the seam ON**, because the ladder this is used to check spends the seam as well as the counts
+and its last rungs are about which of the two gives way first. The seam is a preference and its
+default is OFF — `the-marker-seam-is-hidden-unless-asked-for` is the test for that, and this is the
+one for the ladder."
+  (let ((leticl::*marker-seam* t))
+    (format nil "~{~a~}"
+            (mapcar #'car (leticl::hidden-run-marker (%counts-run-items calls thinking) cols newest)))))
 
 (defun %counts-head (calls thinking)
   "A hundred-column head whose narration is followed by a run of CALLS and THINKING."
@@ -15267,7 +15325,7 @@ that is a function of how many digits the run produced."
   "The NARRATION row's lines, as text, from a head whose run is CALLS and THINKING rows long."
   (let ((leticl::*verbosity* :reading) (leticl::*scroll-anchor* nil)
         (leticl::*hist-cache* nil) (leticl::*hist-generation* 0)
-        (leticl::*hidden-run-open* nil))
+        (leticl::*hidden-run-open* nil) (leticl::*marker-seam* t))
     (let* ((rows (mapcar (lambda (l) (if (consp l) (format nil "~{~a~}" (mapcar #'car l)) ""))
                          (leticl::%viewport-lines (%counts-head calls thinking) 100 40)))
            (at (position-if (lambda (s) (search "Now here is" s)) rows))
@@ -15413,7 +15471,7 @@ The three shapes are asserted together because they are one rule — the marker 
 working, so what follows it is the model speaking again, and it gets prose's own air either way."
   (let* ((leticl::*verbosity* :reading) (leticl::*scroll-anchor* nil)
          (leticl::*hist-cache* nil) (leticl::*hist-generation* 0)
-         (leticl::*hidden-run-open* nil)
+         (leticl::*hidden-run-open* nil) (leticl::*marker-seam* t)
          (call (list :item-id "t1" :kind "tool_result" :ts 0
                      :item (list :type "tool_result" :call-id "c1" :name "bash" :verb "ran"
                                  :subject "\"x\"" :outcome (list :outcome "ok") :payload "o")))

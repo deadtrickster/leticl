@@ -1473,8 +1473,46 @@ into the id: an invisible row inside a run is stepped over, exactly as the walk 
                         (loop for k from (1+ i) to newest
                               when (hidden-p k) collect (aref items k))))))))
 
-(defun %hidden-run-counts (items cols)
+(defun %hidden-run-live-work (turn cols)
+  "The work a RUNNING turn has in flight — `(:calls N :thinking M)` — or NIL.
+
+**The window this closes is the one the operator named:** *\"suppose you write blablabla 'let me
+check' — nothing for awhile while you write a tool call and tool executes, we need to see it
+somehow, otherwise it looks like you hanged.\"*
+
+The window has no marker in it today, and that is not an oversight but a consequence of how a run is
+defined: a run is a stretch of item rows this rung hides, and **an in-flight call has no row yet**.
+The narration is committed as an assistant row the moment the call is proposed, the call itself runs
+with no transcript entry at all, and the result row is what finally gives the run something to
+count — so for the whole of that window the head draws the model's colon and nothing else, and a
+turn running a slow command looks exactly like a turn that has died.
+
+The reference answers it with `live_work` (app.rs:13262): calls **proposed or running with no result
+row yet**, plus the streamed reasoning's display lines, added to the counts of the marker at the live
+edge. This is the same two numbers from the same place, in this head's own terms — `:calls` is the
+turn's call list filtered to the unfinished, and `:thinking` is `reasoning-line-count` over the
+reasoning that has streamed and not yet been committed, which is the SAME arithmetic the reasoning
+row's own header uses.
+
+NIL when there is nothing in flight, so a caller decides with one test and a quiet turn stays quiet."
+  (let ((turn (and turn (string= (or (turn-state-name turn) "") "running") turn)))
+    (when turn
+      (let* ((calls (count-if (lambda (c) (let ((st (getf c :state)))
+                                            (and st (not (string= (or (getf st :state) "") "finished")))))
+                              (getf turn :calls)))
+             (reasoning (or (getf turn :reasoning) ""))
+             (thinking (if (plusp (length reasoning))
+                           (reasoning-line-count reasoning cols)
+                           0)))
+        (when (or (plusp calls) (plusp thinking))
+          (list :calls calls :thinking thinking))))))
+
+(defun %hidden-run-counts (items cols &optional live)
   "`(:calls N :thinking M)` for a run — the two numbers the marker carries, and there are only two.
+
+**LIVE is the work still in flight, added in** — see `%hidden-run-live-work`. It is added HERE and
+not by the caller so there is one arithmetic for *how much work this marker is about*, and the
+marker's own room ladder sees the number that will actually be drawn.
 
 **Thinking is counted in SCREEN lines** (`reasoning-line-count`) because that is what the reader is
 being told the price of, and it is the same arithmetic the reasoning row's own `▸ Thought · 43 lines`
@@ -1488,7 +1526,9 @@ them."
           (:tool-result (incf calls))
           (:reasoning (incf thinking (reasoning-line-count (or (getf body :text) "") cols)))
           (t (incf events)))))
-    (list :calls calls :thinking thinking :events events)))
+    (list :calls (+ calls (or (getf live :calls) 0))
+          :thinking (+ thinking (or (getf live :thinking) 0))
+          :events events)))
 
 (defparameter +hidden-run-marker-cols+ 56
   "The widest room a marker may claim from the sentence it continues, leading space included.
@@ -1556,7 +1596,7 @@ then does the seam start to go.
 the head talking about its own keys. The seam still goes before the counts go to their last rung,
 which is why the pairs interleave rather than running as two separate sweeps.")
 
-(defun %hidden-run-counts-text (items cols &optional count-rung)
+(defun %hidden-run-counts-text (items cols &optional count-rung live)
   "`[N tool calls, M thinking lines]` — the counts alone, and the ONE place they are spelled.
 
 **A zero clause is dropped**, which is letibot's own `counts.join(\", \")`: a run of tool calls says
@@ -1570,7 +1610,7 @@ is how they come to disagree about the same run.
 **COUNT-RUNG chooses the spelling and defaults to the fullest**, which is the merged paragraph's
 case: it has a whole paragraph to wrap in and no frame edge to clear, so it never needs a ladder."
   (let* ((rung (or count-rung (aref +hidden-run-count-rungs+ 0)))
-         (counts (%hidden-run-counts items cols))
+         (counts (%hidden-run-counts items cols live))
          (parts (remove nil
                         (list (when (plusp (getf counts :calls))
                                 (format nil (first rung) (getf counts :calls)))
@@ -1580,7 +1620,33 @@ case: it has a whole paragraph to wrap in and no frame edge to clear, so it neve
         (format nil "[~{~a~^, ~}]" parts)
         (format nil "[~a]" (format nil (third rung) (getf counts :events))))))
 
-(defun hidden-run-marker (items cols &optional newest)
+(defvar *marker-seam* nil
+  "Whether the run marker's SEAM — ` · ctrl-t opens it` / ` · /verbosity` — is drawn.
+
+**OFF by default, and that is the operator's ruling:** *\"also make showing \" dot /verbosity\" a
+config and switch it off.\"* The seam is the head talking about its own key, and on a line whose whole
+job is to be punctuation inside the model's sentence it is the one part that is not a fact.
+
+**What turns it off is still there when it is off**, which is the R29 question and the reason this is
+a preference rather than a deletion: the row it would have opened still says it can be opened — the
+rung names itself on the alarm row, `ctrl-t` is in `%slash-completions` and in the hint bar, and the
+counts are on the line pointing at the work. What goes is the advertisement on every marker.
+
+**It is a variable rather than a head slot for the usual reason** — a struct layout change is a
+restart — and because it changes what the ROW renders to, `%set-marker-seam` is the only writer and it
+invalidates the history, exactly as `set-verbosity` does.")
+
+(defun %set-marker-seam (on)
+  "The ONE writer of `*marker-seam*`, and it invalidates the rendered history.
+
+The seam is drawn into the marker, so a frame that cached the lines with it on would keep drawing it
+with it off — the same defect the folds and the rung each had, and the same fix: bump the generation
+at the writer."
+  (setf *marker-seam* (and on t))
+  (incf *hist-generation*)
+  *marker-seam*)
+
+(defun hidden-run-marker (items cols &optional newest live)
   "The marker's SEGMENTS — `[N tool calls, M thinking lines] · ctrl-t opens it`.
 
 **Two registers, and they say two different things.** The counts are a FACT — how much work there
@@ -1609,12 +1675,17 @@ line of its own. That was the operator's *\"at some point the line could be spli
 even more\"*, and this is the rung that answers it: growth is paid in words, not in layout."
   (let* ((room (hidden-run-marker-room cols))
          (limit (1- room))
+         ;; **NO SEAM MEANS THE COUNTS, AND THE ROOM IS STILL THE ROOM.** The slots are kept even
+         ;; when the seam is off: it is the sentence ABOVE this line that reserved them, and
+         ;; shrinking the marker because it got shorter would move the sentence — the exact jump
+         ;; `hidden-run-marker-room` exists to prevent.
+         (rungs (if *marker-seam* +hidden-run-marker-ladder+ '((0 . 2))))
          (segs nil))
-    (dolist (step +hidden-run-marker-ladder+)
+    (dolist (step rungs)
       (let* ((seam-rung (aref +hidden-run-seam-rungs+ (cdr step)))
-             (seam (if newest (car seam-rung) (cdr seam-rung))))
+             (seam (if *marker-seam* (if newest (car seam-rung) (cdr seam-rung)) "")))
         (setf segs (list (cons (%hidden-run-counts-text
-                                items cols (aref +hidden-run-count-rungs+ (car step)))
+                                items cols (aref +hidden-run-count-rungs+ (car step)) live)
                                nil)
                          (cons seam +role-faint+)))
         (when (<= (%segs-width segs) limit)
@@ -1626,7 +1697,7 @@ even more\"*, and this is the rung that answers it: growth is paid in words, not
     ;; sentence above it left (see `hidden-run-marker-room`).
     (%truncate-segs segs (max 1 limit))))
 
-(defun %marker-onto-last-line (il items cols &optional newest)
+(defun %marker-onto-last-line (il items cols &optional newest live)
   "IL with the run's marker **appended to its last line**, split by ONE SPACE.
 
 **The space is the join, and it is what makes the counts read as part of the sentence.** letibot
@@ -1639,7 +1710,7 @@ promised.
 line already near the frame's width would push the counts off the edge, and a count that is not on the
 screen is a marker that did nothing. When they fit, the line is one line and the sentence runs
 straight into the numbers."
-  (let* ((marker (hidden-run-marker items cols newest))
+  (let* ((marker (hidden-run-marker items cols newest live))
          (last (car (last il)))
          (joined (append last (list (cons " " nil)) marker)))
     (append (butlast il) (wrap-segments joined (max 20 cols)))))
@@ -2125,20 +2196,42 @@ the oracle reads cannot spell one speaker two ways."
              (t (cons :other s))))
       (t :unrecorded))))
 
+(defparameter +operator-block-style+ '(:bold t)
+  "The register the operator's OWN message is drawn in, the blue bar excluded.
+
+**Ours, and NOT letibot's** — the one place in the frame where the two heads deliberately differ,
+and the operator asked for it: *\"my own messages — they jump out too much, i like the blue bar on the
+left, but inverted colors look too much. Maybe we can try to render my messages more calm? like blue
+bar stays and my messages come in bold?\"*
+
+The reference draws the message in REVERSE VIDEO (`Role::UserBlock` is `ESC[7m`), and its style
+module says why with some care: *\"there is no light-mode and no dark-mode here … it names it as `7`
+(reverse video), which asks the terminal to swap its own two colours. That is self-consistent under
+any theme by construction.\"* That argument is sound and it is not an argument against this: a bold
+message is self-consistent under any theme too, because bold is an attribute and not a pair. What it
+gives up is the *block* — the filled rectangle that says this is a different voice at a glance — and
+the operator has read both and prefers the quiet one.
+
+A `defparameter` so the choice is one edit and a live push, and named for what it is rather than
+inlined at the draw site, because a register that lives in two places is two registers.")
+
 (defun %operator-block-lines (text stamp cols)
-  "THE OPERATOR'S OWN MESSAGE, to the reference's shape — read off its screen, because the four
-differences are all things a screenshot shows and a test would not:
+  "THE OPERATOR'S OWN MESSAGE — a blue `▌` bar, the message in `+operator-block-style+`, the
+timestamp right-aligned on the first row.
 
-  · a BLUE `▌` bar (`Role::UserAccent` is `ESC[34m`), not a cyan `›`;
-  · the message in REVERSE VIDEO (`Role::UserBlock` is `ESC[7m`) — the block IS the highlight,
-    which is why it carries no colour of its own and survives a terminal-native palette;
-  · the message PADDED to the full width, so the block is a block: a background that stops early
-    leaves a ragged right edge;
-  · and the timestamp right-aligned on the FIRST row, which is why that row is wrapped narrower
-    than the rest.
+**The bar is the claim that the person spoke**, and it is `Role::UserAccent` (`ESC[34m`) as letibot
+has it. What follows it is ours: see `+operator-block-style+` for the register and for the argument
+the reference makes for its own.
 
-**This is the only shape that claims the person spoke**, which is why R42's dispatch sends only
-`speaker = operator` here."
+Measured off letibot's screen, the differences a screenshot shows and a test does not:
+
+  · a BLUE `▌` bar, not a cyan `›`;
+  · the message PADDED to the full width, so it reads as a block rather than a ragged line; and
+  · the timestamp right-aligned on the FIRST row, which is why that row is wrapped narrower than
+    the rest.
+
+The padding stays even now that the fill is gone: the rows are the same width either way, so the
+next row's wrap cannot depend on which register the operator chose."
   (let* (;; the first row shares its width with the timestamp
          (head-cols (max 8 (- cols 2 (length stamp) (if (plusp (length stamp)) 1 0))))
          (rows (wrap-segments (list (cons text nil)) head-cols))
@@ -2153,9 +2246,9 @@ differences are all things a screenshot shows and a test would not:
                         (cons " " nil)
                         (cons (format nil "~a~a" row-text
                                       (make-string pad :initial-element #\space))
-                              '(:reverse t))
+                              +operator-block-style+)
                         (cons (if (and (= i 0) (plusp (length stamp))) stamp "")
-                              '(:reverse t))))))
+                              +operator-block-style+)))))
 
 (defparameter +job-notice-prefix+ "[job] "
   "The daemon's own opening for a job-settlement notice (`harness.rs:661`, `completion_notice`).

@@ -348,7 +348,7 @@ fourteen-column indent, then a blank. 26 rows against our 18."
 ;;; --------------------------------------------------------- the config pane ;;;
 
 (defparameter *head-setting-rows*
-  '("diff" "verbosity" "thinking" "tools" "raw_calls")
+  '("diff" "verbosity" "thinking" "tools" "raw_calls" "marker_seam")
   "The settings the HEAD owns, in the config pane's own order.
 
 The daemon's rows are its own and read-only here — this head cannot change what a
@@ -375,6 +375,9 @@ hidden` where ours said `raw_calls = off`."
          (if (getf (head-prefs head) :show-tools) "open" "folded"))
         ((string= key "raw_calls")
          (if (getf (head-prefs head) :raw-calls) "shown" "hidden"))
+        ((string= key "marker_seam")
+         ;; the reference's own word for a fold, which is what this is: the seam shown or not
+         (if *marker-seam* "shown" "hidden"))
         ((string= key "verbosity") (verbosity-name))
         (t "?")))
 
@@ -454,7 +457,8 @@ row's label."
          (dir (daemon-config-dir)))
     (append
      (loop for key in *head-setting-rows*
-           for label in '("diff view" "verbosity" "thinking" "tool output" "raw tool calls")
+           for label in '("diff view" "verbosity" "thinking" "tool output" "raw tool calls"
+                          "marker seam")
            collect (list :section "head — this window"
                          :key label
                          :value (%head-setting-value head key)

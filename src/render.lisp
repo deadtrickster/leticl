@@ -449,12 +449,24 @@ thirty rows appended, and the view jumped to `row-62`."
     ;; blank line before a class change) and would disagree with it the first time the rule
     ;; moved — the arithmetic that decides which row a line belongs to is the arithmetic that
     ;; decided what the lines are.
-    (let ((bounds (if cached (fifth cached) nil))
+    ;; **A `let*`, because `live-pending` is bound FROM `live`** — in a `let` the init forms are
+    ;; evaluated in the enclosing environment, so the second would have read the global `live` and
+    ;; the head died on `The variable LIVE is unbound` at the first frame.
+    (let* ((bounds (if cached (fifth cached) nil))
           (raw nil)
           ;; **THE RUN OF HIDDEN ROWS** (R37 amended): consecutive items this rung hides, counted
           ;; here because this is the function that turns a SEQUENCE of items into lines and a run
           ;; is a property of the sequence. `item-lines` cannot see it — it is handed one item.
-          (run nil))
+          (run nil)
+          ;; **THE WORK STILL IN FLIGHT** (the operator's *"nothing for awhile while you write a
+          ;; tool call and tool executes … otherwise it looks like you hanged"*). A run is defined by
+          ;; ROWS, and a call that has not returned has none — so the window between the colon and the
+          ;; first result row is a window this rung draws nothing in. See `%hidden-run-live-work`.
+          ;;
+          ;; It belongs to the NEWEST row the reader can see, which the walk reaches FIRST (it runs
+          ;; newest to oldest), so one flag is the whole of the bookkeeping.
+          (live (%hidden-run-live-work (session-turn s) cols))
+          (live-pending (and live t)))
     (loop while (and (>= next-i 0)
                      (or (< (length lines) (1+ need))
                          ;; the anchor's row has not been reached yet: keep walking down to it
@@ -505,7 +517,16 @@ thirty rows appended, and the view jumped to `row-62`."
                            ;; **THE COUNTS CONTINUE THE MODEL'S SENTENCE AND NOTHING ELSE** (R37
                            ;; final): only an assistant row with visible text takes them. See
                            ;; `%run-continues-prose-p` for the screen that named the rule.
-                           (glue (and run (not open) (%run-continues-prose-p item)))
+                           ;;
+                           ;; **AND LIVE WORK CARRIES THE SAME MARKER ON THE SAME ROW.** This is the
+                           ;; newest row the reader can see (`live-pending`, taken once), which is
+                           ;; exactly the row a live marker belongs to: the narration the model just
+                           ;; wrote, with the call it is running for hanging off the end of it.
+                           (live-here (and live-pending live))
+                           (glue (and (not open)
+                                      (or run live-here)
+                                      (%run-continues-prose-p item)))
+                           (marker-items (or run nil))
                            ;; **and the room is LEFT for them before the sentence wraps** — render the
                            ;; introducing row narrower by the marker's ROOM, so a sentence that
                            ;; fills its line does not push the counts onto a line of their own. That
@@ -524,7 +545,7 @@ thirty rows appended, and the view jumped to `row-62`."
                                     (item-lines item
                                                 (max 20 (- cols (hidden-run-marker-room cols)))
                                                 (head-prefs head))
-                                    run cols newest)
+                                    marker-items cols (and marker-items newest) live-here)
                                    il)))
                       ;; **an OPEN run draws its rows between this row and the newer one** — this
                       ;; row is prepended after them, so they land in the gap the counts would have
@@ -552,7 +573,7 @@ thirty rows appended, and the view jumped to `row-62`."
                       ;; **One blank each side and never two.** The air rule below supplies its own
                       ;; blank above when the class changes, so ours is added only when it will not:
                       ;; two nils there is the hole the first cut of this measured.
-                      (when (and run (not open) (not glue))
+                      (when (and (or run live-here) (not open) (not glue))
                         (let* (;; **THE BLANK ABOVE IS THE AIR RULE'S, and this must not add a
                                ;; second one.** The walk prepends OLDER rows, so at this moment the
                                ;; row that will sit above the marker has not been seen yet — a blank
@@ -561,7 +582,7 @@ thirty rows appended, and the view jumped to `row-62`."
                                ;; operator's own message and the counts, which is one too many. The
                                ;; separation above is bought by `class-above :other` below instead.
                                (prefix (append
-                                        (list (hidden-run-marker run cols newest))
+                                        (list (hidden-run-marker marker-items cols (and marker-items newest) live-here))
                                         ;; the blank BELOW is this branch's to add: the row under it
                                         ;; has already been drawn (`lines` holds it), so nothing else
                                         ;; will supply the break.
@@ -617,7 +638,11 @@ thirty rows appended, and the view jumped to `row-62`."
                       ;; next hidden row begins a NEW run. Without this the run never clears and
                       ;; every visible row after it takes the same marker again: three markers on
                       ;; one screen, which is the eight-marker wall one notch quieter.
-                      (setf run nil))))
+                      (setf run nil)
+                      ;; **and the LIVE marker is spent with it.** This is the newest row the reader
+                      ;; can see; every row below it is older, and work in flight does not belong to
+                      ;; the middle of a transcript. One marker, on the row the turn is at.
+                      (setf live-pending nil))))
                (decf next-i)))
     ;; **THE OFFSETS ARE FLIPPED TO OLDEST-FIRST HERE**, once the total is known: a row whose
     ;; stretch ended `e` lines from the newest end starts `total - e` lines from the oldest, and

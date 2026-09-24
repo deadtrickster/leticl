@@ -868,38 +868,28 @@ is worse than no hint at all."
         (list armed (cons (format nil " · ~a" tail) '(:dim t)))
         (list (cons tail '(:dim t))))))
 
-(defparameter +turn-status-slots+
-  '((:since . 6) (:count . 12))
-  "The columns the running-turn legend RESERVES for its growing fields, and the reason is the same
-axiom the header's tail slots serve (R43): **nothing must jump.**
+(defparameter +turn-status-head+ " Responding · "
+  "The words between the spinner and the first measured field, in one place.")
 
-The operator: *\"Responding spinner itself jumps because of the time label\"*. It did, and it does in
-letibot too — `duration` grows `1.5s` → `12.3s` → `1m05s`, and `thousands` grows `1 tok` → `1.2k tok`
-→ `12.3k tok`. The legend is pinned to the RIGHT of the composer's bottom edge, so the spinner —
-FIRST in that legend, by `turn_status`'s own ordering — slides left a column the moment either field
-gains one.
-
-So both grow inside a fixed place. **The duration is right-aligned** (`1.5s` is drawn `  1.5s`) so the
-`·` before it and the spinner above it never move. **The count is left-aligned and carries its own
-` · `**, so the dot is at a fixed column whenever there is a count at all, and the number grows
-rightward into the rest of the slot — which is the right way round for the last field on the line,
-where the rightmost column is the only one that can be given away.")
-
-(defun %turn-status-slot (text slot &key (sep "") (align :left))
-  "TEXT as SLOT columns, with nothing at all when TEXT is NIL.
-
-**`NIL` is not padded into the field**, deliberately, where the header's own slots are: the header's
-tail reserves a place for a field whose neighbours are to its right, and this is the LAST field on
-its line — so an absent count is simply absent, and the empty slot is not drawn. What must not move
-is the place of the fields that ARE drawn, and the caller charges the slot's columns either way."
-  (if (null text)
-      (make-string slot :initial-element #\space)
-      (let* ((text (format nil "~a~a" sep text))
-             (text (if (> (string-width text) slot) (truncate-to-width text slot) text))
-             (pad (max 0 (- slot (string-width text)))))
-        (ecase align
-          (:left (concatenate 'string text (make-string pad :initial-element #\space)))
-          (:right (concatenate 'string (make-string pad :initial-element #\space) text))))))
+;;; **NO SLOTS ON THIS LEGEND, AND THE REASON IS WHERE IT IS ANCHORED.**
+;;;
+;;; The first cut reserved fixed columns for the duration and the count, because the legend was pinned
+;;; to the RIGHT of the composer's bottom edge and the spinner is its LEFTMOST glyph — so every digit
+;;; either field gained moved the spinner, and the columns had to be held open to stop it.
+;;;
+;;; That fixed the jump and made two new things visible, both worse. Absent fields left a hole in the
+;;; border (`⠼ Responding ·  724ms` then thirteen blank columns and then `─╯`); filling it with `─`
+;;; ran border THROUGH the legend (`⠼ Responding ·  724ms ─────╯`). The operator, on the second:
+;;; *"I guss remove those bottom char entirely."*
+;;;
+;;; Both were symptoms of the ANCHORAGE and not of the fields. **The legend is anchored at the LEFT
+;;; corner now** (see `composer-box-bottom`): the spinner sits at a fixed column by construction,
+;;; growth runs rightward into the border's own fill, and nothing is held open — there is no hole to
+;;; fill and no character to invent.
+;;;
+;;; This is still *nothing must jump*, which is the axiom. What changed is that the LAYOUT pays for
+;;; it rather than the reader. The top edge's subagent legend stays right-pinned, as the reference has
+;;; it; a legend whose first glyph is a moving spinner is the one that cannot be.
 
 (defun turn-status (head &optional (cols 40))
   "The running turn in a few words, or NIL when no turn is running — the
@@ -929,33 +919,26 @@ reference's `turn_status` (app.rs:7501-7566).
             ;; prefilling: the bar says everything the words would have
             (format nil "~a ~a" spin (prefill-line pp (max 1 (- cols 6))))
             (let ((since (if *turn-started-ms*
-                             ;; **the measured duration grows inside a fixed place**
-                             (%turn-status-slot
-                              (duration (- (internal-real-time-ms) *turn-started-ms*))
-                              (cdr (assoc :since +turn-status-slots+))
-                              :align :right)
-                             ;; **and this sentence is the case that does not need one.** A turn that
-                             ;; came out of a snapshot has no start time, and the fact is the same
-                             ;; width for the whole of it — it never grows, so there is nothing for a
-                             ;; slot to keep still, and truncating it into six columns would throw
-                             ;; away the only thing that can be said about that turn.
+                             (format nil "~a" (duration (- (internal-real-time-ms) *turn-started-ms*)))
+                             ;; **a turn that came out of a snapshot measured nothing**, and this
+                             ;; sentence is the case that never grows — so there is nothing here for
+                             ;; the layout to hold still.
                              "started before this head attached"))
                   (tokens (getf turn :tokens)))
               (concatenate
                'string
                spin
-               " Responding · "
+               +turn-status-head+
                since
-               ;; **nothing measured is NOTHING**, and that is the rule `count` keeps in the
-               ;; reference too: a zero is a zero wearing a measurement's clothes.
-               (%turn-status-slot
-                (cond ((and (numberp tokens) (plusp tokens))
-                       (format nil "~a tok" (thousands tokens)))
-                      ((plusp (length (or (getf turn :text) "")))
-                       (format nil "~a chars" (thousands (length (getf turn :text)))))
-                      (t nil))
-                (cdr (assoc :count +turn-status-slots+))
-                :sep " · "))))))))
+               ;; **the count, or the character count where the server has not spoken**, or a
+               ;; `messages`-backend turn whose seam carries no token count — and NOTHING is
+               ;; nothing, which is the rule the reference keeps too: a zero is a zero wearing a
+               ;; measurement's clothes.
+               (cond ((and (numberp tokens) (plusp tokens))
+                      (format nil " · ~a tok" (thousands tokens)))
+                     ((plusp (length (or (getf turn :text) "")))
+                      (format nil " · ~a chars" (thousands (length (getf turn :text)))))
+                     (t "")))))))))
 
 ;;; --------------------------------------------------------- the composer ;;;
 ;;;
@@ -1109,8 +1092,21 @@ already in, and ours painted it bold, which is the header's register."
   (box-edge cols #\╭ #\╮ "" (composer-title head) '(:fg :yellow)))
 
 (defun composer-box-bottom (head cols)
-  "The box's bottom edge, with the alarm and the turn's status pinned right."
-  (box-edge cols #\╰ #\╯ "" (composer-wiring head cols) '(:dim t)))
+  "The box's bottom edge, with the alarm and the turn's status **against the LEFT corner**.
+
+The legend is the reference's — `⚠` then the turn's own status — and so is the edge. **The side is
+ours**, and it is `nothing must jump` applied to a legend whose first glyph is a spinner: pinned
+right, every digit the duration or the count gained slid the spinner leftward, and holding columns
+open for the digits that had not arrived cost a hole in the border (or a run of `─` through the
+legend, which the operator rejected outright — *\"I guss remove those bottom char entirely\"*).
+
+Anchored left, the spinner is a fixed distance from the corner for the whole of a turn: the row
+grows rightward into the border's own fill, which is padding either way. Nothing is reserved, so
+there is no hole to fill and no character to invent.
+
+The top edge's legend stays right-pinned, which is the reference's side for both, so the only
+asymmetry on the screen is one legend sitting at the corner it can sit still at."
+  (box-edge cols #\╰ #\╯ (composer-wiring head cols) "" '(:dim t)))
 
 (defun %composer-body-rows (lines start inner)
   "LINES as box rows, the prompt on the FIRST row of the buffer only."

@@ -58,6 +58,16 @@ understood here.")
         :thinking "folded"   ; `open` or `folded`
         :tools "folded"
         :raw-calls nil       ; show the model's `<function=…>` markup under a call
+        ;; **The seam on the run marker** (R37 amended). ` · ctrl-t opens it` / ` · /verbosity`
+        ;; after the counts — the head talking about its own key. The operator wants it gone:
+        ;; *"also make showing \" dot /verbosity\" a config and switch it off."* Default NIL, and
+        ;; the default is the ruling: a seam that has to be asked for is a seam nobody removes.
+        ;;
+        ;; It is a PREFERENCE rather than a deletion because the seam is the only thing on that
+        ;; line that says the rows can be opened at all — R29's discoverability obligation, which
+        ;; every other elided row in this head meets with `· /t unfolds it`. Off by default, and
+        ;; the obligation is met by the rung naming itself and by `/t` being in the hint bar.
+        :marker-seam nil
         ;; **The rung this head draws at** (R42's sibling, and letibot's `1da8f08`). It was the
         ;; one choice the CARD could change and the file did not keep — so a reader who chose
         ;; `reading` got `normal` back on every restart, which is a setting they have to keep
@@ -83,6 +93,7 @@ understood here.")
 (defun prefs-thinking (p) (getf p :thinking))
 (defun prefs-tools (p)    (getf p :tools))
 (defun prefs-raw-calls (p)(getf p :raw-calls))
+(defun prefs-marker-seam (p) (getf p :marker-seam))
 (defun prefs-verbosity (p) (getf p :verbosity))
 (defun prefs-path (p)     (getf p :path))
 
@@ -115,6 +126,7 @@ the caller still holds, so the honest place to repair it is where the plist is a
 (defun (setf prefs-thinking) (v p) (setf (getf p :thinking) v))
 (defun (setf prefs-tools) (v p)    (setf (getf p :tools) v))
 (defun (setf prefs-raw-calls) (v p)(setf (getf p :raw-calls) v))
+(defun (setf prefs-marker-seam) (v p) (setf (getf p :marker-seam) v))
 (defun (setf prefs-verbosity) (v p) (setf (getf p :verbosity) v))
 (defun (setf prefs-path) (v p)     (setf (getf p :path) v))
 
@@ -153,6 +165,11 @@ shares now, by `load-retired-into`, which `load-prefs-into` calls beside this."
         (head-pref head :show-tools) (fold-on-p (prefs-tools p))
         (head-pref head :raw-calls) (prefs-raw-calls p)
         (head-pref head :diff) (prefs-diff p))
+  ;; **the run marker's seam is a RENDER input, so it bumps the generation like the folds** —
+  ;; and it is its own form because `%set-marker-seam` is a function call and not a place, which
+  ;; `(setf place …)` cannot take. Measured: it read as a `(setf %set-marker-seam)` and the head
+  ;; said so at the first compile rather than at the first frame.
+  (%set-marker-seam (prefs-marker-seam p))
   ;; **The rung, through `set-verbosity` and NOT through the persisting writer.** A load applies
   ;; what the file said; saving it back here would write a file this head may never have read
   ;; (the load's own `unreadable` case), which is the one thing the file discipline forbids.
@@ -191,6 +208,7 @@ saving over a list it never saw. Nothing is written here either way; this only r
     (setf (prefs-thinking p) (fold-name (getf (head-prefs head) :show-reasoning))
           (prefs-tools p) (fold-name (getf (head-prefs head) :show-tools))
           (prefs-raw-calls p) (and (getf (head-prefs head) :raw-calls) t)
+          (prefs-marker-seam p) (and *marker-seam* t)
           (prefs-diff p) (or (getf (head-prefs head) :diff) "split")
           ;; **the rung, read from the LIVE variable** — the plist and the file disagree for the
           ;; moment between a change and a save, and the plist is what is actually in effect.
@@ -676,6 +694,12 @@ than the bad line. Returns `(values prefs notes)`."
                      (push (format nil "head.toml: raw_calls = ~s is not true or false"
                                    value) notes)
                      (setf (prefs-raw-calls p) b))))
+              ((string= key "marker_seam")
+               (let ((b (%bool-value value)))
+                 (if (eq b :unknown)
+                     (push (format nil "head.toml: marker_seam = ~s is not true or false"
+                                   value) notes)
+                     (setf (prefs-marker-seam p) b))))
               ((string= key "verbosity")
                ;; **A word this build cannot read is NAMED, and the file keeps it** (letibot's own
                ;; rule for its rungs). The alternative — silently writing a different word back —
@@ -722,6 +746,7 @@ Returns the path written, or NIL for a head with nowhere to write."
                      (cons "thinking" (format nil "~s" (prefs-thinking p)))
                      (cons "tools" (format nil "~s" (prefs-tools p)))
                      (cons "raw_calls" (if (prefs-raw-calls p) "true" "false"))
+                     (cons "marker_seam" (if (prefs-marker-seam p) "true" "false"))
                      ;; **Quoted like letibot spells its own**, so the two heads' files read
                      ;; alike for a key they share a vocabulary for.
                      (cons "verbosity" (format nil "\"~a\"" (prefs-verbosity p))))))
