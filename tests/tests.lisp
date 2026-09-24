@@ -3546,19 +3546,22 @@ this asserts both plus the retirement."
         (leticl::*hist-generation* 0) (leticl::*hidden-run-open* nil)
         (leticl::*verbosity* :normal))
     (let ((h (%queued-mid-turn-head)))
-      ;; --- 1. BEFORE the announcement: the echo is ALREADY where its row will land
+      ;; --- 1. BEFORE the announcement: the echo is pinned at the BOTTOM, below the reply
       (let* ((rs (%rows h))
              (echo (position-if (lambda (s) (search "queued · and now" s)) rs))
              (turn (position-if (lambda (s) (search "still writing" s)) rs)))
         (is (and echo turn) (format nil "the echo and the running turn are both up: ~s" rs))
-        (is (< echo turn)
-            "**the echo is ABOVE the running reply — where its row is going to land.** This
- assertion used to read `>` and call the echo's place at the tail *the defect*: the tail is
- BELOW the turn, and a queued row is APPENDED to the transcript, which is drawn before the
- live turn. So the echo started below and crossed the reply when the row was announced —
- the operator's *\"pure ui desync\"*. Drawing it where it lands is what makes the
- announcement invisible (R45; `a-queued-prompt-does-not-move-when-its-row-lands` asserts the
- row-for-row identity)."))
+        ;; **`>` IS THE CORRECT ORDER AND THIS ASSERTION WAS ONCE FLIPPED BY A WRONG FIX.** An
+        ;; earlier attempt drew the echo ABOVE the live turn, reasoning that a queued row is
+        ;; appended and the live turn is drawn after every committed row — measured on a sequence
+        ;; that does not occur. The round's answer commits to the transcript BEFORE the step
+        ;; boundary appends the follow-up, so the row lands BELOW that reply; an echo above it
+        ;; crosses it. The operator settled it: *\"still pinned to the bottom.\"*
+        (is (> echo turn)
+            "**the echo is BELOW the running reply — pinned to the bottom**, which is where its
+ row lands, so the announcement moves nothing (R45;
+ `a-queued-prompt-stays-at-the-bottom-and-does-not-cross-the-reply` asserts the row-for-row
+ identity across that announcement)."))
       ;; --- 2. THE ANNOUNCEMENT: the row draws the words, in its own place
       (leticl::%handle-frame h (list :frame "event" :seq 1 :event "transcript_appended"
                                      :item-id "u2" :kind "user" :ledger-head "" :ts 1))
@@ -5436,96 +5439,104 @@ the deleted one's place. That is why the stops carry an id at all."
           "**`delete` never falls through to the composer** with the pane up — the pane owns it,
  like Tab and Enter"))))
 
-(def-test a-queued-prompt-does-not-move-when-its-row-lands (:suite leticl)
-  "**R45, and the operator named the defect better than I first did.** *\"pure ui desync\"*:
+(def-test a-queued-prompt-stays-at-the-bottom-and-does-not-cross-the-reply (:suite leticl)
+  "**R45, and this test was written the wrong way round once — the measurement is what corrected it.**
+
+The operator, twice:
+
+  > and again, i saw your reply before my message was unqueued
 
   > a message was queued to harnessd, delivered to model, reply started streaming above the
   > queued message and then some tick goes off and queued message dequeued and rendered
-  > rightfully above the reply.
+  > rightfully above the reply. pure ui desync
 
-**Measured on one head, before the fix** — and I had this output in front of me and read past it,
-which is the reason this test asserts row INDICES and not a phrase:
+and then, after a first attempt at a fix made it worse: *\"the queued messages must be still
+coalesced and still pinned to the bottom.\"*
 
-    after the send    row 4 = the streaming reply    row 6 = the queued message
-    row announced     row 4 = the queued message      row 6 = the streaming reply
+**The attempt that failed drew the echo ABOVE the live turn**, reasoning that a queued row is
+appended and the live turn is drawn after every committed row. The measurement behind that was
+taken on a sequence that does not occur: it announced the user row while the reply was still in
+the live pane. When the round's answer IS committed as a row while the turn pane still holds the
+same text — a state the head can reach, since nothing but `turn_started` clears `:text` — the
+echo jumps DOWN past the reply:
 
-The message crosses the reply. `%viewport-lines` drew the echo at the very tail — below the
-running turn — under a comment that said *\"at the tail, where they will land\"*, and that
-premise is false: a queued prompt's row is APPENDED to the transcript, the live turn is drawn
-after every committed row, so the row lands ABOVE the turn. The echo started where the row would
-not be and then moved to where it would.
+    reply streaming      row 4 = ▌ queued · Q2      row 6 = R2 the reply
+    reply committed      row 4 = R2 the reply        row 6 = ▌ queued · Q2     <- the jump
 
-**The fix is to draw it where it is going, from the first frame**, and the claim here is stronger
-than *it is in the right place*: **the frame after the announcement is the SAME FRAME as the one
-before it, row for row.** Same count, same indices, and — because an announced row with no body
-yet still wears the `queued` tag — the same words. The announcement is invisible, which is what
-a queued prompt should be: the reader's own sentence, sitting still, waiting.
+So the echo is drawn at the BOTTOM, below the turn, and this test holds the two claims that
+follow from the transcript's own order:
 
-**And the body landing keeps it still.** The row's words change once (`queued · ` gives way to
-the timestamp) and nothing moves, which is the third frame asserted below."
-  ;; the ghost's own globals, for the same reason the other pane tests bind them: the card is
-  ;; checked on the key ladder and a leaked draft takes Esc from every later test
+  · **the echo is BELOW the streaming reply**, because the round's answer is committed before the
+    step boundary appends the follow-up — the row lands under that reply, and an echo above it
+    would have to cross it;
+  · **the announcement does not move it.** A row that has been announced and has no body yet
+    still wears the `queued` mark, so the frame before the announcement and the frame after it
+    are the same frame."
   (let ((leticl::*bound-prompts* nil) (leticl::*queued-unconfirmed* nil)
         (leticl::*todo-draft* nil) (leticl::*operator-todos* nil)
         (leticl::*scroll-anchor* nil) (leticl::*hist-cache* nil)
         (leticl::*hist-generation* 0) (leticl::*hidden-run-open* nil)
         (leticl::*stdout* (make-string-output-stream))
-        (h (%on-head :cols 90 :rows 30)))
+        (h (%on-head :cols 100 :rows 30)))
     (setf (head-connected h) t)
     (setf (session-items (head-session h))
           (make-array 2 :adjustable t :fill-pointer 2
                         :initial-contents
                         (list (list :item-id "u1" :kind "user" :ts 0
-                                    :item (list :type "user"
-                                                :parts (list (list :text "Q1 the earlier question"))))
+                                    :item (list :type "user" :parts (list (list :text "Q1"))))
                               (list :item-id "a1" :kind "assistant" :ts 0
-                                    :item (list :type "assistant" :text "A1 the earlier answer")))))
-    (setf (session-turn (head-session h))
-          (list :turn-id "t1" :model "m" :state (list :state "running")
-                :text "R2 the reply being streamed now" :reasoning "" :calls nil))
+                                    :item (list :type "assistant" :text "A1")))))
     (flet ((rows () (mapcar (lambda (l) (if (consp l) (format nil "~{~a~}" (mapcar #'car l)) ""))
-                            (leticl::%viewport-lines h 90 24)))
-           (at (needle rs) (position-if (lambda (r) (search needle r)) rs)))
-      ;; --- 1. the prompt is queued: no row exists, and the echo says so
-      (leticl::%prompt h "Q2 the message queued mid-turn")
+                            (leticl::%viewport-lines h 100 24)))
+           (at (needle rs) (position-if (lambda (r) (search needle r)) rs))
+           (ev (env) (leticl::%handle-frame h env)))
+      ;; --- a turn runs and its reply streams
+      (ev (list :frame "event" :seq 1 :event "turn_started" :turn-id "t2" :model "m"))
+      (ev (list :frame "event" :seq 2 :event "delta" :turn-id "t2" :target "text"
+                :text "R2 the reply being streamed now"))
+      ;; --- the operator sends mid-turn
+      (leticl::%prompt h "Q2 my queued message")
       (let* ((queued (rows))
-             (msg (at "Q2 the message" queued))
+             (msg (at "Q2 my queued message" queued))
              (reply (at "R2 the reply" queued)))
-        (is (and msg reply) (format nil "both are on the screen: ~s" queued))
-        (is (search "queued" (nth msg queued)) "the echo says it is queued")
-        ;; --- 2. **the row is announced, and the frame does not change AT ALL**
-        (leticl::%handle-frame h (list :frame "event" :seq 1 :event "transcript_appended"
-                                       :item-id "u2" :kind "user" :ledger-head "" :ts 1))
-        (let ((announced (rows)))
-          (is (= msg (at "Q2 the message" announced))
-              (format nil "**the message is on row ~a before and after the announcement** — it
- used to be below the reply and cross it: ~s" msg announced))
-          (is (= reply (at "R2 the reply" announced))
-              (format nil "**and the reply does not move either** — ~a before, ~a after: the
- announcement is invisible, which is what a queued prompt should be: ~s"
-                      reply (at "R2 the reply" announced) announced))
-          (is (equal queued announced)
-              (format nil "**NOT ONE ROW CHANGES** — the frame before the announcement and the
- frame after it are the same frame. That is the whole of *pure ui desync*: ~s vs ~s"
-                      queued announced)))
-        ;; --- 3. the body lands: the row's words change once, and nothing moves
-        (leticl::%handle-frame h (list :frame "event" :seq 2 :event "transcript_content"
-                                       :item-id "u2"
-                                       :item (list :type "user"
-                                                   :parts (list (list :kind "text"
-                                                                      :text "Q2 the message queued mid-turn")))))
+        (is (and msg reply) (format nil "both are up: ~s" queued))
+        (is (> msg reply)
+            (format nil "**the echo is BELOW the streaming reply — pinned to the bottom**, which
+ is where its row will land: ~s" queued))
+        (is (search "queued" (nth msg queued)) "and it says it is queued while that is true")
+        (is (= 1 (count-if (lambda (r) (search "Q2 my queued message" r)) queued))
+            "**drawn once** — the echo is the only copy until its row lands")
+        ;; --- THE ROUND'S ANSWER COMMITS FIRST, which is the daemon's real order: the answer rows
+        ;; are appended when the generation ends, and the follow-up at the step boundary after it.
+        ;; **This step is what the first version of this test was missing, and it is the step that
+        ;; showed the bug**: with the live pane still drawing the text the transcript had taken
+        ;; over, the reply stood on TWO rows and the queued row crossed it.
+        (ev (list :frame "event" :seq 3 :event "transcript_appended" :item-id "a2"
+                  :kind "assistant" :ledger-head "" :ts 1))
+        (ev (list :frame "event" :seq 4 :event "transcript_content" :item-id "a2"
+                  :item (list :type "assistant" :text "R2 the reply being streamed now")))
+        (let ((committed (rows)))
+          (is (equal queued committed)
+              (format nil "**NOT ONE ROW CHANGES when the reply stops streaming and becomes a
+ row** — 8 rows before, 8 after, the same 8. The reply used to stand on two of them, and the
+ echo moved: ~s vs ~s" queued committed))
+          ;; --- and the announcement moves nothing either
+          (ev (list :frame "event" :seq 5 :event "transcript_appended" :item-id "u2"
+                    :kind "user" :ledger-head "" :ts 1))
+          (let ((announced (rows)))
+            (is (equal queued announced)
+                (format nil "**nor across the announcement** — a row announced and bodiless still
+ wears the `queued` mark, so the two frames are the same frame: ~s vs ~s"
+                        queued announced))))
+        ;; --- and the body landing changes only the tag
+        (ev (list :frame "event" :seq 6 :event "transcript_content" :item-id "u2"
+                  :item (list :type "user"
+                              :parts (list (list :kind "text" :text "Q2 my queued message")))))
         (let ((landed (rows)))
-          (is (= msg (at "Q2 the message" landed))
-              (format nil "**and the row is still on line ~a when its body arrives**: ~s"
-                      msg landed))
+          (is (= msg (at "Q2 my queued message" landed))
+              (format nil "**still on line ~a when its body arrives**: ~s" msg landed))
           (is (= reply (at "R2 the reply" landed))
-              (format nil "with the reply still at ~a: ~s" reply landed))
-          ;; the TAG, not the word: this test's message text contains "queued" and a bare search
-          ;; for it passed for the wrong reason — measured, and the reason the tag is spelled with
-          ;; its separator here
-          (is (not (search "queued · " (nth msg landed)))
-              (format nil "**the only change is the tag** — a real row wears its timestamp, not
- the pending mark: ~s" (nth msg landed))))))))
+              (format nil "with the reply still at ~a: ~s" reply landed)))))))
 
 (def-test the-help-is-the-references-row-for-row (:suite leticl)
   "letibot's help against ours, stripped: 41 non-blank rows against 50. Theirs is

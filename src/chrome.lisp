@@ -1092,21 +1092,25 @@ already in, and ours painted it bold, which is the header's register."
   (box-edge cols #\╭ #\╮ "" (composer-title head) '(:fg :yellow)))
 
 (defun composer-box-bottom (head cols)
-  "The box's bottom edge, with the alarm and the turn's status **against the LEFT corner**.
+  "The box's bottom edge, with the alarm and the turn's status **pinned RIGHT** — the reference's
+side for both edges, restored on the operator's word: *\"please move Responding back to the right
+side\"*.
 
-The legend is the reference's — `⚠` then the turn's own status — and so is the edge. **The side is
-ours**, and it is `nothing must jump` applied to a legend whose first glyph is a spinner: pinned
-right, every digit the duration or the count gained slid the spinner leftward, and holding columns
-open for the digits that had not arrived cost a hole in the border (or a run of `─` through the
-legend, which the operator rejected outright — *\"I guss remove those bottom char entirely\"*).
+**It was anchored left for one reason, and the reason still holds.** The spinner is the legend's
+FIRST glyph, so on a right-pinned legend every digit the duration or the count gains slides it
+leftward; anchored left it cannot move, because the row grows rightward into the border's own fill.
+The alternatives were measured and both were rejected by the operator — reserving the unused digits
+left a hole in the border between the count and `─╯` (*\"look at the responding gap\"*), and drawing
+those columns as `─` ran border through the legend (*\"I guss remove those bottom char entirely\"*).
 
-Anchored left, the spinner is a fixed distance from the corner for the whole of a turn: the row
-grows rightward into the border's own fill, which is padding either way. Nothing is reserved, so
-there is no hole to fill and no character to invent.
+**So the jump is a known, accepted cost rather than an oversight** — the operator has read both and
+chose the reference's side, which is their call to make. A turn whose rate goes `724ms` → `12.3s` and
+whose count goes `3 tok` → `12.3k tok` moves the spinner by however many digits it gained. The one
+thing that would keep both — putting the spinner LAST, so growth runs leftward into the border — is
+where `box-edge` truncates from, and it inverts the reference's own word order.
 
-The top edge's legend stays right-pinned, which is the reference's side for both, so the only
-asymmetry on the screen is one legend sitting at the corner it can sit still at."
-  (box-edge cols #\╰ #\╯ (composer-wiring head cols) "" '(:dim t)))
+Both edges are right-pinned now, so they agree with letibot."
+  (box-edge cols #\╰ #\╯ "" (composer-wiring head cols) '(:dim t)))
 
 (defun %composer-body-rows (lines start inner)
   "LINES as box rows, the prompt on the FIRST row of the buffer only."

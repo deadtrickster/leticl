@@ -2147,6 +2147,27 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
          ;; must not survive into the next one
          (when (and body (string= (getf body :type) "assistant"))
            (note-assistant-targets body)
+           (let ((turn (session-turn session)))
+             ;; **THE HANDOVER, and it is `:appended`'s own stated reason.** That list was
+             ;; *"initialised at `turn_started` and written by nothing"*; it is written now, and
+             ;; this is the reader it was written for. `view.rs:246-253`: a head shows a running
+             ;; turn from `text`/`reasoning` and a finished one from the transcript, **and it needs
+             ;; to know which rows are the finished form or it renders the answer twice.**
+             ;;
+             ;; Measured without this, on one head and one sequence: the reply appeared on TWO
+             ;; rows — the committed assistant row at 4 and the live pane's copy at 6 — and that
+             ;; duplicate is what made a queued prompt appear to cross the reply when its own row
+             ;; landed. Two bugs, one cause: the live pane kept drawing text the transcript had
+             ;; taken over.
+             ;;
+             ;; **The guard is the `:appended` membership**, not the body's kind. A row that this
+             ;; turn did not publish — a snapshot's history, a row from a turn already closed —
+             ;; must not clear the LIVE turn's text, and the id is the only thing that says whose
+             ;; row it is. The answer arrives whole, and the turn's `:text` is that whole answer,
+             ;; so the handover is exact rather than approximate.
+             (when (and turn
+                        (member (getf env :item-id) (getf turn :appended) :test #'equal))
+               (setf (getf turn :text) "")))
            (%round-boundary)))
        :dirty)
       ((:decision-requested)

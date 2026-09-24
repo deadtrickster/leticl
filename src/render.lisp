@@ -842,46 +842,44 @@ to decide when the reader has asked for the rows above the window (`fetch-row-ab
  terminal: the newest content sat at row 1 and the oldest at row 57.)"
   (let* ((s (head-session head))
          (need (+ (head-scroll head) want))
-         ;; **THE QUEUED PROMPT GOES WHERE ITS ROW WILL LAND, WHICH IS ABOVE THE LIVE TURN.**
-         ;;
-         ;; The line used to be drawn at the very tail, below the running turn, with the comment
-         ;; *"at the tail, where they will land"* — and that premise is false. A queued prompt's
-         ;; row is APPENDED to the transcript, and the live turn is drawn after every committed
-         ;; row, so the row lands ABOVE the turn and the echo was starting below it. Measured on
-         ;; one head, one sequence:
-         ;;
-         ;;     after the send     row 4 = the streaming reply    row 6 = the queued message
-         ;;     row announced      row 4 = the queued message      row 6 = the streaming reply
-         ;;
-         ;; The message crosses the reply it belongs after. The operator, twice: *"and again, i saw
-         ;; your reply before my message was unqueued"* — and then, naming it exactly: *"a message
-         ;; was queued to harnessd, delivered to model, reply started streaming above the queued
-         ;; message and then some tick goes off and queued message dequeued and rendered rightfully
-         ;; above the reply. pure ui desync."*
-         ;;
-         ;; **So it is drawn where it is going, from the first frame.** The relationship that stays
-         ;; true is *immediately before the live turn*: rows committed afterwards arrive above BOTH
-         ;; the echo and the turn, so the echo stays glued to the turn's head — the same place the
-         ;; appended row will take the moment the daemon announces it, and the same place it keeps.
-         ;; Nothing jumps because nothing moves: the echo and the row are the same row at the same
-         ;; address, one before the announcement and one after.
-         ;; **AND THE ECHO CARRIES THE SAME BLANK A LANDED ROW GETS.** `hist` is followed by one
-         ;; blank row (`gap`, below — *"air above the chrome"*), and a row that LANDS is part of
-         ;; `hist`, so it is followed by that blank before the live turn is drawn. Without the same
-         ;; blank after the echo, the announcement moved the reply down one row — no longer a
-         ;; crossing, but still a move, and the axiom is that nothing moves. Measured: congruent at
-         ;; every row once this is here.
-         (q (queued-lines head cols))
+         ;; **THE QUEUED PROMPTS ARE DRAWN LAST — BELOW THE LIVE TURN, AT THE BOTTOM.** See the
+         ;; account at `tail` below for why this is where they belong and for the one version of
+         ;; this that got it wrong.
          (tail (append
-                ;; the queued prompts FIRST — above the turn, where their rows land
-                q
-                ;; ...and the air their row will have, so the frame before the announcement and the
-                ;; frame after it are the same frame with one word changed (`queued · ` gone)
-                (when q (list nil))
-                ;; then the running turn, then ITS FOOTER — the footer belongs to the turn and
+                ;; the running turn, then ITS FOOTER — the footer belongs to the turn and
                 ;; sits under it, and only when the turn has actually ended
                 (turn-lines (session-turn s) cols (head-prefs head))
                 (turn-footer-lines (session-turn s) cols)
+                ;; **THEN THE QUEUED PROMPTS — AT THE BOTTOM, WHERE THEIR ROWS LAND.**
+                ;;
+                ;; This order was changed once and changed back, and the measurement is why.
+                ;; Drawn ABOVE the live turn, a queued message sits above the streaming reply —
+                ;; and the row that replaces it lands BELOW that reply, because a round's answer
+                ;; is committed before the step boundary appends the follow-up. Measured on one
+                ;; head, one sequence:
+                ;;
+                ;;     reply streaming      row 4 = ▌ queued · Q2   row 6 = R2 the reply
+                ;;     reply committed      row 4 = R2 the reply     row 6 = ▌ queued · Q2
+                ;;
+                ;; The message jumps DOWN past the reply. Below the turn it does not move at all:
+                ;; the turn pane is empty by the time the row lands (the round's answer went to the
+                ;; transcript), and an empty pane contributes no lines, so the echo's place and the
+                ;; row's place are the same row.
+                ;;
+                ;; **The operator's earlier reading — *"rendered rightfully above the reply"* — is
+                ;; about the reply that ANSWERS the message, and that reply is the NEXT round's,
+                ;; drawn below it. The reply above is the one answering the PREVIOUS message, and a
+                ;; queued row belongs under it because that is the order the transcript keeps.**
+                ;; They settled it themselves: *"the queued messages must be still coalesced and
+                ;; still pinned to the bottom."*
+                (queued-lines head cols)
+                ;; **AND THE ECHO CARRIES THE AIR A LANDED ROW HAS AFTER IT.** `hist` is followed by
+                ;; one blank row (`gap`, below — *"air above the chrome"*), and a row that LANDS is
+                ;; part of `hist`, so a committed row brings that blank with it. The echo in the
+                ;; tail does not, and the frame gained one row when the row landed: measured, 7 rows
+                ;; waiting and 8 landed, identical for their first seven. Nothing moved, which is
+                ;; what the operator asked for, but the screen still grew by a line.
+                (when (queued-lines head cols) (list nil))
                 ;; AND THE CARRY LAST: `/reseat` and `/compact` announce every row before a single
                 ;; body follows, so the tail is where the row count is going. Drawn one-per-row that
                 ;; is a screen of placeholders; this is one line, and it removes itself when the
