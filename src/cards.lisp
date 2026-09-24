@@ -1915,7 +1915,42 @@ header, also printed `· 1 line` — a count for a fold with nothing to fold."
          (edit (or (getf facts :edit) (getf body :edit)))
          (open (getf prefs :show-tools))
          (word (outcome-name outcome))
+         ;; bound HERE rather than where the header is built, because `outcome-style` below
+         ;; needs it — the quiet register is what a row that went fine is drawn in
+         (faint '(:dim t))
+         ;; **`bad` IS THE STRUCTURE, NOT THE COLOUR.** It asks one question — did this call
+         ;; come back `ok` — and it decides whether a one-line result may be inlined on the
+         ;; header, whether a failed edit may draw its diff, and whether a failure with no
+         ;; reason must show its body. Those are all about what there is to SHOW.
          (bad (not (string= word "ok")))
+         ;; **THE COLOUR IS THE ROLE, and this row spelled the mapping a SECOND time.**
+         ;;
+         ;; It said `(if bad '(:fg :red) faint)`, so **every outcome that was not `ok` was a
+         ;; failure** — and the operator, looking at a job that had just been moved to the
+         ;; background, asked *"why on earth backgrounding message is in red"*.
+         ;;
+         ;; They were right to ask. `%outcome-style` is the one place this mapping lives and
+         ;; it has said otherwise all along: abstained, denied and **backgrounded** are
+         ;; `Attention`, not `Failure`, because a process that is still working must not be
+         ;; drawn as something to retry. `call-lines` was already fixed to use it and its own
+         ;; comment warns that *"it used to be spelled again here, and the two spellings
+         ;; disagreed about `not_run` and about backgrounded"* — the second spelling was
+         ;; **this row**, one function away, and it was still there.
+         ;;
+         ;; The reference's `display_outcome` (`app.rs:13973`) has `Backgrounded` as its own
+         ;; variant for exactly this reason: *"not `Failed`, which would put a retry in front
+         ;; of the operator for a command that is still working, and not `Ok`, which would
+         ;; read as a finish."*
+         ;;
+         ;; **`ok` stays dim and does not become `Success`.** The settled row is quiet when
+         ;; the call went fine — the whole row is faint on the screen — and a green line
+         ;; under every command in the transcript is a colour that says nothing. Only a row
+         ;; that wants the reader's eye takes a colour, and `%outcome-style` says which
+         ;; colour that is. An outcome this build does not know is `pending`, the same
+         ;; fallback `call-lines` uses, rather than the red this row used to guess.
+         (outcome-style (if (string= word "ok")
+                            faint
+                            (or (%outcome-style outcome) +role-pending+)))
          (mark (if open "▾" "▸"))
          ;; **A ROW MAY STATE ITS OWN VERB AND SUBJECT** (R24), and it is here rather
          ;; than in a second renderer because the derivation below is a DEFAULT and not
@@ -1935,8 +1970,6 @@ header, also printed `· 1 line` — a count for a fold with nothing to fold."
          (n (length rows))
          (ind (activity-indent cols))
          (w (max 20 (- cols ind)))
-         (faint '(:dim t))
-         (outcome-style (if bad '(:fg :red) faint))
          (size-style (if (>= n +big-output-lines+) '(:bold t) faint))
          (shown-word (%outcome-word word))
          (took (if (numberp ms) (format nil " · ~a" (duration ms)) ""))
@@ -1955,7 +1988,7 @@ header, also printed `· 1 line` — a count for a fold with nothing to fold."
          ;; **the actor's segment is APPENDED, not always present**, so a row the model
          ;; proposed has the same SEGMENTS in the same order as it had before this field
          ;; existed — not merely the same text.
-         (head (append (list (cons mark (if bad '(:fg :red) faint))
+         (head (append (list (cons mark outcome-style)
                              (cons (format nil " ~a " verb) faint)
                              (cons subject nil))
                        (when (plusp (length asked)) (list (cons asked faint)))

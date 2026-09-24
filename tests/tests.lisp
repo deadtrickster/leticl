@@ -14416,6 +14416,67 @@ them together — abstained and denied were plain yellow, backgrounded was
         (format nil "~a is Failure — `display_outcome` maps it onto Failed" word)))
   (is (equal leticl::+role-success+ (leticl::%outcome-style (list :outcome "ok")))))
 
+(def-test a-backgrounded-row-is-never-drawn-as-a-failure (:suite leticl)
+  "**`attention-is-not-pending` was right about the mapping and never asked who USED it.**
+
+The operator, looking at a job the harness had just moved to the background:
+
+    why on earth backgrounding message is in red
+
+They were right to ask, and the answer was worse than a wrong colour constant.
+`%outcome-style` has mapped `backgrounded` onto `Attention` all along — and
+`%tool-result-lines`, which draws every SETTLED tool row, did not call it. It spelled the
+mapping a second time:
+
+    (bad (not (string= word \"ok\")))
+    (outcome-style (if bad '(:fg :red) faint))
+
+**so every outcome that was not `ok` was a failure.** The mark, the `· STILL RUNNING`
+tail, and the whole reason line under it all came out `ESC[31m` — red — on a command that
+was working exactly as intended. `call-lines`, the LIVE row, had already been fixed to use
+`%outcome-style`, and its own comment warns that *\"it used to be spelled again here, and
+the two spellings disagreed about `not_run` and about backgrounded\"*. The second spelling
+was this row, one function away, and nobody had checked.
+
+The reference is explicit (`app.rs:13973`): `Backgrounded` is its own variant, *\"not
+`Failed`, which would put a retry in front of the operator for a command that is still
+working, and not `Ok`, which would read as a finish.\"*"
+
+  ;; the settled row, rendered — the MARK carries the role: `(cons mark outcome-style)`
+  (flet ((mark-style (word)
+           (let* ((calls (list :call-id "c" :name "bash"
+                               :outcome (list :outcome word :handle "j520"
+                                              :next "carry on — nothing to wait for")))
+                  (item (list :item-id (format nil "r-~a" word) :kind "tool_result"
+                              :item (list :type "tool_result" :call-id "c" :name "bash"
+                                          :outcome (getf calls :outcome)
+                                          :payload "line one\nline two\nline three")))
+                  (lines (item-lines item 80 (list :show-tools t))))
+             ;; the row opens with an indent segment, so the mark is found by its glyph
+             ;; rather than by position — `(cons mark outcome-style)` is the one segment
+             ;; that carries the outcome's role onto the row
+             (cdr (find-if (lambda (s) (member (car s) '("▸" "▾") :test #'string=))
+                           (first lines))))))
+    (is (equal leticl::+role-attention+ (mark-style "backgrounded"))
+        "a process that is still working needs a person's eye, not a retry: Attention")
+    (is (not (equal leticl::+role-failure+ (mark-style "backgrounded")))
+        "and it is emphatically NOT Failure — that is what the operator saw")
+    ;; the other half, so the fix cannot be 'paint everything yellow': a real failure is
+    ;; still a failure, and a row that went fine is still the quiet register
+    (is (equal leticl::+role-failure+ (mark-style "failed"))
+        "a genuine failure keeps its red")
+    (is (equal '(:dim t) (mark-style "ok"))
+        "and a call that went fine stays dim, not green — the settled row is quiet")
+    ;; **THE COLOUR COMES FROM THE ROLE AND NOT FROM A SECOND LIST.** Every outcome
+    ;; `%outcome-style` knows, asked of the rendered row and of the mapping, must agree —
+    ;; which is the property the old spelling broke for three of them.
+    (dolist (word '("ok" "abstained" "failed" "denied" "timeout" "not_run"
+                    "backgrounded" "interrupted"))
+      (is (equal (if (string= word "ok") '(:dim t)
+                     (or (leticl::%outcome-style (list :outcome word)) leticl::+role-pending+))
+                 (mark-style word))
+          (format nil "the settled row draws ~a in the role the mapping gives it" word)))))
+
 ;;; ---------------- R12: the card says WHICH non-answer it was (letibot 25) ---------------- ;;;
 ;;;
 ;;; Run for real, before the field existed, on three `decision_requested` frames carrying
