@@ -195,7 +195,7 @@
    ;; R37 amended: the run marker — the two counts a run of hidden rows collapses to, and its opener
    #:reading-hides-p #:hidden-run-lines #:newest-hidden-run-id #:hidden-run-marker
    #:*hidden-run-open* #:%set-hidden-run-open #:*hidden-run-head*
-   #:%hidden-run-id #:%marker-onto-last-line #:%hidden-run-counts #:%hidden-run-counts-text #:%row-invisible-p
+   #:%hidden-run-id #:%marker-onto-last-line #:%hidden-run-counts #:%hidden-run-counts-text #:%hidden-run-counts-segs #:%counts-clause-segs #:%row-invisible-p
    #:hidden-run-marker-room #:+hidden-run-marker-cols+ #:+hidden-run-marker-floor+ #:+hidden-run-count-rungs+ #:+hidden-run-seam-rungs+ #:+hidden-run-marker-ladder+
    #:*marker-seam* #:%set-marker-seam #:+operator-block-style+
    ;; R37's OPEN QUESTION, as a switch: two messages or one prose (the operator rules)

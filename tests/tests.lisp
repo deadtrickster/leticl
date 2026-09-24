@@ -13624,45 +13624,103 @@ returns NIL, so a quiet turn stays quiet."
           "even while the turn still says running: the CALL is what is asked"))
     (is (null (leticl::%hidden-run-live-work nil 100)) "no turn, nothing live")))
 
-(def-test the-marker-counts-go-yellow-while-the-work-is-still-running (:suite leticl)
-  "**The operator's ruling:** *\"when you correctly do account running jobs in verbosity mode [],
-mark counters yellow if the tail job is still running.\"*
+(def-test only-the-tool-call-number-goes-yellow (:suite leticl)
+  "**The operator's ruling, and he had to say it twice:** *\"when you correctly do account running
+jobs in verbosity mode [], mark counters yellow if the tail job is still running\"* — and then, when
+the first cut painted the whole bracket, *\"you should yellow only tool call number, not the whole []
+thing.\"*
 
-A count that is still going up and a count that has stopped are the same characters. `[2 tool calls]`
-frozen at two and `[2 tool calls]` about to become three read identically on a screen where the
-marker is the ONLY thing that says how much work there is — and the reader's question at a live
-turn's edge is precisely *is this still going*, which is the question the yellow answers.
+The yellow marks the ONE number that is still going up. The brackets are punctuation, and the thinking
+count is a count of a different kind of work — colouring all three makes the marker a highlight rather
+than a signal, and a highlight on a line whose job is to be punctuation inside the model's sentence is
+noise.
 
-Yellow is `Pending` in this tree's own vocabulary — *is happening* — the register the live card's
-`◐` mark already takes for the same reason.
+Yellow is `Pending` in this tree's own vocabulary — *is happening* — the register the live card's `◐`
+mark already takes for the same reason.
 
-**The seam stays faint.** The counts are a fact about the work; the seam is the head talking about
-its own key, and a yellow affordance would be the head shouting about itself. When the run settles,
-the counts go back with it, which is the other half of the claim."
+**The seam stays faint**, and that is the same rule read once more: a fact about the work takes a
+colour; the head talking about its own key does not. When the run settles the number goes back to the
+prose's own register with it."
   (let* ((items (%counts-run-items 2 1))
          (segs (lambda (live)
                  (let ((leticl::*marker-seam* nil))
                    (leticl::hidden-run-marker items 100 t live nil))))
-         (mark-of (lambda (live)
-                    (cdr (find-if (lambda (sg) (search "[" (car sg))) (funcall segs live))))))
-    (is (equal leticl::+role-pending+ (funcall mark-of (list :calls 2 :thinking 1)))
-        "a live run's counts are Pending — yellow, which is *is happening*")
-    (is (null (funcall mark-of nil))
-        "**and a settled run's counts take the prose's own register** — no colour at all")
-    ;; the seam is the head's own voice, and it does not shout
+         (live (funcall segs (list :calls 2 :thinking 1)))
+         (settled (funcall segs nil))
+         ;; **the segment that IS the calls count** — `~d` prints it alone, so it is the one
+         ;; segment whose text is all digits
+         (digits-p (lambda (sg)
+                     (and (plusp (length (car sg)))
+                          (every #'digit-char-p (car sg)))))
+         (num-style (lambda (ss) (cdr (find-if digits-p ss)))))
+    (is (equal leticl::+role-pending+ (funcall num-style live))
+        "**the CALLS NUMBER is Pending** — yellow, which is *is happening*")
+    (is (null (funcall num-style settled))
+        "and a settled run's number takes the prose's own register — no colour at all")
+    ;; **NOT the brackets, and NOT the thinking count** — the two halves of the second ruling
+    ;; **the empty segment is the SEAM's slot** (the seam is off here), so it is not text at all
+    (let ((plain (remove-if (lambda (sg) (or (funcall digits-p sg)
+                                             (zerop (length (car sg)))))
+                            live)))
+      (is (every #'null (mapcar #'cdr plain))
+          (format nil "nothing else on the marker takes the colour: ~s" plain))
+      (is (member "[" (mapcar #'car plain) :test #'string=) "the bracket is there, and plain")
+      (is (find-if (lambda (sg) (search "thinking" (car sg))) plain)
+          "and the thinking clause is there, and plain"))
+    ;; the seam, on the same marker, is faint rather than yellow
     (let* ((leticl::*marker-seam* t)
            (segs (leticl::hidden-run-marker items 100 t (list :calls 2 :thinking 1) nil)))
       (is (equal leticl::+role-faint+
                  (cdr (find-if (lambda (sg) (search "ctrl-t" (car sg))) segs)))
-          "the seam is faint even while the counts beside it are yellow"))
-    ;; **and the yellow does not change the TEXT** — the same rule the seam preference keeps,
-    ;; because a marker that re-worded itself when work started would move the sentence above it.
-    ;; Compared with `live` adding NOTHING to the counts (`0 0`), so the only difference between
-    ;; the two markers is the register: a run whose work is all already on the screen still spells
-    ;; its counts the same way, in yellow.
-    (is (string= (format nil "~{~a~}" (mapcar #'car (funcall segs nil)))
+          "the seam is faint even while the number beside it is yellow"))
+    ;; **and the COLOUR changes no character.** Compared with `live` adding NOTHING to the counts
+    ;; (`0 0`), so the two markers say the same thing and differ only in register.
+    (is (string= (format nil "~{~a~}" (mapcar #'car settled))
                  (format nil "~{~a~}" (mapcar #'car (funcall segs (list :calls 0 :thinking 0)))))
-        "only the COLOUR moves; not one character of the marker does")))
+        "only the colour moves; not one character of the marker does")))
+
+(def-test a-running-call-is-live-work-whatever-the-turn-is-called (:suite leticl)
+  "**The gate was the turn's STATE NAME, and MEASURED on the live head it was wrong.**
+
+With a bash call plainly executing, the head reported:
+
+    (:TURN-STATE \"finished\"
+     :CALLS ((\"call_00_2BEv4qYe4aW9V9hRz4400585\" \"running\"))
+     :LIVE NIL
+     :MARKER ((\"[0 head events]\") (\"\" :DIM T)))
+
+So the marker said **`[0 head events]` while a tool call ran** — the operator's *\"still no yellow
+counters for [] running tool calls\"*, with the brackets nearly empty because the in-flight call was
+never counted, and no yellow because `live` was nil.
+
+The turn's name lags the call it is running. The model has stopped generating, so from the turn's own
+point of view the turn is over — and the command it asked for is still going. That window is the
+whole reason `%hidden-run-live-work` exists, so gating it on the turn's label closed the very window
+it was written to open.
+
+**A call's own state is the evidence.** The reference takes the turn pane's existence and counts
+(`live_work`, app.rs:13262); its `superseded` guard fires only when every row has a body AND every
+call is finished, which is the case that counts zero anyway. A turn with nothing unfinished still
+returns NIL, so a quiet turn stays quiet."
+  (let ((base (list :turn-id "t1" :model "m" :text "" :reasoning ""
+                    :calls (list (list :call-id "c1" :name "bash" :state (list :state "running"))))))
+    ;; **the measured case**: the turn says finished, the call says running
+    (is (equal '(:calls 1 :thinking 0)
+               (leticl::%hidden-run-live-work (list* :state (list :state "finished") base) 100))
+        "a running call is live work even when the turn is labelled finished")
+    (is (equal '(:calls 1 :thinking 0)
+               (leticl::%hidden-run-live-work (list* :state (list :state "running") base) 100))
+        "and when it is labelled running, which is the case that used to be the only one")
+    ;; a turn with nothing in flight is still quiet, whatever its label
+    (let ((done (list :turn-id "t2" :model "m" :text "" :reasoning ""
+                      :calls (list (list :call-id "c1" :name "bash"
+                                         :state (list :state "finished"
+                                                      :outcome (list :outcome "ok")))))))
+      (is (null (leticl::%hidden-run-live-work (list* :state (list :state "finished") done) 100))
+          "**a finished call is not live work** — the count is the gate, not a second label")
+      (is (null (leticl::%hidden-run-live-work (list* :state (list :state "running") done) 100))
+          "even while the turn still says running: the CALL is what is asked"))
+    (is (null (leticl::%hidden-run-live-work nil 100)) "no turn, nothing live")))
 
 (def-test the-marker-seam-is-hidden-unless-asked-for (:suite leticl)
   "**The operator's own config request, and its default is the ruling.**

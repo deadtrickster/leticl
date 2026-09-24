@@ -1637,29 +1637,70 @@ then does the seam start to go.
 the head talking about its own keys. The seam still goes before the counts go to their last rung,
 which is why the pairs interleave rather than running as two separate sweeps.")
 
+(defun %counts-clause-segs (rung n style)
+  "ONE count clause as SEGMENTS — `2` in STYLE, ` tools` plain.
+
+The rung is a format string that spells the number and its word together (`~d tool call~:p`), so it
+is formatted WHOLE and then split at the digits it printed — not split at its own `~d` first, which
+is what the first cut did and it does not work: **`~:p` reuses the PREVIOUS argument rather than
+taking one**, so a format string holding ` tool call~:p` and nothing that consumed a number has no
+previous argument at all and signals. Measured: seventeen fixtures died on `FORMAT-ERROR`."
+  (let* ((text (format nil rung n))
+         (num (format nil "~d" n))
+         (at (search num text)))
+    (if at
+        (list (cons (subseq text 0 at) nil)
+              (cons num style)
+              (cons (subseq text (+ at (length num))) nil))
+        (list (cons text nil)))))
+
+(defun %hidden-run-counts-segs (items cols &optional count-rung live style)
+  "`[N tool calls, M thinking lines]` as SEGMENTS, with **only the tool-call number** in STYLE.
+
+*\"you should yellow only tool call number, not the whole
+[] thing.\"* The yellow marks the one number that is still going up — the calls — and nothing else:
+not the brackets, which are punctuation, and not the thinking count, which is a count of a different
+kind of work and would make the whole marker a highlight.
+
+The counts are the same string as ever with no STYLE, so the merged paragraph's caller and the
+width ladder are unaffected: this returns SEGMENTS rather than text precisely so the style costs no
+character."
+  (let* ((rung (or count-rung (aref +hidden-run-count-rungs+ 0)))
+         (counts (%hidden-run-counts items cols live))
+         (calls (getf counts :calls))
+         (thinking (getf counts :thinking))
+         (parts (remove nil
+                        (list (when (plusp calls)
+                                (%counts-clause-segs (first rung) calls style))
+                              (when (plusp thinking)
+                                (%counts-clause-segs (second rung) thinking nil))))))
+    (if parts
+        (append (list (cons "[" nil))
+                (loop for p in parts
+                      for i from 0
+                      append (append (when (plusp i) (list (cons ", " nil))) p))
+                (list (cons "]" nil)))
+        ;; a run neither count can describe — this rung also hides head arrivals — falls back to
+        ;; their count, because `[]` is not a marker, and THAT number is not a call count at all
+        ;; so it takes no style
+        (append (list (cons "[" nil))
+                (%counts-clause-segs (third rung) (getf counts :events) nil)
+                (list (cons "]" nil))))))
+
 (defun %hidden-run-counts-text (items cols &optional count-rung live)
-  "`[N tool calls, M thinking lines]` — the counts alone, and the ONE place they are spelled.
+  "The counts as TEXT — `[N tool calls, M thinking lines]`, the same characters the segments draw.
 
 **A zero clause is dropped**, which is letibot's own `counts.join(\", \")`: a run of tool calls says
 `[2 tool calls]`, not `[2 tool calls, 0 thinking lines]` — the second number is ceremony about a row
-nobody hid. A run neither count can describe — this rung also hides head arrivals — falls back to
-their count, because `[]` is not a marker.
+nobody hid.
 
-Extracted because the marker and the merged paragraph both need it, and two spellings of the counts
-is how they come to disagree about the same run.
+Kept as text for the MERGED PARAGRAPH, which folds the counts into the model's own sentence as a
+string and has no segments to style; the marker itself draws `%hidden-run-counts-segs`.
 
 **COUNT-RUNG chooses the spelling and defaults to the fullest**, which is the merged paragraph's
 case: it has a whole paragraph to wrap in and no frame edge to clear, so it never needs a ladder."
-  (let* ((rung (or count-rung (aref +hidden-run-count-rungs+ 0)))
-         (counts (%hidden-run-counts items cols live))
-         (parts (remove nil
-                        (list (when (plusp (getf counts :calls))
-                                (format nil (first rung) (getf counts :calls)))
-                              (when (plusp (getf counts :thinking))
-                                (format nil (second rung) (getf counts :thinking)))))))
-    (if parts
-        (format nil "[~{~a~^, ~}]" parts)
-        (format nil "[~a]" (format nil (third rung) (getf counts :events))))))
+  (format nil "~{~a~}"
+          (mapcar #'car (%hidden-run-counts-segs items cols count-rung live))))
 
 (defvar *marker-seam* nil
   "Whether the run marker's SEAM — ` · ctrl-t opens it` / ` · /verbosity` — is drawn.
@@ -1719,6 +1760,12 @@ even more\"*, and this is the rung that answers it: growth is paid in words, not
 *\"when you correctly do account running jobs in verbosity mode [], mark counters yellow if the tail
 job is still running.\"*
 
+**AND IT IS THE TOOL-CALL NUMBER, not the brackets and not the thinking count** — the operator's
+second reading of his own ruling: *\"you should yellow only tool call number, not the whole [] thing.\"*
+The yellow marks the one number that is still going up; the brackets are punctuation and the thinking
+count is a count of a different kind of work, and colouring the whole marker would make it a highlight
+rather than a signal.
+
 A count that is still going up and a count that has stopped look exactly alike otherwise, and the
 marker is the only thing on the screen that says how much work there is — so `[2 tool calls]` frozen
 at two and `[2 tool calls]` about to become three are the same characters. Yellow is `Pending` in
@@ -1736,18 +1783,19 @@ When the run settles, the counts go back to the prose's own register with it."
          ;; shrinking the marker because it got shorter would move the sentence — the exact jump
          ;; `hidden-run-marker-room` exists to prevent.
          (rungs (if *marker-seam* +hidden-run-marker-ladder+ '((0 . 2))))
-         ;; **YELLOW WHILE THE WORK IS STILL RUNNING, and `live` is the whole question.** It is
-         ;; non-nil exactly when this run has calls or reasoning in flight, so there is no second
-         ;; predicate to ask and nothing to thread down from the caller.
+         ;; **THE TOOL-CALL NUMBER GOES YELLOW WHILE THE WORK IS STILL RUNNING, and `live` is the
+         ;; whole question.** It is non-nil exactly when this run has calls or reasoning in flight,
+         ;; so there is no second predicate to ask and nothing to thread down from the caller. The
+         ;; style is handed to the counts builder, which puts it on the calls number alone.
          (counts-style (if live +role-pending+ nil))
          (segs nil))
     (dolist (step rungs)
       (let* ((seam-rung (aref +hidden-run-seam-rungs+ (cdr step)))
              (seam (if *marker-seam* (if newest (car seam-rung) (cdr seam-rung)) "")))
-        (setf segs (list (cons (%hidden-run-counts-text
-                                items cols (aref +hidden-run-count-rungs+ (car step)) live)
-                               counts-style)
-                         (cons seam +role-faint+)))
+        (setf segs (append
+                    (%hidden-run-counts-segs items cols (aref +hidden-run-count-rungs+ (car step))
+                                             live counts-style)
+                    (list (cons seam +role-faint+))))
         (when (<= (%segs-width segs) limit)
           (return))))
     ;; The room is the frame's, and the last rung is the last word: a marker nothing can shorten
