@@ -13217,6 +13217,39 @@ needs."
   (let ((tight (car (lines-text (list (leticl::box-edge 14 #\╭ #\╮ "" "a much longer legend"))))))
     (is (= 14 (string-width tight)) "a legend never makes the edge wider than its width")))
 
+(def-test both-box-edges-carry-their-legend-on-the-right (:suite leticl)
+  "**The operator's own call, and the cost is written where the side is chosen.**
+
+*\"please move Responding back to the right side\"* — after a spell at the left corner. It was
+anchored left for one reason: the spinner is the legend's FIRST glyph, so on a right-pinned legend
+every digit the duration or the count gains slides it leftward. Anchored left it cannot move,
+because the row grows rightward into the border's own fill — and the two alternatives that would
+keep both were measured and rejected (*\"look at the responding gap\"*, then *\"I guss remove those
+bottom char entirely\"*).
+
+**So this asserts the SIDE and nothing about stillness**, because stillness is what it gives up.
+Both edges carry their legend on the right, which is the reference's side for both — and a
+turn's own status really does move the spinner as it grows, which is the accepted cost and not a
+regression a future reader should 'fix' back."
+  (let* ((h (%on-head :cols 100 :rows 30))
+         (turn (list :turn-id "t" :model "m" :state (list :state "running")
+                     :text "x" :reasoning "" :calls nil))
+         (leticl::*now-ms* 5000)
+         (leticl::*turn-started-ms* (- (leticl::internal-real-time-ms) 724)))
+    (setf (session-turn (head-session h)) turn)
+    (let* ((edge (car (lines-text (list (leticl::composer-box-bottom h 96)))))
+           (at (search "Responding" edge)))
+      (is (integerp at) (format nil "the running turn's legend is on the bottom edge: ~s" edge))
+      (is (> at (/ 96 2))
+          (format nil "**and it is on the RIGHT half of the edge**, which is the reference's side
+ and the operator's instruction: ~s" edge))
+      (is (search "╯" (subseq edge (1- (length edge))))
+          "with the corner after it, so the legend is framed by the border and not by the edge"))
+    ;; the top edge is right-pinned too, so the two agree
+    (let ((top (car (lines-text (list (leticl::composer-box-top h 96))))))
+      (is (search "╮" (subseq top (1- (length top))))
+          "the top edge's legend is pinned right as well"))))
+
 (def-test the-completions-row-lists-what-tab-would-take (:suite leticl)
   "`completions_line` (app.rs:4342-4358). Tab has completed since this head was
 written (`src/editor.lisp:118`) and **nothing was ever drawn**, so the only way
