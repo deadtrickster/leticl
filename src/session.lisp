@@ -447,7 +447,32 @@ A turn that has finished keeps its state plist for the header's sake — `:state
 `turn` being non-NIL says nothing about whether anything is running, which is the distinction every
 one of those four callers needed and each of them spelled out separately."
   (let ((turn (session-turn (head-session head))))
-    (and turn (string= (or (turn-state-name turn) "") "running"))))
+    (and turn (turn-busy-p turn))))
+
+(defun turn-busy-p (turn)
+  "Is this turn still WORKING — generating, or waiting on a call it made?
+
+**Not the turn's state name, and that was measured as a defect on the operator's own screen:**
+*\"our 'responded, responding' is off — while your turn not finished you are 'Responding' regardless
+of the tool calls or thinking or ongoing replies.\"*
+
+`turn-state-name` is `\"running\"` only while the model is GENERATING, and the daemon sets it to
+`\"finished\"` when the round's generation ends — which is exactly when a tool call starts. So the whole
+time a command was executing, and every second of the reasoning and the reply still to come, the row
+read `Responded in 12.4s at 21:07`: the past tense for work in progress.
+
+MEASURED while fixing the running-call clock, and the evidence was already in hand:
+
+    (:turn-state finished
+     :calls ((call_00_2BEv4qYe4aW9V9hRz4400585 running)))
+
+A turn is busy if it is generating (`\"running\"`) **or** if any of its calls has not finished. Those
+are the two ways a turn can still have work in it, and together they are what the reader means by
+*Responding*: the command is still going, the thinking is still coming, the reply has not landed."
+  (or (string= (or (turn-state-name turn) "") "running")
+      (some (lambda (c) (let ((st (getf c :state)))
+                          (and st (not (string= (or (getf st :state) "") "finished")))))
+            (getf turn :calls))))
 
 (defun call-view (turn call-id)
   (when turn

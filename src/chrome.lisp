@@ -980,9 +980,12 @@ reference's `turn_status` (app.rs:7501-7566).
     nowhere, so the one number this harness exists to move never reached the
     composer's edge. COLS is the border's width, which is why it is a parameter:
     the line is sized to the edge it is being pinned to."
+  ;; **`turn-busy-p`, not the state name** — see its docstring: the state is `finished` for the
+  ;; whole of a tool call, so gating here on `running` announced the past tense over work in
+  ;; progress. The operator's own report: *"while your turn not finished you are 'Responding'
+  ;; regardless of the tool calls or thinking or ongoing replies."*
   (let* ((turn (session-turn (head-session head)))
-         (state (and turn (getf turn :state)))
-         (running (and state (string= (getf (getf turn :state) :state) "running"))))
+         (running (and turn (turn-busy-p turn))))
     (when running
       (let* ((pp (getf turn :progress))
              (spin (string (spinner *now-ms*))))

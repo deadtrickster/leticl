@@ -13507,6 +13507,58 @@ three")
     (is (= (+ (funcall body-row) 2) (funcall caret-row))
         "the caret follows the line the cursor is on, off that base")))
 
+(def-test responding-is-the-present-tense-until-the-turn-is-really-done (:suite leticl)
+  "**The operator: *\"our 'responded, responding' is off — while your turn not finished you are
+'Responding' regardless of the tool calls or thinking or ongoing replies.\"***
+
+`turn-status` gated on the turn's state NAME being `\"running\"`, and `\"running\"` is the
+GENERATION state: the daemon sets it while the model is producing a round, and sets `\"finished\"`
+the moment that round's generation ends — which is exactly when a tool call starts. So for the whole
+of a command executing, and every second of the reasoning and the reply still to come, the row read
+`Responded in 12.4s at 21:07`: the past tense over work in progress.
+
+MEASURED while fixing the running-call clock, and the evidence was already in hand:
+
+    (:turn-state finished
+     :calls ((call_00_2BEv4qYe4aW9V9hRz4400585 running)))
+
+The same wrong predicate was open-coded in `turn-running-p`, which the header, the marker's live
+work and the take-back all ask — so `↑` could also decide no turn was running while a call was. One
+predicate now, answering *is the model working* rather than *is it generating*: a turn is busy if it
+is generating OR if any call it made has not finished."
+  (let ((busy (lambda (state calls)
+                (leticl::turn-busy-p (list :turn-id "t" :state (list :state state) :calls calls))))
+        (call-in (lambda (state)
+                   (list (list :call-id "c1" :name "bash" :state (list :state state))))))
+    ;; **the measured case**: generating is over, the command is still running
+    (is (funcall busy "finished" (funcall call-in "running"))
+        "a turn with a running call is BUSY, whatever its state name says")
+    (is (funcall busy "running" (funcall call-in "finished"))
+        "and a turn that is generating is busy")
+    (is (funcall busy "running" nil) "generating with no calls is busy")
+    (is (not (funcall busy "finished" (funcall call-in "finished")))
+        "**and a turn whose calls have all finished is not** — the past tense is earned")
+    (is (not (funcall busy "finished" nil))
+        "nor is a finished turn with nothing in it"))
+  ;; the row itself, in the two states that were being confused
+  (let ((h (%on-head :cols 100 :rows 30))
+        (leticl::*now-ms* 9000)
+        (leticl::*turn-started-ms* (- (leticl::internal-real-time-ms) 4000)))
+    (setf (session-turn (head-session h))
+          (list :turn-id "t" :model "m" :text "" :reasoning ""
+                :state (list :state "finished")
+                :calls (list (list :call-id "c1" :name "bash"
+                                   :state (list :state "running")))))
+    (let ((row (leticl::turn-status h 96)))
+      (is (stringp row) (format nil "**the row says `Responding`, not the report: ~s**" row))
+      (is (search "Responding" row) "the present tense")
+      (is (not (search "Responded" row)) "and not the past"))
+    ;; with the call finished, the same head reports instead of responding
+    (setf (getf (first (getf (session-turn (head-session h)) :calls)) :state)
+          (list :state "finished" :outcome (list :outcome "ok")))
+    (is (null (leticl::turn-status h 96))
+        "and with every call settled there is nothing to say, so the report takes the row")))
+
 (def-test the-turn-status-is-a-permanent-row-above-the-box (:suite leticl)
   "**The operator's spec:** *\"responding has to be brought back up to the left on top of the input
 area and stay here. It will permanently occupy the row for now and will be either Responding spinner

@@ -112,7 +112,7 @@
    #:restore-warnings #:warning-counts #:+note-lines+
    #:warning-listing-lines #:open-notes-listing #:notes-listing-open-p
    #:session-todos #:session-wiring #:session-open-decisions #:session-sessions
-   #:turn-running-p
+   #:turn-running-p #:turn-busy-p
    #:item-lines
    #:+role-faint+ #:+role-failure+
    #:turn-lines #:outcome-name #:edit-lines #:call-lines
