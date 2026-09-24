@@ -163,7 +163,43 @@ head that guessed would offer names it cannot check. It offers its own and stays
             (mapcar (lambda (n) (cons n "")) verbs))))
 
 (defun %prompt (head text)
-  (push text (head-queued head))
+  "Send TEXT as a prompt, and remember it until its row lands.
+
+**BEHIND A RUNNING TURN THE ECHO COALESCES, AND THAT IS THE DAEMON'S OWN RULE.** The engine merges
+consecutive prompts from ONE HEAD into a single held message — `steering.rs:210`:
+
+    if m.from_operator && let Some(last) = self.queued.last_mut() && last.from_operator {
+        last.text.push('\\n');
+        last.text.push_str(&m.text);
+    }
+
+— *\"the model reads one user turn, not a stack of fragments\"*. So two prompts typed behind a turn
+arrive as ONE transcript row whose text is the two joined by a newline, and an echo that kept them
+apart could never match it. That is not cosmetic: **the landing row retires the echo by BEING its
+text** (`%retire-pending`), so an unjoined echo leaves both entries on the screen for the rest of
+the session — and the operator sees two queued lines for a message the conversation will show as
+one.
+
+The operator, twice: *\"the queued messages must be still coalesced and still pinned to the
+bottom\"*, and then, watching it: *\"you still got 2 queued as 2 separate\"*.
+
+**Idle submits stay separate**, which is letibot's other half and the same reason read the other
+way: an idle prompt lands as its own row within a tick, so there is nothing to merge it with — and
+merging it into the PREVIOUS message would put two turns' words in one row. The test that says so
+in letibot is `queued_prompts_behind_a_running_turn_are_one_message`.
+
+**A notice is never merged in**: the harness's own injections stand alone, because folding them
+into the operator's text would put the harness's words in the operator's mouth (`SteeringMessage`'s
+own comment). That distinction is the daemon's and is mirrored here by only ever joining a
+head-queued prompt — this function is the only writer of `head-queued`."
+  (let ((turn (session-turn (head-session head))))
+    (if (and turn (string= (turn-state-name turn) "running")
+             (head-queued head))
+        ;; **the JOIN is a NEWLINE, character for character** — the retirement is a text match, so
+        ;; anything else (a separator, a trimmed copy) would leave the echo standing
+        (setf (first (head-queued head))
+              (format nil "~a~%~a" (first (head-queued head)) text))
+        (push text (head-queued head))))
   (%send head (make-prompt (session-expected-seq (head-session head)) text)))
 
 (defun %choose-verbosity (head level)

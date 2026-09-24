@@ -13237,6 +13237,76 @@ needs."
   (let ((tight (car (lines-text (list (leticl::box-edge 14 #\╭ #\╮ "" "a much longer legend"))))))
     (is (= 14 (string-width tight)) "a legend never makes the edge wider than its width")))
 
+(def-test two-prompts-behind-a-running-turn-are-one-echo (:suite leticl)
+  "**The daemon coalesces, so the echo must coalesce too — or the echo never retires.**
+
+The operator, twice: *\"the queued messages must be still coalesced and still pinned to the
+bottom\"*, and then, watching it: *\"you still got 2 queued as 2 separate\"*. I read the first as
+being about the POSITION and checked only that; the coalescing half was a real bug and it is the
+half that matters.
+
+**The engine merges consecutive prompts from one head** (`steering.rs:210`) — *\"the model reads
+one user turn, not a stack of fragments\"* — so two prompts typed behind a running turn arrive as
+ONE transcript row whose text is the two joined by a newline. **The landing row retires the echo by
+BEING its text** (`%retire-pending`), so an unjoined echo can never match: both entries would stand
+on the screen for the rest of the session, above a conversation that shows one row.
+
+letibot's own test is the statement of the rule and its name is the claim —
+`queued_prompts_behind_a_running_turn_are_one_message` — including the other half: *\"idle submits
+land each as their own row within a tick, so they stay separate\"*.
+
+Four claims, and the fourth is the one a cosmetic fix would miss:
+
+  · **behind a running turn, two prompts are ONE queue entry**, joined by a newline;
+  · **and one ROW**, elided per R33 like any other waiting message;
+  · **the daemon's joined row retires it**, leaving nothing behind — the text matches character for
+    character, which is why the join is `\n` and not a separator;
+  · **while IDLE they stay separate**, because each lands as its own row and merging them would put
+    two turns' words in one."
+  (let ((leticl::*bound-prompts* nil) (leticl::*queued-unconfirmed* nil)
+        (leticl::*scroll-anchor* nil) (leticl::*hist-cache* nil)
+        (leticl::*hist-generation* 0) (leticl::*hidden-run-open* nil)
+        (leticl::*stdout* (make-string-output-stream))
+        (h (%on-head :cols 100 :rows 30)))
+    (setf (head-connected h) t)
+    (setf (session-items (head-session h))
+          (make-array 1 :adjustable t :fill-pointer 1
+                        :initial-contents
+                        (list (list :item-id "u1" :kind "user" :ts 0
+                                    :item (list :type "user" :parts (list (list :text "first")))))))
+    (flet ((rows () (mapcar (lambda (l) (if (consp l) (format nil "~{~a~}" (mapcar #'car l)) ""))
+                            (leticl::%viewport-lines h 100 24))))
+      ;; --- 1. BEHIND A RUNNING TURN: one entry, one row
+      (setf (session-turn (head-session h))
+            (list :turn-id "t1" :model "m" :state (list :state "running")
+                  :text "a reply" :reasoning "" :calls nil))
+      (leticl::%prompt h "the first queued message")
+      (leticl::%prompt h "the second queued message")
+      (is (equal '("the first queued message
+the second queued message")
+                 (head-queued h))
+          "**one entry, joined by a newline** — the exact text the daemon will send back")
+      (is (= 1 (count-if (lambda (r) (search "queued · " r)) (rows)))
+          "**and ONE row on the screen**, not two")
+      ;; --- 2. the daemon's joined row retires it
+      (leticl::%handle-frame h (list :frame "event" :seq 1 :event "transcript_appended"
+                                     :item-id "u2" :kind "user" :ledger-head "" :ts 1))
+      (leticl::%handle-frame h (list :frame "event" :seq 2 :event "transcript_content" :item-id "u2"
+                                     :item (list :type "user"
+                                                 :parts (list (list :kind "text"
+                                                                    :text "the first queued message
+the second queued message")))))
+      (is (null (head-queued h))
+          "**the landing row retires the coalesced echo** — the text matches, so nothing lingers")
+      (is (not (some (lambda (r) (search "queued · " r)) (rows)))
+          "and no `queued` line is left over")
+      ;; --- 3. IDLE: separate, because each lands as its own row
+      (setf (session-turn (head-session h)) nil)
+      (leticl::%prompt h "idle one")
+      (leticl::%prompt h "idle two")
+      (is (equal '("idle two" "idle one") (head-queued h))
+          "**two entries while idle** — merging them would put two turns' words in one row"))))
+
 (def-test opening-status-acknowledges-the-alarm-so-the-triangle-can-go (:suite leticl)
   "**R46, from the operator: *\"how to hide that resync counter arrow?\"***
 
