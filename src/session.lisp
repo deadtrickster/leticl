@@ -1935,17 +1935,32 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
        ;; long this has been going. A turn that came out of a SNAPSHOT has no
        ;; start time — `*turn-started-ms*` stays NIL and the edge says "started
        ;; before this head attached" rather than a duration nobody measured.
-       (setf *turn-started-ms* (and (not (getf env :snapshot)) (internal-real-time-ms)))
-       ;; the turn names the model answering it, unprompted — the one word about
-       ;; the model a head is told after attach, so the header ranks it by seq
-       (when (plusp (length (or (getf env :model) "")))
-         (setf *model-from-turn-at* seq))
-       (setf (session-turn session)
-             (list :turn-id (getf env :turn-id) :model (getf env :model)
-                   :ledger-head (getf env :ledger-head)
-                   :text "" :reasoning "" :raw-calls ""
-                   :calls nil :appended nil :progress nil :tokens 0
-                   :state (list :state "running")))
+       (let* ((old (session-turn session))
+              ;; **THE LAST FINISHED TURN'S MEASUREMENTS CARRY ONTO THE NEW ONE.** `last_timings`
+              ;; and `usage` are the reference's own kept-past-the-end pair (app.rs:3447, 4218,
+              ;; read at 10236), and without them `22 tok/s`, the duration and `38 out` — all three
+              ;; of them facts about the turn that JUST ENDED — vanished the instant the next turn
+              ;; began and came back when it ended. The operator saw exactly that: *"again — rate
+              ;; comes and goes"*. `%usage-numbers` reads the current state first and falls back
+              ;; here, so a finished turn still wins.
+              ;;
+              ;; The OR is for the terminal arms that carry no timings at all (an interrupt, a
+              ;; failure): the newer turn's state says nothing, so the older slot still answers
+              ;; rather than the three fields blinking on every cancelled turn.
+              (prev (getf old :state)))
+         (setf *turn-started-ms* (and (not (getf env :snapshot)) (internal-real-time-ms)))
+         ;; the turn names the model answering it, unprompted — the one word about
+         ;; the model a head is told after attach, so the header ranks it by seq
+         (when (plusp (length (or (getf env :model) "")))
+           (setf *model-from-turn-at* seq))
+         (setf (session-turn session)
+               (list :turn-id (getf env :turn-id) :model (getf env :model)
+                     :ledger-head (getf env :ledger-head)
+                     :text "" :reasoning "" :raw-calls ""
+                     :calls nil :appended nil :progress nil :tokens 0
+                     :usage (or (and prev (getf prev :usage)) (and old (getf old :usage)))
+                     :timings (or (and prev (getf prev :timings)) (and old (getf old :timings)))
+                     :state (list :state "running"))))
        :dirty)
       ((:tokens-generated)
        ;; **The live token counter.** This event was on the wire and handled by

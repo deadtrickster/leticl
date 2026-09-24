@@ -80,6 +80,107 @@ while the header said `qwen-3.8-27b`."
           (t (let ((wire (getf (session-wiring s) :model)))
                (if (stringp wire) wire ""))))))
 
+(defparameter +header-tail-slots+
+  '((:position . 6) (:spent . 9) (:ctx . 11) (:cached . 11)
+    (:rate . 10) (:elapsed . 5) (:out . 10))
+  "How many columns each of the header's tail fields RESERVES, whether or not it has a value.
+
+**A place found on the first render, so growth has nowhere to go but inside its own slot.** The
+operator's axiom — *\"nothing must jump\"* — and their report of how it was being broken: *\"the top
+right status part — where sessions counter and model lives. the problem here is the rate it seems.
+So when a model responds that status thing changes length … again — rate comes and goes.\"*
+
+Measured at 206 columns before this existed: the `1/87 · model` pair sat at column 176 on a head
+that had measured nothing, at 140 mid-turn, at 123 with no rate, at 112 with one, at 111 once the
+meter crossed ten dollars and at 114 once the context crossed a megabyte. **Sixty-four columns of
+sliding**, on the two leftmost fields, for facts changing inside a single turn.
+
+The tail is right-aligned, so every field to the LEFT of one that grows or appears moves by its whole
+width. Fixed slots are the whole fix: the tail's total width is now a constant of the frame, so its
+left edge cannot move and neither can anything in it.
+
+**Widths are the formatter's own maxima**, in the display order, and the numbers are RIGHT-aligned
+inside them so a value grows toward its slot's left edge rather than into its neighbour's. The
+`:model` field is deliberately absent from this table — see `%header-tail`.
+
+A `defparameter` and not a `defconstant`: the file pusher skips constants.")
+
+(defun %header-slot (key)
+  "KEY's reserved columns, or 0 for a field that keeps its natural width."
+  (or (cdr (assoc key +header-tail-slots+)) 0))
+
+(defun %header-tail (fields)
+  "FIELDS — a list of `(KEY . TEXT-OR-NIL)`, in display order — as the header's right-hand tail,
+**in slots that do not move** (R43).
+
+NIL is a field nothing measured, and it **holds its place**: the slot is emitted as spaces. That is
+the rule the marker's room is, one surface over — a number nobody measured is ABSENT and not zero,
+and an absent number takes up no less room than a present one, because the room moving is the defect
+and the number is not.
+
+The separator belongs to the slot — ` · ` before a field that has something to say, three columns of
+nothing before one that does not — so an absent field in the MIDDLE leaves a gap and no dot, and a
+present field beside it still gets its own. That is a blank cell in a table, not a punctuation mark
+about nothing.
+
+**TRAILING absent fields are not emitted.** They are to the RIGHT of everything else, so dropping
+them moves nothing — and the pad still charges their columns (`%header-tail-cols`), so the fields
+that ARE drawn sit exactly where the reservation puts them either way. The row therefore ends with a
+value, as every other row in this head does, and the segment it ends with is the tail's own.
+
+**`:model` is the one field with no slot**, and it is a boundary rather than an oversight: every
+other field is a MEASUREMENT, which changes inside a turn, where the model name is a fact about the
+session that changes only when somebody switches provider. Reserving the width of the longest model
+name anyone might use would cost every short one a gap for a jump that only a deliberate act causes."
+  (let* ((last-present (position-if #'cdr (reverse fields)))
+         (shown (if last-present (- (length fields) last-present) 0))
+         (out (make-string-output-stream))
+         (first t))
+    (dolist (f (subseq fields 0 shown) (get-output-stream-string out))
+      (let* ((key (car f))
+             (text (cdr f))
+             (slot (%header-slot key))
+             (present (and text (plusp (length text)))))
+        (unless first
+          (write-string (if present " · " "   ") out))
+        (when present
+          (let* ((text (if (and (plusp slot) (> (string-width text) slot))
+                           (truncate-to-width text slot)
+                           text))
+                 (w (if (plusp slot) slot (string-width text)))
+                 (pad (max 0 (- w (string-width text)))))
+            (when (plusp pad) (write-string (make-string pad :initial-element #\space) out))
+            (write-string text out)))
+        (when (and (not present) (plusp slot))
+          (write-string (make-string slot :initial-element #\space) out))
+        (setf first nil)))))
+
+(defun %header-tail-cols (fields)
+  "How many columns the tail RESERVES for FIELDS — every field present, at its slot's width.
+
+The number the pad and the workspace's room are both computed from, so the tail's left edge is a
+function of the frame and not of what happens to have been measured when the frame is drawn.
+
+**Not `%header-tail`'s own width**, because that one drops trailing absent fields and this one must
+charge for them: the fields that ARE drawn have to land where the reservation puts them, and those
+columns have to come from somewhere. This is the `NIL`-holds-its-place rule stated as arithmetic
+rather than as rendering."
+  (loop for f in fields
+        for i from 0
+        sum (+ (if (zerop i) 0 3)
+               (let* ((slot (%header-slot (car f)))
+                      (text (cdr f)))
+                 (if (plusp slot) slot (string-width (or text "")))))))
+
+(defun %header-tail-natural (fields)
+  "FIELDS with NO slots — each value at its own width, absent fields omitted.
+
+The reference's own tail, and the form the header falls back to on a frame too narrow to afford the
+reservation. Used for the drop decision in that mode, so the ladder is measuring the row it is
+going to draw."
+  (format nil "~{~a~^ · ~}"
+          (loop for f in fields when (cdr f) collect (cdr f))))
+
 ;;; -------------------------------------------------------------- counters ;;;
 ;;;
 ;;; The head's own instrumentation. Every counter here was added because
@@ -297,28 +398,46 @@ turn as `(:total :cache :processed :time-ms)` and had no reader."
                           (or (getf usage :cached-tokens) 0)
                           (numberp (getf usage :cached-tokens)))))
          (ctx (or live kept))
-         (timings (and state (getf state :timings)))
+         ;; **THE LAST FINISHED TURN'S TIMINGS, KEPT ACROSS THE NEXT ONE** — the reference's
+         ;; `last_timings` (app.rs:1229, set at 3447 and 4218, read at 10236), and the reason
+         ;; these three fields used to blink. Ours read the CURRENT turn's state, which
+         ;; `:turn-started` replaces with a fresh `(:state "running")`, so `22 tok/s`, the
+         ;; duration and `38 out` vanished the instant a turn began and came back when it ended:
+         ;; *"the rate comes and goes"*. `:turn-started` carries the finished turn's state onto
+         ;; the new one (src/session.lisp), so this falls back exactly as the reference's does.
+         (timings (or (and state (getf state :timings))
+                      (and turn (getf turn :timings))))
          (parts nil))
     (when ctx
-      (push (format nil "~a ctx" (thousands (first ctx))) parts))
+      (push (cons :ctx (format nil "~a ctx" (thousands (first ctx)))) parts))
     (when (and ctx (third ctx))
-      (push (format nil "~d% cached"
-                    (round (* 100 (/ (float (second ctx)) (first ctx)))))
+      (push (cons :cached
+                  (format nil "~d% cached"
+                          (round (* 100 (/ (float (second ctx)) (first ctx))))))
             parts))
     (when (and timings (numberp (getf timings :predicted-ms))
                (plusp (getf timings :predicted-ms))
                (numberp (getf usage :predicted-tokens))
                (plusp (getf usage :predicted-tokens)))
-      (push (format nil "~d tok/s"
-                    (round (/ (* (float (getf usage :predicted-tokens)) 1000.0)
-                              (getf timings :predicted-ms))))
+      (push (cons :rate
+                  (format nil "~d tok/s"
+                          (round (/ (* (float (getf usage :predicted-tokens)) 1000.0)
+                                    (getf timings :predicted-ms)))))
             parts))
     (when (and timings (numberp (getf timings :wall-ms)) (plusp (getf timings :wall-ms)))
-      (push (duration (getf timings :wall-ms)) parts))
+      (push (cons :elapsed (duration (getf timings :wall-ms))) parts))
     (when (and usage (numberp (getf usage :predicted-tokens))
                (plusp (getf usage :predicted-tokens)))
-      (push (format nil "~a out" (thousands (getf usage :predicted-tokens))) parts))
+      (push (cons :out (format nil "~a out" (thousands (getf usage :predicted-tokens)))) parts))
     (nreverse parts)))
+
+(defun %usage-fields (s)
+  "The same five fields `%usage-numbers` measures, **in the canonical order and always all five**,\nwith NIL where nothing was measured.
+
+**This is what the header's reservation is computed from, and that is the whole reason it exists.**\n`%usage-numbers` returns only what is present — the right thing for a sentence about measurements, and\nthe wrong thing for deciding how much room to keep, because a decision taken from today's fields\nmoves when tomorrow's arrive. Measured with the former: the model name sat at column 171 on a head\nthat had measured nothing and at 109 with a full tail, because the tail being reserved was the tail\nthat happened to be there.\n\nThe order is the display order, and `nil` here means *this slot is here and empty* — which is a\ndifferent statement from *this field does not exist*, and exactly the difference the header needs."
+  (let ((by-key (%usage-numbers s)))
+    (loop for key in '(:ctx :cached :rate :elapsed :out)
+          collect (cons key (cdr (assoc key by-key))))))
 
 (defun top-border (head cols)
   "The header: what this session IS on the left, what it is COSTING on the right.
@@ -338,18 +457,41 @@ its end, and a token count is not recoverable from anywhere else on the screen."
          (name (if (plusp (length (session-title s)))
                    (session-title s) (session-session-id s)))
          (model (%model-name s))
-         (right (remove nil
-                        (append (list (%session-position s))
-                                (list (and (plusp (length model)) model))
-                                (list (spent-text))
-                                (%usage-numbers s))))
-         (name-cols (+ 2 (string-width name))))
-    ;; drop from the end until it leaves room for the name
-    (loop while (and (> (length right) 1)
-                     (> (+ name-cols (string-width (format nil "~{~a~^ · ~}" right)) 2) cols))
-          do (setf right (butlast right)))
-    (let* ((tail (format nil "~{~a~^ · ~}" right))
-           (tail-cols (if (plusp (length tail)) (+ 2 (string-width tail)) 0))
+         ;; **EACH FIELD AS `(KEY . TEXT-OR-NIL)`, AND THE KEY IS WHAT RESERVES ITS COLUMNS** —
+         ;; see `%header-tail` and `+header-tail-slots+` for the axiom this serves. NIL is
+         ;; *nothing measured this*, and it holds its place rather than taking none.
+         (fields (append (list (cons :position (%session-position s)))
+                         (list (cons :model (and (plusp (length model)) model)))
+                         (list (cons :spent (spent-text)))
+                         (%usage-fields s)))
+         (name-cols (+ 2 (string-width name)))
+         ;; **THE RESERVATION IS AFFORDED OR IT IS NOT, AND THAT IS DECIDED FROM COLS ALONE.**
+         ;;
+         ;; Every slot costs columns, and columns are what the fields LEFT of it have to move for.
+         ;; At a wide frame reserving them is free — the row is padded to COLS in any case, so a
+         ;; blank slot is indistinguishable from padding — and the fields then cannot move. At a
+         ;; narrow frame the slots would cost more than they are worth: a canonical tail is about
+         ;; twenty-six columns wider than a natural one, and at 100 columns reserving everything
+         ;; would leave the tail room for exactly one field where letibot shows seven.
+         ;;
+         ;; So the choice is made on the CANONICAL tail — every field present, every slot at its
+         ;; width — and not on the tail that happens to be drawn. That is the whole point: a
+         ;; decision taken from the measurements would itself move when a measurement arrived.
+         ;; Below the threshold the tail is drawn NATURALLY, exactly as the reference draws it,
+         ;; and the fields move when a value grows — the fidelity is worth more than the
+         ;; stillness on a frame too narrow to have both.
+         (canon (%header-tail-cols fields))
+         (reserved (<= (+ name-cols canon 2) cols)))
+    (unless reserved
+      ;; drop from the end until it leaves room for the name, as the reference does
+      (loop while (and (> (length fields) 1)
+                       (> (+ name-cols (string-width (%header-tail-natural fields)) 2) cols))
+            do (setf fields (butlast fields))))
+    (let* ((tail (%header-tail fields))
+           ;; the pad charges the RESERVED width, so the tail's left edge is where the reservation
+           ;; puts it whether or not every slot was drawn
+           (tail-reserved (if reserved canon (string-width tail)))
+           (tail-cols (if (plusp (length tail)) (+ 2 tail-reserved) 0))
            (left (list (cons "▌ " '(:fg :blue))
                        (cons name '(:bold t))))
            (left-cols name-cols)
@@ -361,10 +503,20 @@ its end, and a token count is not recoverable from anywhere else on the screen."
             (let ((shown (%ellipsise-left ws room)))
               (setf left (append left (list (cons (format nil "  ~a" shown) '(:dim t)))))
               (incf left-cols (+ 2 (string-width shown)))))))
-      (let ((pad (max 0 (- cols left-cols (string-width tail)))))
+      (let* ((pad (max 0 (- cols left-cols tail-reserved)))
+             ;; **AND THE RESERVED BUT UNUSED COLUMNS AFTER THE TAIL.** The block the fields sit in
+             ;; is `tail-reserved` wide whatever happens to be in it, so `2/2` stands where `2/2`
+             ;; will stand when the rate lands beside it — that stillness is the whole point, and
+             ;; this is what it costs: the row ends in blank cells on a frame where nothing has been
+             ;; measured yet. They are the frame's own padding in a different place, not a field with
+             ;; something to say, so they are a segment of their own rather than part of the faint
+             ;; tail.
+             (slack (max 0 (- tail-reserved (string-width tail)))))
         (append left
                 (list (cons (make-string pad :initial-element #\space) nil)
-                      (cons tail '(:dim t))))))))
+                      (cons tail '(:dim t)))
+                (when (plusp slack)
+                  (list (cons (make-string slack :initial-element #\space) nil))))))))
 
 ;;; ----------------------------------------------------------- alarm line ;;;
 ;;;

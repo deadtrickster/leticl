@@ -4193,8 +4193,88 @@ position; and it was three columns short of the box's edge, with a trailing spac
       (is (equal (cons "hello" '(:bold t)) (second line)) "the title Strong")
       (is (search "2/2" text) "the position among the daemon's sessions, subagents not counted")
       (is (= 100 (leticl::%segs-width line)) "and the row is exactly as wide as the body")
-      (is (equal '(:dim t) (cdr (car (last line)))) "the tail faint")
-      (is (string= text (string-right-trim " " text)) "with nothing trailing"))))
+      ;; **THE TAIL IS ITS OWN SEGMENT AND THE VISIBLE TEXT ENDS WITH IT.** The row is `cols` wide
+      ;; and it ends in the reserved-tail's unused columns; what must not end in a space is the
+      ;; TEXT, which is the assertion this has always made and the bug it was written for (a
+      ;; header one column over, which wraps).
+      (is (equal '(:dim t) (cdr (car (last (remove-if-not (lambda (sg) (equal '(:dim t) (cdr sg))) line)))))
+          "the tail faint")
+      (let ((visible (format nil "~{~a~}" (mapcar #'car (butlast line)))))
+        (is (string= visible (string-right-trim " " visible))
+            (format nil "with nothing trailing but the reserved place: ~s" visible))))))
+
+(def-test the-headers-right-hand-fields-hold-their-places (:suite leticl)
+  "**R43: the operator's axiom, on the one row that broke it.**
+
+*\"the top right status part — where sessions counter and model lives. the problem here is the rate
+it seems. So when a model responds that status thing changes length\"*, and then, watching it a
+second time, *\"again — rate comes and goes\"*.
+
+Measured at 206 columns before this existed, on the six states a single turn passes through: the
+`1/87 · model` pair sat at column **176** on a head that had measured nothing, **140** mid-turn,
+**123** with no rate, **112** with one, **111** once the meter crossed ten dollars and **114** once
+the context crossed a megabyte. Sixty-four columns of sliding, on the two leftmost fields, for facts
+that change inside one turn — because the tail is right-aligned and every field moves by the whole
+width of whatever appears to its left.
+
+Two claims, and the second is why the fix is a reservation rather than a formatter:
+
+  · **every field sits at the same column in every one of those states.** Asserted by position, not
+    by eye: `1/87` is at one index and `ctx` at another, whatever is present.
+  · **and the model name does not move either**, which is the field the operator named first. It
+    keeps its natural width and sits after the fixed `N/M` slot, so it is pinned as long as the
+    session count does not gain a digit."
+  (let* ((h (%on-head :cols 206 :rows 40))
+         (s (head-session h))
+         (leticl::*spent-seen* t)
+         (leticl::*spent-micros* 980300))
+    (setf (session-title s) "hello, what we are doing here"
+          (session-session-id s) "s-1"
+          (session-wiring s) (list :model "deepseek/deepseek-flash"
+                                   :workspace "/home/dead/Projects/leticl"))
+    (setf (session-sessions s)
+          (loop for i from 1 to 87 collect (list :session-id (format nil "s~d" i) :title "x")))
+    (setf (session-session-id s) "s1")
+    (flet ((at (what &rest turn-parts)
+             (setf (session-turn s) (and turn-parts (apply #'list :turn-id "t" :model "deepseek/deepseek-flash" turn-parts)))
+             (search what (format nil "~{~a~}" (mapcar #'car (top-border h 206))))))
+      (let* ((nothing (at "deepseek/deepseek-flash"))
+             (full (at "deepseek/deepseek-flash"
+                       :state (list :timings (list :wall-ms 1500 :predicted-ms 1700))
+                       :usage (list :prompt-tokens 213104 :cached-tokens 213104 :predicted-tokens 38)))
+             (norage (at "deepseek/deepseek-flash"
+                         :state (list :timings (list :wall-ms 1500 :predicted-ms 0))
+                         :usage (list :prompt-tokens 213104 :cached-tokens 213104 :predicted-tokens 38)))
+             (mid (at "deepseek/deepseek-flash" :progress (list :total 220000 :cache 210000))))
+        (is (integerp nothing) "the model is on the header with nothing measured at all")
+        (is (= nothing full) (format nil "**the model does not move between *nothing measured* and a\n full tail**: ~a vs ~a" nothing full))
+        (is (= nothing norage)
+            (format nil "**nor when a turn decodes nothing and the rate is absent**: ~a vs ~a" nothing norage))
+        (is (= nothing mid)
+            (format nil "**nor mid-turn, when the live prefill replaces the kept usage**: ~a vs ~a"
+                    nothing mid))))
+    ;; the position indicator, in the same six states
+    (let ((seen nil))
+      (dolist (turn-parts (list nil
+                                (list :state (list :timings (list :wall-ms 1500 :predicted-ms 1700))
+                                      :usage (list :prompt-tokens 213104 :cached-tokens 213104
+                                                   :predicted-tokens 38))
+                                (list :state (list :timings (list :wall-ms 1500 :predicted-ms 0))
+                                      :usage (list :prompt-tokens 213104 :cached-tokens 213104
+                                                   :predicted-tokens 38))
+                                (list :progress (list :total 220000 :cache 210000))))
+        (setf (session-turn s) (and turn-parts (apply #'list :turn-id "t" :model "deepseek/deepseek-flash" turn-parts)))
+        (push (search "1/87" (format nil "~{~a~}" (mapcar #'car (top-border h 206)))) seen))
+      (is (apply #'= seen)
+          (format nil "**the session counter is at ONE column in every state of a turn**: ~s" seen)))
+    ;; and the tail is right-aligned: the row is exactly the body's width in every state
+    (dolist (turn-parts (list nil
+                              (list :state (list :timings (list :wall-ms 1500 :predicted-ms 1700))
+                                    :usage (list :prompt-tokens 213104 :cached-tokens 213104
+                                                 :predicted-tokens 38))))
+      (setf (session-turn s) (and turn-parts (apply #'list :turn-id "t" :model "deepseek/deepseek-flash" turn-parts)))
+      (is (= 206 (leticl::%segs-width (top-border h 206)))
+          "the header is the body's width in every state"))))
 
 ;;; ------------------------------- the payload's own window (T1) --------- ;;;
 ;;;
@@ -12303,8 +12383,10 @@ here, which is the screen a reattach lands on."
       (is (search "93% cached" parts) "and the fraction the row measured")
       ;; and on the ROW itself, which is the claim — `%usage-numbers` is what it draws
       (let ((text (format nil "~{~a~}" (mapcar #'car (top-border h (head-cols h))))))
-        (is (search "633.5k ctx · 93% cached" text)
-            "the assembled header row carries both numbers")
+        (is (search "633.5k ctx" text) "the assembled header row carries the size")
+        (is (search "93% cached" text) "and the fraction")
+        (is (< (search "633.5k ctx" text) (search "93% cached" text))
+            "in that order, which is the reference's")
         (is (not (search "$" text)) "and no money, which this row never measured")))
     ;; **THE SIZE WITHOUT THE FRACTION.** A row that predates the `context_cached`
     ;; column knows how big the prompt was and not how much of it was cached, so the
