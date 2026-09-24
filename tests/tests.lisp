@@ -10758,37 +10758,61 @@ The line is still held, and the ask is still open."
     (is (string= "some prose" (composer-buffer (head-composer h))) "and takes nothing from it")
     (is (null (%sent wire)) "and answers nothing yet")
     (leticl::%handle-key h (list :type :enter))
-    (is (null (%sent wire))
-        "enter on a line that names no option answers NOTHING — not the marked row")
+    ;; **`%sent` DRAINS THE STREAM, so it is read ONCE.** Calling it per assertion is how the
+    ;; second one sees an empty list and reports the wrong thing — measured here.
+    (let ((sent (%sent wire)))
+      ;; **ENTER ANSWERS — at the row the operator MOVED TO.** Down moved the ladder to row 1 with
+      ;; the line still typed, so Enter must answer row 1: the cursor is not a decoration, it is
+      ;; what the answer means. (This assertion used to read *"answers NOTHING — not the marked
+      ;; row"*, which is the arrangement the operator reported as `enter doesnt work` with a draft.)
+      (is (plusp (length sent))
+          "enter on a line that names no option answers the row the operator MARKED")
+      (is (search "allow_always" (format nil "~s" sent))
+          "and on this ladder the marked row after one Down is `allow_always`")
+      (is (not (search "prompt" (format nil "~s" sent)))
+          "and the draft is NOT sent as a prompt"))
     (is (string= "some prose" (composer-buffer (head-composer h)))
         "and the words are held, not sent under the ask")
-    (is (search "names no option" (head-status-note h)) "and it says why")))
+    (is (search "your line is held" (head-status-note h)) "and it says so")))
 
-(def-test a-typed-word-that-names-no-option-sends-nothing (:suite leticl)
-  "THE REQUESTED TEST, and the whole point of the item: a gate that can send an
-answer the operator did not give.
+(def-test an-open-ask-owns-enter-even-with-a-line-typed (:suite leticl)
+  "**The operator: *\"if i have drafted prompt in the input and permission prompt menu comes —
+enter doesnt work. i had to delete my message first.\"***
 
-Typing `allow` against the live ladder matched nothing — there was no prefix
-fallback — fell through to the arm that answers the MARKED ROW, and reported
-*\"answered the ask\"*. So the assertion is not only that the ask stays open: it is
-that **nothing at all reaches the wire**, which is the only version of this that
-cannot be satisfied by accident.
+This test used to assert the opposite and it was called `…-sends-nothing`. The old rule was
+written against a real defect — a typed `allow` matched nothing (there was no prefix fallback),
+fell through to the arm that answers the MARKED ROW, and told the operator their ask had been
+answered, so a gate could send an answer they never gave. Answering nothing was the safe half of
+that fix.
 
-Every word here names no option: a typo, a word from the question, and a bare
-number past the end of the ladder."
+**It cost the operator his words**, and the reason it was unsafe is gone: `match-option` now has
+its prefix fallback and refuses an AMBIGUOUS prefix by name, and the cursor is reset to row one on
+every NEW ask — the two halves the old comment itself named as missing. So the marked row is a row
+on the card the operator is looking at, and letibot's rule applies (`app.rs:5778-5784`): *Enter on
+a card means \"answer this\" — the marked row — so the words go back to the composer and the next
+Enter, with the ask settled, sends them.*
+
+Three claims per word, and the third is the one that matters most: the answer that goes out is the
+MARKED row's, the line comes back to the composer, and **the words are never sent as a prompt**."
   (dolist (typed '("alow" "maybe" "the file please" "9" "%"))
     (let* ((h (%on-head :cols 80 :rows 24))
-           (wire (%wire h)))
+           (wire (%wire h))
+           (marked (or (getf (first (leticl::decision-options (%decision-with))) :option-id)
+                       "the first row")))
       (setf (session-open-decisions (head-session h)) (list (%decision-with)))
       (composer-insert (head-composer h) typed)
       (leticl::%handle-key h (list :type :enter))
-      (is (null (%sent wire))
-          (format nil "~s names no option, so no frame is sent" typed))
+      (let ((sent (%sent wire)))
+        (is (plusp (length sent))
+            (format nil "~s names no option, so Enter answers the MARKED row" typed))
+        (is (search marked (format nil "~s" sent))
+            (format nil "and the row it answers is the marked one (~a): ~s" marked sent))
+        (is (not (search "\"frame\":\"prompt\"" (format nil "~s" sent)))
+            "**the draft is NOT sent as a prompt**, which is the defect this arm avoids"))
       (is (string= typed (composer-buffer (head-composer h)))
-          "the line is held, not consumed")
-      (is (search "names no option" (head-status-note h)) "and the reason is said")
-      (is (= 1 (length (session-open-decisions (head-session h))))
-          "and the ask is still open"))))
+          "the line is held, not consumed — the next Enter sends it")
+      (is (search "your line is held" (head-status-note h))
+          "and it says the line is held rather than that the ask is still open"))))
 
 (def-test a-prefix-names-an-option-when-it-is-unambiguous (:suite leticl)
   "The fallback the docstring promised and the body never implemented.
@@ -10848,7 +10872,11 @@ one more character and cannot grant what was not named."
                                  (list :option-id "allow_always" :kind "allow_always")))))
     (multiple-value-bind (m tag why) (match-option d "allow")
       (is (null m) "an ambiguous prefix does not resolve")
-      (is (null tag))
+      ;; **`:refused`, and the tag is load-bearing**: `%submit-line` has to tell a REFUSAL
+      ;; (matched several, or named one and added words it cannot take) from a DRAFT (matched
+      ;; nothing), because only the second answers the marked row. One `nil` for both is how a
+      ;; gate comes to answer an option nobody named.
+      (is (eq :refused tag) "and it is tagged as a refusal, not left as a bare `nil`")
       (is (search "allow_once" why) "and the candidates are named")
       (is (search "allow_session" why) "all of them")
       (is (search "allow_always" why) "not just the first"))

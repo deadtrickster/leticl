@@ -727,6 +727,39 @@ mistaken for one the daemon issues for its rows.")
   "A fresh id for one of the operator's items. See `*operator-todos*` for why items have them."
   (format nil "t~d" (incf *operator-todo-seq*)))
 
+(defun save-operator-todos ()
+  "Write the operator's list down, if this head is allowed to write.
+
+**Behind `*write-prefs*`, which is the suite's own switch** — its docstring records the measurement
+the suite was editing the operator's own `head.toml`. A test that adds an item must not append to the
+operator's real file, and it is one switch rather than a path check per call site for the reason that
+docstring gives: the fifth site is the one that would forget.
+
+**A save that fails says so and keeps the list in memory.** The alternative — dropping the item
+because it could not be written — would lose the operator's words to a permissions error, which is
+strictly worse than a list that survives only this session."
+  (when *write-prefs*
+    (unless (persist-operator-todos *operator-todos*)
+      ;; once per save is enough; the pane is where the operator reads it and a repeating notice
+      ;; would push everything else off the status line
+      nil))
+  *operator-todos*)
+
+(defun load-operator-todos ()
+  "The operator's list from the file onto `*operator-todos*`, answering a note or NIL.
+
+**An unreadable file refuses to be written for the rest of the session** — the discipline
+`read-operator-todos` documents — so a permissions error cannot be turned into data loss by the
+next add."
+  (multiple-value-bind (items readable) (read-operator-todos)
+    (if readable
+        (progn (setf *operator-todos* (copy-list items)) nil)
+        (progn (setf *operator-todos* nil *todo-file-unreadable* t)
+               "the operator's todo file could not be read — this session will not write it"))))
+
+(defvar *todo-file-unreadable* nil
+  "Set when the todo file existed and could not be read, so a save must not overwrite it.")
+
 (defun operator-todo-add (title &optional detail)
   "Add the operator's item. The new item when it was added, NIL when TITLE was blank.
 
@@ -741,6 +774,9 @@ and so the identity is minted in the one place that owns the list, not by whoeve
                         :detail (string-trim " " (or detail ""))
                         :status "open")))
         (setf *operator-todos* (append *operator-todos* (list item)))
+        ;; **AND WRITE IT DOWN.** Without this the item lived in a `defvar` and died with the
+        ;; process — the operator: *"todo items i add do not survive the head restart."*
+        (save-operator-todos)
         item))))
 
 (defvar *todo-draft* nil

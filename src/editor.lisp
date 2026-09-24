@@ -250,8 +250,13 @@ rather than printing one of two sentences."
                       ;; qualification of the thing they just spelled
                       (and (null whole) (plusp (length rest)) rest)))))
         ;; a permission: the ladder's own rules, unchanged
+        ;; **`:refused` and not merely a `why`**, because the caller has two different things to
+        ;; do with a line that named nothing: *it matched several* is a REFUSAL — answering the
+        ;; marked row would grant an option the operator did not name — while *it matched nothing
+        ;; at all* is a draft, and Enter on a card means *answer this*. Without the tag the two
+        ;; are one `nil` and the caller cannot tell a refusal from a draft.
         ((and (null opt) (> (length prefixed) 1))
-         (values nil nil
+         (values nil :refused
                  (format nil "~s matches ~{~a~^, ~} — type more of one"
                          word (mapcar #'%choice-id prefixed))))
         ;; nothing at all matched
@@ -270,8 +275,9 @@ rather than printing one of two sentences."
              ((and kind (search "reject_always" (string-downcase kind)))
               (values id :note rest))
              ;; every other option refuses them, rather than dropping them
-             (t (values nil nil (format nil "~a takes no words after it — ~s is held"
-                                        id rest))))))))))
+             (t (values nil :refused
+                        (format nil "~a takes no words after it — ~s is held"
+                                id rest))))))))))
 
 
 (defun decision-options (decision)
@@ -380,24 +386,39 @@ text — which is what makes the ledger safe to forget about."
                                   (getf decision :req-id)
                                   (question-answer :free pick)))))
             (setf (head-decision-sel head) 0))
-           ;; **IT NAMED NO OPTION, SO NOTHING IS ANSWERED.**
+           ;; **IT NAMED NO OPTION, AND THERE ARE TWO KINDS OF THAT.**
            ;;
-           ;; This arm used to put the words back and then call
-           ;; `%answer-decision` on `head-decision-sel` — it answered the MARKED
-           ;; ROW — while saying *"answered the ask — your line is held"*. It cited
-           ;; app.rs:4065-4082, and the reference does do that; but the reference
-           ;; only ever reaches it after a PREFIX match has failed too, and it
-           ;; resets its cursor to the first row on every new ask. This head had
-           ;; neither half, so typing `allow` — which names three of the live
-           ;; ladder's options — answered whichever row a PREVIOUS decision had
-           ;; left the cursor on, and told the operator their ask was answered.
-           ;; A gate that sends an answer the operator did not give is worse than
-           ;; a gate that does nothing.
+           ;; **A REFUSAL** (`pick-kind` is `:refused`): the line matched SEVERAL options, or it
+           ;; named one and added words that option does not take. Nothing is answered, the words
+           ;; are held, and the reason is said — an ambiguous `allow` must not be resolved by list
+           ;; position, because that is an answer the operator did not give and this is a gate.
            ;;
-           ;; So: the words are held (the ask arrived while they were being typed)
-           ;; and the reason is SAID, and the ask stays open.
-           (t (composer-insert (head-composer head) line)
-              (say head (or why "that names no option here — the ask is still open"))))))
+           ;; **A DRAFT** (nothing matched at all): **an open ask owns Enter, typed line or not**,
+           ;; and the marked row is the answer. The operator hit the other arrangement and it cost
+           ;; him his words: *"if i have drafted prompt in the input and permission prompt menu
+           ;; comes — enter doesnt work. i had to delete my message first."* Answering the marked
+           ;; row is safe now because both halves of the reference's rule are here — `match-option`
+           ;; has its prefix fallback with ambiguity refused by name, and the cursor is reset to
+           ;; row one on every NEW ask (`head.lisp`), so it is never a row a previous ask left.
+           ;;
+           ;; The words are not disposable and are not sent: the ask settles, the line goes back
+           ;; to the composer, and the next Enter sends it (letibot, app.rs:5778-5784).
+           ((eq pick-kind :refused)
+            (composer-insert (head-composer head) line)
+            (say head (or why "that names no option here — the ask is still open")))
+           (t (let* ((row (head-decision-sel head))
+                     (rows (decision-options decision))
+                     ;; WHAT was answered, named BEFORE the answer resets the cursor
+                     (what (or (getf (nth row rows) :option-id)
+                               (getf (nth row rows) :label)
+                               (format nil "row ~d" (1+ row)))))
+                (%answer-decision head row)
+                (composer-insert (head-composer head) line)
+                ;; **The `why` is NOT repeated here**, and that is not tidiness: it ends
+                ;; *"— the ask is still open"*, which the answer has just made false. A
+                ;; sentence that contradicts what the line above it did is worse than no
+                ;; sentence, and the reason still travels on the refusal arm that needs it.
+                (say head (format nil "answered `~a` — your line is held" what)))))))
       (t (%prompt head line)))
     (setf (head-dirty head) t)))
 
@@ -2170,6 +2191,9 @@ keeps finding elsewhere."
            (t
             (setf *operator-todos*
                   (remove id *operator-todos* :key (lambda (x) (getf x :id)) :test #'equal))
+            ;; the removal is a fact about the operator's list, so the file follows it — a list
+            ;; that lost a row on restart would come back with the row
+            (save-operator-todos)
             ;; the cursor may now point past a shorter enumeration, which `todo-stop-at` clamps
             ;; for the next key — but the screen has to say something NOW, so the mark is put
             ;; back on a row that exists rather than left on the one just deleted.

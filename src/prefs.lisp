@@ -228,6 +228,11 @@ which is not an implementation detail — it is the difference between a prefere
 shared record. The second file's note comes out of `load-retired-into`."
   (multiple-value-bind (p notes) (load-prefs path)
     (prefs-into-head head p)
+    ;; **the operator's own todos are read here too**, and it is the same place for the same
+    ;; reason `load-retired-into` is: this is where a head reads everything it carries between
+    ;; runs, so a third file cannot be forgotten by whoever adds the fourth. A replay does NOT
+    ;; come through here with them — `with-replay-globals` binds `*operator-todos*` to NIL, and a
+    ;; recorded screen must not draw the todos of the day it is being replayed on.
     (let ((note (load-retired-into head)))
       (nreverse (if note (push note notes) notes)))))
 
