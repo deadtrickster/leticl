@@ -206,10 +206,26 @@ position, and a list element has no absence to fall back to."
   ;; had to be applied here by hand would be a bump somebody forgets
   (is
    (equal
-    (format nil "{\"frame\":\"attach\",\"protocol_version\":~d,\"session_id\":\"\",\"since_seq\":0,\"kind\":\"tui\",\"identity\":\"\",\"caps\":{\"queue\":1024,\"can_decide\":true}}"
+    (format nil "{\"frame\":\"attach\",\"protocol_version\":~d,\"session_id\":\"\",\"since_seq\":0,\"kind\":\"tui\",\"identity\":\"\",\"caps\":{\"queue\":16384,\"can_decide\":true}}"
             +protocol-version+)
     (encode-frame (make-attach)))
    "defaults, serde-default fields omitted, caps present"))
+
+(def-test the-attach-asks-for-a-queue-that-can-hold-a-restore (:suite leticl)
+  "**A resume publishes three events per stored row and the queue was 1024.**
+
+The daemon does not block and does not drop silently when a head falls behind — it DEMOTES it,
+clears the queue and hands it a snapshot (`hub.rs:1366`). MEASURED on the running head after one
+restore: **`:resyncs 3`**, the restore bar frozen at `44 of 2706 rows`, and the conversation arriving
+in pieces.
+
+The protocol's own field docstring names the fix: *\"a head that renders slowly can ask for a bigger
+queue instead of resyncing constantly\"*, and there is no clamp daemon-side beyond `.max(1)`. So the
+ask must cover the largest thing that ever happens to it, and a restore is that thing."
+  (let ((caps (getf (make-attach) :caps)))
+    (is (>= (getf caps :queue) 16384)
+        "the queue the head asks for holds a restore's ~3 events x 2700 rows")
+    (is (getf caps :can-decide) "and the head can still decide")))
 
 (def-test ack-golden (:suite leticl)
   (is (equal "{\"frame\":\"ack\",\"seq\":7,\"rendered\":3,\"filtered\":4}"
@@ -10813,6 +10829,64 @@ MARKED row's, the line comes back to the composer, and **the words are never sen
           "the line is held, not consumed — the next Enter sends it")
       (is (search "your line is held" (head-status-note h))
           "and it says the line is held rather than that the ask is still open"))))
+
+(def-test a-picker-seeds-on-the-current-value-when-its-list-arrives-late (:suite leticl)
+  "**The operator: *\"mode selectors has selection on the first not on the current again.\"***
+
+`open-pick` seeds the cursor on
+
+    (position (pick-current head which) (pick-choices head which))
+
+which is right and is computed against a list that DOES NOT EXIST the first time: `/mode` opens the
+picker and asks for the settings in the same breath (`open-pick` sends `make-settings` when
+`head-settings` is nil). `position` answers NIL, the fallback `0` is taken, and nothing re-seeded
+when the rows landed — so the cursor sat on the FIRST row while `← now` marked the current one
+further down.
+
+It works on the SECOND open, settings being known by then. That is why the report says *again*, and
+why a test that sets the settings up first never sees it — which is exactly what this test does NOT
+do: it opens the picker with nothing, then delivers the settings, the way a head really meets them."
+  ;; **BOTH GLOBALS ARE BOUND, and that is the test's own discipline rather than fussiness**: my
+  ;; first cut left `*pick-open*` set, and the NEXT test's Enter then landed in the picker's arm
+  ;; and got *"this daemon does not send the mode list"* instead of the answer it was asserting.
+  ;; A test that leaks a global poisons whatever runs after it — measured here, by the two tests
+  ;; it broke.
+  (let ((leticl::*pick-open* nil)
+        (leticl::*pick-unseeded* nil))
+    (let ((h (%on-head :cols 80 :rows 24)))
+      (setf (head-settings h) nil)
+      ;; the picker opens with no list to seed against
+      (open-pick h :mode)
+      (is (= 0 (head-picker-sel h)) "with no list there is nothing to seed from, so row 0")
+      (is (eq :mode leticl::*pick-open*) "and the picker is up")
+      (is (not (null leticl::*pick-unseeded*))
+          "and the seed is recorded as NOT YET MADE")
+      ;; the settings land, the way the daemon's reply does
+      (leticl::%handle-frame
+       h (list :frame "settings"
+               :rows (list (list :key "mode" :value "allow-all (this box, consented)"
+                                 :choices (list "ask" "allow-all" "read-only")))))
+      (is (= 1 (head-picker-sel h))
+          "**and the cursor moves to the CURRENT value** — `allow-all` is row 1")
+      (is (null leticl::*pick-unseeded*) "and the seed is spent"))
+    ;; **A MOVE THE OPERATOR MADE IS NEVER OVERWRITTEN.** They arrow inside a list that IS there
+    ;; (so the arrows work at all — `pick-key-event` gates them on a non-empty list), and a second
+    ;; settings frame must not yank them back to the current value.
+    (let ((h (%on-head :cols 80 :rows 24)))
+      (setf (head-settings h)
+            (list (list :key "mode" :value "allow-all"
+                        :choices (list "ask" "allow-all" "read-only"))))
+      (open-pick h :mode)
+      (is (= 1 (head-picker-sel h)) "opened on the current value")
+      (leticl::%handle-key h (list :type :down))
+      (is (= 2 (head-picker-sel h)) "one down, on the operator's word")
+      (leticl::%handle-frame
+       h (list :frame "settings"
+               :rows (list (list :key "mode" :value "allow-all"
+                                 :choices (list "ask" "allow-all" "read-only")))))
+      (is (= 2 (head-picker-sel h))
+          "**and the settings landing does NOT snap it back** — the cursor is theirs the moment
+ they touch it, which is why the re-seed is gated on `*pick-unseeded*`"))))
 
 (def-test a-prefix-names-an-option-when-it-is-unambiguous (:suite leticl)
   "The fallback the docstring promised and the body never implemented.

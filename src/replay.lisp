@@ -208,6 +208,7 @@ see this file's header."
          (*slash-out* nil)
          (*pane-scroll* 0)
          (*pick-open* nil)
+         (*pick-unseeded* nil)
          (*mode-confirm* nil)
          (*peeked-session* nil)
          (*peeked-dropped* 0)

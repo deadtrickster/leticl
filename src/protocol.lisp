@@ -188,7 +188,25 @@ queued)."
 ;;; defaults them daemon-side — except where presence itself is the disclosure.
 
 (defun make-attach (&key (session-id "") (since-seq 0) (kind "tui") identity
-                      (queue 1024) (can-decide t) features)
+                      ;; **BIG ENOUGH FOR A RESUME, WHICH IS THE ONE THING THAT NEEDS IT.**
+                      ;;
+                      ;; The default is 1024, and a restore publishes **three events per stored
+                      ;; row** — a `filling` tick, a `transcript_appended`, and the item body —
+                      ;; so a 2706-row conversation is ~8100 events through a 1024-event queue.
+                      ;; The daemon does not block and does not drop silently: it DEMOTES the
+                      ;; head (`hub.rs:1366`), clears the queue, and hands it a snapshot — which
+                      ;; is what the operator saw, three times, as the restore bar freezing at
+                      ;; 44 rows and the conversation arriving in pieces.
+                      ;;
+                      ;; MEASURED on the running head: `:resyncs 3` after one resume.
+                      ;;
+                      ;; The protocol's own field docstring says what to do about it — *"a head
+                      ;; that renders slowly can ask for a bigger queue instead of resyncing
+                      ;; constantly"* — and there is no clamp daemon-side beyond `.max(1)`. So
+                      ;; this asks for what a restore costs, with room to spare: 16384 events is
+                      ;; ~2000 rows of the three-event shape, and costs the daemon a VecDeque of
+                      ;; pointers when it is full.
+                      (queue 16384) (can-decide t) features)
   (list :frame "attach"
         :protocol-version +protocol-version+
         :session-id session-id

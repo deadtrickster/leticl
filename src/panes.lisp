@@ -1863,6 +1863,13 @@ advertised three keys and a full copy on disk, and the copy was never written."
 ;;; then drifts. The flag is a defvar: a head slot is a struct layout change, which
 ;;; is a restart.
 
+(defvar *pick-unseeded* nil
+  "Has the picker's cursor been placed by US, with nobody having moved it yet?
+
+T when `open-pick` could not compute the seed — its list had not arrived — so the settings arm may
+place it once the rows land, and any key that moves the cursor clears it so a move the operator made
+is never overwritten. Reset by `close-pick` and by `with-replay-globals`.")
+
 (defvar *pick-open* nil
   "Which picker is up: NIL, `:mode`, `:model` or `:verbosity`.
 
@@ -1951,10 +1958,18 @@ time: any pane closes."
         (head-mode head) :normal
         (head-picker-sel head)
         (or (position (pick-current head which) (pick-choices head which) :test #'string=) 0)
+        ;; **THE SEED IS A PROMISE, AND IT CANNOT BE KEPT YET.** The line above is right, and it
+        ;; is computed against a list that does not exist the first time — `/mode` asks for the
+        ;; settings here and the rows come back a frame later. So the cursor falls to `0`, and
+        ;; this flag records that NOBODY HAS CHOSEN IT: the settings arm re-seeds from the real
+        ;; list when it arrives, and any key that moves the cursor clears the flag so their own
+        ;; choice is never overwritten. See the operator's report — *"mode selectors has selection
+        ;; on the first not on the current again"* — in `head.lisp`'s settings arm.
+        *pick-unseeded* (null (pick-choices head which))
         (head-dirty head) t))
 
 (defun close-pick (head)
-  (setf *pick-open* nil (head-dirty head) t))
+  (setf *pick-open* nil *pick-unseeded* nil (head-dirty head) t))
 
 (defun pick-card-lines (head cols)
   "The picker's card — `mode_picker_lines` row for row: a bold title, each choice

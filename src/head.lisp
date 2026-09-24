@@ -901,6 +901,27 @@ and a `hello` with a snapshot). Returns T when the queue moved."
            ;; the turn's own word for the model (`%model-name`)
            *model-from-settings-at* (session-seq (head-session head))
            (head-dirty head) t)
+     ;; **A PICKER THAT OPENED BEFORE ITS OWN LIST ARRIVED MUST SEED NOW.**
+     ;;
+     ;; The operator: *"mode selectors has selection on the first not on the current again."*
+     ;; `open-pick` seeds the cursor on `(position (pick-current head which) (pick-choices head
+     ;; which))` — correct, and EMPTY the first time, because `/mode` opens the picker and ASKS for
+     ;; the settings in the same breath (`open-pick` sends `make-settings` when `head-settings` is
+     ;; nil). `pick-choices` then reads a list that does not exist yet, so `position` answers NIL,
+     ;; the fallback `0` is taken, and nothing re-seeds when the rows land: the cursor sits on the
+     ;; FIRST row while `← now` marks the current one further down.
+     ;;
+     ;; It works on the SECOND open, settings being known by then — which is why the report is
+     ;; *"again"* rather than a permanent break, and why a test that sets the settings up first
+     ;; would never see it.
+     ;;
+     ;; **Re-seeded only while the cursor is still untouched**, so a settings frame arriving while
+     ;; the operator is arrowing through the list cannot snap their cursor back — a worse defect
+     ;; than the one this fixes.
+     (when (and *pick-open* *pick-unseeded*)
+       (setf (head-picker-sel head)
+             (or (position (pick-current head) (pick-choices head) :test #'string=) 0)
+             *pick-unseeded* nil))
      :control)
     ((string= (frame-name frame) "row_fetched")
      ;; **THE ANSWER ARRIVES ON THE SAME STREAM AS THE SESSION'S OWN TRAFFIC**, which is
