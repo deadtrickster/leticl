@@ -126,6 +126,10 @@ see this file's header."
          (*spent-seen* nil)
          (*resyncs* 0)
          (*scrubbed-total* 0)
+         ;; **R46's acknowledgement.** Whether the reader has looked at `/status` decides what the
+         ;; alarm row and the composer's triangle draw, so a replay that inherited one would put a
+         ;; quiet edge on a screen recorded when it was loud — and vice versa.
+         (*alarms-acked* nil)
          (*model-from-settings-at* 0)
          (*model-from-turn-at* 0)
          (*verbosity* :normal)

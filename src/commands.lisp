@@ -1127,6 +1127,17 @@ had been there. The reference keeps a cursor per pane; with one, the top is the
 only honest place to start."
   ;; one list on the screen at a time, the rule the pickers keep between themselves
   (setf *pick-open* nil)
+  ;; **OPENING `/status` IS THE ACKNOWLEDGEMENT.** The alarm is a pointer — *something was
+  ;; wrong, look here* — and its job is finished the moment the reader has looked. No key and no
+  ;; verb: the act of opening the screen IS the act of seeing the numbers. See `*alarms-acked*`
+  ;; for why this is safe rather than a way to switch the alarm off (a counter that grows past
+  ;; the value that was seen points again), and why the filter lives in `alarm-counts` rather than
+  ;; at the two surfaces it quiets.
+  ;;
+  ;; Taken BEFORE the mode is set, so the screen the reader is about to see is drawn from the
+  ;; same numbers that were acknowledged — a resync arriving between the two would otherwise be
+  ;; acknowledged without ever having been on the screen.
+  (when (eq mode :status) (acknowledge-alarms head))
   (setf (head-mode head) mode
         ;; the session picker opens ON THE SESSION YOU ARE IN — `ctrl-s` then
         ;; enter moved you off your own session, which is the shape of mistake

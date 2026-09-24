@@ -13237,6 +13237,70 @@ needs."
   (let ((tight (car (lines-text (list (leticl::box-edge 14 #\╭ #\╮ "" "a much longer legend"))))))
     (is (= 14 (string-width tight)) "a legend never makes the edge wider than its width")))
 
+(def-test opening-status-acknowledges-the-alarm-so-the-triangle-can-go (:suite leticl)
+  "**R46, from the operator: *\"how to hide that resync counter arrow?\"***
+
+There was no way, and that is the defect rather than the arrow. `⚠` on the composer's edge means
+*the head is alive and something was wrong — look at `/status`*, so **it is a POINTER, and a pointer
+that cannot be dismissed is one you learn to ignore.** The counters are cumulative and start at zero
+with the process, so a head that took two resyncs (an upgrade, a reattach) carried the triangle for
+the rest of its life while saying nothing new.
+
+**Opening `/status` IS the acknowledgement** — no key, no verb, no second thing to learn: you looked.
+And the recollection is **UP TO THE VALUE THAT WAS SEEN**, which is what makes this safe rather than
+a way to switch the alarm off. Four claims, and the third is the one that would be missing from a
+naive implementation:
+
+  · an unread counter points;
+  · opening the screen quiets it, on the ROW and on the TRIANGLE alike — one filter, so the two
+    cannot disagree about what has been read;
+  · **a counter that grows past the value that was seen points AGAIN** — a resync after the one you
+    read is a new fact;
+  · and the NUMBER stays on `/status`, which says so in its own words: off the edge and still in the
+    log, exactly as a retired note is."
+  (let ((leticl::*alarms-acked* nil)
+        (leticl::*resyncs* 2) (leticl::*scrubbed-total* 0)
+        (leticl::*unreadable-total* 0)
+        (h (%on-head :cols 100 :rows 30)))
+    ;; **CONNECTED, or `alarmed-p` is true for a reason that has nothing to do with the
+    ;; counters**: a detached head alarms by definition and `alarm-line` says that first. The
+    ;; subject here is the acknowledgement, so the connection is held up.
+    (setf (head-connected h) t)
+    ;; --- 1. an unread counter points, on both surfaces
+    (is (equal '(("resync" . 2)) (leticl::alarm-counts h))
+        "the counter is on the alarm's list")
+    (is (leticl::alarmed-p h) "and the triangle is up")
+    (is (search "resync 2" (format nil "~{~a~}" (mapcar #'car (leticl::alarm-line h 100))))
+        "and the row names it")
+    ;; --- 2. **opening /status acknowledges it**, and that is the whole interface
+    (leticl::%open-pane h :status)
+    (is (null (leticl::alarm-counts h))
+        "**the alarm's list is empty once the reader has looked**")
+    (is (not (leticl::alarmed-p h)) "**and the triangle is gone** — the two cannot disagree, because
+ the filter is one function and not one per surface")
+    (is (null (leticl::alarm-line h 100))
+        "and the row goes with it, so a quiet head spends nothing on it")
+    ;; --- 3. the number STAYS on the screen that quieted it
+    (let ((text (lines-text (leticl::status-screen-lines h 100))))
+      (is (some (lambda (l) (search "resync" l)) text)
+          "**the counter is still on /status** — off the edge and in the log, as a retired note is")
+      (is (some (lambda (l) (search "acknowledged" l)) text)
+          "**and the screen SAYS it was acknowledged**, so a reader returning to a quiet edge does
+ not conclude the count reset"))
+    ;; --- 4. **a NEW one points again** — the claim that makes this safe
+    (setf leticl::*resyncs* 3)
+    (is (equal '(("resync" . 3)) (leticl::alarm-counts h))
+        "**a resync after the one that was read is news again**: the acknowledgement is a value,
+ not a switch")
+    (is (leticl::alarmed-p h) "and the triangle comes back")
+    ;; --- 5. and that second one can be acknowledged in its turn
+    (leticl::%open-pane h :status)
+    (is (null (leticl::alarm-counts h)) "the newer one is acknowledged by looking again")
+    (setf leticl::*resyncs* 2)
+    (is (null (leticl::alarm-counts h))
+        "and a counter that goes BACKWARDS is still acknowledged — the rule is `<=`, so nothing
+ re-points at a value already read")))
+
 (def-test both-box-edges-carry-their-legend-on-the-right (:suite leticl)
   "**The operator's own call, and the cost is written where the side is chosen.**
 

@@ -189,12 +189,62 @@ going to draw."
 ;;; for ever in exchange for being noticed once. The alarm line below carries
 ;;; the rest.
 
+(defvar *alarms-acked* nil
+  "`(LABEL . VALUE)` for every counter the reader has ACKNOWLEDGED at that value.
+
+**The alarm is a POINTER, and a pointer that cannot be dismissed is one you learn to ignore.**
+`⚠` on the composer's edge means *the head is alive and something was wrong — look at `/status`*;
+its job is finished the moment the reader has looked, and until now nothing could say so. The
+counters are cumulative and start at zero when the process does, so a head that took two resyncs
+(an upgrade, a reattach) carried the triangle for the rest of its life while saying nothing new.
+The operator: *\"how to hide that resync counter arrow?\"*
+
+**Opening `/status` is the acknowledgement** — no key, no verb, no second thing to learn. That is
+the whole interface: you looked. It is the `/notes` retire pattern with one difference and it is
+the important one: **retiring silences a warning forever, and this silences a counter only UP TO
+THE VALUE THAT WAS SEEN.** A resync after this one is a new fact and the triangle comes back —
+which is what makes acknowledging safe rather than a way to switch the alarm off.
+
+**The record is the unacknowledged state**, so it is a `defvar` like the counters it quiets, and
+bound by `with-replay-globals` for the usual reason: a replay must answer the same bytes twice.")
+
+(defun alarm-acked-p (label value)
+  "Has LABEL been acknowledged at or beyond VALUE?"
+  (let ((at (cdr (assoc label *alarms-acked* :test #'string=))))
+    (and at (<= value at))))
+
+(defun acknowledge-alarms (head)
+  "Acknowledge every alarm counter at the value it holds now. T when anything changed.
+
+Called when `/status` opens — see `*alarms-acked*` for the argument. **The whole set is taken at
+once**, deliberately: a reader who has looked at the screen has seen every number on it, and
+acknowledging only the one they scrolled to would be a decision the screen does not ask them to
+make."
+  (let ((changed nil))
+    (dolist (pair (alarm-counts head))
+      (unless (alarm-acked-p (car pair) (cdr pair))
+        (let ((cell (assoc (car pair) *alarms-acked* :test #'string=)))
+          (if cell
+              (setf (cdr cell) (cdr pair))
+              (push (cons (car pair) (cdr pair)) *alarms-acked*))
+          (setf changed t))))
+    (when changed (setf (head-dirty head) t))
+    changed))
+
 (defun alarm-counts (head)
-  "The counters that are not zero, as an alist of (LABEL . VALUE).
+  "The counters that are not zero **and not acknowledged**, as an alist of (LABEL . VALUE).
 
 A defvar each rather than a head slot, because a struct layout change is a
-restart; there is one head per process, so a global costs nothing and pushes."
-  (remove-if (lambda (pair) (zerop (cdr pair)))
+restart; there is one head per process, so a global costs nothing and pushes.
+
+**The acknowledgement filter is HERE and not at the two callers**, so the row and the triangle
+cannot disagree about what has been read — the same rule the counts' own spelling keeps. What it
+filters on is `*alarms-acked*`: a counter at or below the value the reader last saw on `/status`
+is one they have read, and a counter ABOVE it is news again. **`/status` reads the raw globals and
+not this**, which is what keeps the numbers on the screen after the triangle goes: off the edge
+and still in the log, exactly as a retired note is."
+  (remove-if (lambda (pair) (or (zerop (cdr pair))
+                                (alarm-acked-p (car pair) (cdr pair))))
              (list (cons "dropped" (or (session-dropped (head-session head)) 0))
                    ;; **`scrubbed` counts too.** The reference's `alarmed()` is
                    ;; `dropped + scrubbed + resyncs > 0` (app.rs:7619-7620) and

@@ -342,6 +342,24 @@ fourteen-column indent, then a blank. 26 rows against our 18."
         (when (plusp (length (or ws "")))
           (row "workspace" (tilde-path ws)
                "Where the daemon is standing. Tools resolve relative paths here.")))
+      ;; **AND WHAT THE READER HAS ALREADY SEEN** — the one line that keeps a quiet `⚠` from
+      ;; reading as a zero counter. Opening this screen acknowledges every counter at the value it
+      ;; holds (`acknowledge-alarms`), which is what takes the triangle off the composer's edge;
+      ;; the numbers STAY here, exactly as a retired note stays in `/notes`. So the screen that
+      ;; quiets the pointer is also the screen that says the pointer was quieted and why —
+      ;; otherwise a reader coming back to find no triangle would conclude the count had reset.
+      (let ((acked (remove-if-not (lambda (pair)
+                                    (alarm-acked-p (car pair) (cdr pair)))
+                                  (list (cons "dropped" (or (session-dropped s) 0))
+                                        (cons "scrubbed" *scrubbed-total*)
+                                        (cons "resync" *resyncs*)
+                                        (cons "unreadable" *unreadable-total*)))))
+        (when acked
+          (push nil out)
+          (push (list (cons (format nil "  acknowledged: ~{~a~^, ~} — seen here, so the edge is quiet; a counter\n above these values points again"
+                                    (loop for (k . v) in acked collect (format nil "~a ~d" k v)))
+                            '(:dim t)))
+                out)))
       (push (list (cons "  /status or esc closes this" '(:dim t))) out)
       (nreverse out))))
 

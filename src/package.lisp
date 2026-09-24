@@ -73,6 +73,8 @@
    #:*write-prefs*
    ;; chrome (S8) — the alarm, the stall, the money meter, the boxed composer
    #:composer-line #:hint-bar #:alarm-line #:alarm-counts #:alarmed-p
+   ;; R46: the alarm is a pointer, and opening /status is what acknowledges it
+   #:*alarms-acked* #:alarm-acked-p #:acknowledge-alarms
    #:spent-text #:note-turn-cost #:reset-spent
    #:*resyncs* #:*spent-micros* #:*spent-seen* #:*now-ms* #:*last-event-ms*
    #:note-frame-arrived #:stalled-ms #:stall-text #:stall-row #:notice-line
