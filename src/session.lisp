@@ -537,7 +537,7 @@ allowlist's own one entry is what proved the list was the wrong shape.")
 
 **The one writer, and the invalidation is the whole reason it exists.** The rung is read at DRAW
 time — `item-lines` asks `reading-p` and hides a row — but `%hist-key` is (generation, width, the
-items vector's identity) and none of the three moves when a rung does. So the lines already
+items vector's identity, the live tick) and none of the four moves when a rung does. So the lines already
 rendered would be served back out of the cache and the new rung would appear to do nothing, which
 is the defect this tree has now found at four surfaces (the fold, the payload page, the width, the
 retired note). The generation is what the cache watches, so it is bumped here.

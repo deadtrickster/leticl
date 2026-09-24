@@ -13935,6 +13935,12 @@ back\" — *\"a row that looks like every other tool row and quietly has no outp
 is the shape a person reads straight past.\"*"
   (let* ((*answered-calls* nil)
          (*call-targets* nil)
+         ;; **BOUND, not assumed.** Every claim below is about a call that was ASKED FOR and
+         ;; never started — which is what `→` means. Naming the table here is what keeps the
+         ;; test about that and not about whatever a previous fixture happened to leave in it:
+         ;; a key in `*call-started-ms*` now means *this call is RUNNING*, and a leftover entry
+         ;; would make this row draw the live form instead.
+         (*call-started-ms* nil)
          (body (list :type "assistant" :text ""
                      :tool-calls (list (list :id "c1" :name "read"
                                              :arguments "{\"path\":\"src/cards.lisp\"}"))))
@@ -13951,6 +13957,7 @@ is the shape a person reads straight past.\"*"
   ;; an empty target earns the call id its columns: it is then the only thing
   ;; distinguishing two calls to the same tool
   (let* ((*answered-calls* nil)
+         (*call-started-ms* nil)
          (body (list :type "assistant" :text ""
                      :tool-calls (list (list :id "c7" :name "bash" :arguments ""))))
          (line (first (item-lines (list :item-id "a2" :kind "assistant" :item body)
@@ -13966,6 +13973,105 @@ is the shape a person reads straight past.\"*"
          (line (first (item-lines (list :item-id "a3" :kind "assistant" :item body)
                                   40 nil))))
     (is (<= (leticl::%segs-width line) 40) "never past the width it was given")))
+
+(def-test a-running-call-counts-from-the-moment-it-started (:suite leticl)
+  "**The operator, watching a two-minute `cargo test`:**
+
+    you do \"blablabla:\" and then long ass tool call and I see nothing —
+    literally indistinguishable from connection break or a crash. told you long
+    time ago — to start counting before running command.
+
+MEASURED on their own screen, before this existed: capturing the pane at 6s, 14s and
+24s while a command ran gave **three byte-identical frames**. The row was
+`→ Ran \"…\" · no result` — the FORM ABOVE, and it never moved.
+
+That is the defect exactly, and it is not that the row was missing a number. `→`
+means *asked for, nothing came back*, which is the true and useful thing to say about
+a turn that was INTERRUPTED. Said about a command running right now it is a lie in the
+one direction that costs: it is indistinguishable from death, and the operator read it
+as death.
+
+So a call the head can see running is drawn RUNNING, with its clock — the live card's
+own `◐ {Verb} {subject} · 1.2s`, from the same `call-lines` the turn pane uses, so the
+transcript row and the live card cannot drift into two announcements of one call.
+
+**And the clock starts when the command starts.** `%call-elapsed-ms` is anchored at
+`ToolStarted`, which the reference is explicit about (`app.rs:3996-4005`): *\"the clock
+starts when the tool starts, not when the model asked for it: a call that waited on a
+decision did not spend that time running.\"* A counter that began at the proposal would
+charge the operator for the guard's thinking.
+
+**The other half is that it STOPS.** A call that has finished keeps no entry in
+`*call-started-ms*`, so an unanswered proposal above a finished call says `no result`
+again rather than counting for ever — which is why the table is emptied by
+`note-call-finished` rather than at the round boundary."
+  (let* ((*answered-calls* nil)
+         (*call-targets* nil)
+         (body (list :type "assistant" :text ""
+                     :tool-calls (list (list :id "c1" :name "bash"
+                                             :arguments "{\"command\":\"cargo test\"}"))))
+         (row (lambda (ms)
+                (setf *call-started-ms*
+                      (and ms (list (cons "c1" (- (internal-real-time-ms) ms)))))
+                (segs-of (item-lines (list :item-id "a1" :kind "assistant" :item body)
+                                     100 nil)))))
+    ;; `set *call-targets*` is what gives the row its subject; the arguments carry it here
+    (setf *call-targets* (list (cons "c1" "cargo test")))
+    (let ((early (funcall row 2400))
+          (late (funcall row 14900)))
+      (is (search "◐" early) "a running call carries the PENDING mark, not `→`: ~s" early)
+      (is (search "Running" early) "and the running TENSE: ~s" early)
+      (is (search "2.4s" early) "with the time it has been going: ~s" early)
+      (is (not (search "no result" early))
+          "and NOT `no result`, which is the row that says nothing came back")
+      ;; **THE POINT OF THE WHOLE THING**: the same call, later, READS DIFFERENTLY
+      (is (search "14.9s" late) "the counter MOVES between frames: ~s" late)
+      (is (not (equal early late))
+          "**two frames a decade apart are not byte-identical**, which is the measurement"))
+    ;; a call that started and then FINISHED with no result row does not keep counting
+    (let ((done (funcall row nil)))
+      (is (search "→ Ran \"cargo test\" · no result" done)
+          "a finished call with no result row is back to the `→` form: ~s" done)
+      (is (not (search "◐" done)) "and claims to be running no longer"))
+    ;; **AND THE CLOCK SURVIVES A LONG COMMAND.** The header tail is dropped WHOLE when it
+    ;; does not fit — so a two-hundred-character command pushed `· 12.4s` off the row, and the
+    ;; one number that says *this is alive* went with it. MEASURED on the operator's screen:
+    ;; the mark and the running tense, and no duration anywhere. The subject gives way, not
+    ;; the fact — `%shorten-subject`, which the settled row already did.
+    (let* ((long (format nil "cd /tmp && ~a" (make-string 200 :initial-element #\x)))
+           (item (list :item-id "a2" :kind "assistant" :item
+                       (list :type "assistant" :text ""
+                             :tool-calls (list (list :id "c1" :name "bash"
+                                                     :arguments (format nil "{\"command\":\"~a\"}" long)))))))
+      (setf *call-started-ms*
+            (list (cons "c1" (- (internal-real-time-ms) 12400))))
+      (let ((text (segs-of (item-lines item 100 nil))))
+        (is (search "12.4s" text)
+            "the duration is still on the row however long the command is: ~s" text)
+        (is (search "◐" text) "and so is the mark")
+        (is (<= (apply #'max (mapcar (lambda (l) (leticl::%segs-width l))
+                                     (item-lines item 100 nil)))
+                100)
+            "while the row still fits the width it was given")))))
+
+(def-test a-finished-call-stops-being-runnable (:suite leticl)
+  "The predicate the row above is built on, at its own level.
+
+`*call-started-ms*` began as *every call whose `ToolStarted` this head saw*, kept to the
+end of the round — so a finished call still had a start time, and the two questions this
+table is asked (*how long has it been going* and *is it going*) could not be told apart
+from it. `note-call-finished` now moves the duration into `*call-facts*`, where the
+settled row reads it, and drops the entry: **a key in this table means exactly one
+thing.**"
+  (let ((*call-started-ms* nil) (*call-facts* nil))
+    (is (not (leticl::%call-running-p "c1")) "nothing has started")
+    (leticl::note-call-started "c1")
+    (is (leticl::%call-running-p "c1") "ToolStarted makes it running")
+    (leticl::note-call-finished "c1")
+    (is (not (leticl::%call-running-p "c1"))
+        "**and ToolFinished takes that back** — the call is no longer spending time")
+    (is (numberp (getf (cdr (assoc "c1" *call-facts* :test #'string=)) :ms))
+        "while the duration it spent is still there for the settled row to show")))
 
 (def-test a-segment-boundary-is-a-row (:suite leticl)
   "Gap 5. `SegmentMark` → `dim(\"─── {label} ───\")` (app.rs:10042-10044). The

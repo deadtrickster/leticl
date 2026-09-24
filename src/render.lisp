@@ -390,10 +390,39 @@ fields matter.
 is DRAWN, not what the rows are, and bumping on them would rebuild the history
 every frame and lose the whole point.")
 
-(defun %hist-key (head cols)
-  "Generation, width, and the IDENTITY of the items vector.
+(defun %hist-live-tick (head)
+  "A value that changes while a COMMITTED row's content is a function of the CLOCK.
 
-**Three things, because no two of them are enough.** The first version was
+**The cache was the other half of the operator's complaint, and it was the half that made
+the first fix invisible.** They watched a two-minute `cargo test` and saw the same row the
+whole time; the row was then drawn `→ Ran … · no result`, and after that was fixed it STILL
+did not move — because `%hist-key` is `(generation cols items-vector)`, and **none of those
+three changes when a call starts or while it runs.** A call starting is not an event folded,
+the items vector is the same vector, and the width is the width. So the cache answered with
+the lines it had built before the call began, for the whole of the call, and the paragraph
+that says *the clock starts when the command starts* had no display to stand on.
+
+**Only a RUNNING CALL needs this**, and it is worth being narrow about it. The other
+clock-driven parts of a frame — the composer's spinner, the carry line, a deadline countdown
+— are drawn from the session and the panes, not from a transcript row, so they never went
+through this cache and do not want it bypassed. A running call is the only case where a
+COMMITTED row's text is a function of the clock.
+
+A TENTH, because that is the resolution the number has: `%live-elapsed-ms` rounds to 100 ms,
+and `+live-frame-ms+` is 100 ms, so the head rebuilds this frame ten times a second anyway
+while a call runs. Measured on this head at 3,693 items: **2.8 ms per rebuild**, and only
+while a call is actually running — `%history-until` walks back from the newest row and stops
+when the viewport is full, so the cost is the window and not the session."
+  (let ((turn (session-turn (head-session head))))
+    (when (and turn (some (lambda (c)
+                            (string= (or (getf (getf c :state) :state) "") "running"))
+                          (getf turn :calls)))
+      (floor (internal-real-time-ms) +live-frame-ms+))))
+
+(defun %hist-key (head cols)
+  "Generation, width, the IDENTITY of the items vector, and the live tick.
+
+**Four things, because no three of them are enough.** The first version was
 `(seq cols count prefs)` and it is wrong: two sessions can sit at the same seq with
 the same width and the same item COUNT and hold entirely different content — a
 resync or a switch can land on any of those. Measured by a test that set
@@ -406,15 +435,21 @@ resync or a switch can land on any of those. Measured by a test that set
     which is what `(setf (session-items …))` is.
 
 `eq` on the vector rather than `equal` on its contents: an item body filled in
-place leaves the vector and its count identical, and that case is the generation's."
-  (list *hist-generation* cols (session-items (head-session head))))
+place leaves the vector and its count identical, and that case is the generation's.
+
+**And the tick, because a running call is the fourth way a row changes with no event at
+all** — see `%hist-live-tick`, which is NIL whenever nothing is running and so costs the
+ordinary frame nothing."
+  (list *hist-generation* cols (session-items (head-session head))
+        (%hist-live-tick head)))
 
 (defun %hist-key= (a b)
-  "Two keys equal on the two numbers and the vector's IDENTITY."
+  "Two keys equal on the two numbers, the vector's IDENTITY, and the live tick."
   (and a b
        (= (first a) (first b))
        (= (second a) (second b))
-       (eq (third a) (third b))))
+       (eq (third a) (third b))
+       (eql (fourth a) (fourth b))))
 
 (defun %history-until (head cols need &optional until-id)
   "The committed transcript's lines, oldest first, at least NEED of them.

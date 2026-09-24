@@ -386,16 +386,29 @@ settled row's diff, duration and approval on the screen after the live card is
 gone. An item id is unique per row, so two rounds cannot collide here.")
 
 (defvar *call-started-ms* nil
-  "Alist CALL-ID → the monotonic ms when its ToolStarted arrived.
+  "Alist CALL-ID → the monotonic ms when its ToolStarted arrived, for calls THAT ARE STILL
+RUNNING.
 
 Neither `tool_finished` nor the row that lands afterwards carries a duration, so
 the only way to keep *\"that grep took 4.1 s\"* on the screen is to have noted
-when it began.")
+when it began.
+
+**AND THE ENTRY LEAVES WHEN THE CALL DOES.** It used to be kept to the end of the round,
+and that made \"is this call running?\" unanswerable from here — a finished call still had a
+start time, so the only way to tell the two apart was to ask the turn, which the row renderer
+cannot reach. `note-call-finished` moves the entry into `*call-facts*` (where the duration now
+lives, for the settled row), so **a key in this table means exactly one thing: this call
+started and has not finished.** That is the predicate the transcript's `◐` row needs, and it
+is why the running row can be drawn from a plain `item-lines` with no session in hand.")
 
 (defun note-call-started (call-id)
   (when call-id
     (setf (alexandria:assoc-value *call-started-ms* call-id :test #'string=)
           (internal-real-time-ms))))
+
+(defun %call-running-p (call-id)
+  "Has CALL-ID started and not yet finished — see `*call-started-ms*`."
+  (and call-id (numberp (cdr (assoc call-id *call-started-ms* :test #'string=)))))
 
 (defun note-call-finished (call-id &key edit)
   "Fold what ToolFinished carried into the staging table.
@@ -409,6 +422,12 @@ nothing at all while looking like it recorded something. A test caught it."
       (when (numberp start)
         (setf (getf (alexandria:assoc-value *call-facts* call-id :test #'string=) :ms)
               (max 0 (- (internal-real-time-ms) start)))))
+    ;; **and the call stops being RUNNING here**, which is the same moment it stops spending
+    ;; time. The duration moved into the facts table above, so keeping the start entry would
+    ;; leave a key that no longer answers the question it is asked — and *"has this started and
+    ;; not finished?"* is asked of every unanswered proposal on the screen.
+    (setf *call-started-ms*
+          (remove call-id *call-started-ms* :key #'car :test #'string=))
     (when edit
       (setf (getf (alexandria:assoc-value *call-facts* call-id :test #'string=) :edit)
             edit))))
@@ -2789,20 +2808,66 @@ a terminal-native palette."
                                        (getf tc :arguments))
                                cols)))
              (unless (reading-p)
+               ;; **`append`, not `collect`** — a row of the head's working can be more than
+               ;; one LINE (a running card with a body, an edit with a diff), and `collect`
+               ;; takes ONE item per call. Collected, the lines arrived as a single element and
+               ;; the row was nested one level too deep: the reader saw `(  )` — a list printed
+               ;; where a string belonged — which is how this was caught.
                (loop for tc in (getf body :tool-calls)
                    unless (call-answered-p (getf tc :id))
-                     collect (let* ((tgt (display-target (getf tc :arguments)))
-                                    (line (format nil "→ ~a~a · no result"
-                                                  (verb-label (getf tc :name))
-                                                  (if (plusp (length tgt))
-                                                      (format nil " ~a" tgt)
-                                                      (format nil " (~a)" (getf tc :id))))))
-                               (%truncate-segs
-                                (list (cons (make-string (activity-indent cols)
-                                                         :initial-element #\space)
-                                            nil)
-                                      (cons line +role-attention+))
-                                cols)))))))
+                     append (let* ((tgt (display-target (getf tc :arguments)))
+                                   (id (getf tc :id)))
+                              (if (%call-running-p id)
+                                   ;; **A CALL THAT IS RUNNING IS DRAWN RUNNING, WITH ITS CLOCK
+                                   ;; — and this is the half the row was missing.**
+                                   ;;
+                                   ;; The operator, watching a `cargo test` that took two
+                                   ;; minutes: *"you do 'blablabla:' and then long ass tool call
+                                   ;; and I see nothing — literally indistinguishable from
+                                   ;; connection break or a crash. told you long time ago — to
+                                   ;; start counting before running command."*
+                                   ;;
+                                   ;; MEASURED on their own screen, capturing it at 6s, 14s and
+                                   ;; 24s while a command ran: the three frames were **byte
+                                   ;; identical**. The row was `→ Ran "…" · no result` — the form
+                                   ;; below, all of it `Role::Attention` — and it did not move.
+                                   ;; `→` means *asked for, nothing came back*, which is what a
+                                   ;; row says about a turn that was INTERRUPTED; saying it
+                                   ;; about a command running right now is the one reading it
+                                   ;; must not carry, and it is the reading the operator had.
+                                   ;;
+                                   ;; So a running call takes the LIVE card's own header —
+                                   ;; `◐ {Verb} {subject} · 1.2s`, the very `call-lines` the turn
+                                   ;; pane draws for it. ONE renderer, so the row and the live
+                                   ;; card cannot drift into two announcements of one call, and
+                                   ;; the number is `%live-elapsed-ms` over `%call-elapsed-ms`,
+                                   ;; whose clock starts at `ToolStarted` — when the command
+                                   ;; started, not when the model asked for it, so a call that
+                                   ;; waited on a decision does not count that wait as running
+                                   ;; time (`app.rs:3996-4005`).
+                                   (step-in-lines
+                                    (call-lines (list :call-id id
+                                                      :name (getf tc :name)
+                                                      :target tgt
+                                                      :state (list :state "running"))
+                                                (max 20 (- cols (activity-indent cols)))
+                                                prefs)
+                                    (activity-indent cols))
+                                   ;; **started, and nothing came back** — the turn was
+                                   ;; interrupted, or the body has not arrived yet. This is what
+                                   ;; `→` is for, and the whole of what the row now means
+                                   ;; (app.rs:9614-9645).
+                                   (let ((line (format nil "→ ~a~a · no result"
+                                                       (verb-label (getf tc :name))
+                                                       (if (plusp (length tgt))
+                                                           (format nil " ~a" tgt)
+                                                           (format nil " (~a)" id)))))
+                                     (list (%truncate-segs
+                                            (list (cons (make-string (activity-indent cols)
+                                                                     :initial-element #\space)
+                                                        nil)
+                                                  (cons line +role-attention+))
+                                            cols))))))))))
          ((:reasoning)
           ;; **The model's working-out, so it can never be mistaken for its
           ;; answer.** Three signals, because any one is lost somewhere: the WORD
@@ -3053,7 +3118,7 @@ three colours, none of them the reference's."
          (mark (cond (running (cons "◐" +role-pending+))
                      (finished (cons "●" outcome-style))
                      (t (cons "○" '(:dim t)))))
-         (target (or (getf call :target) ""))
+         (target-raw (or (getf call :target) ""))
          (note (getf call :progress-note))
          (ms (and finished (getf (alexandria:assoc-value *call-facts* (getf call :call-id)
                                                           :test #'string=)
@@ -3066,12 +3131,32 @@ three colours, none of them the reference's."
                                            (and bad (list (%outcome-word word)))
                                            (and bad (list (%outcome-why outcome)))))
                          (t (list (or note "proposed"))))))
+         (joined (and tail (format nil " · ~{~a~^ · ~}" tail)))
+         (tail-style (if bad outcome-style '(:dim t)))
+         (verb-str (verb-label (getf call :name) :running running))
+         ;; **THE TAIL IS MEASURED FIRST AND THE SUBJECT IS GIVEN WHAT IS LEFT** — R25's rule,
+         ;; and the whole reason the operator could not tell a running command from a crash.
+         ;;
+         ;; The header tail is *dropped whole when it does not fit* below, so a long command
+         ;; pushed the clock off the row and the one number that says **this is alive** went
+         ;; with it. MEASURED on their screen: `◐ Running "cd /tmp && (sleep 6; …) & …"` — the
+         ;; mark and the running tense, and no `· 12.4s` anywhere, on a command with two
+         ;; hundred characters of arguments.
+         ;;
+         ;; The tail does not shrink — it is the fact, and half of `· 12.4s` is not a duration.
+         ;; What gives way is the SUBJECT, which is what `%shorten-subject` is for and what
+         ;; `%tool-result-lines` already did. One rule, two rows: measured against letibot's
+         ;; screen, a subject that runs to the edge is how the reference draws it too.
+         (fixed (+ 2 (string-width verb-str) 1))    ; mark, space, verb, space
+         (target (if (plusp (length target-raw))
+                     (%shorten-subject target-raw
+                                       (max 8 (- cols fixed
+                                                  (if joined (string-width joined) 0))))
+                     ""))
          (head (list mark
                      (cons " " nil)
-                     (cons (verb-label (getf call :name) :running running) '(:bold t))
-                     (cons (if (plusp (length target)) (format nil " ~a" target) "") nil)))
-         (joined (and tail (format nil " · ~{~a~^ · ~}" tail)))
-         (tail-style (if bad outcome-style '(:dim t))))
+                     (cons verb-str '(:bold t))
+                     (cons (if (plusp (length target)) (format nil " ~a" target) "") nil))))
     ;; **The card's BODY, which had three of its four parts missing**
     ;; (app.rs:8767-8864, card.rs:482-511). Built in the reference's order and
     ;; then given the reference's budget.
