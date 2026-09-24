@@ -507,13 +507,22 @@ thirty rows appended, and the view jumped to `row-62`."
                            ;; `%run-continues-prose-p` for the screen that named the rule.
                            (glue (and run (not open) (%run-continues-prose-p item)))
                            ;; **and the room is LEFT for them before the sentence wraps** — render the
-                           ;; introducing row narrower by the marker's width, so a sentence that
+                           ;; introducing row narrower by the marker's ROOM, so a sentence that
                            ;; fills its line does not push the counts onto a line of their own. That
                            ;; was the operator's *"sometimes you do it same line - sometimes dont"*.
+                           ;;
+                           ;; **THE ROOM IS A FUNCTION OF THE FRAME AND NOTHING ELSE** — not of the
+                           ;; counts, not of what the run holds. That is the fix for the operator's
+                           ;; *"counts add digits when grow … I dont like jumps"*: the width handed
+                           ;; over here is the same on the frame a turn's first call lands on and on
+                           ;; the frame a hundred lines later, so the sentence above the counts wraps
+                           ;; once and then never moves again. Growth is paid on the marker's side —
+                           ;; `hidden-run-marker` steps its words down its ladder to stay inside the
+                           ;; room — and it can never be paid here.
                            (il (if glue
                                    (%marker-onto-last-line
                                     (item-lines item
-                                                (max 20 (- cols (hidden-run-marker-width run cols newest)))
+                                                (max 20 (- cols (hidden-run-marker-room cols)))
                                                 (head-prefs head))
                                     run cols newest)
                                    il)))

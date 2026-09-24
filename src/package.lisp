@@ -193,6 +193,7 @@
    #:reading-hides-p #:hidden-run-lines #:newest-hidden-run-id #:hidden-run-marker
    #:*hidden-run-open* #:%set-hidden-run-open #:*hidden-run-head*
    #:%hidden-run-id #:%marker-onto-last-line #:%hidden-run-counts #:%hidden-run-counts-text #:%row-invisible-p
+   #:hidden-run-marker-room #:+hidden-run-marker-cols+ #:+hidden-run-marker-floor+ #:+hidden-run-count-rungs+ #:+hidden-run-seam-rungs+ #:+hidden-run-marker-ladder+
    ;; R37's OPEN QUESTION, as a switch: two messages or one prose (the operator rules)
    #:*reading-join-prose* #:%set-reading-join-prose #:%reading-joined-items #:*reading-joined*
    #:reasoning-line-count

@@ -14933,7 +14933,11 @@ prose happened to break**, which is the same transcript reading two ways at two 
   (let ((leticl::*verbosity* :reading) (leticl::*scroll-anchor* nil)
         (leticl::*hist-cache* nil) (leticl::*hist-generation* 0)
         (leticl::*hidden-run-open* nil))
-    (let ((h (%on-head :cols 60 :rows 24)))
+    ;; **80 columns and not 60**: at 60 the room is 30 and the ladder has already started paying for
+    ;; the counts — that is `the-room-for-the-counts-is-fixed-and-the-marker-gives-way` below, and
+    ;; asserting it here would make this test's claim about the RESERVATION ambiguous with the
+    ;; ladder's.
+    (let ((h (%on-head :cols 80 :rows 24)))
       (setf (head-connected h) t)
       (setf (session-items (head-session h))
             (coerce (list (list :item-id "a" :kind "assistant" :ts 0
@@ -14944,16 +14948,146 @@ prose happened to break**, which is the same transcript reading two ways at two 
                                             :verb "ran" :subject "\"x\"" :outcome (list :outcome "ok")
                                             :payload "o")))
                     'vector))
-      (let* ((ls (leticl::%viewport-lines h 60 18))
+      (let* ((ls (leticl::%viewport-lines h 80 18))
              (texts (mapcar (lambda (l) (if (consp l) (format nil "~{~a~}" (mapcar #'car l)) "")) ls))
              (marker (position-if (lambda (s) (search "[1 tool call" s)) texts)))
         (is (integerp marker) "the counts are on the screen")
         (is (search "line exactly! [1 tool call]" (nth marker texts))
             (format nil "**the counts are on the SENTENCE'S OWN LINE**, not pushed onto a line of\n their own — the room was reserved before it wrapped: ~s" (subseq texts 0 (1+ marker))))
-        (is (<= (string-width (nth marker texts)) 60)
+        (is (<= (string-width (nth marker texts)) 80)
             "and that line is still inside the frame")))))
 
 (defun %blank-line-p (s) (every (lambda (ch) (char= ch #\space)) s))
+
+;;; ------------------- the counts' room, and what gives way when it is tight ----------------- ;;;
+;;;
+;;; **The operator's own report, and it is the requirement:** *"when in conversatoin mode we add this
+;;; [] and the text starts to jump - counts add digits when grow, and at some point the line could be
+;;; split so things jump even more. I dont like jumps. so, somehow if we found a place for the []
+;;; stats on the first render - when numbers grow, or a tool call happens or thinking - we just start
+;;; to remove bloat - 'tool calls' -> 'tools' -> 't' and so on"*.
+;;;
+;;; Two jumps were measured at 100 columns on the shape this replaced, and the tests below are the
+;;; two of them:
+;;;
+;;;   · the room reserved for the counts WAS the marker's actual width, so `9/9` and `10/10` handed
+;;;     the sentence two different widths and the paragraph re-wrapped when the second digit landed;
+;;;   · past about 51 columns of marker the seam ` · ctrl-t opens it` wrapped onto a line of its own,
+;;;     which moves the counts AND adds a row.
+
+(defparameter +%counts-prose+
+  "Now here is a sentence that is long enough to fill this line exactly and then to run on well past the frame edge, which is the only way to see where the sentence breaks."
+  "A narration long enough to wrap several times at the widths these tests reserve, so a two-column
+change of the room really does move a word — measured, and the assertion below failed before the fix.")
+
+(defun %counts-run-items (calls thinking)
+  "A run, as ITEMS: CALLS tool results and THINKING one-line reasoning rows.
+
+**Built rather than described**, because every claim here is about how the counts' WIDTH behaved, and
+that is a function of how many digits the run produced."
+  (append
+   (loop for i from 1 to calls
+         collect (list :item-id (format nil "t~d" i) :kind "tool_result" :ts 0
+                       :item (list :type "tool_result" :call-id (format nil "c~d" i) :name "bash"
+                                   :verb "ran" :subject "cargo test"
+                                   :outcome (list :outcome "ok") :payload "P")))
+   (loop for i from 1 to thinking
+         collect (list :item-id (format nil "r~d" i) :kind "reasoning" :ts 0
+                       :item (list :type "reasoning" :text "thinking about it")))))
+
+(defun %counts-marker-text (calls thinking cols &optional newest)
+  "The marker a run of CALLS and THINKING draws at COLS, as one string."
+  (format nil "~{~a~}"
+          (mapcar #'car (leticl::hidden-run-marker (%counts-run-items calls thinking) cols newest))))
+
+(defun %counts-head (calls thinking)
+  "A hundred-column head whose narration is followed by a run of CALLS and THINKING."
+  (let ((h (%on-head :cols 100 :rows 40)))
+    (setf (head-connected h) t)
+    (setf (session-items (head-session h))
+          (coerce
+           (append
+            (list (list :item-id "u" :kind "user" :ts 0
+                        :item (list :type "user" :parts (list (list :text "do the thing"))))
+                  (list :item-id "a1" :kind "assistant" :ts 0
+                        :item (list :type "assistant" :text +%counts-prose+)))
+            (%counts-run-items calls thinking)
+            (list (list :item-id "a2" :kind "assistant" :ts 0
+                        :item (list :type "assistant" :text "and the conclusion is X"))))
+           'vector))
+    h))
+
+(defun %counts-narration-row (calls thinking)
+  "The NARRATION row's lines, as text, from a head whose run is CALLS and THINKING rows long."
+  (let ((leticl::*verbosity* :reading) (leticl::*scroll-anchor* nil)
+        (leticl::*hist-cache* nil) (leticl::*hist-generation* 0)
+        (leticl::*hidden-run-open* nil))
+    (let* ((rows (mapcar (lambda (l) (if (consp l) (format nil "~{~a~}" (mapcar #'car l)) ""))
+                         (leticl::%viewport-lines (%counts-head calls thinking) 100 40)))
+           (at (position-if (lambda (s) (search "Now here is" s)) rows))
+           (end (or (position "" rows :start (1+ at)) (length rows))))
+      (subseq rows at end))))
+
+(def-test the-room-for-the-counts-is-fixed-and-the-marker-gives-way (:suite leticl)
+  "**The room is a function of the frame and nothing else, and what pays for growth is the marker's own
+words.**
+
+The operator, on the shape this replaced: *\"the text starts to jump - counts add digits when grow,
+and at some point the line could be split so things jump even more. I dont like jumps. so, somehow if
+we found a place for the [] stats on the first render … we just start to remove bloat - 'tool calls' ->
+'tools' -> 't' and so on\"*.
+
+Three claims, and the first is the one the operator asked for:
+
+  · **the sentence wraps the same way whatever the counts.** `9 tool calls` and `100 tool calls` are
+    two columns apart, and under the old rule those two columns came out of the paragraph above them —
+    so the second digit landing re-broke the reader's line. The room is COLS alone now, so the two
+    frames below are identical above the counts, word for word.
+  · **the marker never outgrows the room**, at any count and any frame — so it can never split, which
+    was the operator's *\"at some point the line could be split\"*.
+  · **and the words step down the operator's own ladder** when the full spelling no longer fits."
+  ;; --- the room, and the two ends of it
+  (is (= 50 (leticl::hidden-run-marker-room 100)) "half of a hundred-column frame")
+  (is (= 56 (leticl::hidden-run-marker-room 240))
+      "capped, so a wide frame does not hand the counts more than the marker can use")
+  (is (= 22 (leticl::hidden-run-marker-room 40))
+      "floored, because below this the two clauses stop being readable")
+  (is (= 20 (leticl::hidden-run-marker-room 20))
+      "**and never wider than the frame it is on** — a room past the edge is not a room")
+  (is (= 56 (leticl::hidden-run-marker-room 112))
+      "and half of a frame past 112 is more than the marker can use, so the cap takes over there:")
+  (is (= 55 (leticl::hidden-run-marker-room 111)) "just below it, half the frame is still the rule")
+  (is (= (leticl::hidden-run-marker-room 100) (leticl::hidden-run-marker-room 100))
+      "and it answers from COLS alone — no count, no run, nothing else in it")
+  ;; --- the sentence does not move when the counts grow
+  (let ((nine (%counts-narration-row 9 9))
+        (hundred (%counts-narration-row 100 246)))
+    (is (= 4 (length nine)) "the narration wraps to four lines")
+    (is (equal (butlast nine) (butlast hundred))
+        (format nil "**the sentence wraps WORD FOR WORD the same at 9 calls and at 100** — the\n paragraph above the counts must not re-break when a digit lands: ~s vs ~s" nine hundred))
+    (is (search "[9 tools, 9 thinking] · ctrl-t opens it" (car (last nine)))
+        "and at 9 the counts paid for the second column themselves")
+    (is (search "[100 tools, 246 thinking] · ctrl-t opens it" (car (last hundred)))
+        "as they do at 100 — the sentence's breaks are not what gives way here"))
+  ;; --- the marker fits its room, at every count and every frame
+  (dolist (cols '(30 40 60 80 100 240))
+    (dolist (ct '((1 0) (2 1) (9 9) (10 10) (100 246) (1200 24000)))
+      (dolist (newest '(t nil))
+        (let ((room (leticl::hidden-run-marker-room cols))
+              (w (leticl::%segs-width
+                  (leticl::hidden-run-marker (%counts-run-items (first ct) (second ct)) cols newest))))
+          (is (<= w (1- room))
+              (format nil "**inside its room**: ~a calls / ~a thinking at ~a columns is ~a wide, and\nthe room is ~a — a marker that does not fit is a marker that splits"
+                      (first ct) (second ct) cols w room))))))
+  ;; --- and the ladder is the operator's: counts first, and only then the seam
+  (is (search "[1200 tools, 24000 thinking] · ctrl-t opens it" (%counts-marker-text 1200 24000 100 t))
+      "the counts give way a rung while the seam is untouched")
+  (is (search "[1200t, 24000l]" (%counts-marker-text 1200 24000 60 t))
+      "and at a narrow frame they give way all the way to the operator's own `t`")
+  (is (search "[1200t, 24000l] · ctrl-t" (%counts-marker-text 1200 24000 60 t))
+      "with `ctrl-t` still named — the seam is spent after the counts, not before them")
+  (is (search "[1 tool call] · ctrl-t opens it" (%counts-marker-text 1 0 100 t))
+      "**and a small run is spelled out in full**, so the ladder is a response to growth and not a\n tax every marker pays"))
 
 (def-test the-reading-rung-names-itself-on-a-row-that-does-not-expire (:suite leticl)
   "**R37: *the head says which state it is in* — and that is what makes hiding safe here, where

@@ -1490,7 +1490,73 @@ them."
           (t (incf events)))))
     (list :calls calls :thinking thinking :events events)))
 
-(defun %hidden-run-counts-text (items cols)
+(defparameter +hidden-run-marker-cols+ 56
+  "The widest room a marker may claim from the sentence it continues, leading space included.
+
+`[100 tool calls, 999 thinking lines] · ctrl-t opens it` is 54 columns, the longest marker a
+realistic run writes, and this is that plus the space in front of it. It is a CEILING rather than
+the room itself: the room a frame actually reserves is `hidden-run-marker-room`, which also takes
+the frame's width into account.
+
+A `defparameter` and not a `defconstant`, for the reason every other tunable here is: the file
+pusher skips constants, so a constant could never be moved on a running head.")
+
+(defparameter +hidden-run-marker-floor+ 22
+  "The least room a marker may claim, however narrow the frame.
+
+Below about twenty columns the two clauses stop being readable at all — `[100t, 246l]` and its
+separator are twelve — and a marker that cannot be read is a marker that did nothing.")
+
+(defun hidden-run-marker-room (cols)
+  "How many columns of COLS the marker may occupy, its leading space included (R37 final).
+
+**Fixed for a given frame, and that is the whole point.** It does not depend on the counts, and
+the operator's own report is why: *\"the text starts to jump - counts add digits when grow, and at
+some point the line could be split so things jump even more. I dont like jumps.\"* When the room
+was the marker's ACTUAL width, every digit the counts gained re-wrapped the sentence above them —
+the same transcript read two ways depending on how many calls a turn happened to run. A room
+computed from COLS alone cannot move, so growth has nowhere to go but the marker's own words.
+
+**At most half the frame, so a narrow terminal keeps half its line for the sentence**, at most
+`+hidden-run-marker-cols+`, never less than `+hidden-run-marker-floor+`, and never more than the
+frame itself — a room wider than the line it is on is not a room. The prose is rendered
+`(- cols room)` wide and the counts land in what is left."
+  (min cols +hidden-run-marker-cols+ (max +hidden-run-marker-floor+ (floor cols 2))))
+
+(defparameter +hidden-run-count-rungs+
+  (vector (list "~d tool call~:p"   "~d thinking line~:p" "~d head event~:p")
+          (list "~d tool~:p"        "~d thinking"        "~d event~:p")
+          (list "~d call~:p"        "~d line~:p"         "~d event~:p")
+          (list "~dt"               "~dl"                "~de"))
+  "The count clause, most-spelled first: `tool calls` → `tools` → `calls` → `t`.
+
+**What gives way when the counts grow** — the operator's own ladder, verbatim: *\"we just start to
+remove bloat - 'tool calls' -> 'tools' -> 't' and so on\"*. A rung is a triple because a run has
+three kinds of clause and they must step down together: a marker reading `[2 tools, 3 thinking
+lines]` is one rung's word beside another's, and the operator's ladder is about the marker and not
+about the clauses in it.")
+
+(defparameter +hidden-run-seam-rungs+
+  (vector (cons " · ctrl-t opens it" " · /verbosity")
+          (cons " · ctrl-t" " · /verbosity")
+          (cons "" ""))
+  "The seam, most-spelled first: the whole chord, the chord alone, nothing.
+
+Dropped LAST, because the seam is the only thing on the line that says the rows can be opened at
+all — and it is dropped at all only because a marker that will not fit is a marker that did
+nothing. `ctrl-t` survives a rung longer than `opens it` does, which is the same rule R29 uses on
+every other elided row: the key is the part that cannot go.")
+
+(defparameter +hidden-run-marker-ladder+
+  '((0 . 0) (1 . 0) (2 . 0) (3 . 0) (3 . 1) (3 . 2))
+  "The order the two ladders are spent in: the counts step down through every rung first, and only
+then does the seam start to go.
+
+**Counts before seam**, because the counts are the fact the line exists to carry and the seam is
+the head talking about its own keys. The seam still goes before the counts go to their last rung,
+which is why the pairs interleave rather than running as two separate sweeps.")
+
+(defun %hidden-run-counts-text (items cols &optional count-rung)
   "`[N tool calls, M thinking lines]` — the counts alone, and the ONE place they are spelled.
 
 **A zero clause is dropped**, which is letibot's own `counts.join(\", \")`: a run of tool calls says
@@ -1499,16 +1565,20 @@ nobody hid. A run neither count can describe — this rung also hides head arriv
 their count, because `[]` is not a marker.
 
 Extracted because the marker and the merged paragraph both need it, and two spellings of the counts
-is how they come to disagree about the same run."
-  (let* ((counts (%hidden-run-counts items cols))
+is how they come to disagree about the same run.
+
+**COUNT-RUNG chooses the spelling and defaults to the fullest**, which is the merged paragraph's
+case: it has a whole paragraph to wrap in and no frame edge to clear, so it never needs a ladder."
+  (let* ((rung (or count-rung (aref +hidden-run-count-rungs+ 0)))
+         (counts (%hidden-run-counts items cols))
          (parts (remove nil
                         (list (when (plusp (getf counts :calls))
-                                (format nil "~d tool call~:p" (getf counts :calls)))
+                                (format nil (first rung) (getf counts :calls)))
                               (when (plusp (getf counts :thinking))
-                                (format nil "~d thinking line~:p" (getf counts :thinking)))))))
+                                (format nil (second rung) (getf counts :thinking)))))))
     (if parts
         (format nil "[~{~a~^, ~}]" parts)
-        (format nil "[~d head event~:p]" (getf counts :events)))))
+        (format nil "[~a]" (format nil (third rung) (getf counts :events))))))
 
 (defun hidden-run-marker (items cols &optional newest)
   "The marker's SEGMENTS — `[N tool calls, M thinking lines] · ctrl-t opens it`.
@@ -1530,11 +1600,31 @@ this SUPERSEDES the verb-and-target sources R37's amendment first named.
 
 **The seam names the chord only on the run it acts on** (R40): the newest run's says
 `ctrl-t opens it`; every other run's says ` · /verbosity`, the verb that does reach it. letibot lands
-the same two strings, which is why they are here rather than invented."
-  (%truncate-segs
-   (list (cons (%hidden-run-counts-text items cols) nil)
-         (cons (if newest " · ctrl-t opens it" " · /verbosity") +role-faint+))
-   (max 20 cols)))
+the same two strings, which is why they are here rather than invented.
+
+**AND THE MARKER NEVER SPLITS AND NEVER OUTGROWS ITS ROOM.** The two clauses are spent down
+`+hidden-run-marker-ladder+` until they fit `hidden-run-marker-room`, which is fixed for the frame —
+so the counts gaining a digit cannot move the sentence above them and cannot push the seam onto a
+line of its own. That was the operator's *\"at some point the line could be split so things jump
+even more\"*, and this is the rung that answers it: growth is paid in words, not in layout."
+  (let* ((room (hidden-run-marker-room cols))
+         (limit (1- room))
+         (segs nil))
+    (dolist (step +hidden-run-marker-ladder+)
+      (let* ((seam-rung (aref +hidden-run-seam-rungs+ (cdr step)))
+             (seam (if newest (car seam-rung) (cdr seam-rung))))
+        (setf segs (list (cons (%hidden-run-counts-text
+                                items cols (aref +hidden-run-count-rungs+ (car step)))
+                               nil)
+                         (cons seam +role-faint+)))
+        (when (<= (%segs-width segs) limit)
+          (return))))
+    ;; The room is the frame's, and the last rung is the last word: a marker nothing can shorten
+    ;; still gets truncated rather than pushed past the edge, because counts off the screen are not
+    ;; a marker at all. **Truncated to the LIMIT and not to the room**, so the one invariant holds
+    ;; whichever way a marker is reached: it is at most `room - 1` wide, which is exactly what the
+    ;; sentence above it left (see `hidden-run-marker-room`).
+    (%truncate-segs segs (max 1 limit))))
 
 (defun %marker-onto-last-line (il items cols &optional newest)
   "IL with the run's marker **appended to its last line**, split by ONE SPACE.
@@ -1692,16 +1782,6 @@ The merged row is a COPY: the session's own plist is the session's, and this is 
         (let ((joined (coerce (nreverse out) 'vector)))
           (setf *reading-joined* (cons items joined))
           joined)))))
-
-(defun hidden-run-marker-width (items cols &optional newest)
-  "How wide the marker's segments are — what a sentence must LEAVE for the counts (R37 final).
-
-**The room is reserved before the sentence wraps**, and that is letibot's own fix for the operator's
-*\"interesting - sometimes you do it same line - sometimes dont\"*: a sentence that filled its line
-pushed the counts onto a line of their own, so the same transcript read two ways depending on where
-the prose happened to break. The introducing row is rendered narrower by this much and the counts
-then fit in the room it left."
-  (%segs-width (hidden-run-marker items cols newest)))
 
 (defun %run-continues-prose-p (item)
   "Does a run continue THIS row's sentence? — the rule is one-sided, and the bug named it.
