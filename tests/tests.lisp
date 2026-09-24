@@ -5431,6 +5431,55 @@ the deleted one's place. That is why the stops carry an id at all."
           "**`delete` never falls through to the composer** with the pane up — the pane owns it,
  like Tab and Enter"))))
 
+(def-test a-queued-message-belongs-below-the-reply-that-is-not-for-it (:suite leticl)
+  "**R45: the operator's report, measured, and the ordering is CORRECT — so this test exists to
+stop somebody changing it.**
+
+*\"and again, i saw your reply before my message was unqueued\"*, twice. Measured: a prompt sent
+mid-turn is echoed at the TAIL, and the tail is below the running turn — so a reader sees a
+reply and then a message. **The reply is not to that message**, and the screen cannot say so.
+
+**The obvious 'fix' is worse, and that is the reason for an assertion rather than a patch.**
+Drawing the echo ABOVE the running turn would put their message before a reply that does not
+answer it, which reads as cause and effect — *my message, then the reply* — and it is not.
+Below says *this arrived after that*, which is the fact: the running turn is answering an
+EARLIER message, and their new one has no row yet, so the tail is the only place it exists.
+
+The window's LENGTH is the daemon's step boundary (a follow-up is appended at the next one,
+which behind a long tool call is minutes) — filed as R45, and appending on arrival would close
+it with no change here. What this asserts is only the part that is this head's: **the order,
+and that the tag says `queued` while it is true.**"
+  (let ((leticl::*bound-prompts* nil) (leticl::*queued-unconfirmed* nil)
+        (leticl::*scroll-anchor* nil) (leticl::*hist-cache* nil)
+        (leticl::*hist-generation* 0) (leticl::*hidden-run-open* nil)
+        (leticl::*stdout* (make-string-output-stream))
+        (h (%on-head :cols 90 :rows 30)))
+    (setf (head-connected h) t)
+    (setf (session-items (head-session h))
+          (make-array 1 :adjustable t :fill-pointer 1
+                        :initial-contents
+                        (list (list :item-id "u1" :kind "user" :ts 0
+                                    :item (list :type "user"
+                                                :parts (list (list :text "the first question")))))))
+    (setf (session-turn (head-session h))
+          (list :turn-id "t1" :model "m" :state (list :state "running")
+                :text "I am still writing the answer" :reasoning "" :calls nil))
+    ;; the operator sends it mid-turn, which is the whole of the scenario
+    (leticl::%prompt h "and now my second question")
+    (let* ((rs (mapcar (lambda (l) (if (consp l) (format nil "~{~a~}" (mapcar #'car l)) ""))
+                       (leticl::%viewport-lines h 90 24)))
+           (msg (position-if (lambda (r) (search "and now my second" r)) rs))
+           (reply (position-if (lambda (r) (search "still writing" r)) rs)))
+      (is (and msg reply) (format nil "both are on the screen: ~s" rs))
+      (is (> msg reply)
+          (format nil "**the queued message is BELOW the running reply** — it arrived after it,
+ and the reply answers an earlier question. Above would read as cause and effect, which it is
+ not: ~s" rs))
+      (is (search "queued" (nth msg rs))
+          "**and it SAYS it is queued** while that is true, which is the operator's own word")
+      (is (= 1 (count-if (lambda (r) (search "and now my second" r)) rs))
+          "**drawn once** — the echo is the only copy until its row lands"))))
+
 (def-test the-help-is-the-references-row-for-row (:suite leticl)
   "letibot's help against ours, stripped: 41 non-blank rows against 50. Theirs is
 one title, `keys and commands`, a cyan key column sixteen wide, a plain description
