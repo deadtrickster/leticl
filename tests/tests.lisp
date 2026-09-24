@@ -417,8 +417,14 @@ mode - subtodos shown, when all subtodos checked section becomes also checked\"*
                (is (some (lambda (l) (search "one" (line-text l))) lines)
                    "and so are its ITEMS, which is the whole of P42")
                (is (integerp sel-line) "and the cursor's line comes back")
-               (is (search "Alpha" (line-text (nth sel-line lines)))
-                   "pointing at the repo's first row — the cursor walks the repo's items, as the reference's does, not the session's plan")))
+               ;; **R44: the first stop is the add CONTROL, not the repo's first row.** The cursor
+               ;; walks what a key acts on — the add row, then the repo's items — so opening on a
+               ;; row where Enter and Tab do nothing is exactly what it no longer does. What this
+               ;; test is really guarding is that the line NAMES A ROW THE PANE DRAWS and not a
+               ;; line of the session's plan, and that still holds.
+               (is (search "add todo item" (line-text (nth sel-line lines)))
+                   "pointing at the add control — the pane's first STOP, so Enter and Tab act the
+ moment the pane opens (R44; letibot rests its cursor on a heading where they cannot)")))
         (ignore-errors (delete-file path))))))
 
 (def-test decision-card (:suite leticl)
@@ -5171,8 +5177,17 @@ and Enter did nothing to the file's items."
                   (key (k) (leticl::%handle-key h (list :type k))))
              (let ((text (text)))
                (is (string= "todos" (first text)) "the title alone — no hint suffix")
-               (is (not (some (lambda (l) (search "▸" l)) text))
-                   "on open the cursor is on a heading and shows nowhere")
+               ;; **R44 DEPARTS FROM LETIBOT HERE, DELIBERATELY, AND THIS IS THE ASSERTION THAT
+               ;; SAYS SO.** letibot's pane opens with no `▸` anywhere: its cursor rests on the
+               ;; first ROW, which is a heading, and only items can be marked. This pane's cursor
+               ;; walks STOPS — the rows a key acts on — and its first stop is the add control, so
+               ;; the pane opens with that control marked. That is the operator's own complaint
+               ;; turned inside out: *"add todo item is not reachable - arrows dont go here"*. A
+               ;; cursor that can rest where no key acts is a cursor the reader presses keys into
+               ;; and nothing happens, and this pane no longer has one.
+               (is (some (lambda (l) (string= "  ▸ [+] add todo item" l)) text)
+                   "**on open the cursor is on the add control** — the pane's first stop, so Enter
+ and Tab do something the moment it appears (letibot rests it on a heading where they cannot)")
                (is (some (lambda (l) (string= "      Dependency graph" l)) text)
                    "a heading with no items sits six in, with no box")
                (is (some (lambda (l) (string= "    [x] Phase 0  [2/2]" l)) text)
@@ -5182,9 +5197,18 @@ and Enter did nothing to the file's items."
                (is (string= "  the file itself is in the workspace; this pane never writes it."
                             (car (last text)))
                    "and the reference's closing line"))
-             (key :down) (key :down)
-             (is (some (lambda (l) (string= "      ▸ [x] T3 third ···" l)) (text))
-                 "two Downs from the top land on the THIRD item, as letibot's did")
+             ;; **the cursor's ring is `(:add :repo2 :repo3 :repo5 :repo6)`** — the add row, then
+             ;; every repo row that IS an item. Headings are drawn and skipped, which is what
+             ;; letibot does with its own `stops`.
+             (key :down)
+             (is (some (lambda (l) (string= "      ▸ [x] T1 first ···" l)) (text))
+                 "one Down lands on the FIRST item")
+             (key :down)
+             (is (some (lambda (l) (string= "      ▸ [x] T2 second" l)) (text))
+                 "two land on the second — the walk counts ITEMS, not rows, so a heading it
+ skipped costs no press")
+             (key :down)
+             (is (some (lambda (l) (string= "      ▸ [x] T3 third ···" l)) (text)) "then the third")
              (key :enter)
              (let ((text (text)))
                (is (some (lambda (l) (string= "      ▸ [x] T3 third" l)) text)
@@ -5196,42 +5220,48 @@ and Enter did nothing to the file's items."
              (is (not (some (lambda (l) (search "body one" l)) (text)))
                  "moving folds it again")
              (is (some (lambda (l) (string= "      ▸ [ ] T4 fourth" l)) (text)) "on the fourth")
+             ;; **past the last item the cursor wraps to the head of the list, which is the ADD
+             ;; ROW** — letibot's screens wrap to the first item because they have no row above
+             ;; it. One ring, and both arrows travel all of it.
              (key :down)
-             (is (some (lambda (l) (string= "      ▸ [x] T1 first ···" l)) (text))
-                 "and past the end it wraps to the first")
-             (key :tab)
-             (is (some (lambda (l) (string= "              pinned abc" l)) (text))
-                 "Tab unfolds too, as the operator asked")
-             ;; **R44 changes this one step, and the reason is a row letibot does not have.** The
-             ;; cursor is on the FIRST item here (it wrapped there from below), and Up from it is
-             ;; the ADD ROW now — it is drawn above the items, so that is where Up from the top
-             ;; goes. One more Up wraps to the last item, so the ring is still circular and nothing
-             ;; is unreachable; letibot's screens have no add row to reach, which is why its Up from
-             ;; the first went straight to the last.
+             (is (some (lambda (l) (string= "  ▸ [+] add todo item" l)) (text))
+                 "past the end it wraps to the add row — the head of the list")
              (key :up)
-             (is (some (lambda (l) (string= "  ▸ add todo item" l)) (text))
-                 "Up from the first item reaches the ADD ROW")
-             ;; **and Enter on it is the modal the operator asked for** — the cursor is left back on
-             ;; the item below, so the rest of this test keeps walking the repo's rows.
+             (is (some (lambda (l) (string= "      ▸ [ ] T4 fourth" l)) (text))
+                 "and Up from the add row wraps to the last item, so the ring is one ring")
+             (key :up) (key :up) (key :up)
+             (is (some (lambda (l) (string= "      ▸ [x] T1 first ···" l)) (text))
+                 "three more Ups walk back to the first item")
+             (key :up)
+             (is (some (lambda (l) (string= "  ▸ [+] add todo item" l)) (text))
+                 "and Up from the FIRST ITEM reaches it too — both arrows, one ring")
+             ;; **and Enter on it is the modal the operator asked for.**
              (key :enter)
              (is (leticl::todo-draft-open-p) "Enter on the add row opens the new-todo card")
              (is (eq :title (leticl::%todo-draft-field)) "on the title field, with nothing in it")
              (key :esc)
              (is (not (leticl::todo-draft-open-p)) "and Esc closes it again, adding nothing")
              (is (null leticl::*operator-todos*) "with no item stored")
-             (setf (head-picker-sel h) -1)
-             (key :up)
-             (is (some (lambda (l) (string= "      ▸ [ ] T4 fourth" l)) (text))
-                 "and Up from the add row wraps to the last item")
-             ;; **R44: the ADD ROW is a stop of its own, above every repo index.** It is reachable
-             ;; with Up from the first item and with Down past the last, and it is drawn reversed
-             ;; like any other row the cursor is on — the cursor's ring is `(-1 0 3 6 9…)`, so the
-             ;; repo's own stop arithmetic is untouched by it.
-             (is (some (lambda (l) (search "add todo item" l)) (text))
-                 "the add row is in the list, above the repo's items")
-             (multiple-value-bind (lines sel-line) (todos-lines h 210)
-               (is (search "▸ [ ] T4" (nth sel-line (lines-text lines)))
-                   "and the cursor's LINE names the row it is on"))))
+             ;; **and the CLICK agrees with the arrows** — the other half of the operator's report
+             ;; (*"mouse doesnt click"*). Both ask the pane where a row's line is, so a click and
+             ;; the drawing cannot disagree; and the answer is a STOP INDEX, the same number the
+             ;; cursor holds.
+             (let ((*pane-scroll* 0) (*pane-room* 40) (*pane-lines* 40))
+               (multiple-value-bind (ls sl stop-lines) (todos-lines h 210)
+                 (declare (ignore ls))
+                 (is (= 5 (length stop-lines))
+                     "five stops: the add row and the four repo items")
+                 (is (= 0 (leticl::click-row->sel h :todos (aref stop-lines 0)))
+                     "**a click on the add row selects stop 0** — it used to convert to a negative
+ index and be thrown away, so the row could not be clicked at all")
+                 (is (= 1 (leticl::click-row->sel h :todos (aref stop-lines 1)))
+                     "a click on the first item selects stop 1")
+                 (is (null (leticl::click-row->sel h :todos 0))
+                     "and a click on a row that is NOT a stop — the title line — selects nothing")
+                 (is (= sl (aref stop-lines (head-picker-sel h)))
+                     "**the cursor's LINE is its own stop's line**, read out of the same vector the
+ click is answered from — one enumeration, read twice, so the pane cannot scroll to one row
+ while the cursor acts on another")))))
       (ignore-errors (delete-file path)))))
 
 (def-test the-operator-can-add-a-todo-and-it-is-marked-as-theirs (:suite leticl)
@@ -5327,8 +5357,79 @@ Four claims, and the second is the one that makes the feature honest rather than
           "and the model's as the model's — one row each, and the author on both")
       (is (some (lambda (l) (string= "      the daemon log, not the head's" l)) text)
           "**the description hangs under its title**, indented under the mark")
-      (is (some (lambda (l) (string= "    add todo item" l)) text)
-          "and the add row is in the pane, unmarked while the cursor is elsewhere"))))
+      (is (some (lambda (l) (string= "  ▸ [+] add todo item" l)) text)
+          (format nil "**the add row reads as a CONTROL and not as a line of the list** — the
+ operator, of the first cut: *\"it looks like a regular text\"*, which it did: plain, in the
+ items' own register, with nothing but the cursor to tell them apart. `[+]` sits in the items'
+ mark column so the words line up, and it is Bold — this head's Strong register, the one every
+ pane title is drawn in: ~s" (remove-if-not (lambda (l) (search "add todo" l)) text))))))
+
+(def-test the-operator-can-drop-their-own-unstarted-items (:suite leticl)
+  "**The operator's own ask, and their own guard:** *\"i want to be able to remove non-started
+todos\"*.
+
+**`delete`, not a letter.** A pane's letters are the COMPOSER's — the rule every pane here keeps,
+and `%pane-key`'s docstring states it (*\"a pane open was a head you could not talk to\"*) — so the
+removal key is one no sentence contains. The pane OWNS it while it is up, like Tab and Enter
+beside it: a NIL from that arm falls through to `%normal-key`, which sends `delete` to the
+composer, and two owners for one key is how a pane and a field come to disagree.
+
+**Three refusals, each naming WHO owns the row**, and every one of them SAYS something — a key
+that appears to do nothing is the defect this head keeps finding elsewhere:
+
+  · **in progress** — *an item something is working on is not a note any more*. That is the whole
+    of the operator's own qualifier: *non-started*.
+  · **the model's own** — the head has no frame that writes a todo (R44's boundary), so dropping
+    the row here would take it off this screen while the model went on holding it, and the next
+    `TodosUpdated` would put it back;
+  · **the repo's** — a file a person edits, and this pane never writes it.
+
+**And the removal is BY ID.** The list can change between the draw and the keypress — a
+`TodosUpdated` arriving, another removal — and an index would then take the row that moved into
+the deleted one's place. That is why the stops carry an id at all."
+  (let ((leticl::*operator-todos* nil) (leticl::*todo-draft* nil) (leticl::*repo-todo-open* nil)
+        (leticl::*pane-scroll* 0) (leticl::*pane-room* 40) (leticl::*pane-lines* 40)
+        (h (%on-head :cols 100 :rows 40)))
+    (setf (head-connected h) t
+          (session-wiring (head-session h)) (list :workspace "/tmp/leticl-walk-probe")
+          (session-todos (head-session h)) (list (list :content "the model's item"
+                                                        :status "pending")))
+    (leticl::operator-todo-add "mine to drop" "the detail")
+    (leticl::operator-todo-add "mine, working")
+    (setf (getf (second leticl::*operator-todos*) :status) "in_progress")
+    (setf (head-mode h) :todos (head-picker-sel h) 0)
+    (flet ((key (k) (leticl::%handle-key h (list :type k)))
+           (titles () (mapcar (lambda (i) (getf i :content)) leticl::*operator-todos*)))
+      (is (equal '("mine to drop" "mine, working") (titles)) "two items, one open one started")
+      ;; --- the open one goes, by id, and the removal is SAID
+      (key :down)                         ; stop 1 = "mine to drop"
+      (key :delete)
+      (is (equal '("mine, working") (titles)) "**delete removes the operator's open item**")
+      (is (search "removed" (head-status-note h))
+          (format nil "and says so: ~s" (head-status-note h)))
+      ;; --- the started one is refused BY NAME and stays
+      (key :delete)                       ; the cursor is on "mine, working" now
+      (is (equal '("mine, working") (titles))
+          "**an item in progress is not removable** — the operator's own qualifier, *non-started*")
+      (is (search "in progress" (head-status-note h))
+          (format nil "and the refusal names why: ~s" (head-status-note h)))
+      ;; --- the MODEL's item is refused, and the refusal is the R44 boundary
+      (setf (head-picker-sel h) (position-if (lambda (s) (eq (car s) :repo))
+                                             (leticl::todos-stops h)))
+      (key :delete)
+      (is (search "TODO.md" (head-status-note h))
+          (format nil "**the repo's rows are the operator's queue and a FILE** — the pane says
+ which, rather than doing nothing: ~s" (head-status-note h)))
+      ;; --- the add control has nothing to remove, and says nothing rather than lying
+      (setf (head-picker-sel h) 0)
+      (let ((before (head-status-note h)))
+        (key :delete)
+        (is (equal before (head-status-note h))
+            "**the add row is not an item** — no removal, and no sentence about one"))
+      ;; --- and the pane OWNS the key: nothing reached the composer
+      (is (string= "" (composer-buffer (head-composer h)))
+          "**`delete` never falls through to the composer** with the pane up — the pane owns it,
+ like Tab and Enter"))))
 
 (def-test the-help-is-the-references-row-for-row (:suite leticl)
   "letibot's help against ours, stripped: 41 non-blank rows against 50. Theirs is

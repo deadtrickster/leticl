@@ -664,27 +664,48 @@ T only for a key it took, or the field would stop taking letters."
 ;;;     todo that owned real work would need to be persisted somewhere the daemon reads.
 
 (defvar *operator-todos* nil
-  "The todos the OPERATOR added: plists `(:content TITLE :detail TEXT :status STRING)`.
+  "The todos the OPERATOR added: plists `(:id STRING :content TITLE :detail TEXT :status STRING)`.
 
 Oldest first, which is the order they were written and the order the pane draws them in. A
 `defvar` for the reason every other piece of live state here is — a struct layout change is a
 restart — and reset by `with-replay-globals`, because a replay that inherited one would draw this
-session's items on a screen recorded before they existed.")
+session's items on a screen recorded before they existed.
+
+**EVERY ITEM CARRIES AN ID, and the operator is who said it had to.** *\"a todo item is
+identified by a hash or something like a commit\"* — and the point is not the hash, it is that a
+row's TEXT is not its identity. Every action this pane takes is *act on that row*: remove it, mark
+it, and (once the wire carries them) tell the model about it. Keyed on the words, all of them are
+wrong in the same way the moment two items say the same thing or one is edited — `(remove item …)`
+takes the first `equal` neighbour, not the row under the cursor. A commit needs a hash for exactly
+this reason and the class of defect is the same one.
+
+`operator-todo-next-id` is a counter rather than a content hash: it is unique by construction,
+stable for the item's whole life, and it says nothing about the words — which is the property a
+keyed-by-text scheme lacks. The `t` prefix is the head's own namespace, so an id here can never be
+mistaken for one the daemon issues for its rows.")
+
+(defvar *operator-todo-seq* 0
+  "The counter behind `operator-todo-next-id`. A defvar so a live push cannot rewind it.")
+
+(defun operator-todo-next-id ()
+  "A fresh id for one of the operator's items. See `*operator-todos*` for why items have them."
+  (format nil "t~d" (incf *operator-todo-seq*)))
 
 (defun operator-todo-add (title &optional detail)
-  "Add the operator's item. T when it was added, NIL when TITLE was blank.
+  "Add the operator's item. The new item when it was added, NIL when TITLE was blank.
 
 **A blank title is refused rather than stored**, and it is refused HERE rather than at the card:
 an item with no words is a row that says nothing, and the one place that can decide what *nothing*
-is, is the place that owns the list."
+is, is the place that owns the list. It returns the ITEM rather than T so a caller can name it —
+and so the identity is minted in the one place that owns the list, not by whoever asked."
   (let ((title (string-trim " " (or title ""))))
     (when (plusp (length title))
-      (setf *operator-todos*
-            (append *operator-todos*
-                    (list (list :content title
-                                :detail (string-trim " " (or detail ""))
-                                :status "open"))))
-      t)))
+      (let ((item (list :id (operator-todo-next-id)
+                        :content title
+                        :detail (string-trim " " (or detail ""))
+                        :status "open")))
+        (setf *operator-todos* (append *operator-todos* (list item)))
+        item))))
 
 (defvar *todo-draft* nil
   "The new-todo card: `(:title TEXT :detail TEXT :field :title)`, or NIL when it is closed.

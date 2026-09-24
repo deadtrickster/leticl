@@ -1112,24 +1112,20 @@ two sides in circles."
      ;; has written since (app.rs:3272-3277, the same key on the peek pane).
      (%job-out-page head t))
     (:todos
-     ;; **THE ADD ROW IS THE FIRST STOP AND IT IS `-1`** (R44): Enter on it opens the new-todo
-     ;; card, which is the operator's *"add todo item … a modal dialog"*.
-     (if (minusp (head-picker-sel head))
-         (%todo-draft-open head)
-         ;; Otherwise Enter unfolds the repo item under the cursor — the operator
-         ;; asked for this directly: *"if a todo has some associated text?
-         ;; should i be able to expand it somehow?"*. The cursor is first
-         ;; SNAPPED to an item (a cursor at 0 on a heading counts from the
-         ;; first item below it, as the reference's `stops[at]` does), then
-         ;; the one flag flips: at most one item is open, and moving folds it.
-         (let* ((rows (repo-todo-rows-cached
-                       (getf (session-wiring (head-session head)) :workspace)))
-                (stops (repo-todo-stops rows)))
-           (when stops
-             (let ((at (or (position-if (lambda (i) (>= i (head-picker-sel head))) stops)
-                           0)))
-               (setf (head-picker-sel head) (nth at stops)
-                     *repo-todo-open* (not *repo-todo-open*)))))))
+     ;; **Enter acts on WHAT THE CURSOR IS ON**, asked of the one enumeration rather than
+     ;; re-derived (R44): the add control opens the card — the operator's *"add todo item … a
+     ;; modal dialog"* — and a repo row unfolds, which is what they asked for directly (*"if a
+     ;; todo has some associated text? should i be able to expand it somehow?"*). The operator's
+     ;; own rows have nothing for Enter to do yet; the model's are not stops at all.
+     ;;
+     ;; `todo-stop-at` is the single answer to *which row is the cursor on*, with the clamp the
+     ;; pane makes when it draws — so a key pressed against a list that just changed acts on a real
+     ;; row rather than on an index that no longer exists.
+     (let ((stop (todo-stop-at head)))
+       (case (car stop)
+         (:add (%todo-draft-open head))
+         (:repo (setf *repo-todo-open* (not *repo-todo-open*)))
+         (t nil))))
     (:picker
      (let ((hit (nth (head-picker-sel head)
                      (picker-sessions (head-session head)))))
@@ -1271,6 +1267,18 @@ one thing this head must not need."
           ;; there — against its own comment — which suppressed the next repaint.
           ((:tab) (when (and (eq mode :todos) empty) (%pane-enter head))
                   (and (eq mode :todos) empty))
+          ;; **`delete` drops one of the operator's own items** (R44). Their ask: *"i want to be
+          ;; able to remove non-started todos"* — and *non-started* is the whole of the guard,
+          ;; because an item something is working on is not a note any more. Delete rather than a
+          ;; letter: in a pane a letter is the COMPOSER's (the rule every pane here keeps), and a
+          ;; key that both types and deletes is a key that loses somebody's sentence.
+          ;; **the pane OWNS the key whenever it is up**, like Tab and Enter beside it — a NIL
+          ;; here falls through to `%normal-key`, which sends `delete` to the COMPOSER. Nothing is
+          ;; typed into a composer with the pane up in practice, so the fall-through would have been
+          ;; invisible; it is still two owners for one key, and `%todo-remove` is what decides
+          ;; whether there is anything to remove (and says so when there is not).
+          ((:delete) (when (eq mode :todos) (%todo-remove head))
+                     (eq mode :todos))
           ((:enter) (when empty (%pane-enter head)) empty)
           ((:char)
            (let ((ch (getf key :ch)))
@@ -2066,6 +2074,93 @@ together."
              (or sel-line 0)))
       (setf (head-picker-sel head) saved))))
 
+(defun todo-stop-at (head)
+  "The stop the todos cursor is on, and its index in `todos-stops` — as two values.
+
+**The single answer to *which row is the cursor on*, and every caller comes through it**: a key
+that acts on a row, a click converting a line to a row, and the pane deciding where to draw the
+mark. R44's first cut answered it in three places — the pane from the repo's indices, the key
+from a `minusp`, the click from `line - header` — and each of the operator's two reports was one
+of the three disagreeing with the pane.
+
+The index is CLAMPED to the enumeration the way the pane clamps when it draws, because a list
+can change under the cursor: a deletion, a `TodosUpdated`, a different workspace. A key pressed
+against a list that just changed acts on a row rather than on an index that no longer exists."
+  (let* ((stops (todos-stops head))
+         (n (length stops))
+         (i (if (plusp n) (min (max 0 (head-picker-sel head)) (1- n)) 0)))
+    (values (if (plusp n) (nth i stops) nil) i)))
+
+(defun todo-stop-at-line (head line)
+  "The stop index drawn on pane LINE, or NIL when that line is not a selectable row.
+
+Read from `todos-lines`' third value — the lines the stops were actually drawn on — so a click and
+the drawing cannot disagree about where a row is. That disagreement is exactly the operator's
+*\"mouse doesnt click\"*: the add row is the first selectable row of the pane and `line - header`
+made it a negative index, which the old conversion threw away."
+  (let* ((*pane-scroll* 0) (*pane-room* 1000))
+    (multiple-value-bind (lines sel stop-lines) (todos-lines head 80)
+      (declare (ignore lines sel))
+      (position line stop-lines))))
+
+(defun %todo-remove (head)
+  "Delete the operator's own item under the cursor. T when a key was taken.
+
+**Only the operator's own rows, and only ones nothing has started** — *\"i want to be able to
+remove non-started todos\"*, and *non-started* is the whole of the guard: an item in progress is
+work somebody is doing, and dropping it from under them is not a note being tidied up.
+
+**The model's rows are refused by name**, which is the R44 boundary on the keyboard: the head has
+no frame that writes a todo, so deleting one of the model's rows would take it off this screen
+while the model went on holding it — and the next `TodosUpdated` would put it back, which reads as
+the head having lost the operator's instruction. Saying who owns the row is the honest answer.
+
+A refusal SAYS something, on every path: a key that appears to do nothing is the defect this head
+keeps finding elsewhere."
+  (multiple-value-bind (stop i) (todo-stop-at head)
+    (case (car stop)
+      (:mine
+       ;; **BY ID, and that is the operator's own point** — *"a todo item is identified by a hash
+       ;; or something like a commit"*. There is no position here and nothing to go stale: the id
+       ;; was minted when the item was added and it addresses that item for the item's whole life,
+       ;; whatever the list has done in between.
+       (let* ((id (cdr stop))
+              (item (find id *operator-todos* :key (lambda (x) (getf x :id)) :test #'equal))
+              (status (or (and item (getf item :status)) "open")))
+         (cond
+           ((null item)
+            ;; the id is not in the list any more — a `remove` already landed, or the list was
+            ;; replaced under the cursor. Said rather than crashing on a `getf` of NIL.
+            (say head "that item is not in the plan any more")
+            t)
+           ((string= status "in_progress")
+            (say head "that one is in progress — an item something is working on is not a note any more")
+            t)
+           (t
+            (setf *operator-todos*
+                  (remove id *operator-todos* :key (lambda (x) (getf x :id)) :test #'equal))
+            ;; the cursor may now point past a shorter enumeration, which `todo-stop-at` clamps
+            ;; for the next key — but the screen has to say something NOW, so the mark is put
+            ;; back on a row that exists rather than left on the one just deleted.
+            (let ((n (length (todos-stops head))))
+              (setf (head-picker-sel head) (if (plusp n) (min i (1- n)) 0)))
+            (say head (format nil "removed `~a`" (getf item :content)))
+            t))))
+      ;; **the two refusals, each naming WHO owns the row** — the model's are on the screen and the
+      ;; head cannot write them (no frame; see R44), and the repo's are a file a person edits.
+      ;;
+      ;; The `:model` arm is **unreachable while `todos-stops` skips the model's rows**, and it is
+      ;; kept rather than deleted: it is the refusal that must already be written on the day those
+      ;; rows become stops, and a `case` whose other arms are reachable is the place a reader looks
+      ;; for it. A dead arm with a reason is cheaper than a missing one found by a keypress.
+      ((:model)
+       (say head "that is the model's own item — this head cannot write its list, so dropping the row here would take it off your screen while the model went on holding it. ask the model to drop it")
+       t)
+      (:repo
+       (say head "the repo's TODO.md is the operator's queue and this pane never writes it — edit the file itself")
+       t)
+      (t nil))))
+
 (defun click-row->sel (head mode line)
   "The cursor ROW a click on pane LINE means, or NIL when it is not a row.
 
@@ -2089,9 +2184,16 @@ by a second caller — which is how the reference found this, in its own test."
          (per-row (if (member (head-mode head) '(:picker :jobs :subagents)) 2 1))
          (sel (floor (- line (click-header-lines head)) per-row))
          (n (pane-row-count head (head-mode head))))
-    (when (and (>= line window-start) (< line window-end)
-               (>= sel 0) (< sel n))
-      sel)))
+    (when (and (>= line window-start) (< line window-end))
+      (cond
+        ;; **THE ADD ROW IS A ROW, AND IT IS THE ONE ROW THAT IS NOT AN INDEX** (R44). It sits
+        ;; above the repo's first row, so `line - header` is NEGATIVE on it and the guard below
+        ;; rejected it: the operator's *"mouse doesnt click"*. Asked of the pane rather than
+        ;; counted here, for `click-header-lines`' own reason — the row's line is a fact the pane
+        ;; knows and this function does not, and two spellings of it drift the first time the
+        ;; header above it grows.
+        ((eq (head-mode head) :todos) (todo-stop-at-line head line))
+        ((and (>= sel 0) (< sel n)) sel)))))
 
 (defun pane-row-count (head mode)
   "How many ROWS the pane MODE has for its cursor to walk — one place, read by the
@@ -2117,39 +2219,32 @@ the folded tree — each the same list the pane draws from."
     (t 0)))
 
 (defun %todos-move (head n)
-  "Up (N = -1) or Down (N = 1) on the todos pane: the cursor walks the repo's
-ITEMS, wrapping at either end, and folds whatever was open — the reference's
-`Key::Up`/`Key::Down` under `todos_pane` (app.rs:3275).
+  "Up (N = -1) or Down (N = 1) on the todos pane: the cursor walks `todos-stops` and wraps
+at either end, folding whatever was open.
 
-`at` is the first stop at or past the cursor, so a cursor resting on a heading
-(row 0 at open) counts from the item below it: Down from the top goes to the
-SECOND item, which is what letibot's screen shows after two Downs — T3, not T2 —
-and this pane must agree with it."
-  (let* ((rows (repo-todo-rows-cached
-                (getf (session-wiring (head-session head)) :workspace)))
-         (stops (repo-todo-stops rows)))
-    ;; **the `when` is load-bearing**: a workspace with no TODO.md has no stops, and `(mod … 0)` is
-    ;; a division by zero at the first arrow key. Measured — it fired in an unrelated pane test
-    ;; whose head had no repo file, which is exactly the head a reader is on before they write one.
-    (when stops
-     (let* ((sel (head-picker-sel head))
-           (at (or (position-if (lambda (i) (>= i sel)) stops) 0))
-           (next (mod (+ at n) (length stops))))
-      ;; **THE ADD ROW SITS ABOVE THE FIRST ITEM, AND ONLY THE UP ARROW KNOWS IT** (R44). It is a
-      ;; stop of its own on the ring going UP — Up from the first item reaches it instead of
-      ;; wrapping to the last — and going DOWN it is where Up from the first came from. A single
-      ;; ring containing `-1` cannot do both: Down past the last item would land on the add row,
-      ;; where letibot's own screens wrap to the FIRST item, and `Tab` there would open a card
-      ;; instead of unfolding the item the cursor is on. Measured on the wrap assertions, which is
-      ;; what this arrangement is for.
+**One ring, one enumeration, no special cases** — and both of those were corrections the
+operator made by using it. The first cut kept the add row OUTSIDE the ring (reachable by `Up`
+from the top, never by `Down`) so that the repo's own wrap could be preserved; *\"add todo item
+is not reachable - arrows dont go here\"*. The second walked `-1` plus the repo's stop indices
+while the pane drew its rows from a third list, so the row the cursor was on and the row the
+pane scrolled to were computed two ways; *\"arrows dont go here\"* again, from the other end.
+
+`(mod … (length stops))` is the whole of the movement. `todos-stops` is the list; nothing here
+knows what a row IS."
+  (let* ((stops (todos-stops head))
+         ;; **`len`, NOT `n`** — and the shadow is not a style point. N is the MOVEMENT (+1 or -1)
+         ;; and this is the LENGTH, and the first cut of this named the length `n` too: the
+         ;; arithmetic below then read `(mod (+ sel n) n)` — the length used as its own step — which
+         ;; is `(mod (+ sel len) len)`, always ZERO. The cursor sat on the head of the ring and no
+         ;; arrow moved it, which is the operator's *"arrows dont go here"* in its third and silliest
+         ;; costume. Measured: `[PRE sel=0 value=0]` inside the function while the same expression
+         ;; written outside it with a literal step gave 1.
+         (len (length stops)))
+    (when (plusp len)
       (setf *repo-todo-open* nil
+            ;; a stale index — a deletion, a `TodosUpdated` — wraps to a row rather than off the
+            ;; end, which is the same clamp the pane makes when it draws
             (head-picker-sel head)
-            (cond
-              ;; Down off the add row is the first item
-              ((and (minusp sel) (plusp n)) (nth 0 stops))
-              ;; Up off the add row is the last item, which is the wrap the other way
-              ((and (minusp sel) (minusp n)) (nth (1- (length stops)) stops))
-              ;; Up from the FIRST item is the add row, not the last item
-              ((and (minusp n) (zerop at)) -1)
-              (t (nth next stops)))
-            (head-dirty head) t)))))
+            (mod (+ (min (max 0 (head-picker-sel head)) (1- len)) n) len)
+            (head-dirty head) t))))
+

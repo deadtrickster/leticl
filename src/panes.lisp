@@ -1060,7 +1060,7 @@ Headings roll up the rows beneath them and have nothing to unfold, so the cursor
 skips them: the reference's `stops` (app.rs:3268)."
   (loop for r in rows for i from 0 when (getf r :item) collect i))
 
-(defun %todo-item-lines (item author show-detail)
+(defun %todo-item-lines (item author show-detail &optional here)
   "ITEM as the pane's lines: the mark, the words, and whose they are — plus the description under
 them when SHOW-DETAIL and the item has one.
 
@@ -1075,102 +1075,182 @@ words and its detail read as a block rather than as two entries."
                   ((string= (or (getf item :status) "") "completed") :done)
                   (t :open))))
     (append
-     (list (list (cons "    " nil)
+     ;; **the cursor mark, in the pane's own column** — `▸ ` or two spaces, like every other
+     ;; selectable row here, so a reader who has learnt this pane's cursor finds it on a
+     ;; session item too. The row is reversed when it is the one the cursor is on, which is
+     ;; what every other pane does and what makes `delete` mean *this row*.
+     (list (list (cons (if here "  ▸ " "    ") (and here '(:reverse t)))
                  (cons (%todo-mark-text st) (%todo-mark-style st))
-                 (cons (format nil " ~a" (getf item :content)) nil)
-                 (cons (format nil "  — ~a" author) '(:dim t))))
+                 (cons (format nil " ~a" (getf item :content)) (and here '(:reverse t)))
+                 (cons (format nil "  — ~a" author) (if here '(:reverse t) '(:dim t)))))
      (let ((detail (getf item :detail)))
        (when (and show-detail detail (plusp (length detail)))
          (list (list (cons "      " nil)
                      (cons detail '(:dim t)))))))))
 
+(defun todos-stops (head)
+  "Every row of the todos pane the cursor may land on, in the order the pane draws them.
+
+**One enumeration, and everything that asks *where is the cursor* reads this one** — the
+arrows, the click, the cursor's LINE, and the key that acts on a row. R44's first cut had it
+spread over a `-1` sentinel and the repo's own stop indices, and both of the operator's
+reports came from that: *\"arrows dont go here\"* was the cursor moving to a row whose line
+the pane then reported from another list's arithmetic, and *\"mouse doesnt click\"* was a
+click on the add row computing a negative index and being thrown away. Two enumerations was
+the defect; this is the one.
+
+A stop is tagged, and **the tag carries the row's IDENTITY rather than its position**:
+
+  · `(:add)` — the one control, at the head;
+  · `(:mine . ID)` — the operator's own item, by its id (see `*operator-todos*`: *\"a todo item is
+    identified by a hash or something like a commit\"*);
+  · `(:repo . I)` — a row of the workspace's `TODO.md`, index I into `repo-todo-rows-cached`, which
+    has no ids because it is a file the head reads rather than a list it owns.
+
+**Identity and not position, and the difference is the whole of it.** A position is a fact about
+the list at the moment it was drawn; a list changes between a draw and a keypress — a `TodosUpdated`
+arriving, an item removed, the session switching — and every action then lands on the row that took
+its neighbour's place. With the id, `delete` removes the row the operator was looking at or nothing
+at all. The repo's rows keep an index because they are addressed by their own file's order and the
+pane re-reads that file, so the index IS their identity there.
+
+**The model's items are drawn and are NOT stops, and that is the R44 boundary rather than
+an omission.** The head has no frame that writes a todo (`ListTodos` is documented as *a
+question, not an act*), so there is no key that could act on one of the model's rows —
+and a cursor that stops where no key acts is a cursor the operator presses keys into and
+nothing happens. They are skipped the way the repo's headings always were.
+
+`head-picker-sel` is an ORDINARY INDEX INTO THIS LIST, which is why the head's slot type is
+untouched and why the cursor survives a list changing under it: a deletion shifts the index
+and the row it lands on is still a row."
+  (let* ((s (head-session head))
+         (rows (repo-todo-rows-cached (getf (session-wiring s) :workspace))))
+    (append (list (list :add))
+            (loop for item in *operator-todos* collect (cons :mine (getf item :id)))
+            (loop for r in rows
+                  for i from 0
+                  when (getf r :item) collect (cons :repo i)))))
+
 (defun todos-lines (head cols)
-  "The todos pane, row for row the reference's `todos_lines` (app.rs:5859):
+  "The todos pane: the session's plan with its authors, the add control, and the repo's TODO.md.
 
     todos
     <blank>
-      this session — the model's plan, live:
-        [x] S0 decomposition (DONE)
-        [ ] S6 panes — …
+      this session — the plan, and who wrote each line:
+      ▸ [+] add todo item
+        [ ] check the logs  — you
+          the daemon log, not the head's
+        [x] a model item  — model
     <blank>
       the repo's TODO.md — the operator's queue, read-only here:
           Dependency graph
-        [x] Phase 0 — repo  [2/2]
-            [x] T1 git init, .gitignore, commit PLAN.md + TODO.md.
-          ▸ [x] T3 leticl.asd (+ /test system), src/package.lisp (one package
-                  :leticl), run.lisp entry (test / demo), source-registry setup for
-            [x] T4 src/term.lisp: … ···
+        [x] T1 …
     <blank>
       the file itself is in the workspace; this pane never writes it.
 
-The session's plan is what the model writes with `todo_write`, four in with a
-painted mark. The repo's TODO.md is drawn, rolled up and painted, and the cursor
-(`head-picker-sel`, an index into the repo ROWS) stops only on its items — Up and
-Down walk them, Enter or Tab unfolds the one under the cursor
-(`*repo-todo-open*`). Measured against letibot's screen: ours put the cursor on the
-session's plan (reversed, and Up/Down moved nothing useful), titled the pane
-` todos   ↑↓ moves · enter unfolds · esc closes`, indented the plan two columns
-short, and closed with `the file is …` where the reference says `the file itself
-is …`.
+**THREE VALUES**: the lines, the cursor's LINE, and a vector of every stop's line, parallel to
+`todos-stops`. The second is an `aref` of the third — never arithmetic over one of the three lists
+this draws from, which is what put the pane four lines above the row it was scrolling to.
 
-Second value is the cursor's LINE, for the scroll offset (see `subagent-lines`):
-the repo's first line plus the cursor's row — nothing above the cursor is ever
-unfolded, because only the row under it can be."
+**EVERY LINE GOES THROUGH ONE `emit`**, and a line is recorded as a stop's line only when the
+caller says so. The index is `(length out)` taken inside `emit` — the line's index in the list
+this function RETURNS, because `out` is built in reverse and flipped at the end. Two other forms
+of *push this line, and maybe record it* is how the first cut came to record one entry for five
+stops: the recorded index was the length before some pushes and after others."
   (declare (ignore cols))
   (let* ((s (head-session head))
          (todos (session-todos s))
          (rows (repo-todo-rows-cached (getf (session-wiring s) :workspace)))
-         (sel (if rows (min (head-picker-sel head) (1- (length rows))) 0))
-         ;; **THE CURSOR'S FIRST POSITION IS THE ADD ROW, AND IT IS `-1`** (R44). The repo's rows
-         ;; are indexed from 0 and `repo-todo-stops` is a list of those indices, so a sentinel
-         ;; BELOW them cannot collide with anything and the repo's whole arithmetic is untouched.
-         (on-add (minusp (head-picker-sel head)))
-         (out (list (list (cons "  this session — the plan, and who wrote each line:" '(:dim t)))
-                    nil
-                    (list (cons "todos" '(:bold t))))))
-    ;; **the add row**, first so that opening the pane lands on it: the thing an operator does
-    ;; here most often is add.
-    (push (list (cons (if on-add "  ▸ " "    ") (and on-add '(:reverse t)))
-                (cons "add todo item" (if on-add '(:reverse t :bold t) nil)))
-          out)
-    (let ((any nil))
-      ;; **ONE ROW PER ITEM, AND THE AUTHOR ON IT** (R44). `%todo-item-lines` is where the author
-      ;; label and the description's indent are spelled, so the model's rows and the operator's
-      ;; cannot drift apart in shape.
-      ;;
-      ;; **THE OPERATOR'S ITEMS COME FIRST**, and that is a reading order rather than a ranking:
-      ;; theirs are the asks they just made, the model's are the plan it is working through, and a
-      ;; turn's list is long enough that a new line at the bottom of it is a line they will not
-      ;; find. Oldest first within each, so the last thing they typed sits nearest the model's list.
-      (dolist (t2 *operator-todos*)
-        (dolist (line (%todo-item-lines t2 "you" t)) (push line out))
-        (setf any t))
-      (dolist (t2 todos)
-        (dolist (line (%todo-item-lines t2 "model" nil)) (push line out))
-        (setf any t))
-      (unless any
-        (push (list (cons "    none written yet. The model writes them with todo_write, and the row above adds one of yours."
-                          '(:dim t)))
-              out)))
-    (push nil out)
-    (push (list (cons "  the repo's TODO.md — the operator's queue, read-only here:" '(:dim t)))
-          out)
-    (let ((repo-first (length out)))
+         (stops (todos-stops head))
+         (n (length stops))
+         (sel (if (plusp n) (min (max 0 (head-picker-sel head)) (1- n)) 0))
+         (out nil)
+         (stop-lines (make-array 0 :adjustable t :fill-pointer 0))
+         (at 0))
+    (flet ((emit (line &optional stop-p)
+             (when stop-p (vector-push-extend (length out) stop-lines))
+             (push line out))
+           ;; **IS THIS ROW THE CURSOR'S?** — and the two halves of that question are different
+           ;; ones, which is what the first cut of this got wrong: it asked *is this row AT `at`*,
+           ;; and `at` walks EVERY stop, so the mark landed on the first row whose tag matched
+           ;; rather than on the row the cursor was actually sitting on. The operator's own report
+           ;; is what that looked like: the pane opened with the cursor on the add row and a `▸`
+           ;; drawn somewhere else, and every repo item came out double-indented because its row
+           ;; thought it was selected.
+           ;;
+           ;; `at` is where the WALK is (advancing once per row, so it and `stops` stay in step);
+           ;; `sel` is where the CURSOR is. The tag and the identity are the third check, and they
+           ;; stay because they make the comparison impossible to make against a row of the wrong
+           ;; kind — belt to the braces above, and cheap.
+           (this (tag id) (and (< at n) (= at sel) (nth at stops)
+                               (eq (car (nth at stops)) tag)
+                               (equal (cdr (nth at stops)) id))))
+      (emit (list (cons "todos" '(:bold t))))
+      (emit nil)
+      (emit (list (cons "  this session — the plan, and who wrote each line:" '(:dim t))))
+      ;; **the add control**, at the head of the session's list because that is where an addition
+      ;; goes: `[+]` in the items' own mark column, BOLD, so it reads as a control rather than as a
+      ;; line of the list. *"it looks like a regular text"*, said of the first cut, which was plain
+      ;; `    add todo item` in the items' own register with nothing but the cursor to tell them
+      ;; apart.
+      (let ((on (and (< at n) (eq (car (nth at stops)) :add))))
+        (emit (list (cons (if on "  ▸ " "    ") (and on '(:reverse t)))
+                    (cons "[+] " '(:bold t))
+                    (cons "add todo item" '(:bold t)))
+              t))
+      (incf at)
+      ;; the operator's items and the model's, one list with the author on every row
+      (dolist (item *operator-todos*)
+        (let ((here (this :mine (getf item :id)))
+              (first t))
+          (dolist (line (%todo-item-lines item "you" t here))
+            ;; **EVERY item records its line, not only the cursor's** — `stop-lines` is parallel to
+            ;; `todos-stops`, and its whole job is to say where each stop is DRAWN. Recording only
+            ;; the selected row left a vector with one entry in it and made `(aref stop-lines sel)`
+            ;; an out-of-bounds read for every cursor position but the first.
+            (emit line first)
+            (setf first nil)))
+        (incf at))
+      ;; **THE MODEL'S ITEMS ADVANCE NOTHING**, because they are not stops: `todos-stops` skips
+      ;; them for the reason its docstring gives (no key acts on one), and a walk that advanced
+      ;; here would run `at` past the stop it is comparing against — which is how the pane came to
+      ;; index its stop-lines array out of bounds on a plan that had any model rows in it.
+      (dolist (item todos)
+        (dolist (line (%todo-item-lines item "model" nil))
+          (emit line nil)))
+      (when (and (null *operator-todos*) (null todos))
+        (emit (list (cons "    none written yet. The model writes them with todo_write, and the row above adds one of yours."
+                          '(:dim t)))))
+      (emit nil)
+      (emit (list (cons "  the repo's TODO.md — the operator's queue, read-only here:" '(:dim t))))
       (if (null rows)
-          (push (list (cons "    no sections found." '(:dim t))) out)
+          (emit (list (cons "    no sections found." '(:dim t))))
           (loop for r in rows
                 for i from 0
-                do (let ((here (and (getf r :item) (= i sel))))
-                     ;; APPENDED one line at a time: a row renders to several
-                     ;; lines when open, and pushing the list whole would nest it
-                     (dolist (line (%todo-row-lines r :here here
-                                                      :open (and here *repo-todo-open*)))
-                       (push line out)))))
-      (push nil out)
-      (push (list (cons "  the file itself is in the workspace; this pane never writes it."
-                        '(:dim t)))
-            out)
-      (values (nreverse out) (+ repo-first sel)))))
+                ;; **`at` AND `stops` STAY IN STEP, so `at` advances only on the rows that ARE
+                ;; stops** — the repo rows carrying an item. Headings are drawn and are not stops,
+                ;; so advancing for them walked the walk past the entries it was comparing against
+                ;; and no repo row ever matched: the pane drew no cursor mark on the file's items
+                ;; at all, which is the one thing this pane has always done.
+                for item-row = (and (getf r :item) t)
+                for here = (and item-row (this :repo i))
+                ;; **a row's stop is its FIRST line**, so the body of an unfolded item does not
+                ;; move the cursor's target — and the line is taken before the row draws, because
+                ;; the row renders to as many lines as its body needs.
+                for first-line = (length out)
+                do (dolist (line (%todo-row-lines r :here here
+                                                    :open (and here *repo-todo-open*)))
+                     (emit line nil))
+                   ;; **and the same here: an item row records its line whether or not the cursor
+                   ;; is on it.** `here` is the MARK; `item-row` is the STOP.
+                   (when item-row (vector-push-extend first-line stop-lines))
+                   (when item-row (incf at))))
+      (emit nil)
+      (emit (list (cons "  the file itself is in the workspace; this pane never writes it."
+                        '(:dim t)))))
+    (values (nreverse out)
+            (if (or (zerop (length stop-lines)) (zerop n)) 0 (aref stop-lines sel))
+            stop-lines)))
 
 (defvar *peeked-session* nil
   "The subagent whose scrollback `head-peeked` holds — for the title. A defvar
