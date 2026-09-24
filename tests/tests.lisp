@@ -3581,6 +3581,44 @@ this asserts both plus the retirement."
                     (nth row rs)))
         (is (< row turn) "in the place above the reply, where the transcript put it")))))
 
+(def-test the-replys-first-delta-does-not-get-in-front-of-the-prompt (:suite leticl)
+  "**letibot's own sequence, and the second half of the report.** The operator, twice: *\"and again,
+i saw your reply before my message was unqueued.\"*
+
+The half above is fixed — an ANNOUNCED row draws the words the head already holds, in the place the
+transcript gave it. This is the half that is not: the reply's **first delta** arrives between the
+announcement and the body, and a delta is what makes the turn's own text appear. So the order the
+three events arrive in is the whole question, and letibot's test walks it in the order the daemon
+sends it — announcement, then delta — with the assertion that the prompt is above the reply *and
+drawn once*. Its comment for the delta line is the defect in four words: *which is what used to
+reach the screen first.*
+
+**One prompt on the screen, not two.** The row carries the words from the binding; the tail echo is
+skipped for a text a bound row is already drawing. Without the skip the operator reads their own
+sentence twice with a reply between them, which is the same complaint wearing a louder coat."
+  (let ((leticl::*bound-prompts* nil) (leticl::*queued-unconfirmed* nil)
+        (leticl::*scroll-anchor* nil) (leticl::*hist-cache* nil)
+        (leticl::*hist-generation* 0) (leticl::*hidden-run-open* nil)
+        (leticl::*verbosity* :normal))
+    (let ((h (%queued-mid-turn-head)))
+      ;; --- the daemon appends the row and announces it (no text on the event)
+      (leticl::%handle-frame h (list :frame "event" :seq 1 :event "transcript_appended"
+                                     :item-id "u2" :kind "user" :ledger-head "" :ts 1))
+      ;; --- **and THEN the reply starts streaming.** This is the event that used to reach the
+      ;; screen first, which is the operator's report in the reference's own words.
+      (let ((turn (session-turn (head-session h))))
+        (setf (getf turn :text) "I'll fix the parser."))
+      (let* ((rs (%rows h))
+             (prompt (position-if (lambda (s) (search "and now my second question" s)) rs))
+             (reply (position-if (lambda (s) (search "I'll fix the parser." s)) rs)))
+        (is (and prompt reply) (format nil "both are on the screen: ~s" rs))
+        (is (< prompt reply)
+            (format nil "**the prompt is ABOVE the reply it caused** — a delta arriving after the
+ announcement must not put the answer in front of the question: ~s" rs))
+        (is (= 1 (count-if (lambda (s) (search "and now my second question" s)) rs))
+            (format nil "**and it is on the screen ONCE** — the tail does not draw an echo a bound
+ row is already drawing: ~s" rs))))))
+
 ;;; ------------------------------------------------- cluster-aware width (P7) ;;;
 
 (defun %ch (code) (code-char code))
