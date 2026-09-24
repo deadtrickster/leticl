@@ -13476,6 +13476,37 @@ naive implementation:
         "and a counter that goes BACKWARDS is still acknowledged — the rule is `<=`, so nothing
  re-points at a value already read")))
 
+(def-test the-caret-lands-on-the-text-and-not-on-the-status-row (:suite leticl)
+  "**The operator, one keystroke after the status row landed:** *\"hmm cursor now goes above the
+text i type lol. look at tmux\"*.
+
+`composer-caret` answers a row index into `composer-line`'s OWN rows, and every offset in it was
+written when row 0 was the box's top edge — so the body's first row was 1 and a password's row was 1.
+`turn-report-row` now puts a status row at row 0 above the box, which moved the top edge to 1 and the
+body to 2, and the caret stayed where it was: **one row high, sitting on the status row with the text
+below it.** The box, the `›` and the drawn body all moved together; only the arithmetic that says
+where the terminal's cursor goes did not, because it is the one place that does not go through the
+box's own composition."
+  (let* ((h (%on-head :cols 100 :rows 30 :buffer "hello"))
+         ;; the row the caret names, as a row of the composer's own lines
+         (caret-row (lambda () (car (leticl::composer-caret h 96))))
+         (body-row (lambda ()
+                     ;; the box's top edge, and the first body row under it
+                     (let ((rows (leticl::composer-line h 96)))
+                       (1+ (position-if (lambda (r) (search "╭" (car (lines-text (list r))))) rows))))))
+    (is (leticl::composer-boxed-p h) "the box is drawn at this size")
+    (is (= (funcall body-row) (funcall caret-row))
+        (format nil "**the caret is on the body row**, not one above it (body ~a, caret ~a)"
+                (funcall body-row) (funcall caret-row)))
+    ;; **and it still tracks the buffer**, which is what the offset is a base for: three lines
+    ;; typed means the caret is on the third
+    (setf (leticl::composer-buffer (leticl::head-composer h)) "one
+two
+three")
+    (setf (leticl::composer-cursor (leticl::head-composer h)) 13)
+    (is (= (+ (funcall body-row) 2) (funcall caret-row))
+        "the caret follows the line the cursor is on, off that base")))
+
 (def-test the-turn-status-is-a-permanent-row-above-the-box (:suite leticl)
   "**The operator's spec:** *\"responding has to be brought back up to the left on top of the input
 area and stay here. It will permanently occupy the row for now and will be either Responding spinner

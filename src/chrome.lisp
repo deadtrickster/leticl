@@ -1387,7 +1387,17 @@ where it went, so the prompt had no cursor at all — the operator: *\"the creep
 thing about leticl - prompt input doesnt have caret or cursor\"*. The box draws a
 `›` and that is a decoration; the caret is the thing that says where the next
 character lands."
-  (let ((c (head-composer head)))
+  (let* ((c (head-composer head))
+        ;; **THE ROWS ABOVE THE BOX IN THE COMPOSER BLOCK** — `turn-report-row`, which is the
+        ;; first row of `composer-line` and therefore of everything this counts from. It was
+        ;; zero for as long as the box was the whole block, so every offset below assumed row 0
+        ;; was the top edge; the operator found the result immediately — *"hmm cursor now goes
+        ;; above the text i type lol"* — because the caret was one row high, sitting on the
+        ;; status row while the text was below it.
+        ;;
+        ;; This is the arithmetic, not a fudge: `composer-line` starts with the status row, so
+        ;; the box's top edge is at LEAD and the body's first row is at `lead + 1`.
+        (lead (if boxed 1 0)))
     (if (not boxed)
         ;; the bare line: the prompt is two columns and the tail is what is shown
         (let* ((buf (composer-buffer c))
@@ -1397,7 +1407,7 @@ character lands."
         ;; a password puts the caret after the last DOT, and the buffer it is a
         ;; caret into is never measured (app.rs:5343-5347)
         (if (head-secret-req head)
-            (cons 1 (+ 4 (length (head-secret-buf head))))
+            (cons (1+ lead) (+ 4 (length (head-secret-buf head))))
             (multiple-value-bind (start) (composer-window head cols max-rows)
               (multiple-value-bind (row col)
                   (locate-in-ranges (composer-buffer c) (composer-cursor c)
@@ -1405,7 +1415,7 @@ character lands."
                 ;; +1 for the box's wall, +1 for the space after it, +2 for `› `;
                 ;; the body's first row is one below the top edge, and START is
                 ;; how many rows the window has scrolled past
-                (cons (1+ (- row start)) (+ 4 col))))))))
+                (cons (+ lead 1 (- row start)) (+ 4 col))))))))
 
 (defun composer-rows-needed (head cols &key (boxed (composer-boxed-p head)) max-rows ghost)
   "How many rows `composer-line` will return. The render needs this BEFORE it
