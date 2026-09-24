@@ -527,24 +527,29 @@ thirty rows appended, and the view jumped to `row-62`."
                                       (or run live-here)
                                       (%run-continues-prose-p item)))
                            (marker-items (or run nil))
-                           ;; **and the room is LEFT for them before the sentence wraps** — render the
-                           ;; introducing row narrower by the marker's ROOM, so a sentence that
-                           ;; fills its line does not push the counts onto a line of their own. That
-                           ;; was the operator's *"sometimes you do it same line - sometimes dont"*.
+                           ;; **THE SENTENCE WRAPS AT THE FRAME'S OWN WIDTH, NOT AT `cols - room`.**
                            ;;
-                           ;; **THE ROOM IS A FUNCTION OF THE FRAME AND NOTHING ELSE** — not of the
-                           ;; counts, not of what the run holds. That is the fix for the operator's
-                           ;; *"counts add digits when grow … I dont like jumps"*: the width handed
-                           ;; over here is the same on the frame a turn's first call lands on and on
-                           ;; the frame a hundred lines later, so the sentence above the counts wraps
-                           ;; once and then never moves again. Growth is paid on the marker's side —
-                           ;; `hidden-run-marker` steps its words down its ladder to stay inside the
-                           ;; room — and it can never be paid here.
+                           ;; Reserving the marker's room from every line was the second version of this
+                           ;; and it bought stillness at a price the operator refused: their prose broke
+                           ;; early for a marker that is almost never that wide. Measured at 210
+                           ;; columns, the sentence wrapped at 154 while the tail needed 55:
+                           ;;
+                           ;;     Let me confirm where the
+                           ;;     committed history sits: [1 tool call, 23 thinking lines]
+                           ;;
+                           ;; *"there is no need to have the line break here because the whole tail
+                           ;; fits. you didnt try the 'tool calls' -> 'tools' -> 't' progressing. so I
+                           ;; complain about line wrapping here."*
+                           ;;
+                           ;; So the room is spent where it is needed and nowhere else: the prose is
+                           ;; rendered at `cols`, and `%marker-onto-last-line` fits the marker to what
+                           ;; the LAST line has left, stepping down `+hidden-run-marker-ladder+` if it
+                           ;; must. Every line above it is untouched, which is also why nothing jumps:
+                           ;; an earlier line cannot be affected by a marker that lives on the last
+                           ;; one.
                            (il (if glue
                                    (%marker-onto-last-line
-                                    (item-lines item
-                                                (max 20 (- cols (hidden-run-marker-room cols)))
-                                                (head-prefs head))
+                                    (item-lines item cols (head-prefs head))
                                     marker-items cols (and marker-items newest) live-here)
                                    il)))
                       ;; **an OPEN run draws its rows between this row and the newer one** — this
@@ -837,21 +842,52 @@ to decide when the reader has asked for the rows above the window (`fetch-row-ab
  terminal: the newest content sat at row 1 and the oldest at row 57.)"
   (let* ((s (head-session head))
          (need (+ (head-scroll head) want))
-         ;; the running turn, then ITS FOOTER — the footer belongs to the turn and
-         ;; sits under it, and only when the turn has actually ended
-         (tail (append (turn-lines (session-turn s) cols (head-prefs head))
-                       (turn-footer-lines (session-turn s) cols)
-                       ;; QUEUED PROMPTS, at the tail, where they will land: a
-                       ;; sentence the conversation has swallowed is visible here
-                       ;; until the daemon appends its row
-                       (queued-lines head cols)
-                       ;; AND THE CARRY, for the same reason: `/reseat` and
-                       ;; `/compact` announce every row before a single body
-                       ;; follows, so the tail is where the row count is going.
-                       ;; Drawn one-per-row that is a screen of placeholders; this
-                       ;; is one line, and it removes itself when the last body
-                       ;; lands (chrome.lisp, `carry-line`).
-                       (carry-line head cols)))
+         ;; **THE QUEUED PROMPT GOES WHERE ITS ROW WILL LAND, WHICH IS ABOVE THE LIVE TURN.**
+         ;;
+         ;; The line used to be drawn at the very tail, below the running turn, with the comment
+         ;; *"at the tail, where they will land"* — and that premise is false. A queued prompt's
+         ;; row is APPENDED to the transcript, and the live turn is drawn after every committed
+         ;; row, so the row lands ABOVE the turn and the echo was starting below it. Measured on
+         ;; one head, one sequence:
+         ;;
+         ;;     after the send     row 4 = the streaming reply    row 6 = the queued message
+         ;;     row announced      row 4 = the queued message      row 6 = the streaming reply
+         ;;
+         ;; The message crosses the reply it belongs after. The operator, twice: *"and again, i saw
+         ;; your reply before my message was unqueued"* — and then, naming it exactly: *"a message
+         ;; was queued to harnessd, delivered to model, reply started streaming above the queued
+         ;; message and then some tick goes off and queued message dequeued and rendered rightfully
+         ;; above the reply. pure ui desync."*
+         ;;
+         ;; **So it is drawn where it is going, from the first frame.** The relationship that stays
+         ;; true is *immediately before the live turn*: rows committed afterwards arrive above BOTH
+         ;; the echo and the turn, so the echo stays glued to the turn's head — the same place the
+         ;; appended row will take the moment the daemon announces it, and the same place it keeps.
+         ;; Nothing jumps because nothing moves: the echo and the row are the same row at the same
+         ;; address, one before the announcement and one after.
+         ;; **AND THE ECHO CARRIES THE SAME BLANK A LANDED ROW GETS.** `hist` is followed by one
+         ;; blank row (`gap`, below — *"air above the chrome"*), and a row that LANDS is part of
+         ;; `hist`, so it is followed by that blank before the live turn is drawn. Without the same
+         ;; blank after the echo, the announcement moved the reply down one row — no longer a
+         ;; crossing, but still a move, and the axiom is that nothing moves. Measured: congruent at
+         ;; every row once this is here.
+         (q (queued-lines head cols))
+         (tail (append
+                ;; the queued prompts FIRST — above the turn, where their rows land
+                q
+                ;; ...and the air their row will have, so the frame before the announcement and the
+                ;; frame after it are the same frame with one word changed (`queued · ` gone)
+                (when q (list nil))
+                ;; then the running turn, then ITS FOOTER — the footer belongs to the turn and
+                ;; sits under it, and only when the turn has actually ended
+                (turn-lines (session-turn s) cols (head-prefs head))
+                (turn-footer-lines (session-turn s) cols)
+                ;; AND THE CARRY LAST: `/reseat` and `/compact` announce every row before a single
+                ;; body follows, so the tail is where the row count is going. Drawn one-per-row that
+                ;; is a screen of placeholders; this is one line, and it removes itself when the
+                ;; last body lands (chrome.lisp, `carry-line`). It stays at the very end because it
+                ;; is about the WHOLE transcript filling in rather than about a row's place in it.
+                (carry-line head cols)))
          ;; **AIR WHERE THE KIND CHANGES**, which is the reference's `RowClass` rule
          ;; and the spacing this head was missing: a blank line goes before a row
          ;; unless BOTH it and the row above are `Activity`. Two tool cards in a row

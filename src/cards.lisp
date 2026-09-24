@@ -1646,7 +1646,7 @@ at the writer."
   (incf *hist-generation*)
   *marker-seam*)
 
-(defun hidden-run-marker (items cols &optional newest live)
+(defun hidden-run-marker (items cols &optional newest live max-width)
   "The marker's SEGMENTS — `[N tool calls, M thinking lines] · ctrl-t opens it`.
 
 **Two registers, and they say two different things.** The counts are a FACT — how much work there
@@ -1673,7 +1673,7 @@ the same two strings, which is why they are here rather than invented.
 so the counts gaining a digit cannot move the sentence above them and cannot push the seam onto a
 line of its own. That was the operator's *\"at some point the line could be split so things jump
 even more\"*, and this is the rung that answers it: growth is paid in words, not in layout."
-  (let* ((room (hidden-run-marker-room cols))
+  (let* ((room (or max-width (hidden-run-marker-room cols)))
          (limit (1- room))
          ;; **NO SEAM MEANS THE COUNTS, AND THE ROOM IS STILL THE ROOM.** The slots are kept even
          ;; when the seam is off: it is the sentence ABOVE this line that reserved them, and
@@ -1706,14 +1706,38 @@ writes `format!(\"{} {}\", prose, marker)`; the operator's screen without it rea
 where the bracket looks like it belongs to the last word rather than to the work the sentence
 promised.
 
-**Wrapping, not truncating**, because the alternative is a marker the reader cannot see: a narration
-line already near the frame's width would push the counts off the edge, and a count that is not on the
-screen is a marker that did nothing. When they fit, the line is one line and the sentence runs
-straight into the numbers."
-  (let* ((marker (hidden-run-marker items cols newest live))
-         (last (car (last il)))
-         (joined (append last (list (cons " " nil)) marker)))
-    (append (butlast il) (wrap-segments joined (max 20 cols)))))
+**THE MARKER IS FITTED TO THE SPACE THE LAST LINE ACTUALLY HAS — the last line only.** That is the
+whole of this function, and getting it wrong cost the operator a line wrap they reported twice.
+
+The first version was handed a prose already wrapped NARROWER by the marker's room — `cols - room`
+for EVERY line — and it worked in the sense that the marker always fitted. It also broke every
+sentence's wrap early for the sake of a marker that is almost never that wide. Measured on the
+operator's terminal, 210 columns:
+
+    Let me confirm where the            <- prose wrapped at 154 (210 - 56 reserved)
+    committed history sits: [1 tool call, 23 thinking lines]
+
+and the operator: *\"there is no need to have the line break here because the whole tail fits. you
+didnt try the 'tool calls' -> 'tools' -> 't' progressing. so I complain about line wrapping here.\"*
+They are right: the tail is 55 columns of a 210-column frame, and 56 columns were being held back
+from a line that needed 55 once.
+
+**So the prose wraps at the frame's own width, and the marker fits what is left of the last line.**
+The ladder is the same one the marker's room uses (`+hidden-run-marker-ladder+`) and the same rule
+applies at the end of it: **wrapping, not truncating**, because a count off the edge is a marker that
+did nothing. A last line with no room left at all is the one case where the marker goes to its own
+line, and that is a line that was already full of the sentence."
+  (let* ((last (car (last il)))
+         (used (loop for seg in last sum (string-width (car seg))))
+         ;; what is left of the line once the sentence and its one joining space are in
+         (room (- cols used 1))
+         (marker (if (plusp room)
+                     (hidden-run-marker items cols newest live (max 4 room))
+                     nil)))
+    (if (null marker)
+        (butlast il)
+        (append (butlast il)
+                (wrap-segments (append last (list (cons " " nil)) marker) (max 20 cols))))))
 
 (defun hidden-run-lines (items cols)
   "The ROWS a run stands for, for when it is OPEN — the rung lifted for these rows and no others.

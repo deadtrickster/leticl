@@ -3546,14 +3546,19 @@ this asserts both plus the retirement."
         (leticl::*hist-generation* 0) (leticl::*hidden-run-open* nil)
         (leticl::*verbosity* :normal))
     (let ((h (%queued-mid-turn-head)))
-      ;; --- 1. BEFORE the announcement: the only copy is the tail echo, below the turn
+      ;; --- 1. BEFORE the announcement: the echo is ALREADY where its row will land
       (let* ((rs (%rows h))
              (echo (position-if (lambda (s) (search "queued · and now" s)) rs))
              (turn (position-if (lambda (s) (search "still writing" s)) rs)))
         (is (and echo turn) (format nil "the echo and the running turn are both up: ~s" rs))
-        (is (> echo turn)
-            "**and this is the defect**: the echo is BELOW the reply, so a message typed mid-turn
- reads as one that arrived after the answer."))
+        (is (< echo turn)
+            "**the echo is ABOVE the running reply — where its row is going to land.** This
+ assertion used to read `>` and call the echo's place at the tail *the defect*: the tail is
+ BELOW the turn, and a queued row is APPENDED to the transcript, which is drawn before the
+ live turn. So the echo started below and crossed the reply when the row was announced —
+ the operator's *\"pure ui desync\"*. Drawing it where it lands is what makes the
+ announcement invisible (R45; `a-queued-prompt-does-not-move-when-its-row-lands` asserts the
+ row-for-row identity)."))
       ;; --- 2. THE ANNOUNCEMENT: the row draws the words, in its own place
       (leticl::%handle-frame h (list :frame "event" :seq 1 :event "transcript_appended"
                                      :item-id "u2" :kind "user" :ledger-head "" :ts 1))
@@ -5431,54 +5436,96 @@ the deleted one's place. That is why the stops carry an id at all."
           "**`delete` never falls through to the composer** with the pane up — the pane owns it,
  like Tab and Enter"))))
 
-(def-test a-queued-message-belongs-below-the-reply-that-is-not-for-it (:suite leticl)
-  "**R45: the operator's report, measured, and the ordering is CORRECT — so this test exists to
-stop somebody changing it.**
+(def-test a-queued-prompt-does-not-move-when-its-row-lands (:suite leticl)
+  "**R45, and the operator named the defect better than I first did.** *\"pure ui desync\"*:
 
-*\"and again, i saw your reply before my message was unqueued\"*, twice. Measured: a prompt sent
-mid-turn is echoed at the TAIL, and the tail is below the running turn — so a reader sees a
-reply and then a message. **The reply is not to that message**, and the screen cannot say so.
+  > a message was queued to harnessd, delivered to model, reply started streaming above the
+  > queued message and then some tick goes off and queued message dequeued and rendered
+  > rightfully above the reply.
 
-**The obvious 'fix' is worse, and that is the reason for an assertion rather than a patch.**
-Drawing the echo ABOVE the running turn would put their message before a reply that does not
-answer it, which reads as cause and effect — *my message, then the reply* — and it is not.
-Below says *this arrived after that*, which is the fact: the running turn is answering an
-EARLIER message, and their new one has no row yet, so the tail is the only place it exists.
+**Measured on one head, before the fix** — and I had this output in front of me and read past it,
+which is the reason this test asserts row INDICES and not a phrase:
 
-The window's LENGTH is the daemon's step boundary (a follow-up is appended at the next one,
-which behind a long tool call is minutes) — filed as R45, and appending on arrival would close
-it with no change here. What this asserts is only the part that is this head's: **the order,
-and that the tag says `queued` while it is true.**"
+    after the send    row 4 = the streaming reply    row 6 = the queued message
+    row announced     row 4 = the queued message      row 6 = the streaming reply
+
+The message crosses the reply. `%viewport-lines` drew the echo at the very tail — below the
+running turn — under a comment that said *\"at the tail, where they will land\"*, and that
+premise is false: a queued prompt's row is APPENDED to the transcript, the live turn is drawn
+after every committed row, so the row lands ABOVE the turn. The echo started where the row would
+not be and then moved to where it would.
+
+**The fix is to draw it where it is going, from the first frame**, and the claim here is stronger
+than *it is in the right place*: **the frame after the announcement is the SAME FRAME as the one
+before it, row for row.** Same count, same indices, and — because an announced row with no body
+yet still wears the `queued` tag — the same words. The announcement is invisible, which is what
+a queued prompt should be: the reader's own sentence, sitting still, waiting.
+
+**And the body landing keeps it still.** The row's words change once (`queued · ` gives way to
+the timestamp) and nothing moves, which is the third frame asserted below."
+  ;; the ghost's own globals, for the same reason the other pane tests bind them: the card is
+  ;; checked on the key ladder and a leaked draft takes Esc from every later test
   (let ((leticl::*bound-prompts* nil) (leticl::*queued-unconfirmed* nil)
+        (leticl::*todo-draft* nil) (leticl::*operator-todos* nil)
         (leticl::*scroll-anchor* nil) (leticl::*hist-cache* nil)
         (leticl::*hist-generation* 0) (leticl::*hidden-run-open* nil)
         (leticl::*stdout* (make-string-output-stream))
         (h (%on-head :cols 90 :rows 30)))
     (setf (head-connected h) t)
     (setf (session-items (head-session h))
-          (make-array 1 :adjustable t :fill-pointer 1
+          (make-array 2 :adjustable t :fill-pointer 2
                         :initial-contents
                         (list (list :item-id "u1" :kind "user" :ts 0
                                     :item (list :type "user"
-                                                :parts (list (list :text "the first question")))))))
+                                                :parts (list (list :text "Q1 the earlier question"))))
+                              (list :item-id "a1" :kind "assistant" :ts 0
+                                    :item (list :type "assistant" :text "A1 the earlier answer")))))
     (setf (session-turn (head-session h))
           (list :turn-id "t1" :model "m" :state (list :state "running")
-                :text "I am still writing the answer" :reasoning "" :calls nil))
-    ;; the operator sends it mid-turn, which is the whole of the scenario
-    (leticl::%prompt h "and now my second question")
-    (let* ((rs (mapcar (lambda (l) (if (consp l) (format nil "~{~a~}" (mapcar #'car l)) ""))
-                       (leticl::%viewport-lines h 90 24)))
-           (msg (position-if (lambda (r) (search "and now my second" r)) rs))
-           (reply (position-if (lambda (r) (search "still writing" r)) rs)))
-      (is (and msg reply) (format nil "both are on the screen: ~s" rs))
-      (is (> msg reply)
-          (format nil "**the queued message is BELOW the running reply** — it arrived after it,
- and the reply answers an earlier question. Above would read as cause and effect, which it is
- not: ~s" rs))
-      (is (search "queued" (nth msg rs))
-          "**and it SAYS it is queued** while that is true, which is the operator's own word")
-      (is (= 1 (count-if (lambda (r) (search "and now my second" r)) rs))
-          "**drawn once** — the echo is the only copy until its row lands"))))
+                :text "R2 the reply being streamed now" :reasoning "" :calls nil))
+    (flet ((rows () (mapcar (lambda (l) (if (consp l) (format nil "~{~a~}" (mapcar #'car l)) ""))
+                            (leticl::%viewport-lines h 90 24)))
+           (at (needle rs) (position-if (lambda (r) (search needle r)) rs)))
+      ;; --- 1. the prompt is queued: no row exists, and the echo says so
+      (leticl::%prompt h "Q2 the message queued mid-turn")
+      (let* ((queued (rows))
+             (msg (at "Q2 the message" queued))
+             (reply (at "R2 the reply" queued)))
+        (is (and msg reply) (format nil "both are on the screen: ~s" queued))
+        (is (search "queued" (nth msg queued)) "the echo says it is queued")
+        ;; --- 2. **the row is announced, and the frame does not change AT ALL**
+        (leticl::%handle-frame h (list :frame "event" :seq 1 :event "transcript_appended"
+                                       :item-id "u2" :kind "user" :ledger-head "" :ts 1))
+        (let ((announced (rows)))
+          (is (= msg (at "Q2 the message" announced))
+              (format nil "**the message is on row ~a before and after the announcement** — it
+ used to be below the reply and cross it: ~s" msg announced))
+          (is (= reply (at "R2 the reply" announced))
+              (format nil "**and the reply does not move either** — ~a before, ~a after: the
+ announcement is invisible, which is what a queued prompt should be: ~s"
+                      reply (at "R2 the reply" announced) announced))
+          (is (equal queued announced)
+              (format nil "**NOT ONE ROW CHANGES** — the frame before the announcement and the
+ frame after it are the same frame. That is the whole of *pure ui desync*: ~s vs ~s"
+                      queued announced)))
+        ;; --- 3. the body lands: the row's words change once, and nothing moves
+        (leticl::%handle-frame h (list :frame "event" :seq 2 :event "transcript_content"
+                                       :item-id "u2"
+                                       :item (list :type "user"
+                                                   :parts (list (list :kind "text"
+                                                                      :text "Q2 the message queued mid-turn")))))
+        (let ((landed (rows)))
+          (is (= msg (at "Q2 the message" landed))
+              (format nil "**and the row is still on line ~a when its body arrives**: ~s"
+                      msg landed))
+          (is (= reply (at "R2 the reply" landed))
+              (format nil "with the reply still at ~a: ~s" reply landed))
+          ;; the TAG, not the word: this test's message text contains "queued" and a bare search
+          ;; for it passed for the wrong reason — measured, and the reason the tag is spelled with
+          ;; its separator here
+          (is (not (search "queued · " (nth msg landed)))
+              (format nil "**the only change is the tag** — a real row wears its timestamp, not
+ the pending mark: ~s" (nth msg landed))))))))
 
 (def-test the-help-is-the-references-row-for-row (:suite leticl)
   "letibot's help against ours, stripped: 41 non-blank rows against 50. Theirs is
@@ -15603,39 +15650,61 @@ row, or the top of the transcript the marker stands on its own line **with the b
       (is (search "Let me look: [2 tool calls] · ctrl-t opens it" (nth our-marker our-rows))
           (format nil "**and it DOES glue to the model's sentence** — the other half, beside it so the\n two cannot drift: ~s" (subseq our-rows 0 (1+ our-marker)))))))
 
-(def-test the-counts-room-is-left-before-the-sentence-wraps (:suite leticl)
-  "**The counts land on the sentence's LAST LINE even when that line would fill the frame.**
+(def-test the-sentence-keeps-the-frames-width-and-the-marker-fits-what-is-left (:suite leticl)
+  "**The operator's line-wrap report, which is what the reservation cost.**
 
-letibot's fix for the operator's *\"interesting - sometimes you do it same line - sometimes dont\"*:
-the introducing row is rendered narrower by the marker's width, so the prose breaks a little earlier
-and the counts sit in the room it left. **Without the reservation the join depends on where the
-prose happened to break**, which is the same transcript reading two ways at two widths."
+Their screen, 210 columns — an assistant row whose tail needed 55 columns:
+
+    letibot pushes the turn pane … the same order I just fixed. Let me confirm where the
+    committed history sits: [1 tool call, 23 thinking lines]
+
+*\"there is no need to have the line break here because the whole tail fits. you didnt try the
+'tool calls' -> 'tools' -> 't' progressing. so I complain about line wrapping here.\"*
+
+**They are right and the reservation was the cause.** The prose was rendered `cols - room` wide —
+56 columns given up from EVERY line — so a sentence that would have fitted at the frame's own width
+broke early, for a marker that is almost never 56 columns. Two passes at this had already fixed the
+marker's own words (the ladder) and the position of the echo; what neither touched was the fact that
+the ROOM was being spent on lines that do not contain the marker.
+
+**So the sentence wraps at `cols` and the marker fits the last line's leftover.** The claims here are
+the operator's, in their words:
+
+  · **no line break for the tail** — a sentence short enough to fit is ONE row, not two;
+  · **the whole tail fits** — the marker is on that row and the row is inside the frame;
+  · **and the ladder is what pays** when the leftover is small, which the test below asserts at
+    several widths."
   (let ((leticl::*verbosity* :reading) (leticl::*scroll-anchor* nil)
         (leticl::*hist-cache* nil) (leticl::*hist-generation* 0)
         (leticl::*hidden-run-open* nil) (leticl::*marker-seam* t))
-    ;; **80 columns and not 60**: at 60 the room is 30 and the ladder has already started paying for
-    ;; the counts — that is `the-room-for-the-counts-is-fixed-and-the-marker-gives-way` below, and
-    ;; asserting it here would make this test's claim about the RESERVATION ambiguous with the
-    ;; ladder's.
-    (let ((h (%on-head :cols 80 :rows 24)))
+    ;; the operator's own numbers: 210 columns, a tail of 55 — and the frame is the sentence's
+    (let ((h (%on-head :cols 210 :rows 24)))
       (setf (head-connected h) t)
       (setf (session-items (head-session h))
             (coerce (list (list :item-id "a" :kind "assistant" :ts 0
                                 :item (list :type "assistant"
-                                            :text "Now here is a sentence that is long enough to fill this line exactly!"))
+                                            :text "why letibot pushes the turn pane and then the echo block, the same order I just fixed. Let me confirm where the committed history sits:"))
                           (list :item-id "t" :kind "tool_result" :ts 0
                                 :item (list :type "tool_result" :call-id "c" :name "bash"
                                             :verb "ran" :subject "\"x\"" :outcome (list :outcome "ok")
                                             :payload "o")))
                     'vector))
-      (let* ((ls (leticl::%viewport-lines h 80 18))
+      (let* ((ls (leticl::%viewport-lines h 210 18))
              (texts (mapcar (lambda (l) (if (consp l) (format nil "~{~a~}" (mapcar #'car l)) "")) ls))
-             (marker (position-if (lambda (s) (search "[1 tool call" s)) texts)))
+             (marker (position-if (lambda (s) (search "tool call" s)) texts)))
         (is (integerp marker) "the counts are on the screen")
-        (is (search "line exactly! [1 tool call]" (nth marker texts))
-            (format nil "**the counts are on the SENTENCE'S OWN LINE**, not pushed onto a line of\n their own — the room was reserved before it wrapped: ~s" (subseq texts 0 (1+ marker))))
-        (is (<= (string-width (nth marker texts)) 80)
-            "and that line is still inside the frame")))))
+        (is (search "committed history sits: [1 tool call]" (nth marker texts))
+            (format nil "**the tail is NOT broken** — the last words of the sentence and the
+ counts share one row, which they could not while 56 columns were held back from every line: ~s"
+                    (subseq texts (max 0 (1- marker)) (1+ marker))))
+        (is (<= (string-width (nth marker texts)) 210)
+            "and that row is inside the frame")
+        ;; **and the sentence above it is untouched by the marker** — the point of moving the room
+        ;; to the last line only: nothing this function does can affect a line it is not on
+        (is (not (some (lambda (s) (and (plusp (length s)) (search "committed history" s)
+                                        (not (search "tool call" s))))
+                       texts))
+            "the sentence's last words appear once, on the counts' row and not on one of their own")))))
 
 (defun %blank-line-p (s) (every (lambda (ch) (char= ch #\space)) s))
 
@@ -15714,66 +15783,57 @@ one for the ladder."
            (end (or (position "" rows :start (1+ at)) (length rows))))
       (subseq rows at end))))
 
-(def-test the-room-for-the-counts-is-fixed-and-the-marker-gives-way (:suite leticl)
-  "**The room is a function of the frame and nothing else, and what pays for growth is the marker's own
-words.**
+(def-test the-marker-steps-down-its-ladder-to-fit-the-last-line (:suite leticl)
+  "**The ladder is what pays, and the SENTENCE is never what gives way.**
 
-The operator, on the shape this replaced: *\"the text starts to jump - counts add digits when grow,
-and at some point the line could be split so things jump even more. I dont like jumps. so, somehow if
-we found a place for the [] stats on the first render … we just start to remove bloat - 'tool calls' ->
-'tools' -> 't' and so on\"*.
+Two earlier versions of this got the same thing wrong from opposite sides, and the operator's
+reports are the record of both:
 
-Three claims, and the first is the one the operator asked for:
+  · **first**, the marker's room WAS its actual width, so a digit landing re-wrapped the sentence
+    above it — *\"counts add digits when grow … I dont like jumps\"*;
+  · **then**, the room became a constant of the frame and was subtracted from EVERY line, so the
+    sentence broke early for a marker that is almost never that wide — *\"there is no need to have
+    the line break here because the whole tail fits. you didnt try the 'tool calls' -> 'tools' ->
+    't' progressing. so I complain about line wrapping here.\"*
 
-  · **the sentence wraps the same way whatever the counts.** `9 tool calls` and `100 tool calls` are
-    two columns apart, and under the old rule those two columns came out of the paragraph above them —
-    so the second digit landing re-broke the reader's line. The room is COLS alone now, so the two
-    frames below are identical above the counts, word for word.
-  · **the marker never outgrows the room**, at any count and any frame — so it can never split, which
-    was the operator's *\"at some point the line could be split\"*.
-  · **and the words step down the operator's own ladder** when the full spelling no longer fits."
-  ;; --- the room, and the two ends of it
-  (is (= 50 (leticl::hidden-run-marker-room 100)) "half of a hundred-column frame")
-  (is (= 56 (leticl::hidden-run-marker-room 240))
-      "capped, so a wide frame does not hand the counts more than the marker can use")
-  (is (= 22 (leticl::hidden-run-marker-room 40))
-      "floored, because below this the two clauses stop being readable")
-  (is (= 20 (leticl::hidden-run-marker-room 20))
-      "**and never wider than the frame it is on** — a room past the edge is not a room")
-  (is (= 56 (leticl::hidden-run-marker-room 112))
-      "and half of a frame past 112 is more than the marker can use, so the cap takes over there:")
-  (is (= 55 (leticl::hidden-run-marker-room 111)) "just below it, half the frame is still the rule")
-  (is (= (leticl::hidden-run-marker-room 100) (leticl::hidden-run-marker-room 100))
-      "and it answers from COLS alone — no count, no run, nothing else in it")
-  ;; --- the sentence does not move when the counts grow
-  (let ((nine (%counts-narration-row 9 9))
-        (hundred (%counts-narration-row 100 246)))
-    (is (= 4 (length nine)) "the narration wraps to four lines")
-    (is (equal (butlast nine) (butlast hundred))
-        (format nil "**the sentence wraps WORD FOR WORD the same at 9 calls and at 100** — the\n paragraph above the counts must not re-break when a digit lands: ~s vs ~s" nine hundred))
-    (is (search "[9 tools, 9 thinking] · ctrl-t opens it" (car (last nine)))
-        "and at 9 the counts paid for the second column themselves")
-    (is (search "[100 tools, 246 thinking] · ctrl-t opens it" (car (last hundred)))
-        "as they do at 100 — the sentence's breaks are not what gives way here"))
-  ;; --- the marker fits its room, at every count and every frame
-  (dolist (cols '(30 40 60 80 100 240))
-    (dolist (ct '((1 0) (2 1) (9 9) (10 10) (100 246) (1200 24000)))
-      (dolist (newest '(t nil))
-        (let ((room (leticl::hidden-run-marker-room cols))
-              (w (leticl::%segs-width
-                  (leticl::hidden-run-marker (%counts-run-items (first ct) (second ct)) cols newest))))
-          (is (<= w (1- room))
-              (format nil "**inside its room**: ~a calls / ~a thinking at ~a columns is ~a wide, and\nthe room is ~a — a marker that does not fit is a marker that splits"
-                      (first ct) (second ct) cols w room))))))
-  ;; --- and the ladder is the operator's: counts first, and only then the seam
-  (is (search "[1200 tools, 24000 thinking] · ctrl-t opens it" (%counts-marker-text 1200 24000 100 t))
-      "the counts give way a rung while the seam is untouched")
-  (is (search "[1200t, 24000l]" (%counts-marker-text 1200 24000 60 t))
-      "and at a narrow frame they give way all the way to the operator's own `t`")
-  (is (search "[1200t, 24000l] · ctrl-t" (%counts-marker-text 1200 24000 60 t))
-      "with `ctrl-t` still named — the seam is spent after the counts, not before them")
-  (is (search "[1 tool call] · ctrl-t opens it" (%counts-marker-text 1 0 100 t))
-      "**and a small run is spelled out in full**, so the ladder is a response to growth and not a\n tax every marker pays"))
+**The version that satisfies both is the room on the LAST LINE ONLY**, and that is structural rather
+than arithmetic: the marker is appended after the sentence has already wrapped at the frame's own
+width, so nothing it does can reach a line it is not on. The only variable left is how much of the
+last line is spare, and the ladder spends the marker's WORDS on it.
+
+**And the ladder is the operator's own — `tool calls` → `tools` → `calls` → `t`** — so what is
+asserted here is that it is *reached*: at a width where the full marker fits the leftover, the full
+marker is what is drawn; at one where it does not, the words are shorter and the sentence is the same
+length. A version that truncated the sentence instead would pass a *fits* test and fail this one."
+  (let ((leticl::*marker-seam* t))
+    (flet ((text-at (cols calls thinking)
+             (let* ((item (list :item-id "a" :kind "assistant" :ts 0
+                                :item (list :type "assistant"
+                                            :text "a sentence of a known length that ends here.")))
+                    (run (%counts-run-items calls thinking))
+                    (il (leticl::item-lines item cols nil)))
+               ;; the real path: the sentence wrapped at COLS, then the marker fitted to the last line
+               (format nil "~{~a~}" (mapcar #'car (leticl::%marker-onto-last-line
+                                                   (leticl::item-lines item cols nil)
+                                                   run cols t nil))))))
+      ;; the sentence is 48 columns; at 120 the leftover is ~69 and the full marker fits
+      (let ((wide (text-at 120 1 0))
+            (tight (text-at 62 100 0)))
+        (is (search "[1 tool call]" wide)
+            (format nil "**with room to spare the marker is spelled in full**: ~s" wide))
+        (is (search "[100t]" tight)
+            (format nil "**and with little room the ladder is reached TWICE OVER** — 11 columns
+ of leftover cannot hold `[100 tools]` (11) or `[100 calls]` (11), so the operator's own last rung
+ is what is drawn, and the sentence is untouched: ~s" tight))
+        ;; **the sentence is the SAME in both**, which is the whole point: the marker's size is not
+        ;; allowed to change how the prose wrapped
+        (is (search "a sentence of a known length that ends here." tight)
+            (format nil "**the sentence is intact and unwrapped in both** — the ladder pays: ~s" tight))
+        ;; **and the line is never wider than the frame it is on**
+        (is (<= (string-width tight) 62)
+            (format nil "**the row fits its frame**: ~a columns of 62" (string-width tight)))
+        (is (<= (string-width wide) 120)
+            (format nil "**and so does the wide one**: ~a columns of 120" (string-width wide)))))))
 
 (def-test the-reading-rung-names-itself-on-a-row-that-does-not-expire (:suite leticl)
   "**R37: *the head says which state it is in* — and that is what makes hiding safe here, where
