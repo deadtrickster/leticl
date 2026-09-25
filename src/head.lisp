@@ -123,11 +123,16 @@ is folded and which is therefore free — one cons. It is here because a frame t
 head cannot read is only evidence if the operator can see the bytes, and the two
 places that meet one (an unknown frame tag, an unknown event tag) are downstream of
 the decode that would otherwise have dropped the line on the floor."
-  (loop
+  ;; **The stream is taken ONCE, and the goodbye names it.** A reconnect replaces `head-stream`
+  ;; while this loop is still running on the old one; reading through the slot would have the old
+  ;; reader read the NEW socket, and an untagged `(:disconnected)` from it would be taken as the
+  ;; new connection's. `%handle-frame` ignores a marker whose stream is not the current one.
+  (loop with stream = (head-stream head)
+        do
     (handler-case
-        (multiple-value-bind (line eof) (read-frame (head-stream head))
+        (multiple-value-bind (line eof) (read-frame stream)
           (cond (eof
-                 (sb-concurrency:send-message (head-frames head) '(:disconnected))
+                 (sb-concurrency:send-message (head-frames head) (list :disconnected stream))
                  (return))
                 (t
                  (handler-case
@@ -148,7 +153,7 @@ the decode that would otherwise have dropped the line on the floor."
                             :detail (format nil "~a" (wire-error-detail e))
                             :line (wire-error-line e))))))))
       (error (e)
-        (sb-concurrency:send-message (head-frames head) '(:disconnected))
+        (sb-concurrency:send-message (head-frames head) (list :disconnected stream))
         (sb-concurrency:send-message
          (head-frames head)
          (list :frame "warning" :code "read-error" :detail (format nil "~a" e)))
@@ -490,7 +495,21 @@ and a `hello` with a snapshot). Returns T when the queue moved."
 (defun %handle-frame (head frame)
   (cond
     ((and (consp frame) (eq (car frame) :disconnected))
+     ;; **A STALE READER'S GOODBYE IS NOT THIS CONNECTION'S.** The marker names the stream its
+     ;; reader was on. After a reconnect the OLD reader is still unwinding — `%try-reconnect`
+     ;; closed its stream, and it posts `(:disconnected)` for that — while `head-stream` is
+     ;; already the new socket; taking that marker flipped the new connection to "detached" and
+     ;; cost a second reconnect two seconds later, every time. A marker with no stream (a
+     ;; fixture, a test) is about the current one.
+     (when (and (second frame) (not (eq (second frame) (head-stream head))))
+       (return-from %handle-frame :control))
      (setf (head-connected head) nil)
+     ;; **the socket took two outstanding asks with it**: the resync this head sent for a gap
+     ;; will never be answered on a dead connection, and left set it disabled automatic resync
+     ;; for the rest of the process; a row fetch in flight the same. The reattach carries
+     ;; `since-seq`, so the gap is re-measured on the new connection if it is still there.
+     (setf *resync-asked* nil
+           *row-fetch* nil)
      (say head "detached — reconnecting…")
      ;; **A DAEMON OLDER THAN `read_job_output` DROPS THE SOCKET, and this is the
      ;; only place that can say so.**
@@ -599,6 +618,15 @@ and a `hello` with a snapshot). Returns T when the queue moved."
                (head-peeked head) nil
                (head-queued head) nil
                *queued-unconfirmed* nil
+               ;; the third leg of the echo: a row id from the old session must not draw a
+               ;; prompt in the new one
+               *bound-prompts* nil
+               ;; **the rows-above facts are the OLD transcript's.** `*rows-above-gone*` is the
+               ;; daemon saying THAT transcript's top is out of reach; carried across a switch it
+               ;; stopped the new session from ever asking for its own rows. A fetch in flight is
+               ;; an answer that will name a row this head no longer holds.
+               *row-fetch* nil
+               *rows-above-gone* nil
                (head-picker-sel head) 0)
          ;; and the overlays, for the reason the job ROWS are cleared: a window
          ;; belongs to the session that produced it, so a `j12` carried across a
@@ -1807,7 +1835,9 @@ through `scripts/leticl-head`, the same two frames `/new` sends from the compose
            (run-loop head)
         (ignore-errors (%send head (make-detach)))
         (hack-stop head)))
-    (ignore-errors (close stream))
+    ;; the head's CURRENT stream, not the one this function opened: a reconnect replaced it, and
+    ;; closing the original a second time left the live socket open at exit
+    (ignore-errors (close (head-stream head)))
     ;; **THE FAREWELL, after the terminal is back.** A `Bye` says why the daemon
     ;; ended the conversation — a version skew names both numbers — and saying it
     ;; into the transcript puts it on the ALTERNATE SCREEN, which is thrown away

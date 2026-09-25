@@ -2035,8 +2035,11 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
       (setf gap (note-seq-gap session (session-seq session) seq)))
     ;; the seq is consumed either way: a filtered frame still advances the read
     ;; mark, or a head that draws little rereads its own output forever
-    (setf (session-seq session) seq
-          (session-expected-seq session) seq)
+    ;; guarded: the slots are fixnums, and an envelope without a `seq` (a fixture built by hand,
+    ;; a frame from a daemon that forgot) would otherwise take the head down on a type error
+    (when (integerp seq)
+      (setf (session-seq session) seq
+            (session-expected-seq session) seq))
     ;; **A GAP DOES NOT SWALLOW THE EVENT THAT REVEALED IT.** This used to be
     ;; `(when gap (return-from apply-event :dirty))` — the row was filed, and the frame
     ;; that carried the new seq was never folded. So every gap cost the head one MORE

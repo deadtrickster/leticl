@@ -10797,7 +10797,10 @@ gap is lost, its call stays `running`, the marker stays yellow for the rest of t
       (is (= 1 leticl::*seq-gaps*) "and is counted")
       (is (equal "finished" (getf (getf (leticl::call-view (session-turn s) "c1") :state) :state))
           "**and the event itself was folded**: the call is finished, not left running")
-      (is (not (turn-busy-p (session-turn s))) "so the turn is no longer busy"))))
+      ;; the turn itself is still generating (`turn_finished` has not come), so it is still
+      ;; busy — the fact the fold restores is that NO CALL is executing, which is the yellow's
+      (is (zerop (or (getf (leticl::%hidden-run-live-work (session-turn s) 80) :running) 0))
+          "so nothing is executing, and the marker has nothing to be yellow about"))))
 
 (def-test the-markers-number-hands-over-from-live-work-to-the-row-without-a-dip (:suite leticl)
   "The marker's number is landed result rows PLUS live work, and the two halves must hand over
@@ -10831,6 +10834,73 @@ white) tool calls.\"* A count of work done cannot go down."
           "**nothing is executing, so the number is not yellow** even though it is still live"))
     (leticl::note-answered-call "c2")
     (is (null (leticl::%hidden-run-live-work turn 80)) "both rows landed: nothing in flight")))
+
+(def-test a-dead-socket-releases-the-asks-it-took-with-it (:suite leticl)
+  "`*resync-asked*` was cleared only by the `resync` frame. A socket that died between the ask and
+the answer left it T for the rest of the process, and every later gap then went unrepaired —
+automatic resync silently off. The same for a row fetch in flight."
+  (let* ((leticl::*resync-asked* t)
+         (leticl::*row-fetch* (list :row "r1" :at 0))
+         (h (%make-head)))
+    (setf (head-connected h) t)
+    (leticl::%handle-frame h (list :disconnected))
+    (is (null leticl::*resync-asked*) "the outstanding resync ask is released")
+    (is (null leticl::*row-fetch*) "and the fetch in flight")
+    (is (not (head-connected h)) "and the head is detached")))
+
+(def-test a-stale-readers-goodbye-does-not-detach-the-new-connection (:suite leticl)
+  "After a reconnect the OLD reader is still unwinding on its closed stream and posts
+`(:disconnected)`. Untagged, that marker flipped the NEW connection to detached and cost a second
+reconnect two seconds later, every time. The marker now names its stream; one that is not the
+head's current stream is ignored, and one with no stream (a fixture) is about the current one."
+  (let* ((h (%make-head))
+         (old (make-string-output-stream))
+         (new (make-string-output-stream)))
+    (setf (leticl::head-stream h) new (head-connected h) t)
+    (leticl::%handle-frame h (list :disconnected old))
+    (is (head-connected h) "the old reader's goodbye is not this connection's")
+    (leticl::%handle-frame h (list :disconnected new))
+    (is (not (head-connected h)) "the current stream's goodbye is")))
+
+(def-test a-switch-leaves-the-old-transcripts-rows-above-facts-behind (:suite leticl)
+  "`*rows-above-gone*` is the daemon saying THAT transcript's top is out of reach; carried across a
+`/switch` it stopped the new session from ever asking for its own rows. A fetch in flight and the
+echo bindings (row ids of the old session) go with it."
+  (let* ((h (%make-head))
+         (leticl::*rows-above-gone* t)
+         (leticl::*row-fetch* (list :row "r1" :at 0))
+         (leticl::*bound-prompts* (list (cons "u1" "old prompt"))))
+    (setf (session-session-id (head-session h)) "s-old")
+    (leticl::%handle-frame h (list :frame "hello" :session-id "s-new" :head-id "h1"
+                                   :protocol-version leticl::+protocol-version+
+                                   :snapshot (list :session-id "s-new" :seq 1 :items nil)))
+    (is (null leticl::*rows-above-gone*) "the new session may ask for its rows")
+    (is (null leticl::*row-fetch*) "no fetch from the old one is pending")
+    (is (null leticl::*bound-prompts*) "no old row id draws a prompt here")))
+
+(def-test the-joined-prose-memo-misses-when-a-row-lands (:suite leticl)
+  "The memo was keyed on the items vector's identity alone, and `push-item` is `vector-push-extend`:
+the same vector gains a row, the key still matched, and with join-prose on the new row was not in
+the joined copy. The key is now the vector, the generation and the width."
+  (let* ((leticl::*reading-joined* nil)
+         (h (%make-head))
+         (s (head-session h)))
+    (leticl::push-item s (list :item-id "a1" :kind "assistant" :ts 1
+                               :item (list :type "assistant" :text "first")))
+    (let ((first (leticl::%reading-joined-items (session-items s) 80)))
+      (is (= 1 (length first)) "one row joined")
+      (leticl::push-item s (list :item-id "a2" :kind "assistant" :ts 2
+                                 :item (list :type "assistant" :text "second")))
+      (is (= 2 (length (leticl::%reading-joined-items (session-items s) 80)))
+          "**the row that landed is in the joined copy** — the memo missed")
+      (is (not (eq first (leticl::%reading-joined-items (session-items s) 60)))
+          "and a different width is a different join"))))
+
+(def-test an-envelope-without-a-seq-does-not-take-the-head-down (:suite leticl)
+  (let* ((h (%make-head))
+         (s (head-session h)))
+    (finishes (apply-event s (list :event "head_attached" :head-id "h" :kind "tui" :identity "x")))
+    (is (zerop (session-seq s)) "the mark did not move")))
 
 (def-test prompts-queued-behind-a-running-tool-call-coalesce (:suite leticl)
   "**Behind a running turn means BUSY, not the state name.** The daemon drains its source at
@@ -13598,7 +13668,15 @@ seconds of a turn that has stopped talking and nothing on the screen saying so."
     (let ((leticl::*now-ms* 15500) (leticl::*last-event-ms* 0))
       (is (stall-text h) "fifteen and a half seconds of silence is a stall"))
     (let ((leticl::*now-ms* 14500) (leticl::*last-event-ms* 0))
-      (is (null (stall-text h)) "fourteen and a half is not"))))
+      (is (null (stall-text h)) "fourteen and a half is not"))
+    ;; **AND DURING A TOOL CALL**, which is when a long silence actually happens: the state name
+    ;; reads "finished" the whole time, and the line was silent for the one case it exists for
+    (setf (session-turn (head-session h))
+          (list :turn-id "t1" :model "a-model" :state (list :state "finished")
+                :calls (list (list :call-id "c1" :name "bash" :state (list :state "running")))))
+    (let ((leticl::*now-ms* 15500) (leticl::*last-event-ms* 0))
+      (is (search "esc esc" (or (stall-text h) ""))
+          "a turn waiting on a call is a stall too: ~s" (stall-text h)))))
 
 (def-test the-box-edges-pin-their-legends-right-and-frame-them (:suite leticl)
   "`box_edge` (app.rs:5384-5411). Ours put the top legend hard against the `╭`
@@ -14069,24 +14147,33 @@ it was written to open.
 (`live_work`, app.rs:13262); its `superseded` guard fires only when every row has a body AND every
 call is finished, which is the case that counts zero anyway. A turn with nothing unfinished still
 returns NIL, so a quiet turn stays quiet."
-  (let ((base (list :turn-id "t1" :model "m" :text "" :reasoning ""
-                    :calls (list (list :call-id "c1" :name "bash" :state (list :state "running"))))))
+  (let* (;; the answered table is a global other tests leave "c1" in; this test's calls are its own
+         (leticl::*answered-calls* nil)
+         (base (list :turn-id "t1" :model "m" :text "" :reasoning ""
+                     :calls (list (list :call-id "c1" :name "bash" :state (list :state "running"))))))
     ;; **the measured case**: the turn says finished, the call says running
-    (is (equal '(:calls 1 :thinking 0)
+    (is (equal '(:calls 1 :running 1 :thinking 0)
                (leticl::%hidden-run-live-work (list* :state (list :state "finished") base) 100))
         "a running call is live work even when the turn is labelled finished")
-    (is (equal '(:calls 1 :thinking 0)
+    (is (equal '(:calls 1 :running 1 :thinking 0)
                (leticl::%hidden-run-live-work (list* :state (list :state "running") base) 100))
         "and when it is labelled running, which is the case that used to be the only one")
-    ;; a turn with nothing in flight is still quiet, whatever its label
+    ;; a turn with nothing in flight is still quiet, whatever its label — *in flight* meaning
+    ;; the call's RESULT ROW has landed (`*answered-calls*`), which is the hand-over point; a
+    ;; finished call whose row is still coming is counted, and not running (the no-dip rule)
     (let ((done (list :turn-id "t2" :model "m" :text "" :reasoning ""
                       :calls (list (list :call-id "c1" :name "bash"
                                          :state (list :state "finished"
                                                       :outcome (list :outcome "ok")))))))
-      (is (null (leticl::%hidden-run-live-work (list* :state (list :state "finished") done) 100))
-          "**a finished call is not live work** — the count is the gate, not a second label")
-      (is (null (leticl::%hidden-run-live-work (list* :state (list :state "running") done) 100))
-          "even while the turn still says running: the CALL is what is asked"))
+      (let ((leticl::*answered-calls* nil))
+        (is (equal '(:calls 1 :running 0 :thinking 0)
+                   (leticl::%hidden-run-live-work (list* :state (list :state "finished") done) 100))
+            "finished, row not landed: still counted, no longer running"))
+      (let ((leticl::*answered-calls* (list "c1")))
+        (is (null (leticl::%hidden-run-live-work (list* :state (list :state "finished") done) 100))
+            "**a finished call whose row has landed is not live work** — the count is the gate, not a second label")
+        (is (null (leticl::%hidden-run-live-work (list* :state (list :state "running") done) 100))
+            "even while the turn still says running: the CALL is what is asked")))
     (is (null (leticl::%hidden-run-live-work nil 100)) "no turn, nothing live")))
 
 (def-test the-frame-is-clock-driven-for-the-whole-turn (:suite leticl)
@@ -14386,7 +14473,7 @@ running, AND this must be the live edge — the newest run, or the row live work
   (flet ((rising (busy live live-here) (leticl::marker-rising-p busy live live-here)))
     ;; **the live edge of a running turn is yellow** — both halves present, which is the state the
     ;; operator was watching when he asked for this
-    (is (funcall #'rising t '(:calls 1) '(:calls 1))
+    (is (funcall #'rising t '(:calls 1 :running 1) '(:calls 1 :running 1))
         "the row live work rides on is rising while its call is in flight")
     ;; **AND *THE NEWEST RUN* IS NOT THE QUESTION — THE LIVE ROW IS.** The operator: *"yes one old tool
     ;; call is still yellow."* A call proposed with no result row yet leaves the newest run of HIDDEN
@@ -14413,8 +14500,12 @@ running, AND this must be the live edge — the newest run, or the row live work
     ;; **AND IT ANSWERS T, not the thing that made it true.** `live-here` is a plist — the walk
     ;; hands it `%hidden-run-live-work`'s own value — so without the trailing `t` this returned
     ;; `(:calls 1 :thinking 0)` to a caller asking yes-or-no. MEASURED on the live head.
-    (is (eq t (funcall #'rising t '(:calls 1) '(:calls 1 :thinking 0)))
+    (is (eq t (funcall #'rising t '(:calls 1 :running 1) '(:calls 1 :running 1 :thinking 0)))
         "a truthy `live-here` answers T and not the plist")
+    ;; **and `:running` is the number the colour reads, not `:calls`** — a call that has FINISHED
+    ;; and whose row is a frame away is still counted (`:calls`), and must not be yellow
+    (is (not (funcall #'rising t '(:calls 1 :running 0) '(:calls 1 :running 0)))
+        "a finished call whose row has not landed keeps the number and drops the colour")
     ;; **and an OLDER run in the same running turn is not** — this is the regression
     ;; **and nothing rising once the turn is over**, however recent the run
     (is (not (funcall #'rising nil '(:calls 1) '(:calls 1)))
@@ -14518,49 +14609,6 @@ prose's own register with it."
     (is (string= (format nil "~{~a~}" (mapcar #'car settled))
                  (format nil "~{~a~}" (mapcar #'car (funcall segs (list :calls 0 :thinking 0) t))))
         "only the colour moves; not one character of the marker does")))
-
-(def-test a-running-call-is-live-work-whatever-the-turn-is-called (:suite leticl)
-  "**The gate was the turn's STATE NAME, and MEASURED on the live head it was wrong.**
-
-With a bash call plainly executing, the head reported:
-
-    (:TURN-STATE \"finished\"
-     :CALLS ((\"call_00_2BEv4qYe4aW9V9hRz4400585\" \"running\"))
-     :LIVE NIL
-     :MARKER ((\"[0 head events]\") (\"\" :DIM T)))
-
-So the marker said **`[0 head events]` while a tool call ran** — the operator's *\"still no yellow
-counters for [] running tool calls\"*, with the brackets nearly empty because the in-flight call was
-never counted, and no yellow because `live` was nil.
-
-The turn's name lags the call it is running. The model has stopped generating, so from the turn's own
-point of view the turn is over — and the command it asked for is still going. That window is the
-whole reason `%hidden-run-live-work` exists, so gating it on the turn's label closed the very window
-it was written to open.
-
-**A call's own state is the evidence.** The reference takes the turn pane's existence and counts
-(`live_work`, app.rs:13262); its `superseded` guard fires only when every row has a body AND every
-call is finished, which is the case that counts zero anyway. A turn with nothing unfinished still
-returns NIL, so a quiet turn stays quiet."
-  (let ((base (list :turn-id "t1" :model "m" :text "" :reasoning ""
-                    :calls (list (list :call-id "c1" :name "bash" :state (list :state "running"))))))
-    ;; **the measured case**: the turn says finished, the call says running
-    (is (equal '(:calls 1 :thinking 0)
-               (leticl::%hidden-run-live-work (list* :state (list :state "finished") base) 100))
-        "a running call is live work even when the turn is labelled finished")
-    (is (equal '(:calls 1 :thinking 0)
-               (leticl::%hidden-run-live-work (list* :state (list :state "running") base) 100))
-        "and when it is labelled running, which is the case that used to be the only one")
-    ;; a turn with nothing in flight is still quiet, whatever its label
-    (let ((done (list :turn-id "t2" :model "m" :text "" :reasoning ""
-                      :calls (list (list :call-id "c1" :name "bash"
-                                         :state (list :state "finished"
-                                                      :outcome (list :outcome "ok")))))))
-      (is (null (leticl::%hidden-run-live-work (list* :state (list :state "finished") done) 100))
-          "**a finished call is not live work** — the count is the gate, not a second label")
-      (is (null (leticl::%hidden-run-live-work (list* :state (list :state "running") done) 100))
-          "even while the turn still says running: the CALL is what is asked"))
-    (is (null (leticl::%hidden-run-live-work nil 100)) "no turn, nothing live")))
 
 (def-test the-marker-seam-is-hidden-unless-asked-for (:suite leticl)
   "**The operator's own config request, and its default is the ruling.**

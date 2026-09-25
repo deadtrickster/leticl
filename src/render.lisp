@@ -501,7 +501,13 @@ thirty rows appended, and the view jumped to `row-62`."
           ;; It belongs to the NEWEST row the reader can see, which the walk reaches FIRST (it runs
           ;; newest to oldest), so one flag is the whole of the bookkeeping.
           (live (%hidden-run-live-work (session-turn s) cols))
-          (live-pending (and live t))
+          ;; **AND NOT ON A CACHE HIT.** A hit means the newest rows — the row the live work rides
+          ;; on among them — are already in `lines`, drawn with the marker they had; the walk that
+          ;; follows only EXTENDS downward into older rows to fill the screen. Re-arming this flag
+          ;; there put the in-flight counts, and the yellow, on the first OLD row the extension
+          ;; reached: a settled counter from an earlier turn lit up while a call ran. The live
+          ;; marker's freshness on a hit is `%hist-live-tick`'s job, which is in the key.
+          (live-pending (and live (not cached) t))
           ;; **IS THE TURN STILL WORKING** — the COUNTS' question is `live` (what is in flight) and
           ;; the COLOUR's is this: a call finishing and the next round's first delta arriving are
           ;; two events, and between them `live` is nil while the turn runs on. Keying the yellow on
@@ -1536,21 +1542,10 @@ scrolls the transcript by a row every keystroke.
           (setf *caret* (cons (max 0 (min (1- rows) (+ cursor (car caret))))
                               (max 0 (min (1- term-cols) (+ gutter (cdr caret)))))))))))
 
-(defparameter +right-margin+ 2
-  "Columns of right margin, so the frame is not flush against the edge.
-
-Measured from letibot's own screen: in a 210-column pane its box spans columns 2
-to 207, which is a 2-column gutter, 206 of content and 2 columns of right margin.
-Ours drew flush to 209.")
-
-(defparameter +gutter+ 2
-  "Columns of left margin the whole frame sits inside.
-
-Measured against letibot's own screen: its body, its chrome and its composer box
-are all indented two columns, and the box is 208 wide in a 210 frame. The gutter
-is what makes a frame read as a frame rather than as text that happens to start at
-the left edge — and it is the last visible difference between the two heads'
-layout.")
+;;; `+right-margin+` and `+gutter+` were defined a SECOND time here, with a second docstring that
+;;; contradicted the first (this one called the margin a constant of its own; the first says it is
+;;; the gutter mirrored). Both values were 2, so nothing showed — but the later `defparameter` was
+;;; the one a reader of this region found, and it was the wrong story. One definition each, above.
 
 (defun pane-width (cols)
   "The columns a pane's ROW may use, from the body width COLS it is handed.

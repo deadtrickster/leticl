@@ -2024,7 +2024,14 @@ anything the reader can SEE that is not assistant text - a report from a differe
 user message - ends the possibility, because there the item boundary is carrying real information.
 
 The merged row is a COPY: the session's own plist is the session's, and this is a rendering."
-  (if (and *reading-joined* (eq (car *reading-joined*) items))
+  ;; **THE MEMO'S KEY IS THE VECTOR, THE GENERATION AND THE WIDTH — not the vector alone.**
+  ;; `push-item` is `vector-push-extend`, so a session that gains a row keeps the SAME vector, and a
+  ;; key that was only its identity never missed: with join-prose on, a new row or a body landing
+  ;; in an announced one was not in the joined copy until something replaced the vector. The
+  ;; generation is what every writer of a committed row already bumps (`*hist-generation*`), and
+  ;; the width decides where a run's counts wrap, so both are part of what the join depends on.
+  (if (and *reading-joined*
+           (equal (car *reading-joined*) (list items *hist-generation* cols)))
       (cdr *reading-joined*)
       (let* ((n (length items))
              (out nil)
@@ -2076,7 +2083,7 @@ The merged row is a COPY: the session's own plist is the session's, and this is 
                    (setf last (first out)
                          gap nil)))))
         (let ((joined (coerce (nreverse out) 'vector)))
-          (setf *reading-joined* (cons items joined))
+          (setf *reading-joined* (cons (list items *hist-generation* cols) joined))
           joined)))))
 
 (defun %run-continues-prose-p (item)

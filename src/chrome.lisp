@@ -685,8 +685,11 @@ head (a test of the clock alone) the old shorter form stands."
       (if (null head)
           (format nil " · no frames for ~a" (duration ms))
           (let ((turn (session-turn (head-session head))))
-            (when (and turn (string= (turn-state-name turn) "running"))
-              (format nil "~a — nothing received for ~a. The turn is still marked running; esc esc interrupts it."
+            ;; BUSY, not the state name: the name reads "finished" for the whole of a tool call,
+            ;; which is exactly when a long silence happens — so this line was silent for the one
+            ;; case it exists for (the same defect `turn-busy-p` records, in its fifth place).
+            (when (and turn (turn-busy-p turn))
+              (format nil "~a — nothing received for ~a. The turn is still working; esc esc interrupts it."
                       (%model-name (head-session head)) (duration ms))))))))
 
 (defun notice-line (head cols)
