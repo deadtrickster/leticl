@@ -13977,6 +13977,11 @@ running, AND this must be the live edge — the newest run, or the row live work
     ;; operator was watching when he asked for this
     (is (funcall #'rising t t nil) "a running turn's newest run is rising")
     (is (funcall #'rising t nil t) "and so is the row live work rides on, with no run at all")
+    ;; **AND IT ANSWERS T, not the thing that made it true.** `live-here` is a plist — the walk
+    ;; hands it `%hidden-run-live-work`'s own value — so without the trailing `t` this returned
+    ;; `(:calls 1 :thinking 0)` to a caller asking yes-or-no. MEASURED on the live head.
+    (is (eq t (funcall #'rising t nil '(:calls 1 :thinking 0)))
+        "a truthy `live-here` answers T and not the plist")
     ;; **and an OLDER run in the same running turn is not** — this is the regression
     (is (not (funcall #'rising t nil nil))
         "**an older run's marker is NOT yellow while the turn runs** — the whole-transcript bug")

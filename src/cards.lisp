@@ -1748,8 +1748,17 @@ work's own.
 
 **A function, and not the one-line `and` at each call site**, because there are two call sites (the
 in-walk flush and the end-of-walk one) and this colour has now been wrong twice in opposite
-directions. One definition the walk and a test can both ask."
-  (and busy (or live-here newest)))
+directions. One definition the walk and a test can both ask.
+
+**AND IT ANSWERS A BOOLEAN.** `(and busy (or live-here newest))` returns `live-here` itself when that
+is what made it true — and `live-here` is `%hidden-run-live-work`'s plist, so the function handed
+`:calls 1 :thinking 0` to a caller asking yes-or-no. Truthy, so the colour was right by accident, and
+measured on the live head before this was caught:
+
+    (marker-rising-p t t live) => (:CALLS 1 :THINKING 0)
+
+A predicate that returns somebody else's data is a predicate whose next reader will destructure it."
+  (and busy (or live-here newest) t))
 
 (defun hidden-run-marker (items cols &optional newest live max-width rising)
   "The marker's SEGMENTS — `[N tool calls, M thinking lines] · ctrl-t opens it`.
