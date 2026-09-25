@@ -1728,7 +1728,30 @@ at the writer."
   (incf *hist-generation*)
   *marker-seam*)
 
-(defun hidden-run-marker (items cols &optional newest live max-width)
+(defun marker-rising-p (busy newest live-here)
+  "Is THIS marker's number still going up — the one question the yellow answers.
+
+**Two things must both hold, and each was learned by getting it wrong.**
+
+  · **THE TURN MUST STILL BE RUNNING** (`busy`). The first cut keyed the colour on `live` — the work
+    IN FLIGHT — and it flickered: a call finishing and the next round's first delta arriving are two
+    different events, so in the gap between them there was no work in flight and the number went
+    plain in the middle of a turn. *\"running tool is no longer yellow the counter, wtf why it
+    regressed.\"*
+  · **AND THIS MUST BE THE LIVE EDGE** (`newest` or `live-here`). The second cut keyed on the turn
+    alone and lit up the whole transcript: the walk draws a marker for EVERY run in it, so a turn's
+    own history, already settled, went yellow behind it. *\"all tool call counters are yellow now.\"*
+
+`live-here` is the row live work rides on, and it can be set with NO run at all — a call in flight
+whose results have not landed yet — so it carries the colour on a marker whose counts are the live
+work's own.
+
+**A function, and not the one-line `and` at each call site**, because there are two call sites (the
+in-walk flush and the end-of-walk one) and this colour has now been wrong twice in opposite
+directions. One definition the walk and a test can both ask."
+  (and busy (or live-here newest)))
+
+(defun hidden-run-marker (items cols &optional newest live max-width rising)
   "The marker's SEGMENTS — `[N tool calls, M thinking lines] · ctrl-t opens it`.
 
 **Two registers, and they say two different things.** The counts are a FACT — how much work there
@@ -1787,7 +1810,22 @@ When the run settles, the counts go back to the prose's own register with it."
          ;; whole question.** It is non-nil exactly when this run has calls or reasoning in flight,
          ;; so there is no second predicate to ask and nothing to thread down from the caller. The
          ;; style is handed to the counts builder, which puts it on the calls number alone.
-         (counts-style (if live +role-pending+ nil))
+         ;; **YELLOW WHILE THIS NUMBER IS STILL GOING UP — and only on the marker at the live
+         ;; edge.** `rising` is the caller's answer to exactly that, and it is NOT simply *is the
+         ;; turn running*, which is what the second cut of this got wrong.
+         ;;
+         ;; The first cut keyed on `live` — the work IN FLIGHT — and the colour flickered: a call
+         ;; finishing and the next round's first delta arriving are two different events, and in
+         ;; the gap `%hidden-run-live-work` returns NIL. *"running tool is no longer yellow the
+         ;; counter, wtf why it regressed."*
+         ;;
+         ;; The second cut keyed on `turn-busy-p` alone and the operator reported *"all tool call
+         ;; counters are yellow now"* — because `busy` is true for the WHOLE turn and the walk
+         ;; draws a marker for every run in the transcript, so a turn's own history went yellow
+         ;; behind it. Both halves are needed: this marker must belong to the newest run (or be
+         ;; carrying live work), AND the turn must still be running. See `render.lisp`, which
+         ;; narrows it once so the two call sites cannot disagree.
+         (counts-style (if rising +role-pending+ nil))
          (segs nil))
     (dolist (step rungs)
       (let* ((seam-rung (aref +hidden-run-seam-rungs+ (cdr step)))
@@ -1805,7 +1843,7 @@ When the run settles, the counts go back to the prose's own register with it."
     ;; sentence above it left (see `hidden-run-marker-room`).
     (%truncate-segs segs (max 1 limit))))
 
-(defun %marker-onto-last-line (il items cols &optional newest live)
+(defun %marker-onto-last-line (il items cols &optional newest live rising)
   "IL with the run's marker **appended to its last line**, split by ONE SPACE.
 
 **The space is the join, and it is what makes the counts read as part of the sentence.** letibot
@@ -1840,7 +1878,7 @@ line, and that is a line that was already full of the sentence."
          ;; what is left of the line once the sentence and its one joining space are in
          (room (- cols used 1))
          (marker (if (plusp room)
-                     (hidden-run-marker items cols newest live (max 4 room))
+                     (hidden-run-marker items cols newest live (max 4 room) rising)
                      nil)))
     (if (null marker)
         (butlast il)

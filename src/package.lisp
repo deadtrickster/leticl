@@ -196,7 +196,7 @@
    #:reading-hides-p #:hidden-run-lines #:newest-hidden-run-id #:hidden-run-marker
    #:*hidden-run-open* #:%set-hidden-run-open #:*hidden-run-head*
    #:%hidden-run-id #:%marker-onto-last-line #:%hidden-run-counts #:%hidden-run-counts-text #:%hidden-run-counts-segs #:%counts-clause-segs #:%row-invisible-p
-   #:hidden-run-marker-room #:+hidden-run-marker-cols+ #:+hidden-run-marker-floor+ #:+hidden-run-count-rungs+ #:+hidden-run-seam-rungs+ #:+hidden-run-marker-ladder+
+   #:marker-rising-p #:hidden-run-marker-room #:+hidden-run-marker-cols+ #:+hidden-run-marker-floor+ #:+hidden-run-count-rungs+ #:+hidden-run-seam-rungs+ #:+hidden-run-marker-ladder+
    #:*marker-seam* #:%set-marker-seam #:+operator-block-style+
    ;; R37's OPEN QUESTION, as a switch: two messages or one prose (the operator rules)
    #:*reading-join-prose* #:%set-reading-join-prose #:%reading-joined-items #:*reading-joined*
@@ -226,6 +226,7 @@
    #:*op-call-draft* #:op-call-draft-open-p #:op-call-card-lines #:%op-call-draft-key
    ;; R44: the operator's own todo items — the list, the add verb, and the modal card
    #:*operator-todos* #:operator-todo-add #:*todo-draft* #:todo-draft-open-p #:todo-card-lines
+   #:operator-todos-path #:read-operator-todos #:persist-operator-todos #:operator-todos->text #:text->operator-todos #:+operator-todos-cap+ #:save-operator-todos #:load-operator-todos #:*todo-file-unreadable*
    #:%todo-draft-open #:%todo-draft-key #:%todo-draft-field
    ;; R11's locator
    #:*diag* #:diagnostic-listing-lines #:open-diagnostic-listing #:%diagnostic-ask

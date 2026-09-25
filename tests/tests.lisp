@@ -13906,6 +13906,36 @@ returns NIL, so a quiet turn stays quiet."
           "even while the turn still says running: the CALL is what is asked"))
     (is (null (leticl::%hidden-run-live-work nil 100)) "no turn, nothing live")))
 
+(def-test the-yellow-is-only-on-the-live-edge (:suite leticl)
+  "**The colour has been wrong twice, in opposite directions, and this pins both ends.**
+
+*First:* keyed on the work IN FLIGHT, so it flickered off between rounds — *\"running tool is no
+longer yellow the counter, wtf why it regressed.\"*
+
+*Second:* keyed on the TURN alone, so a turn's own settled history went yellow behind it —
+*\"all tool call counters are yellow now.\"*
+
+`marker-rising-p` is the one place the answer lives, and it needs BOTH: the turn must still be
+running, AND this must be the live edge — the newest run, or the row live work rides on."
+  (flet ((rising (busy newest live-here) (leticl::marker-rising-p busy newest live-here)))
+    ;; **the live edge of a running turn is yellow** — both halves present, which is the state the
+    ;; operator was watching when he asked for this
+    (is (funcall #'rising t t nil) "a running turn's newest run is rising")
+    (is (funcall #'rising t nil t) "and so is the row live work rides on, with no run at all")
+    ;; **and an OLDER run in the same running turn is not** — this is the regression
+    (is (not (funcall #'rising t nil nil))
+        "**an older run's marker is NOT yellow while the turn runs** — the whole-transcript bug")
+    ;; **and nothing rising once the turn is over**, however recent the run
+    (is (not (funcall #'rising nil t nil))
+        "a settled turn's newest run is not rising — the past tense is earned")
+    (is (not (funcall #'rising nil nil nil)) "nor is anything else"))
+  ;; **THE WALK USES IT, at both call sites** — asserted as source rather than as a screenshot,
+  ;; because the failure it prevents is a rule applied at one of two places.
+  (let ((src (uiop:read-file-string "src/render.lisp")))
+    (is (search "marker-rising-p" src) "the walk asks the rule")
+    (is (not (search "(hidden-run-marker run cols newest nil nil busy)" src))
+        "and no call site passes the turn's state straight through, which is the bug")))
+
 (def-test only-the-tool-call-number-goes-yellow (:suite leticl)
   "**The operator's ruling, and he had to say it twice:** *\"when you correctly do account running
 jobs in verbosity mode [], mark counters yellow if the tail job is still running\"* — and then, when
@@ -13924,11 +13954,17 @@ mark already takes for the same reason.
 colour; the head talking about its own key does not. When the run settles the number goes back to the
 prose's own register with it."
   (let* ((items (%counts-run-items 2 1))
-         (segs (lambda (live)
+         ;; **`rising` IS THE COLOUR'S INPUT and `live` is the COUNTS'.** They are two questions —
+         ;; *what is in flight* and *is this number still going up* — and the second cut of this
+         ;; fix conflated them, which is what made every marker in the transcript yellow
+         ;; (*"all tool call counters are yellow now"*). This calls the marker the way the walk
+         ;; does: `rising` is narrowed by the CALLER (see `render.lisp`), so a test that wants a
+         ;; yellow number must say so here.
+         (segs (lambda (live rising)
                  (let ((leticl::*marker-seam* nil))
-                   (leticl::hidden-run-marker items 100 t live nil))))
-         (live (funcall segs (list :calls 2 :thinking 1)))
-         (settled (funcall segs nil))
+                   (leticl::hidden-run-marker items 100 t live nil rising))))
+         (live (funcall segs (list :calls 2 :thinking 1) t))
+         (settled (funcall segs nil nil))
          ;; **the segment that IS the calls count** — `~d` prints it alone, so it is the one
          ;; segment whose text is all digits
          (digits-p (lambda (sg)
@@ -13958,7 +13994,7 @@ prose's own register with it."
     ;; **and the COLOUR changes no character.** Compared with `live` adding NOTHING to the counts
     ;; (`0 0`), so the two markers say the same thing and differ only in register.
     (is (string= (format nil "~{~a~}" (mapcar #'car settled))
-                 (format nil "~{~a~}" (mapcar #'car (funcall segs (list :calls 0 :thinking 0)))))
+                 (format nil "~{~a~}" (mapcar #'car (funcall segs (list :calls 0 :thinking 0) t))))
         "only the colour moves; not one character of the marker does")))
 
 (def-test a-running-call-is-live-work-whatever-the-turn-is-called (:suite leticl)

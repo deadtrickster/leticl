@@ -501,7 +501,13 @@ thirty rows appended, and the view jumped to `row-62`."
           ;; It belongs to the NEWEST row the reader can see, which the walk reaches FIRST (it runs
           ;; newest to oldest), so one flag is the whole of the bookkeeping.
           (live (%hidden-run-live-work (session-turn s) cols))
-          (live-pending (and live t)))
+          (live-pending (and live t))
+          ;; **IS THE TURN STILL WORKING** — the COUNTS' question is `live` (what is in flight) and
+          ;; the COLOUR's is this: a call finishing and the next round's first delta arriving are
+          ;; two events, and between them `live` is nil while the turn runs on. Keying the yellow on
+          ;; `live` made it flicker off mid-turn — *"running tool is no longer yellow the counter,
+          ;; wtf why it regressed."*
+          (busy (and (session-turn s) (turn-busy-p (session-turn s)))))
     (loop while (and (>= next-i 0)
                      (or (< (length lines) (1+ need))
                          ;; the anchor's row has not been reached yet: keep walking down to it
@@ -562,6 +568,14 @@ thirty rows appended, and the view jumped to `row-62`."
                                       (or run live-here)
                                       (%run-continues-prose-p item)))
                            (marker-items (or run nil))
+                           ;; **IS THIS MARKER'S NUMBER STILL GOING UP?** — the colour's question, and it is NOT
+                           ;; *is the turn running*: the walk draws a marker for EVERY run in the transcript, so
+                           ;; keying on the turn alone lit up a turn's whole history behind it (*"all tool call
+                           ;; counters are yellow now"*). Two things must both hold: the turn must still be
+                           ;; running, and this must be the LIVE EDGE — the newest run, or the row live work
+                           ;; rides on (which is `live-here`, and can be set with no run at all while a call is
+                           ;; in flight and its results have not landed).
+                           (rising (marker-rising-p busy newest live-here))
                            ;; **THE SENTENCE WRAPS AT THE FRAME'S OWN WIDTH, NOT AT `cols - room`.**
                            ;;
                            ;; Reserving the marker's room from every line was the second version of this
@@ -585,7 +599,7 @@ thirty rows appended, and the view jumped to `row-62`."
                            (il (if glue
                                    (%marker-onto-last-line
                                     (item-lines item cols (head-prefs head))
-                                    marker-items cols (and marker-items newest) live-here)
+                                    marker-items cols (and marker-items newest) live-here rising)
                                    il)))
                       ;; **an OPEN run draws its rows between this row and the newer one** — this
                       ;; row is prepended after them, so they land in the gap the counts would have
@@ -622,7 +636,7 @@ thirty rows appended, and the view jumped to `row-62`."
                                ;; operator's own message and the counts, which is one too many. The
                                ;; separation above is bought by `class-above :other` below instead.
                                (prefix (append
-                                        (list (hidden-run-marker marker-items cols (and marker-items newest) live-here))
+                                        (list (hidden-run-marker marker-items cols (and marker-items newest) live-here nil busy))
                                         ;; the blank BELOW is this branch's to add: the row under it
                                         ;; has already been drawn (`lines` holds it), so nothing else
                                         ;; will supply the break.
@@ -710,8 +724,8 @@ thirty rows appended, and the view jumped to `row-62`."
                            ;; run came first or last in the walk; measured, this path drew
                            ;; `[1 tool call…]` glued to the report while the other separated them.
                            (prefix (if lines
-                                       (list (hidden-run-marker run cols newest) nil)
-                                       (list (hidden-run-marker run cols newest))))
+                                       (list (hidden-run-marker run cols newest nil nil (marker-rising-p busy newest nil)) nil)
+                                       (list (hidden-run-marker run cols newest nil nil (marker-rising-p busy newest nil)))))
                            (at (+ before (1- (length prefix)))))
                       (setf lines (append prefix lines))
                       (dolist (it run)
