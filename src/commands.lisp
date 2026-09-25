@@ -770,6 +770,13 @@ strictly worse than a list that survives only this session."
       nil))
   *operator-todos*)
 
+(defvar *todo-load-head* nil
+  "The head `load-operator-todos` should push the board on, or NIL.
+
+A `defvar` and not an argument because the loader is called from `load-prefs-into`, which is handed a
+head for its own reasons and not for this one — and because a replay binds it to NIL so a recorded
+screen never sends a frame.")
+
 (defun load-operator-todos ()
   "The operator's list from the STORE onto `*operator-todos*`, answering a note or NIL.
 
@@ -802,12 +809,38 @@ which is the same behaviour as before that store existed."
          ;; **and the id counter learns what is already there**, so the next add cannot mint an id
          ;; the store already holds — see `note-todo-ids` for the measurement
          (note-todo-ids *operator-todos*)
+         ;; **and the daemon gets the list at startup**, which is what makes the nag able to see
+         ;; work the operator queued in an EARLIER session: without this the board would be empty
+         ;; until they happened to touch the pane.
+         (push-operator-todos *todo-load-head*)
          nil))))
 
 (defvar *todo-file-unreadable* nil
   "Set when the todo file existed and could not be read, so a save must not overwrite it.")
 
-(defun operator-todo-add (title &optional detail)
+(defun push-operator-todos (head)
+  "Send this head's operator rows to the daemon's board — the ONE sender.
+
+**One writer, because the two halves of the board must not drift**: the daemon replaces its operator
+half with exactly what it is handed, so a caller that sent a stale list would delete rows the pane is
+still drawing. Every mutation that changes `*operator-todos*` comes through here, and there are
+three: add, remove, and the load at startup.
+
+**HEAD defaults to `*head*`**, which is what a caller inside a card or a test wants: the live head
+is the only head there is, and threading it through every caller would be a parameter nobody
+passes anything else for. A NIL head — or one with no session yet — answers NIL rather than
+sending, which is the honest answer for a test or a replay."
+  (when (and head (session-session-id (head-session head)))
+    (%send head (make-set-operator-todos
+                 (session-expected-seq (head-session head))
+                 (mapcar (lambda (item)
+                           (list :content (or (getf item :content) "")
+                                 :status (if (equal (getf item :status) "completed")
+                                             "completed" "pending")
+                                 :by "operator"))
+                         *operator-todos*)))))
+
+(defun operator-todo-add (title &optional detail (head *head*))
   "Add the operator's item. The new item when it was added, NIL when TITLE was blank.
 
 **A blank title is refused rather than stored**, and it is refused HERE rather than at the card:
@@ -830,6 +863,11 @@ and so the identity is minted in the one place that owns the list, not by whoeve
         ;; the pane draws.
         (when *write-prefs*
           (store-save-todo item (length *operator-todos*)))
+        ;; **AND TELL THE DAEMON, so the reminder can see it.** The board on the daemon holds one
+        ;; list with two authors, and this head is the source of truth for its own half; the idle nag
+        ;; asks that board for unfinished work, so until these rows reach it a reminder could only
+        ;; ever be about something the MODEL wrote. `push-operator-todos` is the one sender.
+        (push-operator-todos head)
         item))))
 
 (defvar *todo-draft* nil

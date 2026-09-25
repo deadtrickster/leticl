@@ -236,6 +236,28 @@ not — there is deliberately no other way to obtain one (protocol.rs on Ack)."
         :expected-seq expected-seq
         :reason reason))
 
+(defun make-set-operator-todos (expected-seq items)
+  "The operator's todos, to the daemon that keeps the board — **ONE list, two authors.**
+
+The operator's ruling: *\"the existing getter should return mine and yours, and the rest is also the
+same. the only difference is who created and that is it.\"* So the daemon's board holds one list, the
+head is the source of truth for its own half, and this carries that half whole on every change.
+
+**The whole list and not a delta**, because a delta protocol for a list of tens of items is a second
+source of truth about rows this head owns outright. `by` is `\"operator\"` on every row: the daemon
+needs it to draw `— you` rather than `— model`, and to know which half to replace.
+
+Why any of this is here at all: the idle nag asks the daemon's board for unfinished work, so until
+the operator's rows reach it, a reminder can only ever be about something the MODEL wrote."
+  (list :frame "set_operator_todos"
+        :client-request-id (next-request-id)
+        :expected-seq expected-seq
+        :items (mapcar (lambda (item)
+                         (list :content (or (getf item :content) "")
+                               :status "pending"
+                               :by "operator"))
+                       items)))
+
 (defun make-withdraw-prompts (expected-seq)
   "Take back what this head queued — the original leaves the daemon's queue so
 the operator can edit it rather than stack under it (protocol.rs, v19)."

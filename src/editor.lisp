@@ -2195,6 +2195,10 @@ keeps finding elsewhere."
             ;; restart would come back with the row, which is the same defect as losing the add
             (when leticl::*write-prefs*
               (leticl::store-delete-todo id))
+            ;; **and the DAEMON's board, so the reminder stops counting it.** The board holds the
+            ;; operator's rows beside the model's and the idle nag reads it; a removal this head
+            ;; kept to itself would leave the nag asking about work the operator had dropped.
+            (leticl::push-operator-todos head)
             ;; the cursor may now point past a shorter enumeration, which `todo-stop-at` clamps
             ;; for the next key — but the screen has to say something NOW, so the mark is put
             ;; back on a row that exists rather than left on the one just deleted.
