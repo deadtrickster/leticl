@@ -10736,6 +10736,74 @@ would cry wolf on every reconnect."
       (is (= 1 leticl::*seq-gaps*) "a step backwards is a redelivery, not a hole")
       (is (= 1 (length (rows))) "so only one row was ever filed"))))
 
+(def-test a-gap-asks-the-daemon-for-a-resync-once (:suite leticl)
+  "**The repair is the daemon's to make, and the head has to ask.** A gap leaves this head with
+a STATE that has a hole in it — the events that never arrived were folded by nobody — and a
+row that says so is a notice, not a repair. When the missing event was a `tool_finished`, the call
+stays `running` here for ever and the marker's number stays yellow through the reply and past the
+turn's end: the operator's *\"yellow tool count stucks sometimes\"*. The reference queues a `Resync`
+on every gap (app.rs:3262-3286); this head told the operator to type `/resync`.
+
+Once per outstanding ask: two jumps before the snapshot lands are one hole, and the snapshot that
+answers the first fills it. The `resync` frame re-arms."
+  (let* ((leticl::*filed-notes* 0) (leticl::*seq-gaps* 0)
+         (leticl::*resync-asked* nil)
+         (h (%make-head))
+         (s (head-session h))
+         (sent nil)
+         (real (symbol-function 'leticl::%send)))
+    (unwind-protect
+         (progn
+           (setf (symbol-function 'leticl::%send)
+                 (lambda (head frame) (declare (ignore head)) (push frame sent)))
+           (leticl::%handle-frame h (list :frame "event" :seq 40 :event "head_attached"
+                                          :head-id "h" :kind "tui" :identity "x"))
+           (is (null (remove "resync" sent :key #'frame-name :test-not #'string=))
+               "a first event at any seq is not a gap, and nothing is asked")
+           ;; the gap: 40 -> 52
+           (leticl::%handle-frame h (list :frame "event" :seq 52 :event "head_detached" :head-id "h"))
+           (is (= 1 (count "resync" sent :key #'frame-name :test #'string=))
+               "a jump forward asks the daemon for a resync: ~s" sent)
+           ;; a second jump before the snapshot: the same hole, no second ask
+           (leticl::%handle-frame h (list :frame "event" :seq 60 :event "head_detached" :head-id "h"))
+           (is (= 2 leticl::*seq-gaps*) "the second jump is counted")
+           (is (= 1 (count "resync" sent :key #'frame-name :test #'string=))
+               "but not asked about again while the first ask is outstanding")
+           ;; the snapshot lands, and re-arms
+           (leticl::%handle-frame h (list :frame "resync" :reason "gap" :dropped 0
+                                          :snapshot (list :session-id (session-session-id s)
+                                                          :seq 60 :items nil)))
+           (is (null leticl::*resync-asked*) "the answer clears the ask")
+           (leticl::%handle-frame h (list :frame "event" :seq 70 :event "head_detached" :head-id "h"))
+           (is (= 2 (count "resync" sent :key #'frame-name :test #'string=))
+               "so the next gap asks again"))
+      (setf (symbol-function 'leticl::%send) real))))
+
+(def-test prompts-queued-behind-a-running-tool-call-coalesce (:suite leticl)
+  "**Behind a running turn means BUSY, not the state name.** The daemon drains its source at
+the round boundary, so everything typed during one round — the generation AND the tool calls it
+made — lands as one row. The turn's state name reads `\"finished\"` for the whole of a tool call,
+and `%prompt` gated the coalescing on `\"running\"`. MEASURED on the live head with a 40-second
+`sleep` running: two `queued ·` rows for what the daemon then landed as one row."
+  (let* ((h (%make-head))
+         (leticl::*bound-prompts* nil))
+    ;; generation over, a call still running: `turn-busy-p` is T, the state name is not "running"
+    (setf (session-turn (head-session h))
+          (list :turn-id "t1" :model "m" :state (list :state "finished")
+                :calls (list (list :call-id "call_00_x" :name "bash"
+                                   :state (list :state "running")))))
+    (leticl::%prompt h "first queued")
+    (leticl::%prompt h "second queued")
+    (is (equal (list (format nil "first queued~%second queued")) (head-queued h))
+        "one entry, newline-joined — the row the daemon will commit: ~s" (head-queued h))
+    ;; and an IDLE turn keeps them apart, which is the other half
+    (setf (session-turn (head-session h))
+          (list :turn-id "t1" :model "m" :state (list :state "finished") :calls nil))
+    (setf (head-queued h) nil)
+    (leticl::%prompt h "alone")
+    (leticl::%prompt h "also alone")
+    (is (= 2 (length (head-queued h))) "idle submits stay separate: ~s" (head-queued h))))
+
 (def-test the-emacs-motions-the-reference-decodes-are-bound (:suite leticl)
   "§6. The reference binds `ctrl-b`, `ctrl-f` and `ctrl-_` in its DECODER
 (`term.rs:562-576, 590-594`: `0x02` → Left, `0x06` → Right, `0x1f` → Undo) and this

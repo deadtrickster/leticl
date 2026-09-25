@@ -236,6 +236,13 @@ if the row goes away — a snapshot can replace the whole vector and take the an
 A `defvar` for the usual reason, and reset by `with-replay-globals` because a replay that
 inherited one would draw another session's prompt on a row that never carried it.")
 
+(defvar *resync-asked* nil
+  "T while a `resync` this head sent for a SEQ GAP has not been answered.
+
+Set in the event arm of `%handle-frame` when a fold counts a new gap, cleared by the `resync`
+arm when the snapshot lands. One outstanding ask at a time: two jumps inside one batch are one
+hole, and the one snapshot fills it. A `defvar` for the usual reason — a struct change is a restart.")
+
 (defun %echo-leftover (queued bound)
   "Each queued ENTRY minus the pieces an announced row already draws — oldest first, one block each.
 
@@ -280,11 +287,27 @@ take two different prompts.
 An echo the head cannot resolve (`*queued-unconfirmed*`) is the same kind of thing and is bound
 the same way: the row is on the screen and the words are what it draws."
   (let ((taken (mapcar #'cdr *bound-prompts*)))
-    ;; **THE WHOLE ENTRY, and that is deliberate**: a coalesced pair is ONE row's worth of words when
-    ;; the daemon merges them, which is the common case and the reason the entries are coalesced at
-    ;; all. The defect was never here — it was in `%echo-leftover`, which is where the TAIL now drops
-    ;; the pieces a bound row is drawing instead of asking for the entry to match whole.
-    (let ((text (find-if (lambda (q) (not (member q taken :test #'equal)))
+    ;; **AND IT WILL NOT CLAIM AN ENTRY ONE OF WHOSE PIECES IS ALREADY CLAIMED.** The bound text is
+    ;; the WHOLE entry — a coalesced pair is one row's worth of words when the daemon merges them, and
+    ;; drawing it as one block is the operator's own ruling (*"the queued messages must be still
+    ;; coalesced"*). But the entry GROWS: bound when it was `"A"`, it becomes `"A\nB\nC"` when two
+    ;; more prompts coalesce onto it — and the old test asked whether the ENTRY was in the taken list.
+    ;; It was not, so a LATER announcement claimed the grown entry as well, and the screen drew the
+    ;; message twice: the first row with the one line it claimed, the second with the whole thing.
+    ;;
+    ;; **This is the operator's screen, measured rather than guessed** — one message, two `queued`
+    ;; rows, the second carrying `… +2 lines` the first did not:
+    ;;
+    ;;     ▌ queued · <the message>
+    ;;     ▌ queued · <the same message>  … +2 lines · /t opens it
+    ;;
+    ;; The unit of CLAIMING is the piece and the unit of DRAWING is the entry, so the question here
+    ;; is piecewise: one announcement claims an entry that no other announcement has a piece of.
+    (let ((text (find-if (lambda (q)
+                           (let ((pieces (remove-if (lambda (p) (zerop (length p)))
+                                                    (uiop:split-string q :separator '(#\newline)))))
+                             (and pieces
+                                  (notany (lambda (p) (member p taken :test #'equal)) pieces))))
                          ;; oldest first: the order their rows are announced in
                          (reverse (head-queued head)))))
       (when (and item-id text)
@@ -793,7 +816,26 @@ and a `hello` with a snapshot). Returns T when the queue moved."
                       (equal (outcome-name (getf env :outcome)) "backgrounded")))
          (%send head (make-list-jobs)))
        ;; apply-event is the classifier: :dirty means something visible moved.
-       (let ((disposition (apply-event (head-session head) env)))
+       (let* ((gaps-before *seq-gaps*)
+              (disposition (apply-event (head-session head) env)))
+         ;; **A GAP IS REPAIRED, NOT ONLY FILED — and the repair is the daemon's to make.** The
+         ;; fold counts the jump and files the row that names it; it sends nothing, by design.
+         ;; But a row is a notice, and what the head has after a gap is a STATE with a hole in
+         ;; it: the events that never arrived were folded by nobody. When one of them was a
+         ;; `tool_finished`, the call it ends stays `running` here for ever — `turn-busy-p`
+         ;; says busy, `%hidden-run-live-work` counts it, and the marker's number stays
+         ;; yellow through the reply and past the turn's end. That is the operator's *"yellow
+         ;; tool count stucks sometimes"*, and *sometimes* is when the daemon's bounded
+         ;; scrollback overflowed under a slow stream. The reference queues a `Resync` on
+         ;; every gap (app.rs:3262-3286: *"the head cannot take a snapshot of a transcript it
+         ;; does not hold"*); this head only told the operator to type `/resync`.
+         ;;
+         ;; Once per outstanding request: a batch that jumps twice before the snapshot lands
+         ;; is one hole, and the snapshot that answers the first ask fills it. The `resync`
+         ;; arm clears the flag.
+         (when (and (> *seq-gaps* gaps-before) (not *resync-asked*))
+           (setf *resync-asked* t)
+           (%send head (make-resync)))
          ;; **A REPLY THAT ARRIVED IS SHOWN, AND THAT IS THE ONE THING THE SESSION
          ;; CANNOT DO.** `note-slash-reply` — called from the `:warning` arm inside
          ;; `apply-event` — fills `*slash-out*`; the MODE is head state, so the head
@@ -817,6 +859,9 @@ and a `hello` with a snapshot). Returns T when the queue moved."
      ;; a resync means this head lost its place; the count is on /status and in
      ;; the alarm, because "it happened at all" is the operator's business
      (incf *resyncs*)
+     ;; the snapshot answers the gap this head asked about (the event arm), so the next
+     ;; gap may ask again
+     (setf *resync-asked* nil)
      ;; BOTH COUNTS TRAVEL ON THIS FRAME and both were dropped on this path, so
      ;; `/status`'s `dropped` and `scrubbed` under-reported after a resync —
      ;; which is precisely when they are worth reading. The reference adds both

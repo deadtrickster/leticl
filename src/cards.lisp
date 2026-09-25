@@ -1728,7 +1728,7 @@ at the writer."
   (incf *hist-generation*)
   *marker-seam*)
 
-(defun marker-rising-p (busy live newest live-here)
+(defun marker-rising-p (busy live live-here)
   "Is THIS marker's number still going up — the one question the yellow answers.
 
 **Two things must both hold, and each was learned by getting it wrong.**
@@ -1771,9 +1771,18 @@ A predicate that returns somebody else's data is a predicate whose next reader w
   ;; **Reasoning alone does not light it** (`:calls` zero, `:thinking` streaming): the styled clause
   ;; is the calls number, and a thinking count that is rising while the calls are final is a different
   ;; fact that this marker already shows by going up on its own.
+  ;;
+  ;; **AND *THE LIVE EDGE* MEANS THE ROW THE WORK RIDES ON, NOT THE NEWEST RUN.** The operator, once
+  ;; more, watching a call run: *"yes one old tool call is still yellow"* — and `newest` is exactly
+  ;; how: the newest run of HIDDEN rows can be a row from the PREVIOUS turn while the current turn has
+  ;; a call in flight with no result row yet, so the marker that lit up was an old counter, on the old
+  ;; turn's words. The fact the yellow is about is *the number on THIS line still has work behind it*,
+  ;; and the line that carries live work is `live-here` — the newest row the reader can see, which is
+  ;; where the in-flight count is drawn when a call has been proposed and nothing has landed. An older
+  ;; run's marker is never that line, so it is never yellow, whatever the turn is doing.
   (and busy
        (plusp (or (getf live :calls) 0))
-       (or live-here newest)
+       live-here
        t))
 
 (defun hidden-run-marker (items cols &optional newest live max-width rising)

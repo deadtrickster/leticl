@@ -191,9 +191,25 @@ in letibot is `queued_prompts_behind_a_running_turn_are_one_message`.
 **A notice is never merged in**: the harness's own injections stand alone, because folding them
 into the operator's text would put the harness's words in the operator's mouth (`SteeringMessage`'s
 own comment). That distinction is the daemon's and is mirrored here by only ever joining a
-head-queued prompt — this function is the only writer of `head-queued`."
+head-queued prompt — this function is the only writer of `head-queued`.
+
+**AND *BEHIND A RUNNING TURN* MEANS BUSY, NOT THE STATE NAME `\"running\"`.** The daemon drains its
+source at the ROUND boundary — *\"the greedy poll before a generation\"* — so everything typed during
+one round is one held message, and a round is the generation AND the tool calls it made. The state
+name is `\"running\"` only while the model generates; it reads `\"finished\"` for the whole of a tool
+call (see `turn-busy-p`), which is exactly when the operator has the longest to type. MEASURED on the
+live head, two prompts sent while a 40-second `sleep` ran, `:STATE \"finished\" :BUSY T`:
+
+    ▌ queued · first queued
+    ▌ queued · second queued
+
+— two rows, and the daemon landed them as ONE row, `first queued⏎second queued`. The retirement
+stood both echoes down (it is piecewise), so nothing was left standing; but for the whole wait the
+screen promised two messages where the conversation would show one — the operator's *\"when multiple
+messages queued all subsequent enqueues displayed with the first enqueue message\"*, read from the
+other side: they belong together and were drawn apart."
   (let ((turn (session-turn (head-session head))))
-    (if (and turn (string= (turn-state-name turn) "running")
+    (if (and turn (turn-busy-p turn)
              (head-queued head))
         ;; **the JOIN is a NEWLINE, character for character** — the retirement is a text match, so
         ;; anything else (a separator, a trimmed copy) would leave the echo standing

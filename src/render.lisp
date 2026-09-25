@@ -575,7 +575,7 @@ thirty rows appended, and the view jumped to `row-62`."
                            ;; running, and this must be the LIVE EDGE — the newest run, or the row live work
                            ;; rides on (which is `live-here`, and can be set with no run at all while a call is
                            ;; in flight and its results have not landed).
-                           (rising (marker-rising-p busy live newest live-here))
+                           (rising (marker-rising-p busy live live-here))
                            ;; **THE SENTENCE WRAPS AT THE FRAME'S OWN WIDTH, NOT AT `cols - room`.**
                            ;;
                            ;; Reserving the marker's room from every line was the second version of this
@@ -743,8 +743,8 @@ thirty rows appended, and the view jumped to `row-62`."
                            ;; run came first or last in the walk; measured, this path drew
                            ;; `[1 tool call…]` glued to the report while the other separated them.
                            (prefix (if lines
-                                       (list (hidden-run-marker run cols newest nil nil (marker-rising-p busy live newest nil)) nil)
-                                       (list (hidden-run-marker run cols newest nil nil (marker-rising-p busy live newest nil)))))
+                                       (list (hidden-run-marker run cols newest nil nil (marker-rising-p busy live nil)) nil)
+                                       (list (hidden-run-marker run cols newest nil nil (marker-rising-p busy live nil)))))
                            (at (+ before (1- (length prefix)))))
                       (setf lines (append prefix lines))
                       (dolist (it run)
