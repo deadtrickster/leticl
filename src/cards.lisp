@@ -1728,7 +1728,7 @@ at the writer."
   (incf *hist-generation*)
   *marker-seam*)
 
-(defun marker-rising-p (busy newest live-here)
+(defun marker-rising-p (busy live newest live-here)
   "Is THIS marker's number still going up — the one question the yellow answers.
 
 **Two things must both hold, and each was learned by getting it wrong.**
@@ -1742,9 +1742,11 @@ at the writer."
     alone and lit up the whole transcript: the walk draws a marker for EVERY run in it, so a turn's
     own history, already settled, went yellow behind it. *\"all tool call counters are yellow now.\"*
 
-`live-here` is the row live work rides on, and it can be set with NO run at all — a call in flight
-whose results have not landed yet — so it carries the colour on a marker whose counts are the live
-work's own.
+`live` is the work IN FLIGHT (`%hidden-run-live-work`), and **its `:calls` is what the yellow is
+about**: the styled number is the call count, and that number is only moving while a call has not
+finished. `live-here` is the row live work rides on, and it can be set with NO run at all — a call in
+flight whose results have not landed yet — so it carries the colour on a marker whose counts are the
+live work's own.
 
 **A function, and not the one-line `and` at each call site**, because there are two call sites (the
 in-walk flush and the end-of-walk one) and this colour has now been wrong twice in opposite
@@ -1758,7 +1760,21 @@ measured on the live head before this was caught:
     (marker-rising-p t t live) => (:CALLS 1 :THINKING 0)
 
 A predicate that returns somebody else's data is a predicate whose next reader will destructure it."
-  (and busy (or live-here newest) t))
+  ;;
+  ;; **AND THE THIRD THING IS THE ONE THAT WAS MISSING: A CALL THAT HAS NOT FINISHED.** `busy` is
+  ;; true for the whole of a turn, and a turn is mostly not waiting on a tool — so gating on it alone
+  ;; left the number yellow while the model wrote its answer, which is the operator's third report of
+  ;; this colour, in the same words as the second: *"still some finished toolcalls are yellow"*. The
+  ;; number the yellow is on is the CALLS number, and it only moves while a call is unfinished — so
+  ;; that is the fact, and `live` is where it lives (`%hidden-run-live-work`'s `:calls`).
+  ;;
+  ;; **Reasoning alone does not light it** (`:calls` zero, `:thinking` streaming): the styled clause
+  ;; is the calls number, and a thinking count that is rising while the calls are final is a different
+  ;; fact that this marker already shows by going up on its own.
+  (and busy
+       (plusp (or (getf live :calls) 0))
+       (or live-here newest)
+       t))
 
 (defun hidden-run-marker (items cols &optional newest live max-width rising)
   "The marker's SEGMENTS — `[N tool calls, M thinking lines] · ctrl-t opens it`.
@@ -3521,9 +3537,28 @@ thing would leave the `queued` line on the screen for the rest of the session."
           ;; **NOTHING A BOUND ROW IS ALREADY DRAWING IS DRAWN HERE** — the tail is for the queue,
           ;; which is what is NOT in the conversation yet (letibot's rule; see `*bound-prompts*`).
           (bound (mapcar #'cdr *bound-prompts*)))
-      (loop for text in (reverse (or texts
-                                    (remove-if (lambda (q) (member q bound :test #'equal))
-                                               (head-queued head))))
+      (loop for text in (if texts
+                                     ;; **a bound row is handed its own ONE piece, and the tail's
+                                     ;; list is ALREADY oldest-first** — `%unbound-echo-pieces`
+                                     ;; answers in the order the rows will be announced, which is the
+                                     ;; order the pieces must READ in, so the outer `reverse` that used
+                                     ;; to turn the queue around applies to the caller's list alone.
+                                     (reverse texts)
+                                     ;; **PIECE-WISE, BECAUSE ONE QUEUED ENTRY CAN BE TWO MESSAGES.**
+                                     ;; `%bind-echo` used to hand an announced row the WHOLE entry, and an
+                                     ;; entry is two prompts whenever the operator sends twice behind a
+                                     ;; running turn — the head coalesces them, newline-joined, to match
+                                     ;; the one row the daemon will commit (`%queue-prompt`). The
+                                     ;; equality filter below then dropped that entry from here while the
+                                     ;; row drew both messages, so the FIRST message's row carried the
+                                     ;; SECOND's words, and the piece left over after the row's content
+                                     ;; landed came back here — the same sentence on the screen twice. The
+                                     ;; operator, twice: *"queue problem - items queued twice, at least
+                                     ;; usually - visually"* and *"that second message was presented with
+                                     ;; the first as a first line"*. A piece a row is drawing is dropped; a
+                                     ;; piece no row is drawing stays here, drawn by the tail — as ONE
+                                     ;; block per entry, because one entry is one message to read.
+                                     (%echo-leftover (head-queued head) bound))
             for tag = (if (member text *queued-unconfirmed* :test #'equal)
                           "unconfirmed"
                           "queued")

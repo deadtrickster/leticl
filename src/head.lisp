@@ -236,6 +236,39 @@ if the row goes away — a snapshot can replace the whole vector and take the an
 A `defvar` for the usual reason, and reset by `with-replay-globals` because a replay that
 inherited one would draw another session's prompt on a row that never carried it.")
 
+(defun %echo-leftover (queued bound)
+  "Each queued ENTRY minus the pieces an announced row already draws — oldest first, one block each.
+
+**THE DEFECT THIS ENDS, and it needs the two steps to be visible at all:**
+
+  1. the operator sends A behind a running turn. A is queued, `%bind-echo` gives A's announced row the
+     text `\"A\"` — correctly, that is the whole entry;
+  2. the operator sends B. `%queue-prompt` COALESCES it onto the entry — `\"A\\nB\"` — because the daemon
+     will commit the two as ONE row, which is the operator's own ruling (*\"the queued messages must be
+     still coalesced and still pinned to the bottom\"*).
+
+Now the binding says `\"A\"` and the queue says `\"A\\nB\"`, and the tail's filter asked whether the ENTRY
+was in the bound set. It was not — so the tail drew the whole coalesced block while row 1 went on
+drawing `\"A\"`, and A was on the screen **twice**, under a second message that had A as its first line.
+The operator, twice: *\"queue problem - items queued twice, at least usually - visually\"*, then *\"that
+second message with 'unellow' was presented with 'still...' as a first line\"*.
+
+**The entry stays ONE block, which is the half that must not be lost.** An earlier attempt at this fix
+drew each unclaimed PIECE as its own queued row and broke the coalescing the operator asked for — one
+message arriving as two rows. So the unit of DISPLAY is the entry and the unit of CLAIMING is the
+piece, and this function is where those two meet: a piece a row draws is dropped, and what is left of
+the entry is joined back up and drawn once.
+
+Blank pieces are dropped for `%strip-landed`'s reason: a trailing newline would otherwise be handed on
+as a piece that can never be drawn or claimed."
+  (let ((taken (remove-if (lambda (p) (zerop (length p))) bound)))
+    (loop for entry in (reverse queued)          ; oldest first: the order rows are announced
+          for keep = (remove-if (lambda (piece)
+                                  (or (zerop (length piece))
+                                      (member piece taken :test #'equal)))
+                                (uiop:split-string entry :separator '(#\newline)))
+          when keep collect (format nil "~{~a~^~%~}" keep))))
+
 (defun %bind-echo (head item-id)
   "Bind the OLDEST queued prompt no announced row has claimed to ITEM-ID.
 
@@ -247,6 +280,10 @@ take two different prompts.
 An echo the head cannot resolve (`*queued-unconfirmed*`) is the same kind of thing and is bound
 the same way: the row is on the screen and the words are what it draws."
   (let ((taken (mapcar #'cdr *bound-prompts*)))
+    ;; **THE WHOLE ENTRY, and that is deliberate**: a coalesced pair is ONE row's worth of words when
+    ;; the daemon merges them, which is the common case and the reason the entries are coalesced at
+    ;; all. The defect was never here — it was in `%echo-leftover`, which is where the TAIL now drops
+    ;; the pieces a bound row is drawing instead of asking for the entry to match whole.
     (let ((text (find-if (lambda (q) (not (member q taken :test #'equal)))
                          ;; oldest first: the order their rows are announced in
                          (reverse (head-queued head)))))

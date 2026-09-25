@@ -8592,6 +8592,46 @@ trusting a rule in a document."
 ;;; whole-piece rule retires **28 of 28**; R16's front-piece case was **0 of 28**, so the
 ;;; branch that already existed could not have saved a single one.
 
+(def-test a-coalesced-pair-is-not-drawn-twice (:suite leticl)
+  "**TWO REPORTS, ONE MECHANISM, and it takes two steps to see it:**
+
+  1. the operator sends A behind a running turn. A is queued, and A's ANNOUNCED row is bound to the
+     text `\"A\"` — correctly, that is the whole entry;
+  2. they send B. `%queue-prompt` COALESCES it onto the entry — `\"A\\nB\"` — because the daemon will
+     commit the two as one row, which is the operator's own ruling: *\"the queued messages must be
+     still coalesced and still pinned to the bottom.\"*
+
+Now the binding says `\"A\"` and the queue says `\"A\\nB\"`, and the tail asked whether the ENTRY was in
+the bound set. It was not, so the tail drew the whole coalesced block while row 1 went on drawing
+`\"A\"` — the same sentence twice, and the second message presented with the first as its first line:
+
+    *\"queue problem - items queued twice, at least usually - visually\"*
+    *\"that second message with 'unellow' was presented with 'still...' as a first line\"*
+
+**The entry stays ONE block** — an earlier attempt drew each unclaimed piece as its own queued row and
+broke the coalescing (one message arriving as two rows, which is what the other test in this file
+forbids). So the unit of DISPLAY is the entry and the unit of CLAIMING is the piece."
+  (let* ((h (%make-head))
+         (leticl::*bound-prompts* nil))
+    (setf (session-turn (head-session h))
+          (list :turn-id "t1" :model "m" :state (list :state "running") :calls nil))
+    ;; --- step 1: A is queued and its announced row claims it
+    (leticl::%prompt h "the first thing I said")
+    (leticl::%bind-echo h "u1")
+    (is (equal "the first thing I said" (leticl::bound-prompt-for (list :item-id "u1")))
+        "the announced row draws the words the head holds for it")
+    ;; --- step 2: B coalesces onto the entry, exactly as `%queue-prompt` does behind a turn
+    (leticl::%prompt h "and the second")
+    (is (equal (list (format nil "the first thing I said~%and the second")) (head-queued h))
+        "the queue holds ONE coalesced entry — the shape the daemon will commit")
+    ;; --- and the tail draws what no row is drawing: the SECOND message, not both
+    (let ((text (segs-of (queued-lines h 80))))
+      (is (search "and the second" text) "the unclaimed piece is still drawn at the tail")
+      (is (not (search "the first thing I said" text))
+          (format nil "**and the piece row 1 is drawing is NOT drawn again** — this is the
+ duplicate: ~s" text))
+      (is (= 1 (count-substring "queued" text)) "as ONE block, not one row per piece"))))
+
 (def-test a-row-that-is-several-queued-prompts-retires-all-of-them (:suite leticl)
   "**The measured shape.** Five prompts queued separately — which is what the operator's
 `send-keys` produces, one per newline — and ONE row carrying all five joined by newlines.
@@ -14209,23 +14249,40 @@ longer yellow the counter, wtf why it regressed.\"*
 
 `marker-rising-p` is the one place the answer lives, and it needs BOTH: the turn must still be
 running, AND this must be the live edge — the newest run, or the row live work rides on."
-  (flet ((rising (busy newest live-here) (leticl::marker-rising-p busy newest live-here)))
+  (flet ((rising (busy live newest live-here)
+           (leticl::marker-rising-p busy live newest live-here)))
     ;; **the live edge of a running turn is yellow** — both halves present, which is the state the
     ;; operator was watching when he asked for this
-    (is (funcall #'rising t t nil) "a running turn's newest run is rising")
-    (is (funcall #'rising t nil t) "and so is the row live work rides on, with no run at all")
+    (is (funcall #'rising t '(:calls 1) t nil) "a running turn's newest run is rising")
+    (is (funcall #'rising t '(:calls 1) nil '(:calls 1))
+        "and so is the row live work rides on, with no run at all")
+
+    ;; **AND A TURN THAT IS STILL RUNNING IS NOT ENOUGH — THE NUMBER HAS TO BE MOVING.** This is the
+    ;; third report of this colour and the same words as the second: *"al tool calls stay yellow
+    ;; sometimes"*, then *"still some finished toolcalls are yellow"*. MEASURED on a fresh build of
+    ;; the operator's own transcript, FIVE markers were yellow in one frame; after the standalone call
+    ;; site was corrected, two; and both of those were still wrong for the whole of the model's
+    ;; answer, because `busy` is true while a turn writes its reply and no call is running at all.
+    (is (not (funcall #'rising t nil t nil))
+        "**a FINISHED call is not yellow, however busy the turn** — nothing is in flight, so its
+ call count is final and the number is not going up")
+    (is (not (funcall #'rising t '(:calls 0 :thinking 12) t nil))
+        "**nor is it yellow for REASONING alone** — the styled number is the CALLS one, and a
+ thinking count rising while the calls are final is a different fact")
+    (is (not (funcall #'rising t '(:calls 1) nil nil))
+        "nor an older run while a call is in flight elsewhere")
     ;; **AND IT ANSWERS T, not the thing that made it true.** `live-here` is a plist — the walk
     ;; hands it `%hidden-run-live-work`'s own value — so without the trailing `t` this returned
     ;; `(:calls 1 :thinking 0)` to a caller asking yes-or-no. MEASURED on the live head.
-    (is (eq t (funcall #'rising t nil '(:calls 1 :thinking 0)))
+    (is (eq t (funcall #'rising t '(:calls 1) nil '(:calls 1 :thinking 0)))
         "a truthy `live-here` answers T and not the plist")
     ;; **and an OLDER run in the same running turn is not** — this is the regression
-    (is (not (funcall #'rising t nil nil))
+    (is (not (funcall #'rising t '(:calls 1) nil nil))
         "**an older run's marker is NOT yellow while the turn runs** — the whole-transcript bug")
     ;; **and nothing rising once the turn is over**, however recent the run
-    (is (not (funcall #'rising nil t nil))
+    (is (not (funcall #'rising nil '(:calls 1) t nil))
         "a settled turn's newest run is not rising — the past tense is earned")
-    (is (not (funcall #'rising nil nil nil)) "nor is anything else"))
+    (is (not (funcall #'rising nil nil nil nil)) "nor is anything else"))
   ;; **AND THE WALK HANDS THE ANSWER OVER AT EVERY CALL SITE** — checked STRUCTURALLY, because the
   ;; source-string version of this guard was defeated by a different spelling of the same bug.
   ;;
