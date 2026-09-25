@@ -1630,11 +1630,21 @@ carry/filling line's bar and its patience, and an open ask's deadline (§1.6).
 deadline and mark the head dirty when a tenth of it passes (`tick-notice`,
 `tick-stop-request`), so they already ask for the frames they need; naming them again
 would be a second spelling of one rule, and the second spelling is the one that
-rots."
+rots.
+
+**AND THE TURN'S HALF IS `turn-busy-p`, which is the FOURTH place today this was wrong.** It used to
+read *generating* or *a call is running*, spelled out — right while the model produces and right
+while a command executes, and **FALSE in the gap between them**: the round's generation ends, the
+model has not been sent the results, and for that whole window the frame was not clock-driven at
+all. MEASURED on the operator's screen — *\"when a tool call starts the responding timer freezes for
+a sec\"* — and of course it does: the `Responding · 2m23s` number is a function of the clock, so a
+frame that is not rebuilt on the clock cannot advance it, and everything else live in the frame
+freezes with it.
+
+`turn-busy-p` asks the question the two clauses were reaching for — *is the turn still working* —
+and it is true across the whole turn because it counts a call that has not finished as work."
   (let ((turn (session-turn (head-session head))))
-    (or (and turn (string= (turn-state-name turn) "running"))
-        (some (lambda (c) (string= (getf (getf c :state) :state) "running"))
-              (getf turn :calls))
+    (or (and turn (turn-busy-p turn))
         (filling-active-p)
         (and *carry-last-done* *carry-moved-at*)
         (and (%live-decision head) t))))
@@ -1646,11 +1656,13 @@ The spinner, a running call's elapsed and the carry bar all move continuously, s
 they want the fastest rate a person can read. **A deadline does not**, and neither
 does the stall row: those change once a second at most, so a decision card waiting on
 its own clock asks for ONE frame a second rather than ten — the difference between a
-countdown and a head burning a core to redraw the same number."
+countdown and a head burning a core to redraw the same number.
+
+**The turn's half is `turn-busy-p`, for the reason `live-frame-p` gives at length** — with the added
+sting that THIS one decides the RATE, so the frozen second the operator reported was not only a stale
+number but a frame that had dropped to the idle rate in the middle of a turn."
   (let ((turn (session-turn (head-session head))))
-    (or (and turn (string= (turn-state-name turn) "running"))
-        (some (lambda (c) (string= (getf (getf c :state) :state) "running"))
-              (getf turn :calls))
+    (or (and turn (turn-busy-p turn))
         (filling-active-p)
         (and *carry-last-done* *carry-moved-at*))))
 

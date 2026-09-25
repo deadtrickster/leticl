@@ -13906,6 +13906,61 @@ returns NIL, so a quiet turn stays quiet."
           "even while the turn still says running: the CALL is what is asked"))
     (is (null (leticl::%hidden-run-live-work nil 100)) "no turn, nothing live")))
 
+(def-test the-frame-is-clock-driven-for-the-whole-turn (:suite leticl)
+  "**The operator: *\"when a tool call starts the responding timer freezes for a sec.\"***
+
+`live-frame-p` decides whether the frame is rebuilt on the CLOCK — and `Responding · 2m23s` is a
+function of the clock, so a frame that is not clock-driven cannot advance it. Everything live in the
+frame freezes with the number.
+
+Its turn half read *generating* or *a call is running*, spelled out, and **both are false in the gap
+between them**: the round's generation ends, the model has not been sent the results, and for that
+whole window the head idled — at the coarse rate too, because `live-frame-tenths-p` had the same two
+clauses. That is the reported second, and it is the FOURTH place today this same predicate was wrong
+(`turn-running-p`, `turn-status`, `%hidden-run-live-work`, and here)."
+  (let ((h (%on-head :cols 100 :rows 30)))
+    (flet ((busy-frame (state calls deadline)
+             (setf (session-turn (head-session h))
+                   (list :turn-id "t" :model "m" :state (list :state state)
+                         :text "" :reasoning "" :calls calls))
+             (let ((leticl::*filling* nil)
+                   (leticl::*carry-last-done* nil)
+                   (leticl::*carry-moved-at* nil))
+               (list (leticl::live-frame-p h) (leticl::live-frame-tenths-p h)))))
+      ;; **the reported case**: generation is over, the command is still running
+      (is (equal '(t t) (funcall #'busy-frame "finished"
+                                 (list (list :call-id "c1" :state (list :state "running")))
+                                 nil))
+          "a running call makes the frame clock-driven at the tenths rate")
+      ;; **THE WINDOW THE REPORT IS ACTUALLY ABOUT**: the model has PROPOSED a call and the tool
+      ;; has not started yet — the gate has not answered, or the daemon is about to send
+      ;; `ToolStarted`. `(string= … "running")` was FALSE for a proposed call, so this whole window
+      ;; idled the frame, and `Responding · Ns` sat frozen on the screen for as long as the decision
+      ;; took. `turn-busy-p` counts it, which is why the fix is the predicate and not a new clause.
+      (is (equal '(t t) (funcall #'busy-frame "finished"
+                                 (list (list :call-id "c1" :state (list :state "proposed")))
+                                 nil))
+          "**a PROPOSED call keeps the frame live** — the gate window, which can be seconds")
+      ;; **THE LIMIT, RECORDED RATHER THAN GUESSED AT.** `TurnFinished` is emitted PER ROUND — four
+      ;; times inside `run_turn_steered`, once per round and once per failure path — so the head
+      ;; cannot tell a round's end from the PROMPT's. With the state `\"finished\"` and no call
+      ;; outstanding there is nothing left to ask, and this predicate answers no. That window is
+      ;; milliseconds (the daemon appends the results and calls the next round immediately), so it
+      ;; is not the frozen second the operator reported — the PROPOSED call above is, and it can be
+      ;; seconds long. Closing it properly needs the daemon to say *the prompt is over* as a thing
+      ;; of its own, which is filed and not done.
+      (is (equal '(nil nil) (funcall #'busy-frame "finished" nil nil))
+          "the one window this cannot see: a per-round `finished` with nothing outstanding")
+      (is (equal '(t t) (funcall #'busy-frame "running" nil nil)) "as is one still generating")
+      ;; and a turn that really is over asks for no clock frames at all, which is what keeps an
+      ;; idle head off the CPU
+      (is (equal '(nil nil) (funcall #'busy-frame "finished"
+                                     (list (list :call-id "c1"
+                                                 :state (list :state "finished"
+                                                              :outcome (list :outcome "ok"))))
+                                     nil))
+          "a settled turn is not clock-driven"))))
+
 (def-test the-yellow-is-only-on-the-live-edge (:suite leticl)
   "**The colour has been wrong twice, in opposite directions, and this pins both ends.**
 
