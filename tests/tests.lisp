@@ -10779,6 +10779,59 @@ answers the first fills it. The `resync` frame re-arms."
                "so the next gap asks again"))
       (setf (symbol-function 'leticl::%send) real))))
 
+(def-test the-event-that-reveals-a-gap-is-folded-too (:suite leticl)
+  "`apply-event` filed the gap's row and RETURNED — before the `case` — so the frame that carried
+the new seq was never folded. Every gap therefore cost one more event than the daemon dropped, and
+it was always the first to arrive afterwards. Measured shape: the `tool_finished` that reveals the
+gap is lost, its call stays `running`, the marker stays yellow for the rest of the turn."
+  (let* ((leticl::*filed-notes* 0) (leticl::*seq-gaps* 0)
+         (h (%make-head))
+         (s (head-session h)))
+    (apply-event s (list :seq 10 :event "turn_started" :turn-id "t1" :model "m"))
+    (apply-event s (list :seq 11 :event "tool_started" :turn-id "t1" :call-id "c1" :name "bash"))
+    (is (turn-busy-p (session-turn s)) "a call is running")
+    ;; 11 -> 20: the gap, revealed by the very tool_finished the call was waiting for
+    (let ((d (apply-event s (list :seq 20 :event "tool_finished" :turn-id "t1" :call-id "c1"
+                                  :outcome (list :kind "ok")))))
+      (is (eq d :dirty) "a gap is a visible change")
+      (is (= 1 leticl::*seq-gaps*) "and is counted")
+      (is (equal "finished" (getf (getf (leticl::call-view (session-turn s) "c1") :state) :state))
+          "**and the event itself was folded**: the call is finished, not left running")
+      (is (not (turn-busy-p (session-turn s))) "so the turn is no longer busy"))))
+
+(def-test the-markers-number-hands-over-from-live-work-to-the-row-without-a-dip (:suite leticl)
+  "The marker's number is landed result rows PLUS live work, and the two halves must hand over
+exactly. Live work counted the UNFINISHED calls, so a call left it at `tool_finished` — a frame
+before its row landed — and for that frame it was in neither half. The operator watched it:
+*\"2 (in yellow) tool calls dropping to 1 (in yellow) tool calls and then changing back to 2 (in
+white) tool calls.\"* A count of work done cannot go down."
+  (let* ((leticl::*answered-calls* nil)
+         (turn (list :turn-id "t1" :model "m" :state (list :state "finished") :reasoning ""
+                     :calls (list (list :call-id "c1" :name "bash" :state (list :state "running"))
+                                  (list :call-id "c2" :name "bash" :state (list :state "running"))))))
+    (is (equal '(:calls 2 :running 2 :thinking 0) (leticl::%hidden-run-live-work turn 80))
+        "two calls executing: two live, both running")
+    (is (leticl::marker-rising-p t (leticl::%hidden-run-live-work turn 80) t) "and the number is rising")
+    ;; c1 finishes; its row has not landed
+    (setf (getf (second (getf turn :calls)) :state) (list :state "finished" :outcome (list :kind "ok")))
+    (let ((live (leticl::%hidden-run-live-work turn 80)))
+      (is (= 2 (getf live :calls))
+          "**a finished call with no row yet is still counted live** — the number does not dip: ~s" live)
+      (is (= 1 (getf live :running)) "one still executing")
+      (is (leticl::marker-rising-p t live t) "so the colour holds"))
+    ;; c1's result row lands: the row takes the count over
+    (leticl::note-answered-call "c1")
+    (let ((live (leticl::%hidden-run-live-work turn 80)))
+      (is (= 1 (getf live :calls)) "the landed call left the live count as its row arrived: ~s" live))
+    ;; c2 finishes, row in flight: number held, colour gone
+    (setf (getf (first (getf turn :calls)) :state) (list :state "finished" :outcome (list :kind "ok")))
+    (let ((live (leticl::%hidden-run-live-work turn 80)))
+      (is (equal '(:calls 1 :running 0 :thinking 0) live) "one unlanded, none executing: ~s" live)
+      (is (not (leticl::marker-rising-p t live t))
+          "**nothing is executing, so the number is not yellow** even though it is still live"))
+    (leticl::note-answered-call "c2")
+    (is (null (leticl::%hidden-run-live-work turn 80)) "both rows landed: nothing in flight")))
+
 (def-test prompts-queued-behind-a-running-tool-call-coalesce (:suite leticl)
   "**Behind a running turn means BUSY, not the state name.** The daemon drains its source at
 the round boundary, so everything typed during one round — the generation AND the tool calls it

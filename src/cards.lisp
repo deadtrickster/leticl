@@ -1537,16 +1537,32 @@ has a body AND every call is finished, which is the case that counts zero anyway
 
 The text below is the gate: a turn with nothing unfinished counts zero, and the `when` returns NIL, so
 a genuinely quiet turn stays quiet. A state name is not evidence about a call."
+  ;;
+  ;; **`:calls` IS THE CALLS WITH NO RESULT ROW YET, NOT THE CALLS STILL RUNNING — and `:running`
+  ;; is the other number.** The marker's number is landed result rows PLUS this, and the two halves
+  ;; have to hand over exactly: a call leaves this count at the moment its row starts being counted,
+  ;; which is when the row's BODY lands (`note-answered-call`, on `transcript_content`), and not a
+  ;; moment earlier. Counting the UNFINISHED calls here — the first version — handed over at
+  ;; `tool_finished` instead, which arrives BEFORE the row, so for that window the call was in
+  ;; neither half. The operator watched it: *"2 (in yellow) tool calls dropping to 1 (in yellow)
+  ;; tool calls and then changing back to 2 (in white) tool calls."* A number that is a count of
+  ;; work done cannot go down, and it did.
+  ;;
+  ;; The colour is a different fact — *is a call still executing* — and that is `:running`, which
+  ;; `marker-rising-p` reads. A finished call whose row is still in flight keeps the number and
+  ;; drops the yellow, which is what the screen should say about it.
   (when turn
-    (let* ((calls (count-if (lambda (c) (let ((st (getf c :state)))
+    (let* ((all (getf turn :calls))
+           (calls (count-if-not (lambda (c) (call-answered-p (getf c :call-id))) all))
+           (running (count-if (lambda (c) (let ((st (getf c :state)))
                                             (and st (not (string= (or (getf st :state) "") "finished")))))
-                              (getf turn :calls)))
-             (reasoning (or (getf turn :reasoning) ""))
-             (thinking (if (plusp (length reasoning))
-                           (reasoning-line-count reasoning cols)
-                           0)))
-        (when (or (plusp calls) (plusp thinking))
-          (list :calls calls :thinking thinking)))))
+                              all))
+           (reasoning (or (getf turn :reasoning) ""))
+           (thinking (if (plusp (length reasoning))
+                         (reasoning-line-count reasoning cols)
+                         0)))
+      (when (or (plusp calls) (plusp running) (plusp thinking))
+        (list :calls calls :running running :thinking thinking)))))
 
 (defun %hidden-run-counts (items cols &optional live)
   "`(:calls N :thinking M)` for a run — the two numbers the marker carries, and there are only two.
@@ -1780,8 +1796,13 @@ A predicate that returns somebody else's data is a predicate whose next reader w
   ;; and the line that carries live work is `live-here` — the newest row the reader can see, which is
   ;; where the in-flight count is drawn when a call has been proposed and nothing has landed. An older
   ;; run's marker is never that line, so it is never yellow, whatever the turn is doing.
+  ;;
+  ;; **`:running`, not `:calls`, since the two came apart**: `:calls` is now the calls with no
+  ;; result row yet, which includes a call that has FINISHED and whose row is a frame away. That
+  ;; one keeps the number (it is still work the marker counts) and must not keep the colour — the
+  ;; yellow says *executing*, and nothing is.
   (and busy
-       (plusp (or (getf live :calls) 0))
+       (plusp (or (getf live :running) 0))
        live-here
        t))
 

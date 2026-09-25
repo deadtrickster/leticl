@@ -2011,8 +2011,9 @@ it could no longer hold, and the next event it had is `to`."
                       (format nil "the event stream jumped from ~a to ~a — ~d ~
                                    event~:p never arrived. The daemon's scrollback is ~
                                    bounded, so events are dropped when a head falls ~
-                                   far enough behind; `/resync` takes a fresh ~
-                                   snapshot, and `/status` counts these."
+                                   far enough behind; this head has asked for a fresh ~
+                                   snapshot (`/resync` takes another), and `/status` ~
+                                   counts these."
                               from to missing))
       missing)))
 
@@ -2036,13 +2037,20 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
     ;; mark, or a head that draws little rereads its own output forever
     (setf (session-seq session) seq
           (session-expected-seq session) seq)
-    (when gap
-      ;; the row is filed, so this is a visible change even when the event itself is
-      ;; one this head filters — the gap is about the STREAM, not about the frame
-      (return-from apply-event :dirty))
+    ;; **A GAP DOES NOT SWALLOW THE EVENT THAT REVEALED IT.** This used to be
+    ;; `(when gap (return-from apply-event :dirty))` — the row was filed, and the frame
+    ;; that carried the new seq was never folded. So every gap cost the head one MORE
+    ;; event than the daemon dropped, and it was always the first one to arrive
+    ;; afterwards: a `tool_finished` whose call then stayed `running` for ever, a
+    ;; `turn_finished` whose turn stayed busy. The gap is about the STREAM; the frame is
+    ;; a frame like any other and is folded below. `gap` only decides the disposition
+    ;; at the end — the row is a visible change even when the event is one this head
+    ;; filters.
+    ;;
     ;; a stranger's turn is consumed and not folded — before any side effect
     (when (and (member name +per-turn-events+) (%foreign-turn-p session env))
-      (return-from apply-event :quiet))
+      (return-from apply-event (if gap :dirty :quiet)))
+    (let ((disposition
     (case name
       ((:turn-started)
        ;; WHEN it started, on our own clock, so the composer's edge can say how
@@ -2551,6 +2559,7 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
            (note-unreadable session
                             (format nil "unknown event ~s" (or (getf env :event) "?"))
                             (or (getf env :wire-line) (encode-frame env))))))))
+      (if gap :dirty disposition))))
 
 (defun appendf-text (turn slot text)
   (setf (getf turn slot) (concatenate 'string (getf turn slot) text)))
