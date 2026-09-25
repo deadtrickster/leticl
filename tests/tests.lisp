@@ -8630,7 +8630,20 @@ forbids). So the unit of DISPLAY is the entry and the unit of CLAIMING is the pi
       (is (not (search "the first thing I said" text))
           (format nil "**and the piece row 1 is drawing is NOT drawn again** — this is the
  duplicate: ~s" text))
-      (is (= 1 (count-substring "queued" text)) "as ONE block, not one row per piece"))))
+      (is (= 1 (count-substring "queued" text)) "as ONE block, not one row per piece"))
+    ;; --- **AND A LATER ANNOUNCEMENT CANNOT CLAIM THE GROWN ENTRY.**
+    ;; The binding took the WHOLE entry, and the entry grows: bound when it was `"A"`, it is
+    ;; `"A\nB"` a moment later. A second announcement then asked whether the ENTRY was claimed, found
+    ;; it was not, and claimed it — so the screen drew the same message twice, the first row with the
+    ;; one line it claimed and the second with all of it. The operator's own screen, one message and
+    ;; two `queued` rows:
+    ;;
+    ;;     ▌ queued · <the message>
+    ;;     ▌ queued · <the same message>  … +2 lines · /t opens it
+    (leticl::%bind-echo h "u2")
+    (is (null (assoc "u2" leticl::*bound-prompts* :test #'string=))
+        (format nil "**an entry one of whose pieces is already claimed is not claimed again** —
+ otherwise the row draws what another row is drawing: ~s" leticl::*bound-prompts*))))
 
 (def-test a-row-that-is-several-queued-prompts-retires-all-of-them (:suite leticl)
   "**The measured shape.** Five prompts queued separately — which is what the operator's
@@ -14249,13 +14262,18 @@ longer yellow the counter, wtf why it regressed.\"*
 
 `marker-rising-p` is the one place the answer lives, and it needs BOTH: the turn must still be
 running, AND this must be the live edge — the newest run, or the row live work rides on."
-  (flet ((rising (busy live newest live-here)
-           (leticl::marker-rising-p busy live newest live-here)))
+  (flet ((rising (busy live live-here) (leticl::marker-rising-p busy live live-here)))
     ;; **the live edge of a running turn is yellow** — both halves present, which is the state the
     ;; operator was watching when he asked for this
-    (is (funcall #'rising t '(:calls 1) t nil) "a running turn's newest run is rising")
-    (is (funcall #'rising t '(:calls 1) nil '(:calls 1))
-        "and so is the row live work rides on, with no run at all")
+    (is (funcall #'rising t '(:calls 1) '(:calls 1))
+        "the row live work rides on is rising while its call is in flight")
+    ;; **AND *THE NEWEST RUN* IS NOT THE QUESTION — THE LIVE ROW IS.** The operator: *"yes one old tool
+    ;; call is still yellow."* A call proposed with no result row yet leaves the newest run of HIDDEN
+    ;; rows on the PREVIOUS turn's words, so keying on `newest` lit an old counter. What the yellow is
+    ;; about is the line the in-flight number is drawn on.
+    (is (not (funcall #'rising t '(:calls 1) nil))
+        "**an OLD run is not yellow while a new call is in flight** — the newest hidden run can be the
+ previous turn's, and its counter is not going up")
 
     ;; **AND A TURN THAT IS STILL RUNNING IS NOT ENOUGH — THE NUMBER HAS TO BE MOVING.** This is the
     ;; third report of this colour and the same words as the second: *"al tool calls stay yellow
@@ -14263,26 +14281,24 @@ running, AND this must be the live edge — the newest run, or the row live work
     ;; the operator's own transcript, FIVE markers were yellow in one frame; after the standalone call
     ;; site was corrected, two; and both of those were still wrong for the whole of the model's
     ;; answer, because `busy` is true while a turn writes its reply and no call is running at all.
-    (is (not (funcall #'rising t nil t nil))
+    (is (not (funcall #'rising t nil '(:calls 3)))
         "**a FINISHED call is not yellow, however busy the turn** — nothing is in flight, so its
  call count is final and the number is not going up")
-    (is (not (funcall #'rising t '(:calls 0 :thinking 12) t nil))
+    (is (not (funcall #'rising t '(:calls 0 :thinking 12) '(:thinking 12)))
         "**nor is it yellow for REASONING alone** — the styled number is the CALLS one, and a
  thinking count rising while the calls are final is a different fact")
-    (is (not (funcall #'rising t '(:calls 1) nil nil))
-        "nor an older run while a call is in flight elsewhere")
+    (is (not (funcall #'rising t '(:calls 1) nil))
+        "nor a marker that is not the row the work rides on")
     ;; **AND IT ANSWERS T, not the thing that made it true.** `live-here` is a plist — the walk
     ;; hands it `%hidden-run-live-work`'s own value — so without the trailing `t` this returned
     ;; `(:calls 1 :thinking 0)` to a caller asking yes-or-no. MEASURED on the live head.
-    (is (eq t (funcall #'rising t '(:calls 1) nil '(:calls 1 :thinking 0)))
+    (is (eq t (funcall #'rising t '(:calls 1) '(:calls 1 :thinking 0)))
         "a truthy `live-here` answers T and not the plist")
     ;; **and an OLDER run in the same running turn is not** — this is the regression
-    (is (not (funcall #'rising t '(:calls 1) nil nil))
-        "**an older run's marker is NOT yellow while the turn runs** — the whole-transcript bug")
     ;; **and nothing rising once the turn is over**, however recent the run
-    (is (not (funcall #'rising nil '(:calls 1) t nil))
-        "a settled turn's newest run is not rising — the past tense is earned")
-    (is (not (funcall #'rising nil nil nil nil)) "nor is anything else"))
+    (is (not (funcall #'rising nil '(:calls 1) '(:calls 1)))
+        "a settled turn's live row is not rising — the past tense is earned")
+    (is (not (funcall #'rising nil nil nil)) "nor is anything else"))
   ;; **AND THE WALK HANDS THE ANSWER OVER AT EVERY CALL SITE** — checked STRUCTURALLY, because the
   ;; source-string version of this guard was defeated by a different spelling of the same bug.
   ;;
@@ -20062,3 +20078,20 @@ Three orders, all of them things a reader relies on without noticing:
       (is (< head-at one-at) "the header is ABOVE the body, not below it")
       (is (< one-at four-at) "and the body reads top-down, not bottom-up"))))
 
+
+(def-test esc-esc-interrupts-a-running-tool-call (:suite leticl)
+  "**The one key that stops a runaway command was dead while a command ran.** The turn's
+state name reads \"finished\" for the whole of a tool call — measured on the live head,
+a `sleep 60` executing under `state=finished` — and the esc handler interrupted only a
+turn whose state was \"running\", so esc esc did nothing under a hint bar saying it
+would. The gate is `turn-busy-p`: generating, or a call not finished."
+  (let* ((h (%make-head))
+         (wire (%wire h)))
+    (setf (session-turn (head-session h))
+          (list :turn-id "t1" :state (list :state "finished")
+                :calls (list (list :call-id "c1" :name "bash"
+                                   :state (list :state "running")))))
+    (leticl::%handle-key h (list :type :esc))
+    (leticl::%handle-key h (list :type :esc))
+    (is (equal "interrupt" (getf (first (%sent wire)) :frame))
+        "esc esc interrupts a turn whose only work is a running call")))

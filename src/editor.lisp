@@ -1690,9 +1690,14 @@ of R36 keeps — the anchor is a record of the top row of the last frame, never 
              (ms (/ internal-time-units-per-second 1000.0)))
          (if (and *esc-at* (< (- now *esc-at*) (* *esc-double-ms* ms)))
              (progn (setf *esc-at* nil)
+                    ;; **BUSY, not "running".** The turn's state name reads "finished" for
+                    ;; the whole of a tool call — measured on the live head, a `sleep 60`
+                    ;; executing under `state=finished` — so gated on the name, esc esc did
+                    ;; NOTHING while a command ran: the one key that stops a runaway command
+                    ;; was dead exactly when it is needed, under a hint bar saying it works.
+                    ;; `turn-busy-p` is generating OR a call unfinished, which is the fact.
                     (when (and (session-turn (head-session head))
-                               (string= (turn-state-name (session-turn (head-session head)))
-                                        "running"))
+                               (turn-busy-p (session-turn (head-session head))))
                       (%interrupt head "interrupted with esc esc")))
              (setf *esc-at* now))))
       ;; **SCROLLING PAST THE TOP ASKS FOR THE ROW ABOVE THE WINDOW.** This is the
