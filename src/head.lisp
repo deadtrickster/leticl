@@ -900,6 +900,10 @@ and a `hello` with a snapshot). Returns T when the queue moved."
            (head-dirty head) t)
      :control)
     ((string= (frame-name frame) "todos")
+     ;; **the reply carries the UNION, so the operator's half of it is folded into this head's own
+     ;; list before the wire's copy is stored** — see `fold-board-statuses`, the one rule for who
+     ;; owns what: membership is this head's, status is the daemon's
+     (fold-board-statuses (getf frame :todos))
      (setf (session-todos (head-session head)) (getf frame :todos)
            (head-dirty head) t)
      :control)

@@ -2443,6 +2443,11 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
        (setf (session-title session) (or (getf env :title) ""))
        :dirty)
       ((:todos-updated)
+       ;; **the model can move one of the OPERATOR's rows now** — `todo_write`'s `operator` field,
+       ;; naming the row by its own words — so this event is where the head learns its row was
+       ;; answered, and it must take the status: leaving it would draw the row as pending for ever
+       ;; AND push the stale status back over the daemon's at the next add or delete.
+       (fold-board-statuses (getf env :todos))
        (setf (session-todos session) (getf env :todos))
        :dirty)
       ((:command-issued)

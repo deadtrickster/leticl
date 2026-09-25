@@ -1233,9 +1233,23 @@ stops: the recorded index was the length before some pushes and after others."
       ;; them for the reason its docstring gives (no key acts on one), and a walk that advanced
       ;; here would run `at` past the stop it is comparing against — which is how the pane came to
       ;; index its stop-lines array out of bounds on a plan that had any model rows in it.
+      ;; **THE WIRE'S LIST HELD BOTH AUTHORS, AND THIS DREW THE OPERATOR'S ROWS TWICE.** `session-todos`
+      ;; is the daemon's UNION (both halves — see `TodoBoard::snapshot`), while the rows above come from
+      ;; `*operator-todos*`, which is this head's own half. So every row the operator wrote was drawn
+      ;; once as theirs and again here, **labelled `model`** — a duplicate AND a false author. MEASURED
+      ;; on the live head with one row on the board: `[x] push leticl to github — you` immediately
+      ;; followed by `[x] push leticl to github — model`.
+      ;;
+      ;; The fix is to draw each half once, from the half that OWNS it: the operator's rows from this
+      ;; head's list (which is what the add and delete keys act on, and what carries the ids the
+      ;; cursor's stops are tagged with), and the model's rows from the wire. **The tag is read rather
+      ;; than assumed**, because `by` is the whole of the difference between the two halves and a pane
+      ;; that re-derives authorship from which list a row arrived in is the drift this feature exists
+      ;; to prevent.
       (dolist (item todos)
-        (dolist (line (%todo-item-lines item "model" nil))
-          (emit line nil)))
+        (unless (string= (or (getf item :by) "") "operator")
+          (dolist (line (%todo-item-lines item "model" nil))
+            (emit line nil))))
       (when (and (null *operator-todos*) (null todos))
         (emit (list (cons "    none written yet. The model writes them with todo_write, and the row above adds one of yours."
                           '(:dim t)))))
@@ -2563,7 +2577,15 @@ guesses."
        (list (list (cons (format nil "  ~7a" "esc") '(:dim t))
                    (cons "cancels, and adds nothing" nil)))
        (list nil)
-       (list (list (cons "  the model does not see these — the wire has no frame that writes a todo"
+       ;; **AND THE LIMITATION SAID HERE WAS FALSE.** It read *"the model does not see these — the
+       ;; wire has no frame that writes a todo"*, and both halves had stopped being true: R44 landed
+       ;; `ClientFrame::SetOperatorTodos`, the daemon's board is one list with two authors, and the
+       ;; nag reads it — so the model is not only shown these rows, it is now nagged about them and
+       ;; can answer one. A card that tells the operator their row is invisible would have them
+       ;; wondering why the model kept bringing it up.
+       (list (list (cons "  the model sees these and is reminded of them; it can mark one done"
+                         '(:dim t))))
+       (list (list (cons "  it cannot remove your row — that is yours alone, with the delete key"
                          '(:dim t))))))))
 
 (defun %size-said (n)

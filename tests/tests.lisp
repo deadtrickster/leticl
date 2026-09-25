@@ -5318,11 +5318,13 @@ Four claims, and the second is the one that makes the feature honest rather than
     `— model`: one list, and the author on every line, because the two interleave;
   · **the model's items and the operator's cannot be confused** — asserted together, so neither
     can drift into the other's shape;
-  · **and the wire is not faked.** There is no frame that writes a todo — `ListTodos` is the only
-    one and the protocol calls it *a question, not an act* — so the operator's items are the
-    HEAD's, they do not reach the model, and the card says so on the screen. The alternative was
-    writing them into the model's own list under the model's name, which is the lie this asserts
-    against."
+  · **and the halves are not faked into one another.** The operator's items are the HEAD's own —
+    written under the head's name, kept in its own `operator_todo` table, and tagged `operator` when
+    they reach the daemon — so a model's `todo_write` (which replaces the model's half wholesale)
+    cannot delete them, and nothing pretends the model wrote them. **They DO reach the model though**,
+    and this docstring used to say the opposite: R44's `SetOperatorTodos` gave them a wire and put
+    them on the daemon's one board, so the nag reads them and the model can mark one done. What
+    remains impossible is removal, which is asserted on the card below."
   (let ((leticl::*todo-draft* nil) (leticl::*operator-todos* nil)
         (leticl::*repo-todo-open* nil) (leticl::*pane-scroll* 0)
         (leticl::*pane-room* 40) (leticl::*pane-lines* 0)
@@ -5344,8 +5346,15 @@ Four claims, and the second is the one that makes the feature honest rather than
       (is (some (lambda (l) (search "enter" l)) text) "enter is named")
       (is (some (lambda (l) (search "tab" l)) text) "tab is named")
       (is (some (lambda (l) (search "esc" l)) text) "esc is named")
-      (is (some (lambda (l) (search "the model does not see these" l)) text)
-          "**and the card says the model does not see them** — the limitation, where the reader looks"))
+      ;; **THE CARD'S LIMITATION IS THE TRUE ONE NOW.** It said *"the model does not see these"*, and
+      ;; that stopped being true when R44 landed `SetOperatorTodos`: the board is one list with two
+      ;; authors, the nag reads it, and the model can mark one of these rows done. What it CANNOT do is
+      ;; remove one — so the card says that instead, which is a limitation that is still real.
+      (is (some (lambda (l) (search "the model sees these" l)) text)
+          "**the card says the model is told about them** — because it is, and an operator told
+ otherwise would wonder why the model kept bringing their row up")
+      (is (some (lambda (l) (search "cannot remove your row" l)) text)
+          "**and what the model cannot do**: removing the operator's row is the operator's alone"))
     ;; --- typing goes into the focused field; tab moves it
     (flet ((type (text) (setf (composer-buffer (head-composer h)) text
                               (composer-cursor (head-composer h)) (length text)))
@@ -14025,6 +14034,80 @@ to anything that does not look at the bytes that actually leave the process."
         "**exactly one row is completed** — a constant would make it zero")
     (is (= 2 (count-substring "pending" json))
         "and exactly two are pending, so the status is per-row and not one value for the list")))
+
+(def-test an-operator-row-on-the-wire-is-not-drawn-as-the-models (:suite leticl)
+  "**The board's union arrived in `session-todos` while the pane drew its own half for the same
+  rows — so every row the operator wrote was drawn TWICE, the second time labelled `model`.**
+
+  MEASURED on the live head, with one row on the board and nothing else at all:
+
+      [x] push leticl to github  — you
+      [x] push leticl to github  — model
+
+  A duplicate, and a false author — and the second one is the worse half, because the pane's whole
+  claim since R44 is that the author is on every row. The fix reads `by` (the tag the daemon sends
+  on every entry) and draws each half once, from the half that OWNS it: the operator's from this
+  head's own list, where the ids the cursor's stops are tagged with live, and the model's from the
+  wire."
+  (let ((leticl::*operator-todos*
+          (list (list :id "t1" :content "the operator's row" :status "open" :detail "")))
+        (leticl::*todo-draft* nil) (leticl::*repo-todo-open* nil)
+        (leticl::*pane-scroll* 0) (leticl::*pane-room* 40) (leticl::*pane-lines* 0)
+        (leticl::*write-prefs* nil)
+        (h (%on-head :cols 90 :rows 30)))
+    ;; the wire's list is the UNION: the model's row AND the operator's, tagged
+    (setf (session-todos (head-session h))
+          (list (list :content "the model's row" :status "in_progress" :by "model")
+                (list :content "the operator's row" :status "open" :by "operator"))
+          (session-wiring (head-session h)) (list :workspace "/nonexistent-for-this-test"))
+    (let* ((text (lines-text (leticl::todos-lines h 90)))
+           (mine (remove-if-not (lambda (l) (search "the operator's row" l)) text))
+           (theirs (remove-if-not (lambda (l) (search "the model's row" l)) text)))
+      (is (= 1 (length mine))
+          (format nil "**the operator's row is drawn ONCE**, not once per half that carries it: ~s"
+                  mine))
+      (is (search "— you" (first mine)) "and as THEIRS: the author is what the tag is for")
+      (is (notany (lambda (l) (search "— model" (or l ""))) mine)
+          (format nil "**and never as the model's** — that label is the lie the union produced: ~s"
+                  mine))
+      (is (= 1 (length theirs)) "the model's row still comes through, once")
+      (is (search "— model" (first theirs)) "labelled as the model's own"))))
+
+(def-test the-models-answer-to-an-operator-row-is-taken-by-the-head (:suite leticl)
+  "**THE MODEL CAN MARK ONE OF THE OPERATOR'S ROWS DONE — so the head has to hear about it.**
+
+  `todo_write`'s `operator` field moves the STATE of a row the operator wrote, naming it by its own
+  words (there is no id on the wire, and the operator ruled out a bump for one: `TodoEntry` is
+  `content`, `status`, `by`). The daemon holds one board with two authors, so the announcement that
+  carries that move is the ordinary `TodosUpdated` union — nothing new on the wire.
+
+  **This is the head's half of the split, and the rule is one line: membership and order are the
+  head's; status is the daemon's.** Without the fold the move is lost loudly rather than quietly —
+  the pane keeps drawing the row as pending, the nag keeps naming it, and this head's next push of
+  its half (any add, any delete) would push the stale status back over the daemon's and undo the
+  model's answer."
+  (let ((leticl::*operator-todos*
+          (list (list :id "t1" :content "restart the daemon" :status "open" :detail "")
+                (list :id "t2" :content "push leticl" :status "open" :detail "")))
+        (leticl::*write-prefs* nil))
+    ;; --- the model marks one done, and the head takes the status
+    (leticl::fold-board-statuses
+     (list (list :content "restart the daemon" :status "completed" :by "operator")
+           (list :content "push leticl" :status "open" :by "operator")))
+    (is (equal "completed" (getf (first leticl::*operator-todos*) :status))
+        "**the model's answer sticks** — the row it named is done in this head's own list")
+    (is (equal "open" (getf (second leticl::*operator-todos*) :status)) "and only the one it named")
+    ;; --- membership is the head's: the wire cannot add a row to it
+    (leticl::fold-board-statuses
+     (list (list :content "a row from somebody else's head" :status "completed" :by "operator")))
+    (is (= 2 (length leticl::*operator-todos*))
+        "**nothing is adopted from the wire** — this head's list is the head's, and a fold never adds")
+    ;; --- and a MODEL row with the same words is not the operator's row, whatever it says
+    (setf (getf (first leticl::*operator-todos*) :status) "open")
+    (leticl::fold-board-statuses
+     (list (list :content "restart the daemon" :status "completed" :by "model")))
+    (is (equal "open" (getf (first leticl::*operator-todos*) :status))
+        "a row the wire marks `model` never moves the operator's, even with identical words")))
 
 (def-test the-operators-todos-live-in-sqlite (:suite leticl)
   "**The operator's ruling:** *\"regarding local todo storage - use sqlite as always, not files.\"*

@@ -693,11 +693,16 @@ T only for a key it took, or the field would stop taking letters."
 ;;; So the operator's items are **the head's own**, drawn in the same list and marked by author.
 ;;; Two honest consequences, both of which the screen and the docs say rather than hide:
 ;;;
-;;;   · **the MODEL does not see them.** They steer the reader, not the turn. Making them steer
-;;;     the model needs a frame letibot does not have, and that is an ask to file (like R40/R41),
-;;;     not something to fake by writing them into the model's own list under its name;
-;;;   · **they are this head's memory of this session**, not a file. A restart forgets them. A
-;;;     todo that owned real work would need to be persisted somewhere the daemon reads.
+;;;   · **the MODEL DOES see them, and that is R44's frame rather than this head's doing.**
+;;;     `ClientFrame::SetOperatorTodos` carries this head's half to the daemon, whose board is ONE
+;;;     list with two authors; so the nag reads them, the model is reminded of one when a turn ends
+;;;     with it open, and — since `todo_write` grew its `operator` field — it can mark one DONE. It
+;;;     still cannot remove one: a row is the operator's own words, and a model that misquoted must
+;;;     not be able to take it off the board. This block used to say the opposite (*"the MODEL does
+;;;     not see them … that is an ask to file"*), which is what it was before the ask was answered;
+;;;   · **they are stored in sqlite**, on the operator's own ruling (*"use sqlite as always, not
+;;;     files"*) — `src/store.lisp`'s `operator_todo` table, this head's own, separate from the
+;;;     daemon's `todo` row that holds the union. A restart brings them back.
 
 (defvar *operator-todos* nil
   "The todos the OPERATOR added: plists `(:id STRING :content TITLE :detail TEXT :status STRING)`.
@@ -830,6 +835,48 @@ sending, which is the honest answer for a test or a replay."
                  (session-expected-seq (head-session head))
                  *operator-todos*))))
 
+(defun fold-board-statuses (todos)
+  "The BOARD's status for each of this head's own rows, taken by content — the model's returns.
+
+**The board is one list with two authors, and the two halves are owned differently. This is the
+head's half of that split, and it is one rule:**
+
+  · **membership and order are THIS HEAD's.** It adds, deletes and reorders its own rows, pushes the
+    whole list, and the daemon's half is what it sent. So nothing here adds or removes a row, and a
+    row on the wire that this head does not have is left alone rather than adopted;
+  · **status is the DAEMON's.** The model can move the state of one of these rows now — it names the
+    row by quoting its words (`todo_write`'s `operator` field, see `TodoBoard::set_operator_states`) —
+    and the daemon announces the union with the new status.
+
+**Without this fold the model's move is lost, and it is lost LOUDLY**: the pane keeps drawing the row
+as pending, the nag keeps naming it, and this head's next `push-operator-todos` — any add, any delete
+— pushes the stale status back over the daemon's, undoing the model's answer. So the fold is not
+bookkeeping; it is the half of the feature that makes the move stick.
+
+**By content, because that is the only name a row has.** The wire's `TodoEntry` is `content`, `status`
+and `by` — there is no id (the operator ruled out a protocol bump for one), and this head's own ids
+(`t6`, `t7`) are local to it and were never sent. So a row is found by the words it carries, and the
+match is restricted to rows the daemon marks `operator`: a model row that happened to read the same
+would otherwise take a status meant for the operator's.
+
+PERSISTED when something moved, so a restart does not put the row back to pending. In a replay there
+is nothing to fold and `*write-prefs*` is off, which is why the two guards at the top are the whole
+of the replay story."
+  (when (and todos *operator-todos*)
+    (let ((changed nil))
+      (dolist (item *operator-todos*)
+        (let ((wire (find (getf item :content) todos
+                          :key (lambda (r) (getf r :content))
+                          :test #'string=)))
+          (when (and wire
+                     (string= (or (getf wire :by) "") "operator")
+                     (getf wire :status)
+                     (not (equal (getf item :status) (getf wire :status))))
+            (setf (getf item :status) (getf wire :status)
+                  changed t))))
+      (when changed (save-operator-todos))
+      changed)))
+
 (defun operator-todo-add (title &optional detail (head *head*))
   "Add the operator's item. The new item when it was added, NIL when TITLE was blank.
 
@@ -922,7 +969,7 @@ description is optional and the title is the item. Saying so beats storing a row
     (if (operator-todo-add title (getf *todo-draft* :detail))
         (progn
           (%todo-draft-close head)
-          (say head (format nil "added `~a` to the plan — it is yours, and the model does not see it"
+          (say head (format nil "added `~a` to the plan — it is yours, and the model will be reminded of it"
                             (string-trim " " title)))
           t)
         (progn
