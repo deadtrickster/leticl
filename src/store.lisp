@@ -17,6 +17,19 @@
 ;;;; build step, which matters because the head is frozen into an image and a new C dependency
 ;;;; would be a new thing to build.
 ;;;;
+;;;; **A CHANGE TO THIS FILE NEEDS A RESTART, NOT A PUSH — and that is MEASURED, not a precaution.**
+;;;; Pushing it three times into one live head left the image in a state where `store-load-todos`
+;;;; faulted with *"Unhandled memory fault at #x0"* while a FRESH image read the same database
+;;;; correctly (`READ: ("t5" "t6")`), the `sqlite3` CLI showed the rows intact, and the whole suite
+;;;; passed. The head survived it — the handler catches the fault and records it — but the store
+;;;; answered nothing for the rest of that session, and it looked exactly like a store that was
+;;;; empty.
+;;;;
+;;;; The class is the pusher's own: a re-evaluated `define-alien-type` in a live image is a
+;;;; LAYOUT change, which is why `defstruct` and `defclass` are already skipped by `--file`. These
+;;;; routines are called correctly by the frozen image and by every fresh load; what is not safe is
+;;;; redefining them underneath callers that were compiled against them.
+;;;;
 ;;;; **`prepare` + `bind` + `step`, never string interpolation.** A todo's title is arbitrary
 ;;;; prose that may contain any byte, and building SQL by concatenation is the one way to get that
 ;;;; wrong that no amount of testing catches — the value and the syntax live in the same string.
