@@ -559,6 +559,18 @@ and a `hello` with a snapshot). Returns T when the queue moved."
        (setf (head-connected head) t
              (head-full-repaint head) t
              (head-dirty head) t)
+       ;; **THE OPERATOR'S TODOS GO TO THE DAEMON'S BOARD HERE, and here is the only place that can.**
+       ;;
+       ;; `load-operator-todos` runs in `run`, BEFORE the socket is marked connected — MEASURED:
+       ;; `load-prefs-into` is called at `head.lisp:1670` and `(head-connected head) t` at `:1678`, so
+       ;; a push from the loader hit `%send`'s disconnected guard and sent NOTHING. The list was read,
+       ;; the store was right, and the board stayed empty — which would have looked exactly like the
+       ;; feature not working, on a head whose todo pane was showing the rows.
+       ;;
+       ;; A HELLO is the moment the session is known and the socket is live, and it is also the
+       ;; moment a SWITCH lands — so this covers attach and switch with one send, the same rule the
+       ;; comments below give for the settings request.
+       (push-operator-todos head)
        (clear-note head))
      ;; A `Switch` lands as a Hello on the new session, so asking here covers
      ;; attach AND switch with one send (§7.4). Without it the header keeps the

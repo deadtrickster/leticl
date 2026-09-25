@@ -226,7 +226,7 @@
    #:*head-tool-runners* #:*op-calls* #:+op-call-wait-ms+ #:tick-op-calls #:%op-call-ask
    #:*op-call-draft* #:op-call-draft-open-p #:op-call-card-lines #:%op-call-draft-key
    ;; R44: the operator's own todo items — the list, the add verb, and the modal card
-   #:*operator-todos* #:operator-todo-add #:note-todo-ids #:push-operator-todos #:*todo-load-head* #:*todo-draft* #:todo-draft-open-p #:todo-card-lines
+   #:*operator-todos* #:operator-todo-add #:note-todo-ids #:push-operator-todos #:*todo-draft* #:todo-draft-open-p #:todo-card-lines
    #:operator-todos-path #:read-operator-todos #:persist-operator-todos #:operator-todos->text #:text->operator-todos #:+operator-todos-cap+ #:save-operator-todos #:load-operator-todos #:*todo-file-unreadable*
    ;; the head's own sqlite store (src/store.lisp)
    #:store-path #:store-available-p #:store-close #:*store-path-override* #:*store-unavailable*

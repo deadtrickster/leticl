@@ -234,12 +234,8 @@ shared record. The second file's note comes out of `load-retired-into`."
     ;; come through here with them — `with-replay-globals` binds `*operator-todos*` to NIL, and a
     ;; recorded screen must not draw the todos of the day it is being replayed on.
     (let ((note (load-retired-into head)))
-      ;; **the head, so the loader can push the operator's rows onto the daemon's board** — the
-      ;; board is what the idle nag reads, so a head that kept its own list to itself would leave the
-      ;; nag unable to see work queued in an earlier session
-      (let ((leticl::*todo-load-head* head))
-        (let ((todos (load-operator-todos)))
-          (when todos (push todos notes))))
+      (let ((todos (load-operator-todos)))
+        (when todos (push todos notes)))
       (nreverse notes))))
 
 (defvar *write-prefs* t

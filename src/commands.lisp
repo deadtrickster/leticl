@@ -770,13 +770,6 @@ strictly worse than a list that survives only this session."
       nil))
   *operator-todos*)
 
-(defvar *todo-load-head* nil
-  "The head `load-operator-todos` should push the board on, or NIL.
-
-A `defvar` and not an argument because the loader is called from `load-prefs-into`, which is handed a
-head for its own reasons and not for this one — and because a replay binds it to NIL so a recorded
-screen never sends a frame.")
-
 (defun load-operator-todos ()
   "The operator's list from the STORE onto `*operator-todos*`, answering a note or NIL.
 
@@ -809,10 +802,10 @@ which is the same behaviour as before that store existed."
          ;; **and the id counter learns what is already there**, so the next add cannot mint an id
          ;; the store already holds — see `note-todo-ids` for the measurement
          (note-todo-ids *operator-todos*)
-         ;; **and the daemon gets the list at startup**, which is what makes the nag able to see
-         ;; work the operator queued in an EARLIER session: without this the board would be empty
-         ;; until they happened to touch the pane.
-         (push-operator-todos *todo-load-head*)
+         ;; **and the daemon gets the list when the session is known** — NOT here. This runs before
+         ;; the socket is connected (`run` loads prefs at `head.lisp:1670`, connects at `:1678`), so a
+         ;; push from here hits `%send`'s disconnected guard and sends nothing. The push lives in the
+         ;; HELLO arm, which is the first moment both are true.
          nil))))
 
 (defvar *todo-file-unreadable* nil
