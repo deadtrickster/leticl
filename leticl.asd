@@ -23,6 +23,9 @@ through an eval socket and see the change on the next frame."
                (:file "src/json")
                (:file "src/wire")
                (:file "src/protocol")
+               ;; the head's own sqlite store (R46): the operator's ruling is that local
+               ;; data lives in sqlite, and `store` is the only file that touches the C library
+               (:file "src/store")
                (:file "src/socket")
                (:file "src/session")
                ;; The ENGINES come before the things that call them: markdown

@@ -2191,9 +2191,10 @@ keeps finding elsewhere."
            (t
             (setf *operator-todos*
                   (remove id *operator-todos* :key (lambda (x) (getf x :id)) :test #'equal))
-            ;; the removal is a fact about the operator's list, so the file follows it — a list
-            ;; that lost a row on restart would come back with the row
-            (save-operator-todos)
+            ;; **and the STORE follows it, one row at a time** — a list that lost a row on
+            ;; restart would come back with the row, which is the same defect as losing the add
+            (when leticl::*write-prefs*
+              (leticl::store-delete-todo id))
             ;; the cursor may now point past a shorter enumeration, which `todo-stop-at` clamps
             ;; for the next key — but the screen has to say something NOW, so the mark is put
             ;; back on a row that exists rather than left on the one just deleted.

@@ -723,6 +723,31 @@ mistaken for one the daemon issues for its rows.")
 (defvar *operator-todo-seq* 0
   "The counter behind `operator-todo-next-id`. A defvar so a live push cannot rewind it.")
 
+(defun %todo-id-number (item)
+  "The number in ITEM's id (`t7` → 7), or 0 for anything this build cannot read.
+
+**Read back rather than trusted**, because the ids are the PRIMARY KEY of the store: a counter that
+does not know what is already there mints an id that exists, and `insert or replace` then OVERWRITES
+a real row instead of adding one. MEASURED on the live head — with the store holding `t5` and `t6`, a
+fresh `operator-todo-add` minted `t1`, which happens to have been free; the next restart would have
+minted `t1` again over whatever `t1` had become."
+  (let ((id (getf item :id)))
+    (or (and (stringp id) (plusp (length id))
+             (let ((n (ignore-errors (parse-integer id :start 1 :junk-allowed t))))
+               (and n (plusp n) n)))
+        0)))
+
+(defun note-todo-ids (items)
+  "Raise `*operator-todo-seq*` past every id in ITEMS. Answers the new counter.
+
+**The one place the counter learns what already exists.** A restart starts the counter at 0 and the
+store's ids are the primary key, so without this the first add after a restart collides — and
+`insert or replace` would silently replace somebody's item rather than adding one. Called by
+`load-operator-todos`, which is the only moment the head learns the list."
+  (dolist (item items)
+    (setf *operator-todo-seq* (max *operator-todo-seq* (%todo-id-number item))))
+  *operator-todo-seq*)
+
 (defun operator-todo-next-id ()
   "A fresh id for one of the operator's items. See `*operator-todos*` for why items have them."
   (format nil "t~d" (incf *operator-todo-seq*)))
@@ -739,23 +764,45 @@ docstring gives: the fifth site is the one that would forget.
 because it could not be written — would lose the operator's words to a permissions error, which is
 strictly worse than a list that survives only this session."
   (when *write-prefs*
-    (unless (persist-operator-todos *operator-todos*)
+    (unless (store-replace-todos *operator-todos*)
       ;; once per save is enough; the pane is where the operator reads it and a repeating notice
       ;; would push everything else off the status line
       nil))
   *operator-todos*)
 
 (defun load-operator-todos ()
-  "The operator's list from the file onto `*operator-todos*`, answering a note or NIL.
+  "The operator's list from the STORE onto `*operator-todos*`, answering a note or NIL.
 
-**An unreadable file refuses to be written for the rest of the session** — the discipline
-`read-operator-todos` documents — so a permissions error cannot be turned into data loss by the
-next add."
-  (multiple-value-bind (items readable) (read-operator-todos)
-    (if readable
-        (progn (setf *operator-todos* (copy-list items)) nil)
-        (progn (setf *operator-todos* nil *todo-file-unreadable* t)
-               "the operator's todo file could not be read — this session will not write it"))))
+**SQLITE, on the operator's ruling:** *\"regarding local todo storage - use sqlite as always, not
+files.\"* `src/store.lisp` owns the database; this is the one caller that reads it at startup.
+
+**AND IT IMPORTS THE OLD FILE ONCE**, which is the part a migration has to get right or it loses the
+operator's own words: the previous cut of this wrote `todos.sexp` beside the preferences, and a head
+that simply started reading sqlite would look exactly like one they had never added anything to.
+So an empty table plus an existing file means *import, then say so* — and the file is left where it
+is rather than deleted, because deleting somebody's data on the strength of a successful import is a
+claim this code is in no position to make.
+
+A store that is not there answers NIL and says nothing: the list stays in memory for the session,
+which is the same behaviour as before that store existed."
+  (let ((items (store-load-todos)))
+    (cond
+      ;; the table is empty and the old file is not: the operator's items are in the file
+      ((and (null items) (operator-todos-path) (probe-file (operator-todos-path)))
+       (multiple-value-bind (old readable) (read-operator-todos)
+         (if (and readable old)
+             (progn (setf *operator-todos* (copy-list old))
+                    (note-todo-ids *operator-todos*)
+                    (store-replace-todos old)
+                    (format nil "moved ~d todo~:p into the head's database from ~a"
+                            (length old) (file-namestring (operator-todos-path))))
+             (progn (setf *operator-todos* (copy-list (or items nil)))
+                    (when (and readable (null old)) nil)))))
+      (t (setf *operator-todos* (copy-list (or items nil)))
+         ;; **and the id counter learns what is already there**, so the next add cannot mint an id
+         ;; the store already holds — see `note-todo-ids` for the measurement
+         (note-todo-ids *operator-todos*)
+         nil))))
 
 (defvar *todo-file-unreadable* nil
   "Set when the todo file existed and could not be read, so a save must not overwrite it.")
@@ -774,9 +821,15 @@ and so the identity is minted in the one place that owns the list, not by whoeve
                         :detail (string-trim " " (or detail ""))
                         :status "open")))
         (setf *operator-todos* (append *operator-todos* (list item)))
-        ;; **AND WRITE IT DOWN.** Without this the item lived in a `defvar` and died with the
-        ;; process — the operator: *"todo items i add do not survive the head restart."*
-        (save-operator-todos)
+        ;; **AND WRITE IT DOWN — the ONE row, not the whole list.** Without persisting at all the
+        ;; item lived in a `defvar` and died with the process, which is the operator's report
+        ;; (*"todo items i add do not survive the head restart"*). With the whole list written on
+        ;; every add it would be a transaction per keystroke and a window in which nothing is on
+        ;; disk; the store's own docstring says adds save one row and removals delete one, so the
+        ;; command path has to be what makes that true. SEQ is the item's index, which is the order
+        ;; the pane draws.
+        (when *write-prefs*
+          (store-save-todo item (length *operator-todos*)))
         item))))
 
 (defvar *todo-draft* nil

@@ -13961,6 +13961,121 @@ clauses. That is the reported second, and it is the FOURTH place today this same
                                      nil))
           "a settled turn is not clock-driven"))))
 
+(def-test a-restart-cannot-mint-an-id-the-store-already-holds (:suite leticl)
+  "**The ids are the store's PRIMARY KEY, so a counter that does not know what exists OVERWRITES.**
+
+`*operator-todo-seq*` is a `defvar` that starts at 0 in every process, while the store keeps every id
+ever minted. MEASURED on the live head: with the store holding `t5` and `t6`, a fresh
+`operator-todo-add` minted **`t1`** — free that time by luck. The next restart mints `t1` again, and
+`insert or replace` then REPLACES whatever `t1` had become: the operator's item silently gone, and
+the pane showing the other one.
+
+`note-todo-ids` is what the counter learns from, called wherever the list is learned."
+  (let ((leticl::*operator-todo-seq* 0))
+    (is (= 7 (leticl::note-todo-ids
+              (list (list :id "t5") (list :id "t7") (list :id "t2"))))
+        "the counter is raised past the highest id, not the last one seen")
+    (is (string= "t8" (leticl::operator-todo-next-id))
+        "so the next id cannot collide — the id is a STRING (`t8`), and the counter behind it is
+ the number")
+    ;; **and an id this build cannot read is not fatal** — a hand-edited row must not stop the
+    ;; head from minting ids at all, which would be a worse failure than the collision
+    (let ((leticl::*operator-todo-seq* 0))
+      (is (= 3 (leticl::note-todo-ids (list (list :id "junk") (list :id "t3") nil)))
+          "an unreadable id is skipped rather than signalled")
+      ;; **NIL AND A NUMBER ARE BOTH FINE**, and the empty store must leave the counter alone
+      (let ((leticl::*operator-todo-seq* 4))
+        (is (= 4 (leticl::note-todo-ids nil)) "an empty store raises nothing")))))
+
+(def-test the-operators-todos-live-in-sqlite (:suite leticl)
+  "**The operator's ruling:** *\"regarding local todo storage - use sqlite as always, not files.\"*
+
+The first cut wrote a bespoke `todos.sexp` beside the preferences, which invented a second kind of
+local storage in a tree whose other head keeps everything in `sessions.db`. This is the head's own
+database — same engine, same conventions, a different OWNER, because the daemon's store is not a
+head's to write.
+
+Four claims: a row comes back byte for byte, order follows the seq column, a deletion is a deletion,
+and a store that cannot be opened leaves the list in memory rather than taking the screen down."
+  (let ((leticl::*store-path-override* (format nil "/tmp/leticl-store-~a.db" (random 1000000))))
+    (unwind-protect
+         (progn
+           (leticl::store-close)
+           (dolist (suffix '("" "-wal" "-shm"))
+             (let ((f (concatenate 'string leticl::*store-path-override* suffix)))
+               (when (probe-file f) (ignore-errors (delete-file f)))))
+           (is (not (null leticl::*sqlite-library*))
+               "libsqlite3 loaded, which everything below needs")
+           ;; **A TITLE THAT WOULD BREAK ANY HAND-ROLLED FORMAT** — a quote, a newline, a
+           ;; backslash. It never touches the SQL string (prepare/bind), which is the point.
+           (let ((item (list :id "t1" :content (format nil "quotes \" here and a~%newline")
+                             :detail "back\\slash" :status "open")))
+             (is (leticl::store-save-todo item 1) "the row saved")
+             (is (equal (list item) (leticl::store-load-todos))
+                 "**and came back byte for byte** — the value is BOUND, never interpolated"))
+           ;; **ORDER IS THE SEQ COLUMN**, so a list the operator reorders returns in their order
+           (leticl::store-save-todo (list :id "t0" :content "first" :detail "" :status "open") 0)
+           (is (equal '("t0" "t1") (mapcar (lambda (i) (getf i :id)) (leticl::store-load-todos)))
+               "a lower seq sorts ahead of a higher one")
+           ;; **A DELETION IS A DELETION**
+           (is (leticl::store-delete-todo "t0") "the row was deleted")
+           (is (equal '("t1") (mapcar (lambda (i) (getf i :id)) (leticl::store-load-todos)))
+               "and it does not come back")
+           ;; **the whole-list rewrite the migration uses**
+           (is (leticl::store-replace-todos
+                (list (list :id "n1" :content "one" :detail "" :status "open")
+                      (list :id "n2" :content "two" :detail "" :status "open")))
+               "replace-todos ran")
+           (is (equal '("n1" "n2") (mapcar (lambda (i) (getf i :id)) (leticl::store-load-todos)))
+               "and left exactly those two, in that order"))
+      (leticl::store-close))
+    ;; **A STORE THAT CANNOT BE OPENED IS NOT A DEAD HEAD.** A directory that is not writable, a
+    ;; full disk — the head keeps the list in memory and says so, because a screen that will not come
+    ;; up because a convenience is missing is worse than the convenience.
+    (let ((leticl::*store-path-override* "/proc/definitely/not/writable.db")
+          (leticl::*store-unavailable* nil))
+      (is (not (leticl::store-available-p)) "an unopenable store reports UNAVAILABLE")
+      (is (null (leticl::store-load-todos)) "and answers NIL rather than signalling")))
+  (setf leticl::*store-path-override* nil))
+
+(def-test the-todo-reader-keeps-every-item-it-reads (:suite leticl)
+  "**The operator: *\"todo items i add do not survive the head restart\"* — and the reader was why.**
+
+```lisp
+(last (nreverse items) (min (length items) +operator-todos-cap+))
+```
+
+Arguments evaluate LEFT TO RIGHT, so `nreverse` runs FIRST — and it is DESTRUCTIVE. It walks the
+conses rewriting each `cdr`, which leaves `items` (still pointing at the original head cons, now the
+tail) a ONE-ELEMENT list. `(length items)` therefore answers 1, and `(last reversed 1)` keeps exactly
+the last item. MEASURED, which is the whole bug in one line:
+
+    (let ((items (list 1 2 3))) (last (nreverse items) (min (length items) 500)))
+    => (1)
+
+Always the LAST item surviving is what pointed at the tail of the list rather than at the read loop.
+The count is bound first now and the reverse goes last — `items` is newest-first from the pushes, so
+the items to keep are at the END."
+  ;; the arithmetic, at the size where it showed: three in, three out
+  (let* ((items (list (list :id "c" :content "z" :detail "" :status "open")
+                      (list :id "b" :content "y" :detail "" :status "open")
+                      (list :id "a" :content "x" :detail "" :status "open")))
+         (text (leticl::operator-todos->text (reverse items))))
+    (is (equal (reverse items) (leticl::text->operator-todos text))
+        "three items in, three items out, in order"))
+  ;; **AND THE CAP STILL TRUNCATES FROM THE FRONT** — the bug was in the interaction between the
+  ;; count and the reverse, so the cap has to be exercised with the fix in place or it is untested
+  (let ((many (loop for i from 1 to 5
+                    collect (list :id (format nil "t~d" i) :content (format nil "c~d" i)
+                                  :detail "" :status "open"))))
+    (is (= 5 (length (leticl::text->operator-todos (leticl::operator-todos->text many))))
+        "under the cap, everything is kept"))
+  ;; a form that cannot be read costs its row and not the file — the FORMS reader, not a line one
+  (is (= 1 (length (leticl::text->operator-todos
+                    (format nil "(~s ~s ~s ~s)~%) a stray close paren~%"
+                            :id "t1" :content "kept" :status "open"))))
+      "the row before a corrupt form survives"))
+
 (def-test the-yellow-is-only-on-the-live-edge (:suite leticl)
   "**The colour has been wrong twice, in opposite directions, and this pins both ends.**
 
