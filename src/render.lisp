@@ -627,6 +627,25 @@ thirty rows appended, and the view jumped to `row-62`."
                       ;; **One blank each side and never two.** The air rule below supplies its own
                       ;; blank above when the class changes, so ours is added only when it will not:
                       ;; two nils there is the hole the first cut of this measured.
+                      ;; **AND THE COLOUR IS `rising`, WHICH IS NOT `busy`.** This call site handed
+                      ;; the marker the TURN's own state for as long as it existed, so every
+                      ;; STANDALONE marker — a run whose counts do not continue a sentence — went
+                      ;; yellow for the whole of every turn. The operator reported it twice in the same
+                      ;; words: *"all tool call counters are yellow now"*, and later *"al tool calls
+                      ;; stay yellow sometimes"*. MEASURED on their screen, a fresh build of their own
+                      ;; transcript had FIVE markers yellow where exactly one — the newest run — is
+                      ;; the live edge.
+                      ;;
+                      ;; **The `sometimes` is this branch and not the turn.** The GLUED path was
+                      ;; fixed (`%marker-onto-last-line` takes the narrowed answer), so only the runs
+                      ;; that do NOT glue to prose were lit — which is why one frame showed four
+                      ;; markers and the next showed one, and why the same transcript renders
+                      ;; differently as its prose changes.
+                      ;;
+                      ;; `rising` is bound once above, so there is nothing to narrow here a second
+                      ;; time. **And the guard for it is now STRUCTURAL**, because the string-anchored
+                      ;; version forbade a SPELLING — `(hidden-run-marker run cols newest nil nil
+                      ;; busy)` — and this is the same bug, written another way.
                       (when (and (or run live-here) (not open) (not glue))
                         (let* (;; **THE BLANK ABOVE IS THE AIR RULE'S, and this must not add a
                                ;; second one.** The walk prepends OLDER rows, so at this moment the
@@ -636,7 +655,7 @@ thirty rows appended, and the view jumped to `row-62`."
                                ;; operator's own message and the counts, which is one too many. The
                                ;; separation above is bought by `class-above :other` below instead.
                                (prefix (append
-                                        (list (hidden-run-marker marker-items cols (and marker-items newest) live-here nil busy))
+                                        (list (hidden-run-marker marker-items cols (and marker-items newest) live-here nil rising))
                                         ;; the blank BELOW is this branch's to add: the row under it
                                         ;; has already been drawn (`lines` holds it), so nothing else
                                         ;; will supply the break.

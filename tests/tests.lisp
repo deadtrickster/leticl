@@ -14143,12 +14143,43 @@ running, AND this must be the live edge — the newest run, or the row live work
     (is (not (funcall #'rising nil t nil))
         "a settled turn's newest run is not rising — the past tense is earned")
     (is (not (funcall #'rising nil nil nil)) "nor is anything else"))
-  ;; **THE WALK USES IT, at both call sites** — asserted as source rather than as a screenshot,
-  ;; because the failure it prevents is a rule applied at one of two places.
-  (let ((src (uiop:read-file-string "src/render.lisp")))
-    (is (search "marker-rising-p" src) "the walk asks the rule")
-    (is (not (search "(hidden-run-marker run cols newest nil nil busy)" src))
-        "and no call site passes the turn's state straight through, which is the bug")))
+  ;; **AND THE WALK HANDS THE ANSWER OVER AT EVERY CALL SITE** — checked STRUCTURALLY, because the
+  ;; source-string version of this guard was defeated by a different spelling of the same bug.
+  ;;
+  ;; It forbade `(hidden-run-marker run cols newest nil nil busy)`, and the defect came back as
+  ;; `(hidden-run-marker marker-items cols (and marker-items newest) live-here nil busy)` — the turn's
+  ;; own state, handed to a marker at ONE of the two call sites. MEASURED on the operator's screen as
+  ;; *"al tool calls stay yellow sometimes"*: a fresh build of their own transcript had FIVE yellow
+  ;; markers where exactly one — the newest run — is the live edge.
+  ;;
+  ;; So this READS THE FORMS rather than searching the text, and it asks the question the rule is
+  ;; actually about: the colour is the SEVENTH element of a marker's arguments (`(items cols
+  ;; &optional newest live max-width rising)`), and every call site must put a narrowed answer there —
+  ;; the walk's own `rising`, or a `marker-rising-p` call of its own. There is no spelling of the turn
+  ;; flag that satisfies it.
+  (let ((colour-args '()))
+    (labels ((scan (x)
+               (when (consp x)
+                 (when (and (symbolp (car x))
+                            (member (symbol-name (car x))
+                                    (list "HIDDEN-RUN-MARKER" "MARKER-ONTO-LAST-LINE")
+                                    :test #'string=)
+                            (>= (length x) 7))
+                   (push (seventh x) colour-args))
+                 (mapc #'scan x))))
+      (with-open-file (s "src/render.lisp")
+        (loop for f = (read s nil :eof) until (eq f :eof) do (scan f))))
+    (setf colour-args (nreverse colour-args))
+    (is (>= (length colour-args) 3) "the marker's call sites are found at all: ~s" colour-args)
+    (is (some (lambda (a) (and (consp a) (symbolp (car a))
+                               (string= (symbol-name (car a)) "MARKER-RISING-P")))
+              colour-args)
+        "the walk asks the rule itself, rather than trusting the turn's state")
+    (dolist (a colour-args)
+      (is (or (and (symbolp a) (string= (symbol-name a) "RISING"))
+              (and (consp a) (symbolp (car a)) (string= (symbol-name (car a)) "MARKER-RISING-P")))
+          "**every marker is handed a narrowed `rising`** — got ~s, which is the turn's own state \
+           straight through, the bug the operator has now reported twice" a))))
 
 (def-test only-the-tool-call-number-goes-yellow (:suite leticl)
   "**The operator's ruling, and he had to say it twice:** *\"when you correctly do account running
