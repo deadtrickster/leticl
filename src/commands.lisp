@@ -824,14 +824,11 @@ is the only head there is, and threading it through every caller would be a para
 passes anything else for. A NIL head — or one with no session yet — answers NIL rather than
 sending, which is the honest answer for a test or a replay."
   (when (and head (session-session-id (head-session head)))
+    ;; **THE ITEMS GO AS THEY ARE** — `make-set-operator-todos` owns the mapping into the wire's
+    ;; shape, and mapping them here as well is how a hardcoded status hid for a whole session.
     (%send head (make-set-operator-todos
                  (session-expected-seq (head-session head))
-                 (mapcar (lambda (item)
-                           (list :content (or (getf item :content) "")
-                                 :status (if (equal (getf item :status) "completed")
-                                             "completed" "pending")
-                                 :by "operator"))
-                         *operator-todos*)))))
+                 *operator-todos*))))
 
 (defun operator-todo-add (title &optional detail (head *head*))
   "Add the operator's item. The new item when it was added, NIL when TITLE was blank.

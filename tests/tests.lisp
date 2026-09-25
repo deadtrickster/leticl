@@ -13987,6 +13987,45 @@ the pane showing the other one.
       (let ((leticl::*operator-todo-seq* 4))
         (is (= 4 (leticl::note-todo-ids nil)) "an empty store raises nothing")))))
 
+(def-test the-status-of-an-operator-row-reaches-the-wire (:suite leticl)
+  "**A COMPLETED operator item was announced as pending, for ever, and the nag was the symptom.**
+
+Two mappings stacked: `push-operator-todos` derived the wire status from the head's item, and
+`make-set-operator-todos` then threw that away and wrote the constant pending. MEASURED on the live
+head: mark an operator row done in the head's store, watch the daemon's board flip back to pending on
+the next hello, and read the frame — it carried the item with status pending while the item said
+completed.
+
+The consequence is not cosmetic. `unfinished_plan` reads the daemon's board, so an operator row that
+was genuinely done still counted as open and the reminder asked for it again every idle period. The
+fix is ONE mapping — the frame builder's — because two is how a constant hides.
+
+**And this is asserted on the ENCODED FRAME, not on an intermediate list**: a mapping bug is invisible
+to anything that does not look at the bytes that actually leave the process."
+  (let* ((frame (make-set-operator-todos
+                 7 (list (list :id "t1" :content "done already" :status "completed")
+                         (list :id "t2" :content "still to do" :status "open")
+                         (list :id "t3" :content "being worked" :status "in_progress"))))
+         (items (getf frame :items))
+         (json (encode-frame frame)))
+    (is (equal '("completed" "pending" "pending") (mapcar (lambda (i) (getf i :status)) items))
+        "**the head's status reaches the wire** — only `completed` is completed")
+    (is (equal '("done already" "still to do" "being worked")
+               (mapcar (lambda (i) (getf i :content)) items))
+        "and every row is carried, in order")
+    (is (every (lambda (i) (equal "operator" (getf i :by))) items)
+        "each tagged as the operator's, which is what the board replaces by")
+    ;; **the two things the bug got wrong, read off the bytes**: the FIRST row's status, and that a
+    ;; completed row is not among the pending ones. (A count rather than a substring: the frame
+    ;; legitimately contains the word pending for the rows that ARE pending, which is what made the
+    ;; first cut of this assertion wrong — it searched for a pattern that the LAST row matched.)
+    (dolist (text '("done already" "still to do" "being worked"))
+      (is (search text json) (format nil "~s is in the encoded frame" text)))
+    (is (= 1 (count-substring "completed" json))
+        "**exactly one row is completed** — a constant would make it zero")
+    (is (= 2 (count-substring "pending" json))
+        "and exactly two are pending, so the status is per-row and not one value for the list")))
+
 (def-test the-operators-todos-live-in-sqlite (:suite leticl)
   "**The operator's ruling:** *\"regarding local todo storage - use sqlite as always, not files.\"*
 

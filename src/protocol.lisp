@@ -252,9 +252,25 @@ the operator's rows reach it, a reminder can only ever be about something the MO
   (list :frame "set_operator_todos"
         :client-request-id (next-request-id)
         :expected-seq expected-seq
+        ;; **THE ITEM'S OWN STATUS, and a hardcoded `"pending"` here was a bug that no test caught.**
+        ;;
+        ;; Two mappings stacked: `push-operator-todos` derives the wire status from the head's item,
+        ;; and this function then THREW THAT AWAY and wrote a constant. So every operator row reached
+        ;; the board as pending and could never be completed there — MEASURED, after marking one done
+        ;; in the head's store and watching the daemon's board flip back to `pending` on the next
+        ;; hello, and then reproduced in the frame itself:
+        ;;
+        ;;     {"frame":"set_operator_todos", … "items":[{"content":"push leticl to github",
+        ;;       "status":"pending","by":"operator"}]}          <- the item said "completed"
+        ;;
+        ;; The consequence is the nag: `unfinished_plan` reads the board, so an operator item
+        ;; announced as done still counted as open, for ever, and the reminder asked again every idle
+        ;; period. **ONE mapping**, here, from the head's own item shape to the wire's — which is what
+        ;; `make-set-operator-todos`'s name already promised.
         :items (mapcar (lambda (item)
                          (list :content (or (getf item :content) "")
-                               :status "pending"
+                               :status (if (equal (getf item :status) "completed")
+                                           "completed" "pending")
                                :by "operator"))
                        items)))
 
