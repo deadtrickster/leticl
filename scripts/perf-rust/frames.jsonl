@@ -1,0 +1,25 @@
+{"frame":"event","session_id":"s-1","seq":42,"ts":1,"event":"turn_started","turn_id":"t1","model":"qwen3-next-80b","ledger_head":"0000","began_ms":null}
+{"frame":"event","session_id":"s-1","seq":42,"ts":1,"event":"prompt_progress","turn_id":"t1","total":1000,"cache":900,"processed":950,"time_ms":40}
+{"frame":"event","session_id":"s-1","seq":42,"ts":1,"event":"tokens_generated","turn_id":"t1","tokens":42}
+{"frame":"event","session_id":"s-1","seq":42,"ts":1,"event":"delta","turn_id":"t1","target":"text","text":"x"}
+{"frame":"event","session_id":"s-1","seq":42,"ts":1,"event":"tool_call_proposed","turn_id":"t1","call_id":"c1","name":"read","args_digest":"fnv1a:0000000000000000","target":""}
+{"frame":"event","session_id":"s-1","seq":42,"ts":1,"event":"decision_requested","req_id":"r1","kind":"permission","call_id":"c1","access":"exec","summary":"do it","target":"","detail":"","options":[{"option_id":"allow","label":"Allow once","kind":"allow_once"},{"option_id":"deny","label":"Deny","kind":"reject_once"}],"choices":[],"because":"","deadline":null,"on_timeout":"deny"}
+{"frame":"event","session_id":"s-1","seq":42,"ts":1,"event":"decision_answered","req_id":"r1","outcome":{"outcome":"selected","option_id":"allow"},"by":{"kind":"human","identity":"dead@lab2x1"},"basis":"typed d","late":false}
+{"frame":"event","session_id":"s-1","seq":42,"ts":1,"event":"tool_started","turn_id":"t1","call_id":"c1","name":"read","access":"read"}
+{"frame":"event","session_id":"s-1","seq":42,"ts":1,"event":"tool_progress","turn_id":"t1","call_id":"c1","note":"half"}
+{"frame":"event","session_id":"s-1","seq":42,"ts":1,"event":"tool_finished","turn_id":"t1","call_id":"c1","outcome":{"outcome":"ok"},"payload_digest":"fnv1a:1","inline_bytes":12,"full_bytes":12,"spill":null,"repairs":0,"edit":null}
+{"frame":"event","session_id":"s-1","seq":42,"ts":1,"event":"turn_finished","turn_id":"t1","finish_reason":"eos","usage":{"prompt_tokens":1000,"cached_tokens":900,"predicted_tokens":42},"timings":{"prompt_ms":40.0,"predicted_ms":900.0,"wall_ms":950}}
+{"frame":"event","session_id":"s-1","seq":42,"ts":1,"event":"turn_interrupted","turn_id":"t1","reason":"operator","partial_kept":true}
+{"frame":"event","session_id":"s-1","seq":42,"ts":1,"event":"transcript_appended","item_id":"s.0","kind":"user","ledger_head":"beef"}
+{"frame":"event","session_id":"s-1","seq":42,"ts":1,"event":"transcript_content","item_id":"s.0","item":{"type":"user","parts":[{"kind":"text","text":"hi"}],"speaker":"operator"}}
+{"frame":"event","session_id":"s-1","seq":42,"ts":1,"event":"head_attached","head_id":"h1","kind":"tui","identity":"dead"}
+{"frame":"event","session_id":"s-1","seq":42,"ts":1,"event":"head_detached","head_id":"h1","kind":"tui","identity":"dead"}
+{"frame":"event","session_id":"s-1","seq":42,"ts":1,"event":"warning","code":"test","detail":"careful"}
+{"frame":"event","session_id":"s-1","seq":42,"ts":1,"event":"explain","turn_id":"t1","plan":{"stage":"render"}}
+{"frame":"event","session_id":"s-1","seq":42,"ts":1,"event":"command_issued","head_id":"h1","identity":"dead","command":"prompt","client_request_id":"c1","note":"queued"}
+{"frame":"event","session_id":"s-1","seq":42,"ts":1,"event":"session_renamed","title":"the name"}
+{"frame":"event","session_id":"s-1","seq":42,"ts":1,"event":"todos_updated","todos":[{"content":"read the harness","status":"completed","by":"model"},{"content":"render the pane","status":"pending","by":"model"}]}
+{"frame":"event","session_id":"s-1","seq":42,"ts":1,"event":"denial_raised","request_id":"adj-s1-0001","turn_id":"t1","call_id":"c1","tool":"bash","summary":"bash(command: systemctl --user restart llama)","baseline":"1 command; intents: privilege_escalation(system)","by":"human:dead","basis":"always-ask: privilege escalation","tier":"always_ask","outcome":"denied","repeat_count":1,"breaker_open":false,"grant":"grant `adj-s1-0001` (bash) for this session"}
+{"frame":"event","session_id":"s-1","seq":42,"ts":1,"event":"subagent","subagent_id":"s-sub-1","state":"running","prompt":"summarize ~/bin/letibot","role":"coder"}
+{"frame":"event","session_id":"s-1","seq":42,"ts":1,"event":"job_settled","job":"j7","state":"exited 0","produced":41392,"elapsed_ms":74206}
+{"frame":"event","session_id":"s-1","seq":42,"ts":1,"event":"job_output","job":"j7","from":0,"to":24,"produced":24,"dropped":0,"state":"exited 0","never_ran":false,"lines":["building","done"],"next":null}

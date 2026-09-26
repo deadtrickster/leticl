@@ -1,0 +1,12 @@
+[package]
+name = "perf-probe"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+letibot-ui = { path = "/home/dead/Projects/letibot/letibot/crates/ui" }
+letibot-sessionlog = { path = "/home/dead/Projects/letibot/letibot/crates/sessionlog" }
+letibot-transcript = { path = "/home/dead/Projects/letibot/letibot/crates/transcript" }
+serde_json = "1"
