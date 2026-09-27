@@ -20775,3 +20775,48 @@ exactly the width it was asked for is not the same claim as a row that lines up 
     (is (char= #\┘ (char (car (last texts)) (1- (string-width (car (last texts))))))
         "and the foot closes with its own corner"))
   (dash-clear-panels))
+
+(def-test a-published-series-is-never-mutated-under-a-reader (:suite leticl)
+  "**A DATA RACE I SHIPPED, found by being asked what backs the dashboard.**
+
+The series table has two threads: the collector writes it every five seconds, and the painter reads
+it from a panel's own `:rows` lambda while drawing the frame. MEASURED on the live head:
+
+    (sb-ext:hash-table-synchronized-p *dash-series*)  => NIL
+    :ENTRIES 18   :WHO-WRITES \"leticl-dash-collector\"
+
+— an ordinary SBCL hash table, being written by a background thread while the renderer walked it.
+`dash-note` also mutated the STORED VECTOR in place (`vector-push-extend`, `fill-pointer`, and a
+`replace` that shifted the whole thing down), so a painter holding that vector could see a half-shifted
+series — and a `fill-pointer` moved under a `subseq` is the kind of fault that reads as a mystery.
+
+Two fixes and this test is about the second, because a synchronized table alone is NOT enough: it
+makes `gethash`/`setf` atomic and says nothing about the vector inside. So `dash-note` publishes a
+NEW vector and never touches one a reader may hold.
+
+**Asserted by identity**: the vector a reader took must still hold exactly what it held. That is the
+property, and it is the one a future `vector-push-extend` would silently break."
+  (dash-reset-series)
+  (dotimes (i 5) (dash-note "t.s" (float i)))
+  (let ((snapshot (dash-values "t.s")))
+    (is (= 5 (length snapshot)) "five samples")
+    (dash-note "t.s" 99.0)
+    ;; **the vector the reader took is UNTOUCHED** — not the same length, not the same contents
+    (is (= 5 (length snapshot))
+        (format nil "**the published vector did not grow under the reader** — it is now ~d long"
+                (length snapshot)))
+    (is (= 4.0 (aref snapshot 4)) "and its last sample still reads 4.0, not the new one")
+    (let ((now (dash-values "t.s")))
+      (is (not (eq snapshot now))
+          "**the new value is a DIFFERENT vector** — a reader sees one snapshot or the next")
+      (is (= 6 (length now)) "with one more sample in it")
+      (is (= 99.0 (aref now 5)) "the one that was just taken")))
+  ;; and the retention rule still holds: past `+dash-hist+` the oldest eighth goes
+  (dash-reset-series)
+  (dotimes (i (+ leticl::+dash-hist+ 20)) (dash-note "t.s" (float i)))
+  (is (<= (length (dash-values "t.s")) leticl::+dash-hist+)
+      (format nil "**a series does not grow past its retention** — got ~d"
+              (length (dash-values "t.s"))))
+  (is (= (float (+ leticl::+dash-hist+ 19)) (dash-last "t.s"))
+      "and the newest sample is the one at the end, whatever was dropped from the front")
+  (dash-reset-series))

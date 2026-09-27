@@ -180,16 +180,31 @@ move reported as `climbing` is noise wearing a label, which is worse than saying
 
 ;;; ============================================================= 2. series ;;;
 
-(defvar *dash-series* (make-hash-table :test #'equal)
-  "series name → a struct. A `defvar`, for the house reason: a live push must not throw away
-the running head's collected history.")
+(defvar *dash-series* (make-hash-table :test #'equal :synchronized t)
+  "series name → a PLIST, whose `:v` is an immutable snapshot vector.
+
+Two properties, and both are load-bearing:
+
+  · **`:synchronized t`**, because this table has TWO THREADS. The collector writes it
+    (`leticl-dash-collector`); the painter reads it, from a panel's own `:rows` lambda, on the
+    thread drawing the frame. An SBCL hash table is not safe for that by default, and this was
+    MEASURED as one: `(sb-ext:hash-table-synchronized-p *dash-series*)` answered NIL while the
+    collector had 1984 samples in it.
+  · **and a snapshot rather than a buffer that grows in place.** A synchronized table makes
+    `gethash` and `setf gethash` atomic with respect to each other, and says NOTHING about the
+    vector stored in it — so `vector-push-extend` and `fill-pointer` would still have been
+    mutating a vector the painter was walking with `subseq` and `aref`. `dash-note` therefore
+    publishes a NEW vector each time, which a reader either sees whole or does not see at all. At
+    eighteen series of a hundred and sixty samples that is a few thousand copies per sample,
+    every five seconds, which is nothing beside the HTTP request that produced the number.
+
+A `defvar`, for the house reason: a live push must not throw away the running head's history.")
 
 (defvar *dash-interval* 5 "Seconds between samples.")
 
 (defun dash-series-new (name &optional (unit ""))
   (setf (gethash name *dash-series*)
-        (list :name name :unit unit :v (make-array +dash-hist+ :adjustable t :fill-pointer 0)
-              :at 0)))
+        (list :name name :unit unit :v #() :at 0)))
 
 (defun dash-note (name value &key (unit "") (now *now-ms*))
   "Record one sample of NAME. Returns VALUE, or NIL when nothing was recorded.
@@ -197,18 +212,27 @@ the running head's collected history.")
 **A NIL VALUE IS NOT RECORDED, and that is the point.** The sampler has already decided the
 number does not exist; a zero substituted here would be THIS FUNCTION inventing a fact about
 the world. A series that stops being fed goes STALE — which `dash-freshness` says out loud —
-rather than dropping to the floor and looking idle."
+rather than dropping to the floor and looking idle.
+
+**AND IT PUBLISHES A NEW VECTOR RATHER THAN APPENDING TO THE OLD ONE.** The old one may be in a
+painter's hands right now — see `*dash-series*` for why that is not a hypothetical. The retention
+rule is unchanged: past `+dash-hist+` the oldest eighth is dropped, which keeps this O(1)-ish
+amortized rather than shifting the whole series on every tick."
   (when (and value (numberp value))
-    (let ((s (or (gethash name *dash-series*) (dash-series-new name unit))))
-      (setf (getf s :unit) unit (getf s :at) (or now *now-ms*))
-      (let ((v (getf s :v)))
-        (when (>= (length v) +dash-hist+)
-          ;; Drop the oldest eighth rather than shifting on every tick: a full array shift at
-          ;; every sample is the one operation in this file that would show up in a profile.
-          (let ((keep (- +dash-hist+ (floor +dash-hist+ 8))))
-            (replace v (subseq v (floor +dash-hist+ 8)))
-            (setf (fill-pointer v) keep)))
-        (vector-push-extend (float value) v)))
+    (let* ((old (gethash name *dash-series*))
+           (v (and old (getf old :v)))
+           (n (length v)))
+      (when (or (null v) (not (vectorp v))) (setf v #() n 0))
+      (let* ((keep (if (>= n +dash-hist+)
+                       (- +dash-hist+ (floor +dash-hist+ 8))
+                       n))
+             ;; the tail we keep, then the new sample — a fresh SIMPLE-VECTOR, so nothing a
+             ;; reader already holds is touched
+             (next (make-array (1+ keep) :initial-element 0.0)))
+        (when (plusp keep) (replace next v :start2 (- n keep) :end2 n))
+        (setf (aref next keep) (float value))
+        (setf (gethash name *dash-series*)
+              (list :name name :unit unit :v next :at (or now *now-ms*)))))
     value))
 
 (defun dash-values (name) (let ((s (gethash name *dash-series*))) (and s (getf s :v))))
