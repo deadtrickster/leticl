@@ -2496,6 +2496,13 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
        ;; unnamed form rather than printing `NIL` where a noun goes.
        (note-filling env))
       ((:job-output)
+       ;; **THE DASHBOARD'S FEED READS EVERY WINDOW, asked for or not.** This line is BEFORE the
+       ;; overlay's `cond` on purpose: the overlay keeps a window only for the job it is showing
+       ;; (`*job-out*`, and only while it is open), while a job-backed panel wants the NUMBERS from
+       ;; whichever window arrives — including one answering ANOTHER head's read, because
+       ;; `hub.publish` broadcasts. The two readers want different things from one fact and neither
+       ;; is derived from the other, which is why this is a call and not a branch in the fold.
+       (dash-note-job env)
        ;; **The answer to the jobs pane's Enter, folded into the overlay that
        ;; asked and nowhere else.** The whole window is kept — job, from, to,
        ;; produced, dropped, state, never-ran, lines, next — because the pane draws

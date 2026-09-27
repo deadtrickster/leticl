@@ -294,7 +294,7 @@ cursor's line — see the comment in `dash-frame-lines` for the crash that taugh
 (defvar *dash-panels* (make-hash-table :test #'equal))
 (defvar *dash-order* nil "Registration order, as names.")
 
-(defun dash-register (name &key title rows (order 50) needs job)
+(defun dash-register (name &key title rows (order 50) needs job feed)
   "Register or replace a panel. Returns NAME.
 
     (dash-register \"llama\" :title \"llama\" :needs '(\"llama.gen\")
@@ -302,20 +302,38 @@ cursor's line — see the comment in `dash-frame-lines` for the crash that taugh
 
 **That call at a live REPL is the whole API**, and it is what makes a dashboard a thing the
 operator composes rather than a thing a programmer ships. Replacing an existing NAME keeps its
-place in the order, so re-registering a panel while watching it does not move it."
+place in the order, so re-registering a panel while watching it does not move it.
+
+**`:job` binds the panel to a background job, and `:feed` says how to read it.** With `:job`
+alone the panel gets the two series every job has and no parsing is needed:
+
+  · `produced` — everything the job has written, a MONOTONIC TOTAL, which for a long-running
+    import is the most useful line on the panel;
+  · `dropped` — bytes that fell off the ring, which a parser counting lines cannot recover from.
+
+`FEED` is a function of the `JobOutput` window returning `(series-name . value)` pairs — **the same
+contract a sampler has**, so a job-backed feed is registered where the panel is and a REPL call
+still composes a whole dashboard. That property is worth more than any elegance in the plumbing: a
+feed that needed a code change in a module would make the dashboard a thing a programmer ships."
   (setf (gethash name *dash-panels*)
-        (list :name name :title (or title name) :rows rows :order order :needs needs :job job))
+        (list :name name :title (or title name) :rows rows :order order :needs needs
+              :job job :feed feed))
   (unless (member name *dash-order* :test #'string=) (push name *dash-order*))
   (setf *dash-order*
         (stable-sort *dash-order* #'<
                      :key (lambda (n) (or (getf (gethash n *dash-panels*) :order) 50))))
   name)
 
-(defun dash-panel-for-job (job)
-  "The panel registered for JOB, or NIL.
+(defun dash-job-matches-p (job want)
+  "Does JOB satisfy the name WANT a panel was registered with?
 
-**The match is a substring of the job's COMMAND, or its exact `:id`**, and the reason is the one
-that makes this usable at all: a job's id is known the moment the daemon reports it, but a panel is
+**THE RULE, IN ONE PLACE, because it is asked in BOTH DIRECTIONS** — `dash-panel-for-job` goes
+job → panel (the pane asks *is there a dashboard for this row*) and `dash-job-for-panel` goes
+panel → job (the feed asks *has my job appeared yet*). Two spellings of this match would let the
+pane say one thing and the feed do another, and the failure would be a panel that never fills.
+
+The match is a substring of the job's COMMAND, or its exact `:id`, and the reason is the one that
+makes this usable at all: a job's id is known the moment the daemon reports it, but a panel is
 registered **before** the job exists — the operator writes a dashboard for a llama server, and the
 job that starts it is named afterwards. So the association is made on the thing both sides have: the
 command line. `:job \"llama\"` catches `./llama-server -m …` however the operator spelled it.
@@ -325,15 +343,25 @@ able to name it, and an id is the only unambiguous handle there is.
 
 Case-insensitive on the command: a path and a name in a command line are the same word to a reader,
 and `Llama-Server` is not a different program."
+  (and want job
+       (or (string-equal want (or (getf job :id) ""))
+           (let ((cmd (or (getf job :command) "")))
+             (and (plusp (length cmd))
+                  (search (string-downcase want) (string-downcase cmd)))))))
+
+(defun dash-panel-for-job (job)
+  "The panel registered for JOB, or NIL. See `dash-job-matches-p` for the match, which is shared."
   (when (and job (or (getf job :command) (getf job :id)))
-    (loop for p in (dash-panels)
-          for want = (getf p :job)
-          when (and want
-                    (or (string-equal want (or (getf job :id) ""))
-                        (let ((cmd (or (getf job :command) "")))
-                          (and (plusp (length cmd))
-                               (search (string-downcase want) (string-downcase cmd))))))
-            return p)))
+    (find-if (lambda (p) (dash-job-matches-p job (getf p :job))) (dash-panels))))
+
+(defun dash-job-for-panel (head panel)
+  "The daemon's job entry a PANEL is bound to, or NIL.
+
+**The other direction of `dash-panel-for-job`, through the same rule** — and it is the feed's whole
+matching problem: the daemon's list is the only place a job's id, state and `running` flag exist, so
+this is what turns a panel's `:job \"llama\"` into the `\"j12\"` that `read_job_output` takes."
+  (let ((want (getf panel :job)))
+    (and want (find-if (lambda (j) (dash-job-matches-p j want)) (head-jobs head)))))
 
 (defun dash-unregister (name)
   (remhash name *dash-panels*)
@@ -765,6 +793,183 @@ rather than printed into a log nobody is reading."
     (ignore-errors (sb-thread:join-thread *dash-thread* :timeout 2)))
   (setf *dash-thread* nil)
   (values))
+
+;;; ============================================================== 7. the feed ;;;
+;;;
+;;; **A JOB'S ENDING IS AN EVENT; ITS PROGRESS IS A POLL.** Verified rather than assumed, and the
+;;; whole shape follows from it: `SessionEvent::JobOutput` has exactly ONE publish site — inside the
+;;; daemon's `CommandKind::ReadJobOutput` arm — nothing in the daemon issues that frame on its own,
+;;; and the exec host publishes nothing at capture time. `JobSettled`, by contrast, arrives
+;;; unprompted from the watcher thread. So the poll covers progress and the event covers the
+;;; ending, and together the polling window is EXACTLY the job's lifetime.
+;;;
+;;; **And the asking happens in the MAIN LOOP.** A sampler runs on `leticl-dash-collector`, and
+;;; `%send` from that thread would write a frame from a thread that does not own the socket — the
+;;; same class as handing a frame to Lisp from a foreign thread (the host must drive). So the feed
+;;; is a tick beside `tick-notice` and `tick-op-calls`, and the reply is folded by the event arm
+;;; that already folds a window for the pane.
+
+(defvar *dash-fed* (make-hash-table :test #'equal)
+  "JOB id → `(:next N :from N :state STRING :never-ran BOOL :at MS :asked BOOL)`.
+
+**`:next` is the daemon's own incremental handle**, taken from the reply and handed back — never
+recomputed here, because the page size is the daemon's (`JOB_OUTPUT_WINDOW`) and a head that
+arithmetic'd `from + window` would be a second copy of a number only the daemon knows.
+
+**`:asked` is what makes the feed STOP.** A job that is no longer running and has been asked about
+once is not asked again, which is what bounds the cost by the job's life rather than by the head's.
+
+A `defvar`, for the house reason: a live push must not throw away the offsets this head has taken.")
+
+(defvar *dash-fed-at* 0 "When this head last asked for a window, on `internal-real-time-ms`.")
+
+(defvar *dash-jobs-asked-at* 0
+  "When this head last asked for the JOB LIST, on `internal-real-time-ms`.
+
+Separate from the window clock because the two questions have different urgencies: a window is asked
+for every interval, and the job LIST only while a panel is still unmatched — which is the state a
+dashboard registered before its job started is in.")
+
+(defun dash-feed-panels ()
+  "The registered panels that name a job — the feed's work list."
+  (remove-if-not (lambda (p) (getf p :job)) (dash-panels)))
+
+(defun dash-feed-due-p (head &optional (now (internal-real-time-ms)))
+  "Is it time to ask? **The same interval as the samplers**, so a job series and a system series have
+ONE resolution: two cadences would draw two time axes on a panel that shows both, which is the same
+defect as two sparklines on different ceilings."
+  (declare (ignore head))
+  (and (dash-feed-panels)
+       (>= (- now *dash-fed-at*) (* 1000 *dash-interval*))))
+
+(defun tick-dash-feeds (head)
+  "Ask for the window of every registered job panel. Runs ON THE MAIN LOOP — see the section note.
+
+**The job LIST is asked for while a panel is unmatched, and that is the second ask.** `head-jobs`
+is filled by `/jobs` and by `JobSettled`, so a dashboard registered before its job started has
+nothing to match against; this asks `list_jobs` until it does, which stops as soon as it does."
+  (when (dash-feed-due-p head)
+    (setf *dash-fed-at* (internal-real-time-ms))
+    (let* ((panels (dash-feed-panels))
+           (unmatched (remove-if (lambda (p) (dash-job-for-panel head p)) panels)))
+      ;; one ask, and only while something is still waiting for its job to exist
+      (when (and unmatched
+                 (>= (- (internal-real-time-ms) *dash-jobs-asked-at*)
+                     (* 1000 *dash-interval*)))
+        (setf *dash-jobs-asked-at* (internal-real-time-ms))
+        (%send head (make-list-jobs)))
+      (dolist (p panels)
+        (let ((entry (dash-job-for-panel head p)))
+          (when entry
+            (let* ((id (getf entry :id))
+                   (fed (gethash id *dash-fed*)))
+              ;; **A SETTLED JOB IS NOT ASKED ABOUT AGAIN** — the event told us, and polling a
+              ;; finished job for ever is exactly the cost this design exists to avoid.
+              (unless (and (getf fed :asked) (not (getf entry :running)))
+                (%send head (make-read-job-output id 0))
+                (setf (gethash id *dash-fed*)
+                      (list :next (getf fed :next) :from (getf fed :from)
+                            :state (getf fed :state) :never-ran (getf fed :never-ran)
+                            :at (getf fed :at) :asked t)))))))))
+  t)
+
+;;; ------------------------------------- the window's numbers, and why ABSOLUTES ;;;;
+;;;
+;;; **ABSOLUTES, NEVER INCREMENTS.** `hub.publish` means every attached head sees the `JobOutput`
+;;; answering ANOTHER head's read — so a series accumulated from deltas DOUBLE-COUNTS the moment a
+;;; second head polls, while one taking the reply's ABSOLUTE is idempotent and simply gains the
+;;; extra sample. **And an absolute is DROP-SAFE for the same reason**, which is this design paying
+;;; twice: `produced` is a monotonic total, unaffected by what the ring threw away, so the primary
+;;; series cannot be corrupted by a gap at all. The increment would have been wrong on both counts,
+;;; and the wire was telling us so.
+
+(defun dash-note-job (window)
+  "Record WINDOW's own numbers, and run its panel's `:feed`. Returns how many series were written.
+
+Called by the `JobOutput` event arm — which ALSO folds a window into the pane, and the two are
+deliberately separate readers of one fact: the pane wants the LINES, the dashboard wants the
+NUMBERS, and neither is derived from the other."
+  (let* ((job (getf window :job))
+         (produced (getf window :produced))
+         (dropped (getf window :dropped))
+         (n 0))
+    (when job
+      (setf (gethash job *dash-fed*)
+            (list :next (getf window :next)
+                  :from (getf window :from)
+                  :state (or (getf window :state) "")
+                  :never-ran (getf window :never-ran)
+                  :at *now-ms*
+                  :asked t)))
+    ;; the two every job has, so `:job` alone is a working panel with no parsing
+    (when produced (dash-note (format nil "job.~a.produced" job) produced) (incf n))
+    (when dropped (dash-note (format nil "job.~a.dropped" job) dropped) (incf n))
+    ;; and the panel's own reading, which is a function of the window like a sampler is
+    (let ((panel (dash-panel-for-job (list :id job :command job))))
+      (when (and panel (getf panel :feed))
+        (dolist (pair (ignore-errors (funcall (getf panel :feed) window)))
+          (when (dash-note (car pair) (cdr pair)) (incf n)))))
+    n))
+
+;;; ========================================================= the five states ;;;;
+
+(defun dash-job-rows (head panel &optional cols)
+  "The rows a job-backed PANEL always draws: its state, and what it has produced.
+
+**FIVE STATES AND THEY ARE ALL REAL** (R56), the last one because an empty window is two facts:
+
+  · `waiting` — registered, no job in the daemon's list yet. A panel may legitimately be registered
+    BEFORE its job exists, which is why the association matches on the command line;
+  · `running` — the live register;
+  · `exited 0`;
+  · `ended` — non-zero, killed; **the job's own word**, never rendered as `error`;
+  · `never_ran` — the wrapper could not join its cgroup, so nothing started. In the ATTENTION
+    register, because this head already paid for the confusion once: the R41 work's own words,
+    *a job that never ran has no duration, and the row claimed one*.
+
+A panel that wants ONLY these passes its own plist:
+
+    (dash-register \"import\" :job \"long-import\"
+      :rows (lambda (cols) (dash-job-rows *head* that cols)))
+
+and a panel with its own numbers puts them in a `:feed` and draws them beside these."
+  (declare (ignore cols))
+  (let* ((entry (dash-job-for-panel head panel))
+         (id (getf entry :id))
+         (fed (and id (gethash id *dash-fed*)))
+         (never (or (and entry (getf entry :never-ran)) (getf fed :never-ran)))
+         (running (and entry (getf entry :running)))
+         (state (or (and entry (getf entry :state)) (getf fed :state) ""))
+         (series (and id (dash-values (format nil "job.~a.produced" id))))
+         (produced (and series (plusp (length series)) (aref series (1- (length series)))))
+         (dropped (and id (dash-last (format nil "job.~a.dropped" id))))
+         (dir (and series (dash-direction series 20))))
+    (append
+     (list
+      (list :label "job"
+            :value (or id "—")
+            :kind (cond ((null entry) :dim)
+                        (never :crit)
+                        (running :pending)
+                        ((and (plusp (length state)) (uiop:string-prefix-p "exited 0" state)) :good)
+                        (t :crit))
+            :tail (cond ((null entry)
+                         (format nil "waiting for a job whose command names ~a"
+                                 (or (getf panel :job) "")))
+                        (never "never ran — the wrapper could not join its cgroup")
+                        (t state))))
+     (when produced
+       (list (list :label "written"
+                   :value (dash-bytes produced)
+                   :kind :plain
+                   ;; **A GAP IS A FACT ON THE PANEL, never a smoothed line.** Bytes fell off the
+                   ;; ring, so a parser that counts is wrong from that point on and cannot tell
+                   ;; from the lines alone — which is the third member of this file's family:
+                   ;; stale is not zero, absent is not zero, and a gap is not a fall to zero.
+                   :tail (cond ((and dropped (plusp dropped))
+                                (format nil "~@[~a · ~]~a dropped" dir (dash-bytes dropped)))
+                               (dir dir)
+                               (t ""))))))))
 
 ;;; ====================================================== 8. the llama panel ;;;
 ;;;

@@ -20820,3 +20820,165 @@ property, and it is the one a future `vector-push-extend` would silently break."
   (is (= (float (+ leticl::+dash-hist+ 19)) (dash-last "t.s"))
       "and the newest sample is the one at the end, whatever was dropped from the front")
   (dash-reset-series))
+
+;;; ======================================================= R56 — a job's feed ;;;
+;;;
+;;; **A JOB'S ENDING IS AN EVENT; ITS PROGRESS IS A POLL.** Verified in the row: `JobOutput` has one
+;;; publish site, inside the daemon's `ReadJobOutput` arm, nothing issues it on its own, and the
+;;; runtime publishes nothing at capture. So the feed is a poll driven by the MAIN LOOP, and these
+;;; tests are about the three things that follow from the window's own shape.
+
+(defun %job-window (&rest over)
+  "A `JobOutput` window as the head folds it, with OVER applied."
+  (let ((w (list :job "j12" :from 0 :to 100 :produced 4096 :dropped 0
+                 :state "running" :never-ran nil :lines "one\ntwo" :next 100)))
+    (loop for (k v) on over by #'cddr do (setf (getf w k) v))
+    w))
+
+(def-test a-job-series-is-an-absolute-so-a-second-reader-changes-nothing (:suite leticl)
+  "**THE WIRE TOLD US WHICH SHAPE IS CORRECT, so this takes the hint rather than defending against
+it.** `hub.publish` means every attached head sees the `JobOutput` answering ANOTHER head's read —
+so a series accumulated from DELTAS double-counts the moment a second head polls, while one taking
+the reply's ABSOLUTE is idempotent and merely gains the extra sample.
+
+**And an absolute is DROP-SAFE for the same reason**, which is this design paying twice: `produced`
+is a monotonic total and is unaffected by what the ring threw away. The increment would have been
+wrong on both counts.
+
+Asserted by calling the folder twice with the same window and once with a later one — the second
+identical window must add a sample equal to the first, not a delta on top of it."
+  (dash-reset-series)
+  (dash-note-job (%job-window :produced 4096))
+  (is (= 4096 (dash-last "job.j12.produced")) "the first sample is the absolute")
+  ;; **THE SAME WINDOW AGAIN** — what a second head's poll looks like from here
+  (dash-note-job (%job-window :produced 4096))
+  (is (= 4096 (dash-last "job.j12.produced"))
+      "**a repeated read does not double-count** — the series is the absolute, not a running sum")
+  (is (= 2 (length (dash-values "job.j12.produced")))
+      "it merely gains the extra sample, which is the free resolution rather than a corruption")
+  ;; and a later window moves it forward by the total, not by the difference
+  (dash-note-job (%job-window :produced 9000))
+  (is (= 9000 (dash-last "job.j12.produced")) "a later read is the new absolute")
+  (is (= 4096.0 (aref (dash-values "job.j12.produced") 1))
+      "and the sample before it is untouched — no delta arithmetic anywhere")
+  (dash-reset-series))
+
+(def-test a-dropped-window-is-a-fact-on-the-panel-and-not-a-fall-to-zero (:suite leticl)
+  "**`dropped` IS THE THIRD MEMBER OF THIS FILE'S FAMILY**, and the first two are `STALE IS NOT ZERO`
+and `ABSENT IS NOT ZERO`. Bytes fell off the ring, so a parser that COUNTS is simply wrong from that
+point on and cannot tell from the lines alone — which is why the daemon sends the field.
+
+The panel draws it rather than smoothing it: `N dropped` in the row's tail, in the same breath as
+the direction, because a line that dips because bytes were lost and a line that dips because the job
+slowed are the same shape on the screen and only one of them is the job's doing."
+  (dash-reset-series)
+  (dash-clear-panels)
+  (let ((h (%on-head)))
+    ;; **THE JOB HAS TO BE IN THE DAEMON'S LIST, because that is where its ID lives** — and with no
+    ;; id there is nothing to have read, which is exactly why the state row says `waiting`.
+    (setf (head-jobs h) (list (list :id "j12" :command "./long-import --db x"
+                                    :running t :state "running")))
+    ;; the `:rows` lambda is not exercised here: this test calls `dash-job-rows` directly, because
+    ;; the claim is about the ROW and not about the pane that places it
+    (dash-register "j" :title "the job" :job "j12"
+                   :rows (lambda (cols) (declare (ignore cols)) nil))
+    ;; a running job, nothing dropped yet
+    (dash-note-job (%job-window :produced 1000 :dropped 0))
+    (let* ((panel (first (dash-panels)))
+           (rows (dash-job-rows h panel 80))
+           (written (find "written" rows :key (lambda (r) (getf r :label)) :test #'string=)))
+      (is (not (null written)) "the produced series is drawn")
+      (is (string= "1000B" (getf written :value)) "in bytes a person reads")
+      (is (not (search "dropped" (or (getf written :tail) "")))
+          "**nothing dropped, nothing said** — a clean window is not made noisy by a warning about zero"))
+    ;; now bytes fall off the ring
+    (dash-note-job (%job-window :produced 900000 :dropped 65536))
+    (let* ((panel (first (dash-panels)))
+           (rows (dash-job-rows h panel 80))
+           (written (find "written" rows :key (lambda (r) (getf r :label)) :test #'string=)))
+      (is (search "64.0K dropped" (or (getf written :tail) ""))
+          (format nil "**the gap is ON THE PANEL** — the tail reads ~s" (getf written :tail)))
+      (is (= 900000 (dash-last "job.j12.produced"))
+          "**and the series did NOT fall to zero** — `produced` is unaffected by what the ring lost")))
+  (dash-clear-panels)
+  (dash-reset-series))
+
+(def-test the-five-job-states-are-drawn-and-never-ran-is-not-quiet (:suite leticl)
+  "**FIVE STATES AND THEY ARE ALL REAL**, and the last is the one this head already paid for: a job
+whose wrapper could not join its cgroup has an EMPTY WINDOW, exactly like a process that ran and
+wrote nothing — *\"a job that never ran has no duration, and the row claimed one\"* (`e1cd2b0`).
+
+A dashboard that drew a flat line at zero for a job that never started would be reporting a quiet
+system where there is no system at all, which is the same defect as a stale series drawn as a zero."
+  (dash-clear-panels)
+  (dash-reset-series)
+  (let ((h (%on-head)))
+    (dash-register "j" :title "the job" :job "long-import"
+                   :rows (lambda (cols) (dash-job-rows h 'panel cols)))
+    (flet ((state-row (entry)
+             (setf (head-jobs h) (when entry (list entry)))
+             (let ((rows (dash-job-rows h (first (dash-panels)) 80)))
+               (find "job" rows :key (lambda (r) (getf r :label)) :test #'string=))))
+      ;; 1. WAITING — no job in the daemon's list yet. Legitimate: a panel may be registered
+      ;;    before its job exists, which is why the match is on the command line.
+      (let ((r (state-row nil)))
+        (is (search "waiting for a job whose command names long-import" (getf r :tail))
+            "**1. waiting**, and it names what it is waiting FOR")
+        (is (eq :dim (getf r :kind)) "in the quiet register — nothing is wrong"))
+      ;; 2. RUNNING
+      (let ((r (state-row (list :id "j3" :command "./long-import --db x" :running t :state "running"))))
+        (is (search "running" (getf r :tail)) "**2. running**")
+        (is (eq :pending (getf r :kind)) "in the live register, like every other thing in flight"))
+      ;; 3. EXITED 0
+      (let ((r (state-row (list :id "j3" :command "./long-import --db x" :running nil
+                                :state "exited 0"))))
+        (is (string= "exited 0" (getf r :tail)) "**3. exited 0**")
+        (is (eq :good (getf r :kind))))
+      ;; 4. ENDED NON-ZERO — the job's OWN word, never rendered as `error`
+      (let ((r (state-row (list :id "j3" :command "./long-import --db x" :running nil
+                                :state "exited 3"))))
+        (is (string= "exited 3" (getf r :tail)) "**4. the job's own word, verbatim**")
+        (is (eq :crit (getf r :kind)) "and it takes the attention register")
+        (is (not (search "error" (getf r :tail)))
+            "**never rendered as `error`** — a non-zero exit is the command's answer"))
+      ;; 5. NEVER RAN — the one that must not look quiet
+      (let ((r (state-row (list :id "j3" :command "./long-import --db x" :running nil
+                                :state "not run" :never-ran t))))
+        (is (search "never ran" (getf r :tail)) "**5. never ran**")
+        (is (search "could not join its cgroup" (getf r :tail))
+            "and it says WHY — an empty window is two facts and this is which one")
+        (is (eq :crit (getf r :kind))
+            "**in the attention register**: a job that never started must not read as a quiet one"))))
+  (dash-clear-panels))
+
+(def-test a-feed-is-registered-with-its-panel-through-the-one-api (:suite leticl)
+  "**THE COMPOSABILITY PROPERTY, which is worth more than any elegance in the plumbing.** The
+operator's framing: `dash-register` being the whole API is what makes a dashboard a thing the
+operator composes at a live REPL. A feed that needed a code change in a module would break that.
+
+So a feed is a `:feed` on `dash-register`, with the SAME contract a sampler has — a function
+returning `(series-name . value)` pairs — and `:job` alone is enough for the common case, where the
+two series every job has need no parsing at all."
+  (dash-clear-panels)
+  (dash-reset-series)
+  ;; `:job` alone — no `:feed` — still gives the produced series
+  (dash-register "bare" :job "j12" :rows (lambda (cols) (declare (ignore cols)) nil))
+  (dash-note-job (%job-window :produced 2048))
+  (is (= 2048 (dash-last "job.j12.produced"))
+      "**`:job` alone is a working panel** — the produced total needs no parsing")
+  ;; and a `:feed` is a function of the window, exactly like a sampler is of nothing
+  (dash-register "parsed" :job "j12" :feed (lambda (w) (list (cons "import.rows" 42.0)
+                                                            (cons "import.state" (if (getf w :running) 1.0 0.0))))
+                 :rows (lambda (cols) (declare (ignore cols)) nil))
+  (dash-note-job (%job-window :produced 2048 :running t))
+  (is (= 42.0 (dash-last "import.rows"))
+      "**a registered feed runs on the window**, with the same contract a sampler has")
+  (is (= 1.0 (dash-last "import.state")) "and it can read any field the window carries")
+  ;; a feeder that throws does not take the job's own series with it
+  (dash-register "bad" :job "j12" :feed (lambda (w) (declare (ignore w)) (error "no"))
+                 :rows (lambda (cols) (declare (ignore cols)) nil))
+  (dash-note-job (%job-window :produced 9999))
+  (is (= 9999 (dash-last "job.j12.produced"))
+      "a failing feed does not stop the numbers the window itself carries")
+  (dash-clear-panels)
+  (dash-reset-series))

@@ -1704,6 +1704,13 @@ Oldest request first."
              ;; wait, for the same reason: a silence with a deadline has to be said, and
              ;; the pass that says it must be the pass that paints it
              (tick-op-calls head)
+             ;; **THE DASHBOARD'S JOB FEED** — and it runs HERE, on the main loop, because that is
+             ;; the thread that owns the socket. A job's ENDING arrives as an event; its PROGRESS
+             ;; has no push path at all (`JobOutput` is published only in reply to a read), so it
+             ;; has to be asked for, and the asking cannot come from the collector thread
+             ;; (`leticl-dash-collector`) without writing a frame from a thread that does not own
+             ;; the connection. See `tick-dash-feeds`.
+             (tick-dash-feeds head)
              ;; 1. drain. An error while FOLDING a frame must not kill the loop
              ;; either: a frame this head cannot handle is one bad frame, not a
              ;; reason to lose the session. The failure is remembered so the

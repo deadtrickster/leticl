@@ -212,6 +212,9 @@
    #:dash-bytes #:dash-bytes-at #:dash-rate #:dash-pct #:dash-counter
    #:dash-bind #:dash-bindings #:dash-nav #:dash-http-get #:dash-parse-metrics
    #:dash-panel-for-job #:dash-job-panels #:dash-panel-at-line #:*dash-line-map*
+   ;; R56 — a job-backed panel: the feed, and the five states it always draws
+   #:dash-job-matches-p #:dash-job-for-panel #:dash-feed-panels #:dash-feed-due-p
+   #:tick-dash-feeds #:dash-note-job #:dash-job-rows #:*dash-fed*
    #:dash-sample-system #:dash-collect-once #:dash-start #:dash-stop #:dash-sampler-add
    #:dash-llama-panels #:dash-llama-dashboard #:dash-register-defaults
    #:*dash-series* #:*dash-interval* #:*dash-panels* #:*dash-views* #:*dash-nav*
