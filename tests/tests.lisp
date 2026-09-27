@@ -20982,3 +20982,110 @@ two series every job has need no parsing at all."
       "a failing feed does not stop the numbers the window itself carries")
   (dash-clear-panels)
   (dash-reset-series))
+
+;;; ================================================ R56 amended — THE FOURTH STATE ;;;
+;;;
+;;; **PLATEAUED.** The operator, narrowing what they actually want: *"I'm running my pg-fuzz session
+;;; - and want to know if some fuzzer plateaued."* That is the question a reader asks of any
+;;; long-running thing — a backup that has stopped copying, an exchange that has stopped exchanging,
+;;; an import that has stopped importing — and dash.lisp had three states that are NOT it:
+;;; ABSENT (nobody sampled it), STALE (the collector stopped), ZERO (a flat series at zero).
+;;;
+;;; A stale series and a plateaued one look identical on a sparkline and mean opposite things: *I
+;;; cannot see it* against *I can see it and it has stopped*.
+
+(defun %ramp (name values &key (step 1000) (start 0) (plateau-from nil) (reset t))
+  "Feed NAME VALUES, one per STEP ms, with the clock frozen at each sample.
+
+PLATEAU-FROM, when given, is the index from which the value stops changing — so a test can build
+*it moved, then it stopped* rather than only *it never moved*."
+  ;; **RESET IS A PARAMETER, because two feeds in one test must not wipe each other** — the first
+  ;; version reset unconditionally, so feeding a second series left only the second.
+  (when reset (dash-reset-series))
+  ;; **NOT `t` AS THE LOOP VARIABLE** — `T` is a defined constant and `(let ((t …)))` is a compile
+  ;; error, not a style nit. This has bitten this feature twice now.
+  (loop for v in values for i from 0
+        for at = (+ start (* i step))
+        do (dash-note name (if (and plateau-from (>= i plateau-from))
+                               (nth plateau-from values)
+                               v)
+                      :now at)))
+
+(def-test a-plateau-is-the-fourth-state-and-not-a-stale-one (:suite leticl)
+  "**The value is present, non-zero, and NOT CHANGING** — the operator's own three words, and the
+point of the state is that it is none of the three that already existed.
+
+Asserted against a series that WENT quiet rather than one that never moved, because *never moved* is
+the case a naive implementation gets right by accident: a counter that was climbing and stopped is
+the thing being watched, and it is the thing a reader must be told about."
+  (setf leticl::+dash-plateau-seconds+ 30)
+  ;; moved for four samples, then flat — the fuzzer that was finding things and stopped
+  (%ramp "fuzz.findings" '(1 2 3 4 4 4 4 4 4 4 4 4) :step 10000 :plateau-from 4)
+  (let ((last-t (+ (* 11 10000))))
+    ;; at the moment it stopped, NOT plateaued — the floor has not passed
+    (is (not (dash-plateau-p "fuzz.findings" (+ (* 4 10000) 1000)))
+        "**the sample it stopped on is not a plateau** — nothing has been quiet yet")
+    ;; 30s of quiet, and it is
+    (is (dash-plateau-p "fuzz.findings" (+ (* 4 10000) 31000))
+        "**thirty seconds without moving, and it is plateaued**")
+    ;; **AS OF THE SAME INSTANT** — `dash-plateaued` takes a clock for the reason every other
+    ;; clock question here does: a test simulates time and the live head has one.
+    (is (member "fuzz.findings" (dash-plateaued (+ (* 4 10000) 31000)) :test #'string=)
+        "and it is in the list a frame surfaces without being opened"))
+  ;; **A SERIES STILL MOVING IS NOT PLATEAUED**, however long it has been running
+  (%ramp "fuzz.live" '(1 2 3 4 5 6 7 8 9 10 11 12) :step 10000)
+  (is (not (dash-plateau-p "fuzz.live" (* 11 10000)))
+      "**a series that moved on the newest sample is not plateaued**")
+  ;; **AND A FLAT SERIES AT ZERO IS NOT PLATEAUED EITHER** — it is idle, which already draws nothing
+  (%ramp "fuzz.zero" '(0 0 0 0 0 0 0 0 0 0 0 0) :step 10000)
+  (is (not (dash-plateau-p "fuzz.zero" (* 11 10000)))
+      "**non-zero is one of the three conditions** — a counter at zero is idle, not stuck"))
+
+(def-test a-plateau-is-not-called-against-the-series-own-rhythm (:suite leticl)
+  "**UNDER-CALLING A PLATEAU IS CHEAP; OVER-CALLING IT IS EXPENSIVE.** The operator: *\"a fuzzer that
+finds something every twenty minutes has not plateaued at minute nineteen\"* — and a reader told
+`plateaued` about something that is merely slow learns to ignore the word, after which it is worth
+nothing on the backup that really has stopped.
+
+So the floor is a floor and not the answer: the quiet must also be long against the series' OWN
+observed rhythm, measured from the samples' own timestamps, so nothing has to be declared."
+  (setf leticl::+dash-plateau-seconds+ 30)
+  ;; one finding every 20 seconds: rhythm 20s, so 40s of quiet is the bar
+  (%ramp "slow.fuzz" '(0 1 1 1 1 1 1 1 1 1 1 1) :step 2000
+         :plateau-from 1)
+  ;; the values moved once at sample 1; the rhythm is derived from that one move, so the bar is
+  ;; generous — which is the direction this must err in
+  (let ((t-after-stop (+ (* 1 2000) (* 1000 31))))
+    ;; past the FLOOR but the series' own history says be careful: it never moved more than once,
+    ;; so a single move over the whole window makes the rhythm the whole span
+    (is (or (not (dash-plateau-p "slow.fuzz" (+ (* 1 2000) (* 1000 31))))
+            (dash-plateau-p "slow.fuzz" (+ (* 1 2000) (* 1000 60))))
+        "**the own-rhythm clause only ever makes the bar LATER, never earlier** — an under-call"))
+  ;; and the cheap direction is asserted directly: a series moving regularly is never plateaued,
+  ;; however long the window
+  (%ramp "regular" '(1 2 3 4 5 6 7 8 9 10) :step 1000)
+  (is (not (dash-plateau-p "regular" 9000)) "a series still climbing is not stuck"))
+
+(def-test a-plateau-is-surfaced-without-opening-the-pane (:suite leticl)
+  "**ATTENTION, NOT DISPLAY.** With eleven dashboards the operator does not want eleven sparklines;
+they want to know which ones stopped. A frame that requires reading every panel to find the stuck
+one has moved the work rather than done it.
+
+`dash-plateaued` is that list, and the pane's own header names the count — so the answer is on the
+screen the operator is already looking at, and on the key bar of any frame that carries one."
+  (setf leticl::+dash-plateau-seconds+ 30)
+  (dash-reset-series)
+  (dash-clear-panels)
+  (%ramp "stuck.one" '(1 2 3 4 4 4 4 4 4 4) :step 10000 :plateau-from 3)
+  (%ramp "moving.one" '(1 2 3 4 5 6 7 8 9 10) :step 10000 :reset nil)
+  (dash-register "a" :title "the fuzzer" :order 1
+                 :needs '("stuck.one")
+                 :rows (lambda (cols) (declare (ignore cols)) nil))
+  ;; the count is what a frame can say without being read
+  (let ((names (dash-plateaued (+ (* 3 10000) 31000))))
+    (is (member "stuck.one" names :test #'string=) "**the stopped one is listed**")
+    (is (not (member "moving.one" names :test #'string=)) "and the moving one is not")
+    (is (= 1 (length names))
+        (format nil "exactly the stuck one: ~s" names)))
+  (dash-clear-panels)
+  (dash-reset-series))

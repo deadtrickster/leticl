@@ -226,14 +226,116 @@ amortized rather than shifting the whole series on every tick."
       (let* ((keep (if (>= n +dash-hist+)
                        (- +dash-hist+ (floor +dash-hist+ 8))
                        n))
+             (when-now (or now *now-ms*))
              ;; the tail we keep, then the new sample — a fresh SIMPLE-VECTOR, so nothing a
              ;; reader already holds is touched
-             (next (make-array (1+ keep) :initial-element 0.0)))
+             (next (make-array (1+ keep) :initial-element 0.0))
+             (times (make-array (1+ keep) :initial-element 0))
+             (old-t (and old (getf old :t))))
         (when (plusp keep) (replace next v :start2 (- n keep) :end2 n))
-        (setf (aref next keep) (float value))
+        (when (and (plusp keep) old-t (vectorp old-t))
+          (replace times old-t :start2 (max 0 (- n keep)) :end2 (min n (length old-t))))
+        (setf (aref next keep) (float value)
+              (aref times keep) when-now)
         (setf (gethash name *dash-series*)
-              (list :name name :unit unit :v next :at (or now *now-ms*)))))
+              (list :name name :unit unit :v next :t times :at when-now))))
     value))
+
+(defparameter +dash-plateau-seconds+ 150
+  "How long a series must NOT have moved before it is called PLATEAUED — and it is TIME, not a count
+of samples.
+
+**A fixed number of samples is wrong, and that is the whole reason this is seconds.** A sampler on a
+five-second interval reaches ten samples in fifty seconds; one on a five-minute interval needs
+fifty minutes for the same ten. A plateau that means *fifty seconds* on one panel and *fifty
+minutes* on the next is not a fact about the work, it is a fact about the cadence.
+
+150 seconds is deliberately generous, because of the other half: **under-calling a plateau is cheap
+and over-calling it is expensive.** A reader who is told `plateaued` about a fuzzer that finds
+something every twenty minutes learns to ignore the word, and then the word is worth nothing on the
+backup that really has stopped. So the floor is a floor, not the answer — see `dash-plateau-p`,
+which also requires the quiet to be long against the series' OWN observed rhythm.")
+
+(defun dash-times (name)
+  "NAME's sample timestamps, parallel to `dash-values`."
+  (let ((s (gethash name *dash-series*))) (and s (getf s :t))))
+
+(defun dash-last-change-at (name)
+  "When NAME's value last differed from the sample before it, or NIL.
+
+**Differences between CONSECUTIVE samples, which is what makes a rare jump a change.** A fuzzer that
+finds something every twenty minutes moves ONCE at minute twenty; every sample before it equals the
+one before, and this reads that as *the last change was when it moved*, not as *it has been quiet
+for nineteen minutes*."
+  (let* ((v (dash-values name))
+         (t* (dash-times name)))
+    (when (and v t* (> (length v) 1))
+      (loop for i from (1- (length v)) downto 1
+            when (/= (aref v i) (aref v (1- i)))
+              return (aref t* i)))))
+
+(defun dash-plateau-p (name &optional (now *now-ms*))
+  "**HAS THIS SERIES STOPPED MAKING PROGRESS?** — the question a reader actually asks, and the fourth
+thing a series can be.
+
+The first three are already here and each has a bug to justify it: **absent** (nobody sampled it),
+**stale** (the collector stopped), and **zero** (a flat series at zero draws nothing). A plateau is
+none of them: the collector is healthy, the value is present and NON-ZERO, and **it is not
+changing**. A stale series and a plateaued one look identical on a sparkline and mean opposite
+things — *I cannot see it* against *I can see it and it has stopped* — and telling them apart is the
+difference between a dashboard that finds the stuck job and one that draws eleven lines.
+
+Three conditions, and each exists for a reason:
+
+  · **enough history** — at least four samples, because a plateau cannot be read off two;
+  · **non-zero** — the operator's own words, *\"the value is present and non-zero\"*. A counter
+    sitting at zero is idle, not stuck, and a flat-at-zero series already draws nothing at all;
+  · **quiet for longer than BOTH the floor and twice this series' own rhythm.** That last clause is
+    the protection against over-calling: a series whose value usually moves every twenty minutes is
+    given forty before it is accused of having stopped, so the fuzzer is not called stuck at minute
+    nineteen. It is measured from the samples' own timestamps, so it needs nothing declared."
+  (let* ((v (dash-values name))
+         (t* (dash-times name))
+         (n (and v (length v))))
+    (when (and n t* (>= n 4))
+      (let* ((last (aref v (1- n)))
+             (changed (dash-last-change-at name))
+             ;; no change at all in the whole window: the quiet starts at the first sample
+             (since (or changed (aref t* 0)))
+             (quiet (- (or now *now-ms*) since))
+             ;; **THE RHYTHM IS THE GAP BETWEEN CONSECUTIVE *CHANGES*, and with fewer than two
+             ;; there is no rhythm to speak of.** The first version divided the whole span by the
+             ;; number of moves — so a series that moved ONCE over eleven samples was given a
+             ;; rhythm of the entire span and a bar of twice that, which no amount of quiet could
+             ;; reach. MEASURED: a series that stopped at t=30s was still not plateaued at t=71s,
+             ;; because its single move made `span/moves` 110 seconds.
+             ;;
+             ;; That is the wrong reading of *rhythm*. With one move there is no evidence about how
+             ;; often the thing moves, so the floor governs and this clause ABSTAINS. With two or
+             ;; more, the mean gap between them is the rhythm — and the fuzzer that finds something
+             ;; every twenty minutes is given forty before it is called stuck, which is the
+             ;; over-calling protection doing its job.
+             (gaps (loop for i from 1 below n
+                         when (/= (aref v i) (aref v (1- i))) collect (aref t* i)))
+             (rhythm (if (>= (length gaps) 2)
+                         (/ (- (car (last gaps)) (car gaps))
+                            (float (1- (length gaps))))
+                         0)))
+        (and (not (zerop last))                     ; present and NON-ZERO
+             (>= quiet (* 1000 +dash-plateau-seconds+))
+             (>= quiet (* 2 rhythm)))))))             ; and long against its own rhythm
+
+(defun dash-plateaued (&optional (now *now-ms*))
+  "Every series that has stopped moving — the list a frame surfaces without being opened.
+
+**ATTENTION, NOT DISPLAY.** With eleven dashboards the operator does not want eleven sparklines;
+they want to know which ones stopped. A frame that requires reading every panel to find the stuck
+one has moved the work rather than done it.
+
+NOW is a parameter for the reason every other clock question here takes one: a frame and a test
+must be able to ask *as of this instant* rather than as of whenever `*now-ms*` was last set."
+  (loop for name being the hash-keys of *dash-series*
+        when (dash-plateau-p name now) collect name))
 
 (defun dash-values (name) (let ((s (gethash name *dash-series*))) (and s (getf s :v))))
 (defun dash-last (name)
