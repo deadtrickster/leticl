@@ -297,10 +297,24 @@ reference's `width::locate`."
     (values row (string-width text :start start :end cursor))))
 
 (defun put-segments (screen row col segs)
-  "One segment line to the buffer; returns the column after it."
+  "One segment line to the buffer; returns the column after it.
+
+**AND THIS IS WHERE A HYPERLINK'S SPAN IS RECORDED**, because this is the only function that
+knows both the row and the columns its text actually landed in — after wide-character degradation
+and after a truncation, which are facts about the SCREEN and not about the segment. The URL is not
+here: the segment carries an INTEGER id into `*link-urls*`, and the URL is looked up at paint time
+by the one module that mints them (`src/links.lisp`), so nothing that arrives as text can become a
+target."
   (let ((c col))
     (dolist (seg segs c)
-      (setf c (screen-put-string screen row c (car seg) (style-index (cdr seg)))))))
+      (let ((id (getf (cdr seg) :link))
+            (from c))
+        ;; `:link` STRIPPED before the style is interned: a URL inside a style spec would enter the
+        ;; style table as CONTENT, one entry per distinct path for ever, and the grid's whole safety
+        ;; argument is that what goes in it is a character and an integer.
+        (setf c (screen-put-string screen row c (car seg)
+                                   (style-index (if id (link-strip-style (cdr seg)) (cdr seg)))))
+        (when id (link-note row from c id))))))
 
 (defun put-wrapped (screen row col segs cols)
   "Wrapped segments starting at row; returns the next row."
@@ -1354,6 +1368,14 @@ scrolls the transcript by a row every keystroke.
          ;; every card that does not have one, which is all of them but the decision.
          (card-ladder nil))
     (screen-clear s)
+    ;; **THE LINK LAYER BEGINS A FRAME HERE**, beside the clear, because the two are the same
+    ;; statement: what follows is drawn from nothing. The table is per-frame (an id means nothing
+    ;; outside the frame that minted it) and the cwd is what a relative path resolves against —
+    ;; `*link-cwd*` from the session's own workspace, since a terminal has no idea where this head
+    ;; is and a relative `file://` URL is not a broken link but a meaningless one.
+    (link-reset)
+    (setf *link-enabled* (not (null (getf (head-prefs head) :links)))
+          *link-cwd* (getf (session-wiring (head-session head)) :workspace))
     ;; The card that owns the keyboard, in the reference's own order
     ;; (app.rs:5053-5066): a password, then a decision, then the way out, then a
     ;; picker. The `allow-all` question rides at the FRONT of all of it, because

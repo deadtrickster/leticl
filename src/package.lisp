@@ -255,7 +255,13 @@
    #:*diag* #:diagnostic-listing-lines #:open-diagnostic-listing #:%diagnostic-ask
    ;; hack
    #:hack-start #:hack-stop #:hack-socket-path #:list-live-heads #:hack-handle
-   #:head-hack-listener #:head-hack-path #:hack-accept-loop #:hack-serve))
+   #:head-hack-listener #:head-hack-path #:hack-accept-loop #:hack-serve
+   ;; links — OSC 8, kept OUT of the grid (links.lisp). The operator: *"i also dont mind if image
+   ;; path will be rendered as a link so a click will open the image for me."*
+   #:link-reset #:link-note #:link-row #:link-at #:link-url #:link-intern
+   #:link-path-url #:image-path-p #:image-path-link #:link-strip-style
+   #:link-fence-holds-p #:links-said #:*link-enabled* #:*link-cwd* #:*link-urls* #:*link-spans*
+   #:%url-encode #:%osc8-open #:%osc8-close))
 
 (defpackage #:leticl/tests
   (:documentation "Zero-dep test harness; see PLAN.md §11.")

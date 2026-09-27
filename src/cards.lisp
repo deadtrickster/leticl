@@ -2192,13 +2192,24 @@ header, also printed `· 1 line` — a count for a fold with nothing to fold."
                        (string-width asked)
                        3 6 (length (format nil "~d" n))))
          (lead (+ (length mark) 1 (length verb) 1))
+         ;; **THE IMAGE PATH IS A LINK** (R55), computed from the subject BEFORE it is shortened —
+         ;; so an elided `…/shots/chart.png` still opens the file it names rather than a path with
+         ;; an ellipsis in it.
+         ;;
+         ;; **`image-path-link` REFUSES MORE THAN IT ACCEPTS**, and each refusal is a rule rather than
+         ;; caution: not a picture by its extension, not absolute after resolution, or not a file
+         ;; that exists — each renders as plain text, because a link that does nothing when clicked
+         ;; is worse than no link, having told the reader it was clickable.
+         (link (image-path-link subject))
          (subject (%shorten-subject subject (max 8 (- w lead tail-cols))))
          ;; **the actor's segment is APPENDED, not always present**, so a row the model
          ;; proposed has the same SEGMENTS in the same order as it had before this field
          ;; existed — not merely the same text.
          (head (append (list (cons mark outcome-style)
                              (cons (format nil " ~a " verb) faint)
-                             (cons subject nil))
+                             ;; the link rides the subject's own segment; `nil` when there is none,
+                             ;; and `put-segments` strips it before the style is interned
+                             (if link (cons subject (list :link link)) (cons subject nil)))
                        (when (plusp (length asked)) (list (cons asked faint)))
                        (list (cons (format nil " · ~a" shown-word) outcome-style)
                              (cons took faint))))

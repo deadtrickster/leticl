@@ -19,6 +19,11 @@ through an eval socket and see the change on the next frame."
                (:file "src/term")
                (:file "src/width")
                (:file "src/progress")
+               ;; **THE LINK LAYER, BEFORE THE CELLS.** `paint-diff` consults it while it walks the
+               ;; grid, so loading it first is what keeps that call a call rather than a forward
+               ;; reference — and the module has nothing to say about cells anyway: it is a table
+               ;; of head-authored URLs and a per-frame map of integer spans.
+               (:file "src/links")
                (:file "src/cells")
                (:file "src/json")
                (:file "src/wire")

@@ -20593,3 +20593,137 @@ that R49 already recorded as defeatable."
  operator's head, and no test had ever asked for it" (car size) (cdr size))))
     (setf (head-mode h) :normal)
     (dash-clear-panels)))
+
+;;; ================================================================ R55 — links ;;;
+;;;
+;;; An image path is a CLICKABLE LINK. The operator: *"i also dont mind if image path will be
+;;; rendered as a link so a click will open the image for me."*
+;;;
+;;; **Every test here is about the FENCE as much as about the feature.** This head's cell grid
+;;; physically cannot carry an escape — a cell is a character and an interned style INTEGER — which
+;;; is why `a-tool-payload-cannot-reconfigure-the-operators-terminal` is a proof here rather than a
+;;; patch. A hyperlink is precisely the thing that would break it, so the design keeps URLs out of
+;;; the grid entirely and these tests hold that line rather than trusting the design note.
+
+(defun %link-test-file (ext &optional (dir nil))
+  "A REAL file with image EXT, so `link-path-url`'s existence check is exercised rather than
+mocked. Returns its (truename) namestring."
+  (let* ((dir (or dir (uiop:temporary-directory)))
+         (path (merge-pathnames (format nil "leticl-link-~a.~a" (random 1000000) ext) dir)))
+    (with-open-file (s path :direction :output :if-exists :supersede
+                            :element-type '(unsigned-byte 8))
+      (write-byte 137 s) (write-byte 80 s) (write-byte 78 s) (write-byte 71 s))
+    (namestring (truename path))))
+
+(defun %painted (screen)
+  "SCREEN painted for real, as ANSI — the bytes a terminal would receive."
+  (with-output-to-string (o) (leticl::paint-full screen o)))
+
+(def-test a-link-url-is-never-built-from-content (:suite leticl)
+  "**THE FENCE, and it outranks the feature.** R55's constraint in one line: *\"do not put a URL in a
+cell, and do not let content supply the target.\"*
+
+A tool payload is whatever the command wrote and a model's prose is whatever it typed, and BOTH
+reach the screen as text. Neither may reach `link-intern`, which is the only way a URL enters the
+table the painter reads. So this asserts the three shapes that must NOT resolve — and the reason
+they cannot is structural rather than a filter that could be forgotten: a target is built ONLY by
+`link-path-url`, from a path the head resolved and confirmed EXISTS.
+
+Deliberately tested with the shapes that would work if the rule were *pass the text through*: an
+OSC 8 already escaped in a payload, a markdown link, a bare file:// URL, and a path that names a
+real non-image file."
+  (let* ((esc (%ch 27))
+         (osc (format nil "~C]8;;file:///etc/passwd~Cclick~C]8;;~C" esc (%ch 7) esc (%ch 7)))
+         (prose "[look](file:///etc/passwd)")
+         (bare "file:///etc/passwd"))
+    (dolist (text (list osc prose bare))
+      (is (not (leticl::link-fence-holds-p text))
+          (format nil "**content must not resolve to a link**: ~s" text)))
+    ;; and the sanitising that makes the payload case harmless still works, one layer up
+    (is (not (search (string esc) (leticl::%without-control osc)))
+        "a payload's ESC is still turned into a space before any of this")
+    ;; a real non-image file is a real path AND not a picture: the fence is about images
+    (let ((txt (%link-test-file "txt")))
+      (is (not (leticl::image-path-link txt))
+          "a real file that is not an image is not linked, extension whitelist")
+      (is (leticl::link-path-url txt)
+          "**and it still RESOLVES** — the refusal is the whitelist's, not the path's"))))
+
+(def-test an-image-path-becomes-a-link-and-the-url-is-head-authored (:suite leticl)
+  "The feature itself: a real image file, a read row's subject naming it, and the painter emitting
+OSC 8 around exactly those columns.
+
+**The URL is built here, by `link-path-url`, from a path that EXISTS** — which is the whole of what
+makes it *head-authored*: nothing in the row's text is consulted for a target, so a path that does
+not resolve renders as plain text rather than as a link that fails when clicked."
+  (let ((png (%link-test-file "png")))
+    (unwind-protect
+         (progn
+           (leticl::link-reset)
+           (setf leticl::*link-cwd* nil leticl::*link-enabled* t)
+           (let* ((screen (make-screen 80 3))
+                  ;; **ONE LINE, not a list of lines** — `put-segments` takes a segment-line, which
+                  ;; is what `%place-lines` hands it. Wrapped one level deeper, the walk treats the
+                  ;; whole line as one segment and reads its cdr as a style plist.
+                  (line (list (cons "▸ Read " '(:dim t))
+                              (cons (format nil "~a" png)
+                                    (list :link (leticl::image-path-link png))))))
+             (leticl::put-segments screen 0 0 line)
+             (let ((drawn (%painted screen)))
+               (is (search (format nil "~C]8;;file://" (%ch 27)) drawn)
+                   "**an OSC 8 reaches the terminal** — the link is emitted, not merely recorded")
+               (is (search (leticl::%url-encode png) drawn) "and it carries the resolved path")
+               ;; **BALANCED**: every open has a close, or a terminal leaves the rest of the
+               ;; screen inside one hyperlink
+               (let ((opens 0) (closes 0))
+                 (loop for i from 0 below (- (length drawn) 4)
+                       when (string= (subseq drawn i (+ i 4))
+                                     (format nil "~C]8;;" (%ch 27)))
+                         do (if (string= (subseq drawn (+ i 4) (+ i 5)) ";")
+                                (incf closes) (incf opens)))
+                 (is (= opens closes)
+                     (format nil "~d opens and ~d closes — an unclosed link swallows what follows"
+                             opens closes)))))
+           ;; **AND THE GRID IS STILL A GRID.** This is the property the whole design is bent
+           ;; around, so it is asserted on the cells rather than trusted.
+           (let ((screen (make-screen 80 1)))
+             (leticl::put-segments screen 0 0
+                                   (list (cons "path.png" (list :link (leticl::image-path-link png)))))
+             (dotimes (c 8)
+               (is (characterp (leticl::cell-ch (screen-cell screen 0 c)))
+                   "a linked cell is still a CHARACTER"))
+             (is (integerp (leticl::cell-style (screen-cell screen 0 0)))
+                 "and its style is still an INTEGER"))
+           ;; **AND NO URL IS IN THE STYLE TABLE.** A `:link` interned into a style would be
+           ;; content in the one structure whose safety argument is that it holds no content.
+           (is (notany (lambda (s) (getf s :link)) leticl::*styles*)
+               "no style carries a :link — `link-strip-style` keeps the two tables apart"))
+      (ignore-errors (delete-file png)))))
+
+(def-test a-link-is-refused-when-the-path-is-not-honest (:suite leticl)
+  "**A link that does nothing when clicked is worse than no link**, because the reader has been told
+it is clickable. So the three refusals are asserted, each for the reason it exists:
+
+  · a path that does not EXIST — the model typed it, or it was cleaned up;
+  · a relative one — a terminal has no idea where this head's cwd is, so it is not a broken link
+    but a MEANINGLESS one: it names a file on whatever machine the terminal happens to be;
+  · and a picture whose extension is outside the whitelist, which is a click that opens the wrong
+    program."
+  (leticl::link-reset)
+  (setf leticl::*link-cwd* nil)
+  (is (null (leticl::link-path-url "/nonexistent/surely/not/here.png"))
+      "**a path that is not there is not a link**")
+  (is (null (leticl::link-path-url "relative/chart.png"))
+      "**and a relative path is not resolved against anything** — no cwd, no link")
+  (is (null (leticl::link-path-url "")) "nor an empty one")
+  (is (null (leticl::link-path-url nil)) "nor a missing one")
+  ;; with a cwd, a relative path becomes honest and therefore linkable — which is the point of
+  ;; resolving rather than refusing
+  (let ((png (%link-test-file "png")))
+    (unwind-protect
+         (progn
+           (setf leticl::*link-cwd* (uiop:pathname-directory-pathname png))
+           (is (leticl::link-path-url (file-namestring png))
+               "**relative to the session's workspace, it resolves** — the same path, honestly"))
+      (ignore-errors (delete-file png))))
+  (setf leticl::*link-cwd* nil))

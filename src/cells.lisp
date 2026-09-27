@@ -362,7 +362,11 @@ paints of a 210×63 frame with every row changed took 15 ms at default safety an
          (pcells (if prev (screen-cells prev) nil))
          ;; Every paint ends with a reset, so every paint begins at default
          ;; style — SGR for style 0 is never needed mid-frame.
-         (last-style 0))
+         (last-style 0)
+         ;; **THE SAME TRACKING FOR A HYPERLINK**, which is the whole of the grid's part in this:
+         ;; `last-link` is the span currently open, or NIL. It is a SPAN and not a URL — `eq`
+         ;; answers whether it is still the one — and the URL never comes near a cell.
+         (last-link nil))
     (declare (type fixnum cols rows last-style)
              (type simple-vector cells)
              (type (or null simple-vector) pcells))
@@ -390,7 +394,10 @@ paints of a 210×63 frame with every row changed took 15 ms at default safety an
              (dotimes (r rows)
                (declare (type fixnum r))
                (let ((c 0)
-                     (base (* r cols)))
+                     (base (* r cols))
+                     ;; **ASKED ONCE PER ROW.** Most rows carry no link, and this is a hash lookup
+                     ;; per cell otherwise — 13,000 a frame to learn nothing.
+                     (row-links (link-row r)))
                  (declare (type fixnum c base))
                  (loop while (< c cols)
                        do (let* ((i (+ base c))
@@ -414,6 +421,20 @@ paints of a 210×63 frame with every row changed took 15 ms at default safety an
                                                   ;; covered by the wide char before it
                                                   (incf c))
                                                  (t
+                                                  ;; **A LINK OPENS AND CLOSES WHERE THE STYLE IS,
+                                                  ;; AND ONLY WHEN THIS HEAD DRAWS LINKS.** A span
+                                                  ;; that ends mid-run closes and the next run
+                                                  ;; reopens it: two sequences where one would do,
+                                                  ;; and correct either way.
+                                                  (when row-links
+                                                    (let ((want (and *link-enabled*
+                                                                     (link-at row-links c))))
+                                                      (unless (eq want last-link)
+                                                        (when last-link (%osc8-close out))
+                                                        (setf last-link nil)
+                                                        (when (and want (link-url (third want)))
+                                                          (%osc8-open (link-url (third want)) out)
+                                                          (setf last-link want)))))
                                                   (when (/= (cell-style cc) last-style)
                                                     (write-string (%sgr (cell-style cc)) out)
                                                     (setf last-style (cell-style cc)))
@@ -425,7 +446,13 @@ paints of a 210×63 frame with every row changed took 15 ms at default safety an
                                                         ;; direct screen-put could — guard anyway
                                                         (progn (write-char #\space out) (incf c))
                                                         (progn (write-char ch out)
-                                                               (incf c (max 1 w))))))))))))))))
+                                                               (incf c (max 1 w))))))))))
+                                  ;; **THE RUN ENDS AND SO DOES THE LINK.** The inner loop stops at
+                                  ;; the first unchanged cell, which can be the middle of a span —
+                                  ;; so a link left open here would cover everything after it on
+                                  ;; the row, including text the reader never linked. Two
+                                  ;; sequences where one would do, and correct either way.
+                                  (when last-link (%osc8-close out) (setf last-link nil))))))))
              (write-char +esc+ out)
              (write-string "[0m" out)
              ;; THE CARET, last: a frame is a run of absolute moves, so wherever the
@@ -443,6 +470,11 @@ paints of a 210×63 frame with every row changed took 15 ms at default safety an
         (unless painted
           (write-char +esc+ out)
           (write-string "[0m" out))
+        ;; **AND THE SAME FOR AN OPEN LINK**, for the same reason the reset is here: a paint that
+        ;; signalled mid-run left a hyperlink open, and everything the terminal draws after it —
+        ;; including the next frame — is inside it. Unconditional and unpaired: a close emitted
+        ;; when nothing is open is six bytes the terminal ignores.
+        (when last-link (%osc8-close out) (setf last-link nil))
         (when sync (sync-end out))
         (ignore-errors (force-output out))))))
 

@@ -67,7 +67,7 @@ globals a frame reads.")
   (settings nil)
   (jobs nil)
   (subagents nil)
-  (prefs (list :show-reasoning nil :show-tools nil :diff "split"))
+  (prefs (list :show-reasoning nil :show-tools nil :diff "split" :links t))
   (status-note nil)
   ;; **THE CLOCK BELONGS TO THE NOTE IT AGES.** A wall-clock millisecond after
   ;; which `status-note` stops being news; 0 means no clock is running. It was a
