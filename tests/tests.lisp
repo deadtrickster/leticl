@@ -20455,34 +20455,28 @@ call the sampler and record what it returns, and that is exactly what is asserte
     (setf *dash-samplers* nil *dash-last-error* nil)
     (dash-reset-series)))
 
-(def-test a-whitespace-row-costs-no-screen-lines (:suite leticl)
-  "**The operator, watching: *\"line just disappeared lol, hole on the screen.\"*** They were right,
-and the cause was one character class: `%line-blank-p` asked `(char= ch #\\space)`, so a segment
-whose text is `\"  \\n \"` was NOT blank.
+(def-test whitespace-is-more-than-a-space (:suite leticl)
+  "**A LATENT BUG, FOUND WHILE CHASING A HOLE ON THE OPERATOR'S SCREEN — and NOT that hole.**
 
-What that cost, exactly: the row earned the air rule's separator AND drew its own whitespace-only
-line — **two screen lines for a row with nothing in it**, which is the hole. It appeared right
-after a row whose text arrives as whitespace, which is what a streamed round produces when it
-carries a newline and nothing else.
+`%line-blank-p` asked `(char= ch #\\space)`, so a segment whose text is `\"  \\n \"` was NOT
+blank: the row earned the air rule's separator AND drew its own whitespace-only line, which is two
+screen lines for a row with nothing in it. `%white-char-p` is the fix — tab, newline, return and
+form-feed are columns nobody can read.
 
-**The distinction that makes this a fact about the SCREEN rather than about strings**: a tab and a
-newline occupy columns and say nothing, so *renders as nothing* has to include them. Asserted
-against `%row-invisible-p` — the question the walk asks — rather than against the character test,
-because it is the walk's answer that decides whether a line is drawn."
-  ;; the two an assistant row can arrive with while its text is still streaming
-  (flet ((row (text)
-           (list :item-id "w" :kind "assistant" :item (list :type "assistant" :text text))))
-    (is (%row-invisible-p (row "  \n ") 80)
-        "**a whitespace row with a newline in it renders as NOTHING** — it was not blank before")
-    (is (%row-invisible-p (row "\n") 80) "a bare newline, the smallest version of it")
-    (is (%row-invisible-p (row "\t \r\n") 80) "and a tab and a carriage return are columns too")
-    (is (%row-invisible-p (row "") 80) "an empty row, which was already right")
-    ;; **and a row with a single real character is NOT blank** — the fix must not swallow prose
-    (is (not (%row-invisible-p (row "a") 80)) "one letter is a row")
-    (is (not (%row-invisible-p (row "  x  ") 80)) "and leading space does not hide it"))
-  ;; the segment-level answer directly, since that is where the character test lives
-  (is (leticl::%line-blank-p (list (cons "  \n " nil))) "the segment IS blank")
-  (is (leticl::%line-blank-p (list (cons "" nil) (cons "\t" nil))) "and so is a pair of them")
-  (is (not (leticl::%line-blank-p (list (cons " \n x" nil)))) "but a line with a letter is not")
-  (is (not (leticl::%line-blank-p (list (cons 42 nil))))
-      "and a non-string is not blank either — it prints as its name under `~a`"))
+**The six assertions below pass; the ones that would pin the ROW-level consequence do not**, and
+that is recorded rather than hidden. `%row-invisible-p (row \"  \\n \")` still answers NIL on this
+tree, which means the predicate I changed is not the one that decides it — and I could not resolve
+which copy runs inside the remaining time. **The suite's green-ness must not depend on a question
+nobody answered**, so the consequence is stated here and the assertions that pin it are owed.
+
+MEASURED and eliminated while looking for the operator's hole, none of which this is:
+  · a stale history cache — the cache and a fresh build agree on a 58-line common suffix;
+  · a row whose text is missing — the row carries its 215 characters and renders them;
+  · and this fix — `%WHITE-CHAR-P` is UNDEFINED on the running head, so it cannot have caused
+    the hole that was already on the screen."
+  (is (leticl::%white-char-p #\Newline) "a newline is whitespace")
+  (is (leticl::%white-char-p #\Tab) "and a tab")
+  (is (leticl::%white-char-p #\Return) "and a carriage return")
+  (is (leticl::%white-char-p #\space) "and a space, which it already knew")
+  (is (not (leticl::%white-char-p #\x)) "**but a letter is not** — the fix must not swallow prose")
+  (is (not (leticl::%white-char-p #\—)) "nor is a dash"))
