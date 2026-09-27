@@ -514,6 +514,58 @@ tui-eval --screen            # the drawn frame, ANSI stripped for reading
 `--no-verify` skips the gate. Use it for a deliberate eval that is expected to
 break the render (as the gate's own test does), never for a source push.
 
+## Freezing the image while heads are running
+
+**Not an injury — a hazard that was noticed before it fired.** It sits under its own
+heading rather than inside `## Injuries`, because that section's contract is *a real
+accident against a real head*, and writing a predicted cost as if it were a suffered one
+is the overstatement this document exists to avoid. What follows is therefore *reasoning
+about a risk*, marked as such, with the parts that WERE measured named as measured.
+
+**How the obvious way is wrong.** `sbcl --script freeze.lisp` writes `bin/leticl-head`
+**in place**, and the heads you are looking at are *executing that file*: their text
+pages are mapped from it. MEASURED — `ps -eo pid,cmd | grep bin/leticl-head` showed
+**six** running heads the last time this was checked, the oldest up 6 days 17 hours. So
+the dangerous case is the normal one, not the rare one: the operator's own pane is
+usually among them.
+
+**What it would cost (PREDICTED, not measured).** A write to a mapped executable is not
+atomic; a process can be served a page that is mid-update. In the benign case that is a
+torn frame; in the bad case it is a fault inside a head that has no way to recover — the
+same shape as the `Unhandled memory fault at #x0` this tree has already spent a session
+on. It would be worse than the `defparameter` injury below, where a clobbered stream
+costs a repaint: a clobbered `.text` costs the head, and the six running heads are the
+ones at risk. **I have not seen a head die this way.** The counter-argument that it is
+harmless because the rename never happens is exactly what is being removed.
+
+**The transaction** (`scripts/freeze-safe`, which has run successfully):
+
+1. **`mv` the current image aside first.** A rename does not touch the inode, so every
+running process keeps *exactly* the bytes it started with — and the move incidentally
+produces the `bin/leticl-head.prev-HHMM` backup the directory already kept by hand,
+which is where that convention came from;
+2. **freeze.** `save-lisp-and-die` now creates a NEW file at the canonical path, so
+nothing maps the file being written;
+3. **if the freeze FAILS, move the old one back**, so the path is never left without an
+image and a failed build costs nothing.
+
+```sh
+scripts/freeze-safe          # the freeze log goes to /tmp/leticl-freeze.log
+```
+
+**Two things to know when checking a fresh image**, both MEASURED, and both of which
+cost me a wrong reading the first time:
+
+- **`strings` does not find your work.** Comments and docstrings never enter an image, so
+grepping the binary for a line of prose finds nothing and reads as a failed build. **Symbol
+names DO land** — `strings -a bin/leticl-head | grep -c ECHO-LEFTOVER` — and so do a
+function's own string literals. `./bin/leticl-head -h` and a `--replay` over a fixture are
+the two checks that actually exercise it.
+- **`/proc/<pid>/exe` names the file the process STARTED from, not the current one.** After
+this transaction a running head's exe reads `.../bin/leticl-head.prev-1540`, which looks
+alarming and is exactly right. A head showing `(deleted)` was started from an image an
+EARLIER freeze had already replaced — it is not a symptom of this one.
+
 ## Injuries
 
 What the live surface has actually cost, so the next person recognises the shape

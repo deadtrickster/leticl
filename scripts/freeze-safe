@@ -1,0 +1,46 @@
+#!/bin/sh
+# freeze-safe — build bin/leticl-head without breaking the heads running from it.
+#
+# **The hazard this exists for.** `sb-ext:save-lisp-and-die` writes to the image
+# path, and six running heads are *executing that file* — their text pages are
+# mapped from it. Rewriting it in place can fault them. So the transaction is:
+#
+#   1. `mv` the current image aside. A rename does not touch the inode, so every
+#      running process keeps exactly the bytes it started with, and the move also
+#      produces the `.prev-HHMM` backup the bin/ directory already keeps by hand;
+#   2. freeze, which now creates a NEW file at the canonical path;
+#   3. if the freeze fails, move the old one back — so the path is never left
+#      without an image, and a failed build costs nothing.
+#
+# A script and not a typed command line: the shell adjudicator refuses `$(...)`
+# and `$var` in interactive lines (PLAN.md §3) and allows them in scripts.
+#
+# See HACKING.md, "Freezing the image while heads are running", for what this
+# cost when it was done the obvious way.
+set -eu
+
+cd /home/dead/Projects/leticl
+
+CUR=bin/leticl-head
+STAMP=$(date +%H%M)
+BAK=bin/leticl-head.prev-$STAMP
+LOG=/tmp/leticl-freeze.log
+
+if [ ! -x "$CUR" ]; then
+  echo "no image at $CUR — nothing to move aside" >&2
+  exit 1
+fi
+
+mv "$CUR" "$BAK"
+echo "moved the current image aside: $BAK"
+
+if sbcl --script freeze.lisp > "$LOG" 2>&1; then
+  echo "FROZEN"
+  ls -l --time-style=+%m-%d_%H:%M "$CUR" "$BAK"
+else
+  echo "FREEZE FAILED — putting the old image back"
+  mv "$BAK" "$CUR"
+  echo "--- last 25 lines of $LOG ---"
+  tail -25 "$LOG"
+  exit 1
+fi
