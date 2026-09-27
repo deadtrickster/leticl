@@ -208,7 +208,9 @@
    ;; first time, so a test in another package got `UNBOUND-VARIABLE` and read like a missing
    ;; `defvar` rather than a typo in an export list. Eight symbols, one cause.
    ;; R56 amended — the FOURTH state, and the list a frame surfaces without being opened
-   #:dash-plateau-p #:dash-plateaued #:dash-last-change-at #:dash-times #:+dash-plateau-seconds+
+   #:dash-plateau-p #:dash-plateaued #:dash-flatness #:dash-flatness-said #:dash-flat-said
+   #:dash-last-change-at #:dash-times #:dash-median #:dash-spread #:dash-window #:dash-rhythm-ms
+   #:dash-floor-for #:+dash-flat-window+ #:+dash-flat-min-samples+ #:+dash-flat-floor+
    #:dash-note #:dash-values #:dash-last #:dash-stale-p #:dash-freshness
    #:dash-age-ms #:dash-oldest-freshness #:dash-reset-series #:dash-direction #:dash-spark
    #:dash-bytes #:dash-bytes-at #:dash-rate #:dash-pct #:dash-counter

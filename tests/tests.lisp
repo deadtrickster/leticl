@@ -20994,101 +20994,139 @@ two series every job has need no parsing at all."
 ;;; A stale series and a plateaued one look identical on a sparkline and mean opposite things: *I
 ;;; cannot see it* against *I can see it and it has stopped*.
 
-(defun %ramp (name values &key (step 1000) (start 0) (plateau-from nil) (reset t))
+
+;;; ------------------------------------------- R56 amended — FLATNESS, robustly ;;;
+;;;
+;;; **PORTED IN SUBSTANCE FROM serenedash's `anomaly.py`**, which solved most of this and did not
+;;; generalise it: every rule there is about something GROWING, and `flat` exists once, hand-rolled
+;;; inside one panel. So direction-and-duration becomes a thing A SERIES ANSWERS.
+;;;
+;;; Two of these tests carry serenedash's own names because they are its own traps, and a trap that
+;;; is named in one tree should keep its name in the next.
+
+(defun %feed (name values &key (step 1000) (start 0) (flat-from nil) (unit "") (reset t))
   "Feed NAME VALUES, one per STEP ms, with the clock frozen at each sample.
 
-PLATEAU-FROM, when given, is the index from which the value stops changing — so a test can build
-*it moved, then it stopped* rather than only *it never moved*."
-  ;; **RESET IS A PARAMETER, because two feeds in one test must not wipe each other** — the first
-  ;; version reset unconditionally, so feeding a second series left only the second.
+FLAT-FROM is the index from which the value stops changing, so a test can build *it moved, then it
+stopped* rather than only *it never moved* — and *never moved* is the case a naive rule gets right
+by accident.
+
+**NOT `t` AS A LOOP VARIABLE**: `T` is a defined constant and `(let ((t …)))` is a compile error,
+which this feature has now been bitten by twice."
   (when reset (dash-reset-series))
-  ;; **NOT `t` AS THE LOOP VARIABLE** — `T` is a defined constant and `(let ((t …)))` is a compile
-  ;; error, not a style nit. This has bitten this feature twice now.
   (loop for v in values for i from 0
         for at = (+ start (* i step))
-        do (dash-note name (if (and plateau-from (>= i plateau-from))
-                               (nth plateau-from values)
+        do (dash-note name (if (and flat-from (>= i flat-from))
+                               (nth flat-from values)
                                v)
-                      :now at)))
+                      :unit unit :now at)))
 
-(def-test a-plateau-is-the-fourth-state-and-not-a-stale-one (:suite leticl)
-  "**The value is present, non-zero, and NOT CHANGING** — the operator's own three words, and the
-point of the state is that it is none of the three that already existed.
+(def-test a-flat-series-does-not-fire-on-rounding (:suite leticl)
+  "**serenedash's own test name, because it is its own trap** (`anomaly.py`'s FLOOR comment: *\"a
+series that is genuinely flat has a MAD of zero and every rounding wobble is infinitely many
+sigmas\"* — measured over there at 8 MiB of allocator noise against a 34 GB pool).
 
-Asserted against a series that WENT quiet rather than one that never moved, because *never moved* is
-the case a naive implementation gets right by accident: a counter that was climbing and stopped is
-the thing being watched, and it is the thing a reader must be told about."
-  (setf leticl::+dash-plateau-seconds+ 30)
-  ;; moved for four samples, then flat — the fuzzer that was finding things and stopped
-  (%ramp "fuzz.findings" '(1 2 3 4 4 4 4 4 4 4 4 4) :step 10000 :plateau-from 4)
-  (let ((last-t (+ (* 11 10000))))
-    ;; at the moment it stopped, NOT plateaued — the floor has not passed
-    (is (not (dash-plateau-p "fuzz.findings" (+ (* 4 10000) 1000)))
-        "**the sample it stopped on is not a plateau** — nothing has been quiet yet")
-    ;; 30s of quiet, and it is
-    (is (dash-plateau-p "fuzz.findings" (+ (* 4 10000) 31000))
-        "**thirty seconds without moving, and it is plateaued**")
-    ;; **AS OF THE SAME INSTANT** — `dash-plateaued` takes a clock for the reason every other
-    ;; clock question here does: a test simulates time and the live head has one.
-    (is (member "fuzz.findings" (dash-plateaued (+ (* 4 10000) 31000)) :test #'string=)
-        "and it is in the list a frame surfaces without being opened"))
-  ;; **A SERIES STILL MOVING IS NOT PLATEAUED**, however long it has been running
-  (%ramp "fuzz.live" '(1 2 3 4 5 6 7 8 9 10 11 12) :step 10000)
-  (is (not (dash-plateau-p "fuzz.live" (* 11 10000)))
-      "**a series that moved on the newest sample is not plateaued**")
-  ;; **AND A FLAT SERIES AT ZERO IS NOT PLATEAUED EITHER** — it is idle, which already draws nothing
-  (%ramp "fuzz.zero" '(0 0 0 0 0 0 0 0 0 0 0 0) :step 10000)
-  (is (not (dash-plateau-p "fuzz.zero" (* 11 10000)))
-      "**non-zero is one of the three conditions** — a counter at zero is idle, not stuck"))
+Here the wobble is a float's last digit, and the floor is per unit. Without it **every flat series in
+the head reports itself as maximally anomalous**, which means the one series that has really stopped
+is one line among eleven."
+  (%feed "bytes.series" '(1000.0 1000.0000001 999.9999999 1000.0 1000.0000001
+                          1000.0 999.9999999 1000.0 1000.0 1000.0000001 1000.0 1000.0)
+         :step 1000 :unit "B")
+  (is (dash-plateau-p "bytes.series" 11500)
+      "**a byte series wobbling in the last digit is FLAT** — the floor is what makes that true")
+  ;; and the floor is per unit: the same wobble in a percent series is under 5.0 as well
+  (%feed "pct.series" '(50.0 50.0000001 49.9999999 50.0 50.0000001
+                        50.0 49.9999999 50.0 50.0 50.0000001 50.0 50.0)
+         :step 1000 :unit "%")
+  (is (dash-plateau-p "pct.series" 11500) "and so is a percent one")
+  ;; **BUT A REAL MOVE IS NOT FLAT** — the floor must not swallow the thing being watched. The jump
+  ;; has to fall INSIDE the recent window, or the tail is flat for the honest reason that it has not
+  ;; moved since.
+  (%feed "jumping" '(1000.0 1000.0 1000.0 1000.0 1000.0 5000.0 5000.0 5000.0 5000.0 5000.0 5000.0 5000.0)
+         :step 1000 :unit "B")
+  (is (not (dash-plateau-p "jumping" 11500))
+      "**a jump inside the recent window is not flat** — the floor is a noise guard, not a blindfold")
+  ;; and once the jump ages past the window, the tail IS flat — which is the plateau this is for
+  (%feed "settled" (append (list 1000.0 5000.0) (make-list 20 :initial-element 5000.0))
+         :step 1000 :unit "B")
+  (is (dash-plateau-p "settled" 21000)
+      "the tail after a real move is flat once the move has left the window — that is the plateau"))
 
-(def-test a-plateau-is-not-called-against-the-series-own-rhythm (:suite leticl)
-  "**UNDER-CALLING A PLATEAU IS CHEAP; OVER-CALLING IT IS EXPENSIVE.** The operator: *\"a fuzzer that
-finds something every twenty minutes has not plateaued at minute nineteen\"* — and a reader told
-`plateaued` about something that is merely slow learns to ignore the word, after which it is worth
-nothing on the backup that really has stopped.
+(def-test one-move-is-not-a-rhythm-so-the-window-governs (:suite leticl)
+  "**THE CORRECTION THAT MATTERED, kept as a test.** The first cut of this rule divided the whole
+span by the number of moves to get a *rhythm* — so a series that moved ONCE over eleven samples was
+given a rhythm of the entire span and a bar of twice that, which no amount of quiet could reach.
+MEASURED: a series that stopped at t=30s was still not flat at t=71s, because its single move made
+that ratio 110 seconds.
 
-So the floor is a floor and not the answer: the quiet must also be long against the series' OWN
-observed rhythm, measured from the samples' own timestamps, so nothing has to be declared."
-  (setf leticl::+dash-plateau-seconds+ 30)
-  ;; one finding every 20 seconds: rhythm 20s, so 40s of quiet is the bar
-  (%ramp "slow.fuzz" '(0 1 1 1 1 1 1 1 1 1 1 1) :step 2000
-         :plateau-from 1)
-  ;; the values moved once at sample 1; the rhythm is derived from that one move, so the bar is
-  ;; generous — which is the direction this must err in
-  (let ((t-after-stop (+ (* 1 2000) (* 1000 31))))
-    ;; past the FLOOR but the series' own history says be careful: it never moved more than once,
-    ;; so a single move over the whole window makes the rhythm the whole span
-    (is (or (not (dash-plateau-p "slow.fuzz" (+ (* 1 2000) (* 1000 31))))
-            (dash-plateau-p "slow.fuzz" (+ (* 1 2000) (* 1000 60))))
-        "**the own-rhythm clause only ever makes the bar LATER, never earlier** — an under-call"))
-  ;; and the cheap direction is asserted directly: a series moving regularly is never plateaued,
-  ;; however long the window
-  (%ramp "regular" '(1 2 3 4 5 6 7 8 9 10) :step 1000)
-  (is (not (dash-plateau-p "regular" 9000)) "a series still climbing is not stuck"))
+**With fewer than two moves there is no evidence about how often the thing moves**, so the rhythm
+clause abstains and the window floor governs. That is the under-calling direction, which is the one
+this must err in."
+  (%feed "one.move" '(1.0 2.0 2.0 2.0 2.0 2.0 2.0 2.0 2.0 2.0 2.0 2.0) :step 1000 :flat-from 1)
+  (is (null (dash-rhythm-ms "one.move"))
+      "**one move is no rhythm** — the clause abstains rather than inventing a bar")
+  (is (dash-plateau-p "one.move" 8000)
+      "so the window floor governs, and a series that stopped is called stopped")
+  ;; two moves DO give a rhythm, and it is the mean gap between them
+  (%feed "two.moves" '(1.0 2.0 2.0 2.0 2.0 3.0 3.0 3.0 3.0 3.0 3.0 3.0) :step 1000)
+  (is (= 4000 (dash-rhythm-ms "two.moves"))
+      "two moves 4s apart is a rhythm of 4s — measured, so nothing has to be declared"))
 
-(def-test a-plateau-is-surfaced-without-opening-the-pane (:suite leticl)
-  "**ATTENTION, NOT DISPLAY.** With eleven dashboards the operator does not want eleven sparklines;
-they want to know which ones stopped. A frame that requires reading every panel to find the stuck
-one has moved the work rather than done it.
+(def-test a-jump-at-the-end-of-a-flat-series-is-not-a-climb (:suite leticl)
+  "**serenedash's other named trap**, turned around: its `GROWTH_RISING` exists because *\"one jump at
+the end of a flat series is a perfect trend\"*, and the same shape at the other end is a plateau
+claim made about a series that has just moved.
 
-`dash-plateaued` is that list, and the pane's own header names the count — so the answer is on the
-screen the operator is already looking at, and on the key bar of any frame that carries one."
-  (setf leticl::+dash-plateau-seconds+ 30)
-  (dash-reset-series)
-  (dash-clear-panels)
-  (%ramp "stuck.one" '(1 2 3 4 4 4 4 4 4 4) :step 10000 :plateau-from 3)
-  (%ramp "moving.one" '(1 2 3 4 5 6 7 8 9 10) :step 10000 :reset nil)
-  (dash-register "a" :title "the fuzzer" :order 1
-                 :needs '("stuck.one")
-                 :rows (lambda (cols) (declare (ignore cols)) nil))
-  ;; the count is what a frame can say without being read
-  (let ((names (dash-plateaued (+ (* 3 10000) 31000))))
-    (is (member "stuck.one" names :test #'string=) "**the stopped one is listed**")
-    (is (not (member "moving.one" names :test #'string=)) "and the moving one is not")
-    (is (= 1 (length names))
-        (format nil "exactly the stuck one: ~s" names)))
-  (dash-clear-panels)
-  (dash-reset-series))
+The rule reads the RECENT TAIL for flatness, so a jump on the newest sample cannot be inside a flat
+window — which is what stops `flat` appearing on the same frame as the value that disproves it."
+  (%feed "late.jump" '(10.0 10.0 10.0 10.0 10.0 10.0 10.0 10.0 10.0 10.0 10.0 99.0) :step 1000)
+  (is (not (dash-plateau-p "late.jump" 11500))
+      "**a series whose newest sample moved is not flat**, however flat the ten before it were"))
+
+(def-test a-flatness-claim-carries-its-evidence-and-a-duration (:suite leticl)
+  "**\"Each detection carries the baseline it was judged against, the value that arrived, and the
+window, which is what makes it arguable rather than authoritative.\"** An unarguable claim is the one
+that gets ignored, so the finding is a plist and not a boolean.
+
+**And `flat 3h` is the affordance, not a colour.** ABSENT, STALE and ZERO are states; flatness is a
+state PLUS HOW LONG IT HAS HELD, and a reader weighs *flat 20s* against *flat 3h* without being told
+which matters — where a yellow cell cannot say that at all."
+  ;; a value that has not moved for three hours, on a one-second cadence
+  (%feed "held.long" (append (list 5.0 5.0 6.0) (make-list 20000 :initial-element 6.0))
+         :step 1000 :unit "B")
+  (let ((f (dash-flatness "held.long" 20003000)))
+    (is (not (null f)) "it is flat")
+    (is (= 6.0 (getf f :value)) "**the value that arrived** is on the finding")
+    (is (numberp (getf f :baseline)) "**the baseline it was judged against** is on the finding")
+    (is (> (getf f :window) 100) "**and the window** — every field needed to argue with it")
+    (is (search "flat " (dash-flat-said f)) "the words are a duration")
+    (is (plusp (getf f :held-ms)) "held-ms is real time, not a sample count")
+    (is (dash-flatness-said "held.long" 20003000)
+        "and a panel asks for the sentence through one call"))
+  ;; **AND THE DURATION IS THE POINT**: the same series judged at two instants reads differently
+  (%feed "shortly" '(3.0 3.0 3.0 3.0 3.0 3.0 3.0 3.0 3.0 3.0 3.0 3.0) :step 1000)
+  (let* ((early (dash-flatness "shortly" 11500))
+         (late (dash-flatness "shortly" 900000)))
+    (is (< (getf early :held-ms) (getf late :held-ms))
+        "a plateau that has held longer says so — the two are different findings")
+    (is (not (string= (dash-flat-said early) (dash-flat-said late)))
+        (format nil "**and read differently**: ~s against ~s"
+                (dash-flat-said early) (dash-flat-said late)))))
+
+(def-test something-actionable-beats-flat (:suite leticl)
+  "**\"Orphaned beats flat: … That is a reclaimable number, which is worth more than another word
+for 'not moving'.\"** serenedash already knows a plateau is a WEAK finding, and the shape it chose is
+the one worth carrying: the panel says its own thing, and `flat` is what is left when it has nothing
+better.
+
+So the accessor answers NIL for a flat series when the caller says something beats it — a panel
+expresses that without knowing this rule exists, and there is no precedence table anywhere."
+  (%feed "weak" '(7.0 7.0 7.0 7.0 7.0 7.0 7.0 7.0 7.0 7.0 7.0 7.0) :step 1000)
+  (is (dash-flatness-said "weak" 11500) "the flat sentence is there to be had")
+  ;; and the predicate is the same question, so a caller that wants a boolean asks once
+  (is (null (dash-flatness-said "nothing.here" 11500))
+      "**an unknown series says nothing at all** — absent is not flat, which is the first of the
+ three states this one is distinguished from"))
 
 (def-test a-source-can-be-a-command-because-the-thing-watched-is-often-not-reachable (:suite leticl)
   "**MEASURED, and it is why this exists.** The operator tried to watch a real long-running thing

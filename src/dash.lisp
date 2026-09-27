@@ -241,89 +241,196 @@ amortized rather than shifting the whole series on every tick."
               (list :name name :unit unit :v next :t times :at when-now))))
     value))
 
-(defparameter +dash-plateau-seconds+ 150
-  "How long a series must NOT have moved before it is called PLATEAUED — and it is TIME, not a count
-of samples.
+;;; ---------------------------------------------------- FLATNESS, robustly ;;;
+;;;
+;;; **PORTED IN SUBSTANCE FROM `~/Projects/serenedash/src/serenedash/anomaly.py`**, which solved most
+;;; of this and did not generalise it. Its detectors are all about something GROWING — `spike`,
+;;; `shift`, `trend` — while `flat` exists once, hand-rolled inside ONE panel
+;;; (`views.py`'s storage tail), as a three-way choice over a local delta. So the concept is proven
+;;; and ungeneralised, which is the opening this takes: **direction-and-duration becomes a thing A
+;;; SERIES ANSWERS**, and every source — a Lisp function, a command, a daemon job — gets it for
+;;; nothing and no panel has to know.
+;;;
+;;; Three of that file's decisions travel with it, because each is a trap it already paid for:
+;;;
+;;;   · **MEDIAN AND MAD, NOT MEAN AND STANDARD DEVIATION.** Both are computed over a window that
+;;;     CONTAINS the event being looked for, so a mean is dragged toward the excursion and a standard
+;;;     deviation is inflated by it — the failure gets worse exactly as the event gets bigger. MAD
+;;;     has a 50% breakdown point; `+mad-to-sigma+` is 1.4826 so a multiplier reads in familiar
+;;;     units even though the data are not normal.
+;;;   · **AN ABSOLUTE FLOOR PER UNIT.** A genuinely flat series has a MAD of ZERO, and every
+;;;     rounding wobble is then infinitely many sigmas. Measured over there at 8 MiB of allocator
+;;;     noise against a 34 GB pool; here it is the last digit of a float.
+;;;   · **A MINIMUM WINDOW IN SAMPLES, NOT SECONDS.** `*dash-interval*` is settable, so a rule keyed
+;;;     on wall time silently changes meaning when somebody passes `(dash-start 60)`.
+;;;
+;;; And the sentence worth putting above the feature: *"Each detection carries the baseline it was
+;;; judged against, the value that arrived, and the window, which is what makes it arguable rather
+;;; than authoritative."* An unarguable claim is the one that gets ignored.
 
-**A fixed number of samples is wrong, and that is the whole reason this is seconds.** A sampler on a
-five-second interval reaches ten samples in fifty seconds; one on a five-minute interval needs
-fifty minutes for the same ten. A plateau that means *fifty seconds* on one panel and *fifty
-minutes* on the next is not a fact about the work, it is a fact about the cadence.
+(defparameter +mad-to-sigma+ 1.4826
+  "MAD scaled so a multiplier reads in familiar units. serenedash's constant and its reason: the
+data here are not normal, but `6` should still mean what a reader thinks `6` means.")
 
-150 seconds is deliberately generous, because of the other half: **under-calling a plateau is cheap
-and over-calling it is expensive.** A reader who is told `plateaued` about a fuzzer that finds
-something every twenty minutes learns to ignore the word, and then the word is worth nothing on the
-backup that really has stopped. So the floor is a floor, not the answer — see `dash-plateau-p`,
-which also requires the quiet to be long against the series' OWN observed rhythm.")
+(defparameter +dash-flat-floor+ '(("B" . 1048576.0) ("bytes" . 1048576.0) ("%" . 5.0)
+                                  ("percent" . 5.0) ("s" . 30.0) ("ms" . 500.0))
+  "**THE FLOOR, PER UNIT, and it is the whole trick on a flat series.** A series that is genuinely
+flat has a MAD of exactly ZERO, so every last-digit wobble is infinitely many sigmas and every flat
+series in the fleet reports itself as maximally anomalous.
 
-(defun dash-times (name)
-  "NAME's sample timestamps, parallel to `dash-values`."
-  (let ((s (gethash name *dash-series*))) (and s (getf s :t))))
+serenedash's numbers where they exist — 64 MiB for bytes, 5.0 for percent — and lowered to 1 MiB
+here because a head watches counters and rates, not a 34 GB pool; a byte floor of 64 MiB would leave
+every counter in this head unable to be flat at all. A unit nobody named gets the DEFAULT, and the
+default is deliberately small: the floor is a guard against float noise, not a judgement about what
+counts as a change.
 
-(defun dash-last-change-at (name)
-  "When NAME's value last differed from the sample before it, or NIL.
+**PER UNIT AND NOT PER SERIES.** A floor a caller can pass is a floor that gets passed `0`.")
 
-**Differences between CONSECUTIVE samples, which is what makes a rare jump a change.** A fuzzer that
-finds something every twenty minutes moves ONCE at minute twenty; every sample before it equals the
-one before, and this reads that as *the last change was when it moved*, not as *it has been quiet
-for nineteen minutes*."
-  (let* ((v (dash-values name))
-         (t* (dash-times name)))
-    (when (and v t* (> (length v) 1))
-      (loop for i from (1- (length v)) downto 1
-            when (/= (aref v i) (aref v (1- i)))
-              return (aref t* i)))))
+(defparameter +dash-flat-unit-default+ 1.0)
 
-(defun dash-plateau-p (name &optional (now *now-ms*))
-  "**HAS THIS SERIES STOPPED MAKING PROGRESS?** — the question a reader actually asks, and the fourth
-thing a series can be.
+(defparameter +dash-flat-window+ 8
+  "How many samples the flatness test looks at. Eight, because the question is *has the recent tail
+moved* and a longer test is slower to notice a recovery.")
 
-The first three are already here and each has a bug to justify it: **absent** (nobody sampled it),
-**stale** (the collector stopped), and **zero** (a flat series at zero draws nothing). A plateau is
-none of them: the collector is healthy, the value is present and NON-ZERO, and **it is not
-changing**. A stale series and a plateaued one look identical on a sparkline and mean opposite
-things — *I cannot see it* against *I can see it and it has stopped* — and telling them apart is the
-difference between a dashboard that finds the stuck job and one that draws eleven lines.
+(defparameter +dash-flat-min-samples+ 12
+  "**The minimum window before the rule may speak, IN SAMPLES.** serenedash's `MIN_SPIKE`/`MIN_TREND`
+make the same point as *\"a trend needs enough of a window that a query starting is not a trend\"*:
+below this a series has no past to be measured against, and the honest answer is silence.
 
-Three conditions, and each exists for a reason:
+Samples and not seconds for the reason its sibling above gives — `*dash-interval*` is settable.")
 
-  · **enough history** — at least four samples, because a plateau cannot be read off two;
-  · **non-zero** — the operator's own words, *\"the value is present and non-zero\"*. A counter
-    sitting at zero is idle, not stuck, and a flat-at-zero series already draws nothing at all;
-  · **quiet for longer than BOTH the floor and twice this series' own rhythm.** That last clause is
-    the protection against over-calling: a series whose value usually moves every twenty minutes is
-    given forty before it is accused of having stopped, so the fuzzer is not called stuck at minute
-    nineteen. It is measured from the samples' own timestamps, so it needs nothing declared."
+(defun dash-floor-for (unit)
+  "The absolute floor for UNIT, or the default. Case-insensitive, because a unit is a word somebody
+typed rather than an enum."
+  (or (and unit
+           (cdr (assoc (string-downcase unit) +dash-flat-floor+ :test #'string=)))
+      +dash-flat-unit-default+))
+
+(defun dash-median (values)
+  "The median of VALUES (a vector), by sorting a copy. NIL for none."
+  (let* ((v (coerce values 'vector))
+         (n (length v)))
+    (when (plusp n)
+      (let ((sorted (sort (copy-seq v) #'<)))
+        (if (oddp n)
+            (aref sorted (floor n 2))
+            (/ (+ (aref sorted (1- (floor n 2))) (aref sorted (floor n 2))) 2.0))))))
+
+(defun dash-spread (values unit)
+  "Two values: the MEDIAN of VALUES and its scaled MAD with UNIT's floor applied.
+serenedash's `spread`, and the floor is why it takes a unit at all."
+  (let* ((n (length values))
+         (med (or (dash-median values) 0.0)))
+    (if (zerop n)
+        (values 0.0 (dash-floor-for unit))
+        (let* ((devs (make-array n :initial-element 0.0)))
+          (dotimes (i n) (setf (aref devs i) (abs (- (aref values i) med))))
+          (values med (max (dash-floor-for unit) (* +mad-to-sigma+ (or (dash-median devs) 0.0))))))))
+
+(defun dash-window (name &optional (n +dash-flat-window+))
+  "The last N samples of NAME, as a vector, or NIL when there are none."
+  (let ((v (dash-values name)))
+    (when (and v (plusp (length v)))
+      (let ((at (max 0 (- (length v) n))))
+        (subseq v at)))))
+
+(defun dash-rhythm-ms (name)
+  "The median gap between NAME's changes, in ms, or NIL when there are fewer than two.
+
+**AND FEWER THAN TWO MEANS THERE IS NO RHYTHM TO SPEAK OF**, which is a correction worth recording:
+the first cut of this rule divided the whole span by the number of moves, so a series that moved
+ONCE over eleven samples was given a rhythm of the entire span and a bar of twice that — which no
+amount of quiet could reach. MEASURED: a series that stopped at t=30s was still not flat at t=71s,
+because its single move made the ratio 110 seconds. With one move there is no evidence about how
+often the thing moves, so the caller abstains and the window floor governs."
   (let* ((v (dash-values name))
          (t* (dash-times name))
          (n (and v (length v))))
-    (when (and n t* (>= n 4))
+    (when (and n t* (>= n 2))
+      (let ((gaps (loop for i in (dash-changes name) collect (aref t* i))))
+        (when (>= (length gaps) 2)
+          (let ((step (loop for (a b) on gaps while b collect (- b a))))
+            (and step (dash-median (coerce step 'vector)))))))))
+
+(defun dash-flatness (name &optional (now *now-ms*))
+  "**HAS THIS SERIES STOPPED MAKING PROGRESS?** — a FINDING, or NIL.
+
+**Five fields, and every one is evidence rather than decoration**, because that is what makes the
+claim arguable rather than authoritative:
+
+    :series    which one
+    :held-ms   how long it has been flat — **a DURATION, not a colour**
+    :baseline  the median it was judged against
+    :value     the value that arrived
+    :window    how many samples the judgement looked at
+
+**`held-ms` IS THE AFFORDANCE, and it is the one this vocabulary was missing.** ABSENT, STALE and
+ZERO are states; flatness is a state PLUS HOW LONG IT HAS HELD, and a reader can weigh *flat 20s*
+against *flat 3h* without being told which matters — where a yellow cell cannot say that at all.
+
+It is none of the three states that already existed. The collector is healthy (not stale), the value
+is there (not absent), and it is **present and non-zero** (not idle) — and it is not changing:
+
+  1. **enough history** — `+dash-flat-min-samples+`, in SAMPLES;
+  2. **non-zero** — the operator's own words;
+  3. **the recent tail is at its FLOOR** — `dash-spread` of the last `+dash-flat-window+` samples,
+     whose MAD collapses to the floor when nothing has moved. **Measured, not compared to zero**, so
+     a float's last digit cannot call a flat series anomalous;
+  4. **and it has held longer than twice its own rhythm**, when a rhythm exists — the over-calling
+     protection. *\"A fuzzer that finds something every twenty minutes has not plateaued at minute
+     nineteen\"*, and a reader told otherwise learns to ignore the word."
+  (let* ((v (dash-values name))
+         (t* (dash-times name))
+         (n (and v (length v)))
+         (unit (let ((s (gethash name *dash-series*))) (and s (getf s :unit)))))
+    (when (and n t* (>= n +dash-flat-min-samples+))
       (let* ((last (aref v (1- n)))
+             (recent (dash-window name))
              (changed (dash-last-change-at name))
-             ;; no change at all in the whole window: the quiet starts at the first sample
              (since (or changed (aref t* 0)))
-             (quiet (- (or now *now-ms*) since))
-             ;; **THE RHYTHM IS THE GAP BETWEEN CONSECUTIVE *CHANGES*, and with fewer than two
-             ;; there is no rhythm to speak of.** The first version divided the whole span by the
-             ;; number of moves — so a series that moved ONCE over eleven samples was given a
-             ;; rhythm of the entire span and a bar of twice that, which no amount of quiet could
-             ;; reach. MEASURED: a series that stopped at t=30s was still not plateaued at t=71s,
-             ;; because its single move made `span/moves` 110 seconds.
+             (held (- (or now *now-ms*) since))
+             ;; **THE MOVE MUST BE OLDER THAN THE FLAT WINDOW, and this is the trap MAD cannot
+             ;; catch.** MAD's 50% breakdown point is why it ignores ordinary variation, and the
+             ;; same property makes a SINGLE jump invisible: seven identical samples and one
+             ;; outlier give a median deviation of zero, so a series that has just jumped reads as
+             ;; perfectly flat. MEASURED — `(10 10 10 10 10 10 10 99)` was called flat.
              ;;
-             ;; That is the wrong reading of *rhythm*. With one move there is no evidence about how
-             ;; often the thing moves, so the floor governs and this clause ABSTAINS. With two or
-             ;; more, the mean gap between them is the rhythm — and the fuzzer that finds something
-             ;; every twenty minutes is given forty before it is called stuck, which is the
-             ;; over-calling protection doing its job.
-             (gaps (loop for i from 1 below n
-                         when (/= (aref v i) (aref v (1- i))) collect (aref t* i)))
-             (rhythm (if (>= (length gaps) 2)
-                         (/ (- (car (last gaps)) (car gaps))
-                            (float (1- (length gaps))))
-                         0)))
-        (and (not (zerop last))                     ; present and NON-ZERO
-             (>= quiet (* 1000 +dash-plateau-seconds+))
-             (>= quiet (* 2 rhythm)))))))             ; and long against its own rhythm
+             ;; serenedash's own `GROWTH_RISING` exists for the mirror of this (*"one jump at the
+             ;; end of a flat series is a perfect trend"*), so the guard is the same shape at the
+             ;; other end: the value must have been still for the WHOLE window being judged, not
+             ;; merely for most of it.
+             (wstart (aref t* (max 0 (- n +dash-flat-window+))))
+             (aged (<= since wstart))
+             (rhythm (dash-rhythm-ms name))
+             (flatp (multiple-value-bind (med spread) (dash-spread recent unit)
+                      (declare (ignore med))
+                      ;; **AT THE FLOOR**, which is `<=` and not `=`: a spread that has collapsed is
+                      ;; exactly the floor, and a tolerance here would be a second number to tune.
+                      (<= spread (dash-floor-for unit)))))
+        (when (and flatp
+                   aged
+                   (not (zerop last))
+                   (or (null rhythm) (>= held (* 2 rhythm))))
+          (let ((all (dash-window name (length v))))
+            (multiple-value-bind (med spread) (dash-spread all unit)
+              (list :series name
+                    :held-ms held
+                    :baseline med
+                    :value last
+                    :window (length all)
+                    :spread spread
+                    :unit (or unit "")))))))))
+
+(defun dash-plateau-p (name &optional (now *now-ms*))
+  "Is NAME flat? The predicate behind `dash-flatness`, which carries the evidence."
+  (and (dash-flatness name now) t))
+
+(defun dash-flat-said (finding)
+  "FINDING as the words a row or a marker carries: `flat 3h`, or `flat 20s`.
+
+**The duration is the whole sentence on purpose.** It is the fact a reader weighs, and a bare
+`flat` would make every plateau look the same size."
+  (and finding (format nil "flat ~a" (duration (max 0 (floor (getf finding :held-ms)))))))
 
 (defun dash-plateaued (&optional (now *now-ms*))
   "Every series that has stopped moving — the list a frame surfaces without being opened.
@@ -332,10 +439,59 @@ Three conditions, and each exists for a reason:
 they want to know which ones stopped. A frame that requires reading every panel to find the stuck
 one has moved the work rather than done it.
 
-NOW is a parameter for the reason every other clock question here takes one: a frame and a test
-must be able to ask *as of this instant* rather than as of whenever `*now-ms*` was last set."
+NOW is a parameter for the reason every other clock question here takes one: a frame and a test must
+be able to ask *as of this instant* rather than as of whenever `*now-ms*` was last set."
   (loop for name being the hash-keys of *dash-series*
         when (dash-plateau-p name now) collect name))
+
+(defun dash-flatness-said (name &optional (now *now-ms*))
+  "`flat 3h` for NAME when it is flat, or NIL — **and NIL means a panel says its own thing instead**,
+which is serenedash's `views.py`: *\"Orphaned beats flat … That is a reclaimable number, which is
+worth more than another word for 'not moving'.\"*
+
+**A plateau is a WEAK finding**, and this is the function that admits it: a panel with something
+actionable to say about a row should say that, and `flat` is what is left when it has nothing
+better. Returning NIL rather than `flat` is how a panel expresses that without knowing this rule
+exists."
+  (dash-flat-said (dash-flatness name now)))
+
+(defun dash-times (name)
+  "NAME's sample timestamps, parallel to `dash-values`. Recorded per sample rather than kept as one
+`at`, because a flatness claim is a claim about WHEN the value last moved."
+  (let ((s (gethash name *dash-series*))) (and s (getf s :t))))
+
+(defun dash-changed-p (a b unit)
+  "Did the value move from A to B by more than UNIT's FLOOR?
+
+**A CHANGE IS A MOVEMENT BIGGER THAN THE NOISE FLOOR, and without that the floor would be applied in
+one place and not another.** A byte series wobbling in its last digit differs from sample to sample,
+so a `/=` test calls every pair a change — and then the series' *last change* is always the newest
+sample, which makes every flat series look like it moved a moment ago and no plateau is ever
+reported. Same floor, same reason, applied once."
+  (>= (abs (- (float a) (float b))) (dash-floor-for unit)))
+
+(defun dash-changes (name)
+  "The indices at which NAME moved by more than its floor."
+  (let* ((v (dash-values name))
+         (s (gethash name *dash-series*))
+         (unit (and s (getf s :unit)))
+         (n (and v (length v))))
+    (when (and n (> n 1))
+      (loop for i from 1 below n
+            when (dash-changed-p (aref v (1- i)) (aref v i) unit) collect i))))
+
+(defun dash-last-change-at (name)
+  "When NAME's value last moved by more than its floor, or NIL.
+
+**Consecutive samples, and floor-aware** — see `dash-changed-p` for why a raw `/=`. A fuzzer that
+finds something every twenty minutes moves ONCE at minute twenty; every sample before it equals the
+one before, and this reads that as *the last change was when it moved*, which is the fact the
+duration is measured from."
+  (let* ((v (dash-values name))
+         (t* (dash-times name))
+         (idx (dash-changes name)))
+    (when (and v t* idx)
+      (aref t* (car (last idx))))))
 
 (defun dash-values (name) (let ((s (gethash name *dash-series*))) (and s (getf s :v))))
 (defun dash-last (name)
