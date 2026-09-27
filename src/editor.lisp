@@ -1019,6 +1019,15 @@ than from the click."
   (let ((row (getf key :y)))
     (cond
       (*pick-open* (%pick-click head row))
+      ;; **THE DASHBOARD IS A LIST OF PANELS, AND A CLICK PICKS ONE.** It goes ahead of the shared
+      ;; pane arm because a panel's row is a LINE and not an index into a per-row list — the boxes
+      ;; are different heights, so `click-row->sel`'s arithmetic (which assumes one or two lines per
+      ;; row) would land on the wrong box for every panel but the first.
+      ((eq (head-mode head) :dash)
+       (let ((line (+ *pane-scroll* (- row 1))))
+         (when (and (>= line 0) (< line (+ *pane-scroll* *pane-room*)) (< line *pane-lines*))
+           (dash-click-sel head line)))
+       t)
       ((member (head-mode head) '(:picker :jobs :subagents :todos :config))
        ;; the pane starts at screen row 1 (row 0 is the top border), and the
        ;; offset says how many pane LINES are hidden above it
@@ -1340,8 +1349,27 @@ one thing this head must not need."
              (cond ((not empty) nil)
                    ((eql ch #\q) (shut))
                    ((and (eql ch #\o) (eq mode :subagents)) (%subagent-switch head) t)
+                   ;; the operator's own ask: the job row links to its dashboard
+                   ((and (eql ch #\d) (eq mode :jobs))
+                    (let ((job (nth (head-picker-sel head) (head-jobs head))))
+                      (when (dash-panel-for-job job)
+                        (setf *dash-nav* (list :sel 0 :scroll 0 :open nil))
+                        (pane :dash "dash")
+                        t)))
                    ;; the dashboard's own letters, and no others — `g`/`G` jump to the first
                    ;; and last panel, which is the one navigation a `j`-only list cannot give.
+                   ;; **`d` ON THE JOBS PANE OPENS THE JOB'S DASHBOARD.** Gated on there BEING
+                   ;; one, so the key reports rather than doing nothing — a key that silently
+                   ;; ignores a press is the defect `%pane-key`'s docstring records, and here
+                   ;; the row itself already says `· dash` so the gate and the mark agree.
+                   ((and (eq mode :jobs) (eql ch #\d))
+                    (let ((job (nth (head-picker-sel head) (head-jobs head))))
+                      (if (dash-panel-for-job job)
+                          (progn (setf *dash-nav* (list :sel 0 :scroll 0 :open nil))
+                                 (pane :dash "dash")
+                                 t)
+                          (progn (say head "no dashboard is registered for that job")
+                                 t))))
                    ((and (eq mode :dash) (member ch '(#\j #\k #\J #\K #\g #\G) :test #'eql))
                     (setf *dash-nav* (dash-nav *dash-nav* (string ch))
                           (head-dirty head) t)
@@ -2265,6 +2293,26 @@ keeps finding elsewhere."
        (say head "the repo's TODO.md is the operator's queue and this pane never writes it — edit the file itself")
        t)
       (t nil))))
+
+(defun dash-click-sel (head line)
+  "Select the panel a click on pane LINE lands on. T when it selected one.
+
+**The layout is asked AGAIN at click time**, which is what `todos-click-sel` does one pane over and
+for its reason: the function that DREW the pane is the only thing that knows where its rows are, so
+re-asking it cannot disagree with what is on the screen. Recomputing the arithmetic here would be a
+second layout that drifts from the first — `todos-stops`' docstring calls that *\"the defect\"*.
+
+The panel is left CLOSED, because a click is a selection: opening on a click as well would make a
+mis-aimed click both move the cursor and unfold a box, and the second half is the one you cannot see
+coming."
+  (declare (ignore head))
+  (multiple-value-bind (lines starts) (dash-frame-lines 80 :nav *dash-nav*)
+    (declare (ignore lines))
+    (let ((i (dash-panel-at-line line starts)))
+      (when i
+        (setf *dash-nav* (list :sel i :scroll 0 :open nil)
+              (head-dirty *head*) t)
+        t))))
 
 (defun click-row->sel (head mode line)
   "The cursor ROW a click on pane LINE means, or NIL when it is not a row.

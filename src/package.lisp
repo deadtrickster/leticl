@@ -211,6 +211,7 @@
    #:dash-age-ms #:dash-oldest-freshness #:dash-reset-series #:dash-direction #:dash-spark
    #:dash-bytes #:dash-bytes-at #:dash-rate #:dash-pct #:dash-counter
    #:dash-bind #:dash-bindings #:dash-nav #:dash-http-get #:dash-parse-metrics
+   #:dash-panel-for-job #:dash-job-panels #:dash-panel-at-line
    #:dash-sample-system #:dash-collect-once #:dash-start #:dash-stop #:dash-sampler-add
    #:dash-llama-panels #:dash-llama-dashboard
    #:*dash-series* #:*dash-interval* #:*dash-panels* #:*dash-views* #:*dash-nav*

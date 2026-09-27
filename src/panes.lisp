@@ -717,7 +717,16 @@ Second value is the cursor's LINE: two lines per job after a two-line header."
                (push (list (cons (format nil "~a " (if picked "▸" " ")) (and picked '(:reverse t)))
                            (cons mark (if picked (append '(:reverse t) colour) colour))
                            (cons (format nil " ~a ~a" (getf j :id) (getf j :command))
-                                 (and picked '(:reverse t))))
+                                 (and picked '(:reverse t)))
+                           ;; **A JOB WITH A DASHBOARD SAYS SO ON ITS OWN ROW.** The operator's
+                           ;; ask: *"link to dashboard from jobs if a job has associated
+                           ;; dashboard."* It has to be ON THE ROW rather than in the hint bar —
+                           ;; the hint says what a key does, the row says whether there is
+                           ;; anything to open, and only the row can differ from job to job.
+                           (cons (if (dash-panel-for-job j) "  · dash" "")
+                                 ;; and the mark rides the selection's reverse video, or it is
+                                 ;; the one part of the row that stays lit when the cursor leaves
+                                 (if picked '(:reverse t) '(:dim t))))
                      out)
                (push (list (cons (truncate-to-width
                                   (format nil "         ~a · ~a" (getf j :how) tail) w)

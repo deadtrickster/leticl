@@ -879,6 +879,13 @@ is worse than no hint at all."
                  ((eq (head-mode head) :dash) (format nil "~a · esc closes" (dash-bindings)))
                  ((eq (head-mode head) :config) "arrows move · enter changes a row marked ✎ · esc closes")
                  ((eq (head-mode head) :subagents) "subagents this session spawned · esc closes")
+                 ;; **THE JOBS PANE NAMES `d` ONLY WHEN THERE IS SOMETHING TO OPEN**, and the
+                 ;; count comes from the panels rather than from a guess: a hint that offers a key
+                 ;; which does nothing on this job is worse than a shorter hint.
+                 ((eq (head-mode head) :jobs)
+                  (if (dash-panel-for-job (nth (head-picker-sel head) (head-jobs head)))
+                      "↑↓ moves · enter reads the output · d opens its dashboard · esc closes"
+                      "↑↓ moves · enter reads the output · esc closes"))
                  ((eq (head-mode head) :jobs) "background jobs this session started · ↑↓ then enter reads one · esc closes")
                  ((eq (head-mode head) :peek) "arrows scroll · enter re-reads · esc back")
                  ;; the overlay's row names ESC BACK TO JOBS, not "closes": the

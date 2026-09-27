@@ -20480,3 +20480,73 @@ MEASURED and eliminated while looking for the operator's hole, none of which thi
   (is (leticl::%white-char-p #\space) "and a space, which it already knew")
   (is (not (leticl::%white-char-p #\x)) "**but a letter is not** — the fix must not swallow prose")
   (is (not (leticl::%white-char-p #\—)) "nor is a dash"))
+
+(def-test a-job-with-a-dashboard-says-so-and-a-key-opens-it (:suite leticl)
+  "**The operator's ask: *\"link to dashboard from jobs if a job has associated dashboard.\"***
+
+The association is made on the COMMAND, not on an id, and that is forced by the order of events: a
+job's id does not exist until the daemon reports it, while a panel is registered **before** the job
+starts. So the thing both sides have is the command line — which is also the thing an operator reads
+when deciding which job they mean.
+
+**And the mark is on the ROW rather than in the hint bar**, because only the row can differ from job
+to job. The hint says what a key does; the row says whether there is anything to open."
+  (dash-clear-panels)
+  (dash-register "llama" :title "llama-server" :job "llama"
+                 :rows (lambda (cols) (declare (ignore cols)) nil))
+  ;; a job whose command names it
+  (let ((job (list :id "j12" :command "./llama-server -m Qwen3.8-27B.gguf --port 8080")))
+    (is (equal "llama" (getf (dash-panel-for-job job) :name))
+        "**a panel finds its job by a SUBSTRING of the command** — `:job \"llama\"` catches
+ `./llama-server -m …` however the operator spelled the whole line"))
+  ;; someone else's job is not claimed
+  (is (null (dash-panel-for-job (list :id "j13" :command "cargo test --workspace")))
+      "and a job no panel names is left alone — no mark, and no key offered")
+  ;; case does not decide it
+  (is (not (null (dash-panel-for-job (list :id "j14" :command "/usr/bin/Llama-Server -m x"))))
+      "**case-insensitively**: a path and a name are the same word to a reader")
+  ;; an exact id is a handle too, for a panel registered while watching one job
+  (dash-register "watch" :title "that one job" :job "j15"
+                 :rows (lambda (cols) (declare (ignore cols)) nil))
+  (is (equal "watch" (getf (dash-panel-for-job (list :id "j15" :command "whatever")) :name))
+      "**an exact id matches**, so a dashboard can be pinned to the job it was written for")
+  (is (= 2 (dash-job-panels)) "and the count the hint bar asks for is the panels that HAVE a job")
+  ;; a panel with no `:job` is not attached to anything, and must not be counted
+  (dash-register "loose" :title "loose" :rows (lambda (cols) (declare (ignore cols)) nil))
+  (is (= 2 (dash-job-panels)) "a panel with no `:job` belongs to no job and is not counted")
+  (is (null (dash-panel-for-job nil)) "and no job is no panel, rather than an error")
+  (dash-clear-panels))
+
+(def-test the-dashboards-verb-opens-the-pane-and-a-click-picks-a-panel (:suite leticl)
+  "**The operator: *\"do /dashboards\"*** and ***\"dashboard with list all dashboard — up and down and
+enter and click — the usuals for navigation.\"***
+
+So three claims: the verb exists, every panel is LISTED (not scrolled), and a click lands on the box
+it was aimed at. The last one is why `dash-frame-lines` returns a second value — a panel's box is a
+different height from its neighbour's, so an index derived from the line number would be wrong for
+every panel but the first."
+  (dash-clear-panels)
+  ;; a panel of one row and a panel of four: heights that differ, which is the whole difficulty
+  (dash-register "one" :title "one" :order 1
+                 :rows (lambda (cols) (declare (ignore cols)) (list (list :label "a" :value "1"))))
+  (dash-register "four" :title "four" :order 2
+                 :rows (lambda (cols) (declare (ignore cols))
+                         (list (list :label "a") (list :label "b") (list :label "c") (list :label "d"))))
+  (multiple-value-bind (lines starts) (dash-frame-lines 60 :nav (list :sel 0))
+    (is (= 2 (length starts)) "one start line per panel")
+    (is (search "2 dashboards registered" (let ((l (first lines)))
+                                            (if (listp l) (apply #'concatenate 'string (mapcar #'car l)) l)))
+        "**the pane SAYS how many there are** — a list with no count is a list you have to count")
+    ;; each start really is where its box is drawn, and the mapping takes the LAST one at or above
+    (is (= 0 (dash-panel-at-line (aref starts 0) starts)) "the first panel's own line")
+    (is (= 0 (dash-panel-at-line (1+ (aref starts 0)) starts)) "and the line inside it")
+    (is (= 1 (dash-panel-at-line (aref starts 1) starts)) "**the second panel's line is the second panel**")
+    (is (= 1 (dash-panel-at-line (+ 3 (aref starts 1)) starts)) "as is every line of its box")
+    (is (null (dash-panel-at-line 0 starts))
+        "**a line above every box selects nothing** — the heading is not a panel"))
+  ;; the nav: up/down/enter, and esc leaving at depth zero
+  (is (= 1 (getf (dash-nav (list :sel 0) "j") :sel)) "down moves")
+  (is (= 0 (getf (dash-nav (list :sel 1) "k") :sel)) "up moves")
+  (is (getf (dash-nav (list :sel 0) "\r") :open) "enter opens the one under the cursor")
+  (is (null (dash-nav (list :sel 0 :open nil) "esc")) "and esc at depth 0 is the caller's signal to leave")
+  (dash-clear-panels))

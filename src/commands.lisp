@@ -67,6 +67,7 @@
     ("jobs" . "the background-jobs pane")
     ("subagents" . "the subagent tree")
     ("todos" . "the plan and the repo's TODO.md — or /todos add for one of your own")
+    ("dashboards" . "the live dashboard — panels are DATA, registered from a REPL")
     ("peek" . "SESSION-ID — read a subagent's output without leaving this session")
     ;; the session's own machinery
     ("cells" . "MESSAGE — send it with a copy of this screen")
@@ -359,6 +360,14 @@ on ClientFrame::Slash)."
        ;; it had finished).
        (%toggle-pane head :jobs (lambda () (%send head (make-list-jobs)))))
       ((string= verb "subagents") (%open-pane head :subagents))
+      ((string= verb "dashboards")
+       ;; **OPENING IT STARTS THE COLLECTORS**, because a dashboard with no series is a frame of
+       ;; dashes — and starting a sampler that is already running is a no-op, so the verb is
+       ;; idempotent. `*dash-nav*` is cleared so the cursor is never left on a panel that a
+       ;; re-registration has moved.
+       (setf *dash-nav* (list :sel 0 :scroll 0 :open nil))
+       (dash-start)
+       (%open-pane head :dash))
       ((string= verb "todos")
        ;; **`/todos add` opens the card without opening the pane** (R44): the verb is the
        ;; keystroke-saving spelling of the pane's own first row, and `add` is a word this verb

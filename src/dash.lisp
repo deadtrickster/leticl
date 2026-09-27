@@ -262,7 +262,7 @@ series, because a panel is only as live as its stalest input."
 (defvar *dash-panels* (make-hash-table :test #'equal))
 (defvar *dash-order* nil "Registration order, as names.")
 
-(defun dash-register (name &key title rows (order 50) needs)
+(defun dash-register (name &key title rows (order 50) needs job)
   "Register or replace a panel. Returns NAME.
 
     (dash-register \"llama\" :title \"llama\" :needs '(\"llama.gen\")
@@ -272,12 +272,36 @@ series, because a panel is only as live as its stalest input."
 operator composes rather than a thing a programmer ships. Replacing an existing NAME keeps its
 place in the order, so re-registering a panel while watching it does not move it."
   (setf (gethash name *dash-panels*)
-        (list :name name :title (or title name) :rows rows :order order :needs needs))
+        (list :name name :title (or title name) :rows rows :order order :needs needs :job job))
   (unless (member name *dash-order* :test #'string=) (push name *dash-order*))
   (setf *dash-order*
         (stable-sort *dash-order* #'<
                      :key (lambda (n) (or (getf (gethash n *dash-panels*) :order) 50))))
   name)
+
+(defun dash-panel-for-job (job)
+  "The panel registered for JOB, or NIL.
+
+**The match is a substring of the job's COMMAND, or its exact `:id`**, and the reason is the one
+that makes this usable at all: a job's id is known the moment the daemon reports it, but a panel is
+registered **before** the job exists — the operator writes a dashboard for a llama server, and the
+job that starts it is named afterwards. So the association is made on the thing both sides have: the
+command line. `:job \"llama\"` catches `./llama-server -m …` however the operator spelled it.
+
+An **exact id** is checked too, because a panel registered while watching a specific job should be
+able to name it, and an id is the only unambiguous handle there is.
+
+Case-insensitive on the command: a path and a name in a command line are the same word to a reader,
+and `Llama-Server` is not a different program."
+  (when (and job (or (getf job :command) (getf job :id)))
+    (loop for p in (dash-panels)
+          for want = (getf p :job)
+          when (and want
+                    (or (string-equal want (or (getf job :id) ""))
+                        (let ((cmd (or (getf job :command) "")))
+                          (and (plusp (length cmd))
+                               (search (string-downcase want) (string-downcase cmd))))))
+            return p)))
 
 (defun dash-unregister (name)
   (remhash name *dash-panels*)
@@ -285,6 +309,12 @@ place in the order, so re-registering a panel while watching it does not move it
   (values))
 
 (defun dash-panels () (remove nil (mapcar (lambda (n) (gethash n *dash-panels*)) *dash-order*)))
+
+(defun dash-job-panels ()
+  "How many panels are attached to a job. The jobs pane's hint bar uses it to say whether the key is
+worth pressing — a hint that names a key which does nothing is the defect `dash-bindings` exists to
+avoid, one pane over."
+  (count-if (lambda (p) (getf p :job)) (dash-panels)))
 
 (defun dash-clear-panels () (clrhash *dash-panels*) (setf *dash-order* nil) (values))
 
@@ -451,20 +481,49 @@ that hides the one line it belongs to."
                        '(:fg :cyan)))))))
 
 (defun dash-frame-lines (cols &key nav now)
-  "The whole dashboard, as lines. NAV is the plist `dash-nav` maintains.
+  "The whole dashboard, as lines, and **the LINE each panel starts on**.
+
+Two values, and the second is `todos-lines`' own arrangement: a pane that owns a cursor must be able
+to say WHICH ROW A LINE BELONGS TO, or a click cannot be turned into a selection. The alternative —
+recomputing the layout from the panel list at click time — is a second layout arithmetic, and this
+tree has already paid for that once (`todos-stops`' docstring: *\"two enumerations is the defect\"*).
+
+**Every panel is listed, always.** The operator: *\"dashboard with list all dashboard\"* — so this is
+a LIST you walk, not a stack you scroll: `↑↓` moves the cursor, `enter` opens the one under it, and a
+click lands on the panel you aimed at.
 
 **The key bar is GENERATED from the binding table**, so it cannot advertise a key that does
-nothing, and it is always the last line — which is how the reader learns the pane is
-interactive at all. serenedash's own correction: a bar that listed `q` and `x` to a browser
-that could do neither was found by reading, not by looking."
-  (let ((panels (dash-panels))
-        (sel (or (getf nav :sel) 0))
-        (open (getf nav :open)))
-    (append
-     (loop for p in panels
-           for i from 0
-           append (dash-panel-lines p cols :sel-p (= i sel) :open-p (and (= i sel) open) :now now))
-     (list (list (cons (dash-bindings) '(:dim t)))))))
+nothing, and it is always the last line — which is how the reader learns the pane is interactive at
+all. serenedash's own correction: a bar that listed `q` and `x` to a browser that could do neither
+was found by reading, not by looking."
+  (let* ((panels (dash-panels))
+         (sel (or (getf nav :sel) 0))
+         (open (getf nav :open))
+         (lines '())
+         (starts (make-array 0 :adjustable t :fill-pointer 0)))
+    ;; a heading, because a list of boxes with no line above them does not say what it is
+    (push (list (cons (format nil "~d dashboard~:p registered~@[ · ~d attached to a job~]"
+                              (length panels) (dash-job-panels))
+                      '(:bold t)))
+          lines)
+    (push nil lines)
+    (dolist (p panels)
+      (vector-push-extend (length lines) starts)
+      (let ((i (position p panels)))
+        (dolist (l (dash-panel-lines p cols :sel-p (eql i sel) :now now))
+          (push l lines))))
+    (push (list (cons (dash-bindings) '(:dim t))) lines)
+    (values (nreverse lines) starts)))
+
+(defun dash-panel-at-line (line starts)
+  "Which panel a click on LINE lands on, or NIL.
+
+**The question is `line >= start`, taking the LAST panel that satisfies it** — a panel's box is its
+own line plus everything until the next one begins, so walking backwards is what makes a click land
+on the box it is inside rather than on the one after it."
+  (when (and starts (plusp (length starts)) line)
+    (loop for i from (1- (length starts)) downto 0
+          when (>= line (aref starts i)) return i)))
 
 ;;; ======================================================= 6. the collector ;;;
 
@@ -722,6 +781,10 @@ Each panel's `:needs` names the series its freshness chip should reflect — **a
 live as its stalest input**, which is why the chip is computed from the set rather than from
 whichever series happened to be sampled last."
   (dash-register "llama" :title "llama-server" :order 10
+                 ;; **`job` IS WHAT LINKS IT TO THE JOBS PANE** — the operator's ask. It is a
+                 ;; SUBSTRING of the command rather than an id, because a panel is registered
+                 ;; before the job it watches exists (see `dash-panel-for-job`).
+                 :job "llama-server"
                  :needs '("llama.gen_rate" "llama.processing")
                  :rows
                  (lambda (cols)
