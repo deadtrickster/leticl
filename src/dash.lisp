@@ -419,34 +419,60 @@ unreachable."
                         (make-string (- w k) :initial-element #\░)))))))
 
 (defun dash-line (row cols &optional (sel-p nil))
-  "ROW as a segment list, on the shared grid.
+  "ROW as a segment list, on the shared grid, EXACTLY COLS wide.
 
 The label is ellipsised rather than clipped — a label cut without a mark reads as the row's
 actual name, which serenedash learned from `checkpoint_thres` — and the value is
-right-aligned in its own column so digits line up down the panel."
+right-aligned in its own column so digits line up down the panel.
+
+**AND THE ROW IS PADDED TO COLS, which is what keeps the right border straight.** It was not, and
+the operator saw it: *\"right borders are off\"*. MEASURED at 60 columns, one panel's rows came out
+**85, 78, 70, 79 and 80** wide inside a box whose own borders are 59 — because the TAIL had no
+bound at all, so `peak 114.4 tok/s  falling` simply ran past the edge and the `│` that
+`dash-panel-lines` appends landed wherever the text happened to stop.
+
+So the tail gets what is left after the fixed columns and is ELLIPSISED like every other column,
+and a filler segment makes up any shortfall — including the one a truncated VALUE leaves, which is
+the case a fixed arithmetic would get wrong."
   (let* ((label (or (getf row :label) ""))
          (value (or (getf row :value) ""))
          (style (dash-style-for (getf row :kind)))
          (bar (getf row :bar))
          (sparkname (getf row :spark))
-         (bar-cols (min +dash-col-bar+ (max 8 (- cols +dash-col-label+ +dash-col-value+ 6))))
+         ;; **THE COLUMNS ARE ALLOCATED FROM COLS, NOT FIXED.** A fixed label of 24 and value of
+         ;; 11 is 49 columns before the bar and the separators — more than a narrow panel has, so
+         ;; at 40 columns the row came out **53 wide in a box drawn 40**. The bar takes a third,
+         ;; the label and the value take what is left in that order, and each is capped at its
+         ;; designed width so a wide terminal is unchanged.
+         (room (max 0 (- cols 6)))
+         (bar-cols (min +dash-col-bar+ (max 0 (floor room 3))))
+         (label-cols (min +dash-col-label+ (max 1 (- room bar-cols 6))))
+         (value-cols (min +dash-col-value+ (max 0 (- room bar-cols label-cols 2))))
          (glyph (cond ((and sparkname (dash-values sparkname))
                        (dash-spark (dash-values sparkname) :top (getf row :top) :width bar-cols))
                       ((or bar (listp bar)) (dash-bar-text bar bar-cols))
                       (t (make-string bar-cols :initial-element #\space))))
-         (lab (if (<= (length label) +dash-col-label+)
-                  (format nil "~va" +dash-col-label+ label)
-                  (format nil "~a…" (subseq label 0 (1- +dash-col-label+)))))
-         (val (if (<= (string-width value) +dash-col-value+)
-                  (format nil "~va" +dash-col-value+ value)
-                  (truncate-to-width value +dash-col-value+))))
+         (lab (if (<= (length label) label-cols)
+                  (format nil "~va" label-cols label)
+                  (format nil "~a…" (subseq label 0 (max 1 (1- label-cols))))))
+         (val (if (<= (string-width value) value-cols)
+                  (format nil "~va" value-cols value)
+                  (truncate-to-width value value-cols)))
+         (before-tail (+ 2 label-cols value-cols 2 bar-cols 2))
+         (tail (truncate-to-width (or (getf row :tail) "") (max 0 (- cols before-tail))))
+         (used (+ before-tail (string-width tail)))
+         (pad (make-string (max 0 (- cols used)) :initial-element #\space)))
     (list (cons (if sel-p "▸ " "  ") (and sel-p '(:bold t)))
           (cons lab '(:dim t))
           (cons val style)
           (cons "  " nil)
           (cons glyph (cond ((getf row :bar) '(:fg :cyan)) (sparkname '(:dim t)) (t nil)))
           (cons "  " nil)
-          (cons (or (getf row :tail) "") '(:dim t)))))
+          (cons tail '(:dim t))
+          ;; **THE FILLER IS A SEGMENT AND NOT TRAILING SPACES ON THE TAIL**, so it survives a
+          ;; caller that trims, and so the padding is visible as one thing rather than as an
+          ;; accident of a format string.
+          (cons pad nil))))
 
 (defun dash-panel-lines (panel cols &key sel-p (open-p nil) now)
   "One panel as lines: a box, its header with the freshness chip, its rows, and its close.
@@ -462,7 +488,7 @@ that hides the one line it belongs to."
          (inner (max 20 (- cols 4)))
          (head (format nil "┌─~a " title))
          (chip-text (format nil " ~a ─┐" (or chip "")))
-         (fill (make-string (max 1 (- cols (string-width head) (string-width chip-text) 1))
+         (fill (make-string (max 1 (- cols (string-width head) (string-width chip-text)))
                             :initial-element #\─))
          (rows (ignore-errors (funcall (getf panel :rows) cols))))
     (append

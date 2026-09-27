@@ -20727,3 +20727,51 @@ it is clickable. So the three refusals are asserted, each for the reason it exis
                "**relative to the session's workspace, it resolves** — the same path, honestly"))
       (ignore-errors (delete-file png))))
   (setf leticl::*link-cwd* nil))
+
+(def-test a-dashboard-row-is-exactly-as-wide-as-its-panel (:suite leticl)
+  "**The operator, looking at the pane: *\"also right borders are off.\"*** They were, and the
+measurement is the whole of it: at 60 columns one panel's rows came out
+
+    85, 78, 70, 79, 80
+
+inside a box whose own borders are **59**. Three separate columns were unbound or mis-counted:
+
+  · **the TAIL had no bound at all** — `peak 114.4 tok/s  falling` ran straight past the edge, so
+    the `│` that `dash-panel-lines` appends landed wherever the text happened to stop. That is the
+    wide rows;
+  · **the header was one column short**, because its `─` fill subtracted a column that the `┌` and
+    the `┐` already accounted for. That is the border that drifts left by one;
+  · and a truncated VALUE leaves the row short, which is the case a fixed arithmetic gets wrong and
+    a filler segment gets right.
+
+**Asserted through `dash-panel-lines` rather than through `dash-line`**, because the box and the
+rows are drawn by different functions and the bug was in the agreement between them — a row that is
+exactly the width it was asked for is not the same claim as a row that lines up with its border."
+  (dash-clear-panels)
+  ;; a panel whose tail is far too long, which is the shape the operator's own screen had
+  (dash-register "wide" :title "llama-server" :order 1
+                 :rows (lambda (cols)
+                         (declare (ignore cols))
+                         (list (list :label "generation" :value "100.5 tok/s" :bar 0.8
+                                     :tail "peak 113.8 tok/s  climbing  and a great deal more")
+                               (list :label "a-label-far-past-the-column" :value "1"
+                                     :tail "another tail that is much too long for the room"))))
+  (dolist (cols '(40 60 100 210))
+    (let ((lines (dash-panel-lines (first (dash-panels)) cols)))
+      (dolist (l lines)
+        (is (= cols (string-width (apply #'concatenate 'string (mapcar #'car l))))
+            (format nil "**every row is exactly ~d wide** — got ~d: ~s"
+                    cols (string-width (apply #'concatenate 'string (mapcar #'car l)))
+                    (apply #'concatenate 'string (mapcar #'car l)))))))
+  ;; and the borders agree with the rows, which is the claim that actually matters
+  (let* ((lines (dash-panel-lines (first (dash-panels)) 80))
+         (texts (mapcar (lambda (l) (apply #'concatenate 'string (mapcar #'car l))) lines)))
+    (is (every (lambda (s) (= 80 (string-width s))) texts) "at 80 as well")
+    (is (char= #\┐ (char (first texts) (1- (string-width (first texts)))))
+        "**the header closes with `┐`**, the corner that belongs to it")
+    (dolist (body-text (cdr (butlast texts)))
+      (is (char= #\│ (char body-text (1- (string-width body-text))))
+          (format nil "every body row closes at the same column: ~s" body-text)))
+    (is (char= #\┘ (char (car (last texts)) (1- (string-width (car (last texts))))))
+        "and the foot closes with its own corner"))
+  (dash-clear-panels))

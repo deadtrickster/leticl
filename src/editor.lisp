@@ -1578,7 +1578,7 @@ for the lists)."
       ;; can be typed under the card
       ((and *pick-open* (pick-key-event head key)))
       ((and (member (head-mode head)
-                    '(:help :status :jobs :subagents :todos :picker :slash))
+                    '(:help :status :jobs :subagents :todos :picker :slash :dash))
             (%pane-key head key type)))
       (t (%normal-key head key)))))
 

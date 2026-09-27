@@ -6,8 +6,11 @@
 ;;;; **THE CONSTRAINT, AND IT OUTRANKS THE CONVENIENCE.** This head's cell grid physically cannot
 ;;;; carry an escape: a cell is one character plus an interned style INTEGER (`cells.lisp`), so
 ;;;; `a-tool-payload-cannot-reconfigure-the-operators-terminal` is a PROOF here rather than a patch,
-;;;; as this tree has recorded since R46 — *"a cell grid cannot store a control character at all,
-;;;; so for B the same criterion is a proof rather than a fix."*
+;;;; which is the parity document's criterion *content the head did not author must not reconfigure
+;;;; the terminal* — its own words: *"a cell grid cannot store a control character at all, so for B
+;;;; the same criterion is a proof rather than a fix."* It fails the day a zero-width cluster gains
+;;;; a cell, and that test is the citation because a test name survives the document being
+;;;; renumbered.
 ;;;;
 ;;;; A hyperlink is exactly the thing that would break that proof: it is a non-printing escape
 ;;;; carrying a URL, which is not a character and does not fit in a cell. So:

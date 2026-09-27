@@ -1662,6 +1662,15 @@ and it is true across the whole turn because it counts a call that has not finis
     (or (and turn (turn-busy-p turn))
         (filling-active-p)
         (and *carry-last-done* *carry-moved-at*)
+        ;; **A DASHBOARD IS LIVE BY DEFINITION, and this is why the numbers moved only when a key
+        ;; was pressed.** The panels draw from series the collector samples on a clock — the very
+        ;; same shape as a running call's elapsed, one layer down — so a frame with a dashboard in
+        ;; it IS a function of the clock and must be rebuilt on it.
+        ;;
+        ;; MEASURED, on the operator's screen: *"it doesnt update until i type"*, and the
+        ;; mechanism was that pressing a key marked the head dirty and a clock-driven frame was
+        ;; never due — so the dashboard was a screenshot until something else asked for a paint.
+        (eq (head-mode head) :dash)
         (and (%live-decision head) t))))
 
 (defun live-frame-tenths-p (head)
