@@ -218,6 +218,8 @@
    #:dash-job-matches-p #:dash-job-for-panel #:dash-feed-panels #:dash-feed-due-p
    #:tick-dash-feeds #:dash-note-job #:dash-job-rows #:*dash-fed*
    #:dash-sample-system #:dash-collect-once #:dash-start #:dash-stop #:dash-sampler-add
+   ;; R56 amended — a source that is a COMMAND, for what this head cannot reach any other way
+   #:dash-command-add #:dash-parse-pairs
    #:dash-llama-panels #:dash-llama-dashboard #:dash-register-defaults
    #:*dash-series* #:*dash-interval* #:*dash-panels* #:*dash-views* #:*dash-nav*
    #:*dash-samplers* #:*dash-running* #:*dash-thread* #:*dash-last-error*

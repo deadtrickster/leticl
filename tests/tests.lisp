@@ -21089,3 +21089,55 @@ screen the operator is already looking at, and on the key bar of any frame that 
         (format nil "exactly the stuck one: ~s" names)))
   (dash-clear-panels)
   (dash-reset-series))
+
+(def-test a-source-can-be-a-command-because-the-thing-watched-is-often-not-reachable (:suite leticl)
+  "**MEASURED, and it is why this exists.** The operator tried to watch a real long-running thing
+from where the head lives and could not reach it at all: another mount namespace
+(`mnt:[4026533260]` against the head's `mnt:[4026531832]`), the state on a path that does not exist
+here, and `nsenter` answering `Operation not permitted`. A source that can only call a Lisp function
+or open a file cannot watch that — so a source can be a COMMAND whose stdout is parsed, which is
+also what makes this work for an HTTP endpoint, a `docker exec`, an agent task's log, and the
+`watch`-like case the operator named.
+
+**And a command that hangs must not wedge the collector**, because the collector is one thread
+shared by every series: the head would keep painting while the numbers silently stopped. That is the
+worst-shaped failure this file has, so the timeout is asserted rather than assumed."
+  (dash-reset-series)
+  (dash-clear-panels)
+  ;; the two shapes a real command prints
+  (is (equal '(("rows" . 1204.0))
+             (dash-parse-pairs "rows 1204"))
+      "`key value`, the shape an `awk` or a monitor script prints")
+  (is (equal '(("rows" . 1204.0))
+             (dash-parse-pairs "rows=1204"))
+      "and `key=value`, the shape prometheus text and an env dump print")
+  (is (equal '(("a" . 1.0) ("b" . 2.0))
+             (dash-parse-pairs (format nil "# a comment~%~%a 1~%b=2~%garbage with no number~%")))
+      "**a line that says nothing is NOT a series** — a guess about an unpromised shape is how a
+ number comes to mean something else")
+  (is (null (dash-parse-pairs "")) "and no output is no pairs")
+  ;; a real command, run for real
+  (dash-command-add "probe" "echo findings 42")
+  (dash-collect-once)
+  (is (= 42.0 (dash-last "probe.findings"))
+      "**the command's output reaches a series**, prefixed with the source's own name")
+  ;; `:prefix nil` for a command whose keys are already unique
+  (dash-command-add "bare" "echo plain 7" :prefix nil)
+  (dash-collect-once)
+  (is (= 7.0 (dash-last "plain")) "and `:prefix nil` leaves the keys alone")
+  ;; **THE TIMEOUT** — a command that would hang for ever must not wedge the collector
+  (dash-command-add "slow" "sleep 30; echo never 1" :timeout 1)
+  (let ((t0 (get-internal-real-time)))
+    (dash-collect-once)
+    (let ((secs (/ (- (get-internal-real-time) t0) internal-time-units-per-second)))
+      (is (< secs 10)
+          (format nil "**a hanging command is ended, not waited on** — the pass took ~,1fs" secs))))
+  ;; and a non-zero exit is NOT an error: the output is still parsed
+  (dash-reset-series)
+  (dash-command-add "failing" "echo state 3; exit 1")
+  (dash-collect-once)
+  (is (= 3.0 (dash-last "failing.state"))
+      "**a program that exits non-zero still has something to say**, and it is still parsed")
+  (setf *dash-samplers* nil)
+  (dash-clear-panels)
+  (dash-reset-series))

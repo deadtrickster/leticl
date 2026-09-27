@@ -858,6 +858,74 @@ nobody is reading is not a place for it.")
   (setf *dash-samplers* (append *dash-samplers* (list (cons name fn))))
   name)
 
+(defun dash-parse-pairs (text)
+  "TEXT as `(series . value)` pairs, from the two shapes every tool already speaks.
+
+An ordinary line is either `key value` (`rows 1204`, `pending 3`) or `key=value`
+(`rows=1204`, prometheus-ish text, an env dump). A line that is neither, and a blank or
+`#`-prefixed line, records NOTHING — because this is parsing somebody else's output and a guess
+about a shape nobody promised is how a series gets a number that means something else.
+
+A METRIC NAME is left as it comes, dots and all: `pg_fuzz.findings` stays that, and the source's own
+name is prefixed on by `dash-command-add` so two sources cannot collide."
+  (loop for raw in (uiop:split-string (or text "") :separator '(#\Newline))
+        for line = (string-trim '(#\space #\tab #\return) raw)
+        unless (or (zerop (length line)) (char= (char line 0) #\#))
+          append (let* ((eq (position #\= line))
+                        (sp (position-if (lambda (c) (member c '(#\space #\tab) :test #'char=)) line)))
+                   (multiple-value-bind (key tail)
+                       (cond ((and eq (or (null sp) (< eq sp)))
+                              (values (subseq line 0 eq) (subseq line (1+ eq))))
+                             (sp (values (subseq line 0 sp) (subseq line (1+ sp))))
+                             (t (values nil nil)))
+                     (let ((value (and key (ignore-errors
+                                            (read-from-string
+                                             (string-trim '(#\space #\tab) (or tail "")))))))
+                       (when (and key (plusp (length key)) (numberp value))
+                         (list (cons key (float value)))))))))
+
+(defun dash-command-add (name command &key (parse #'dash-parse-pairs) (timeout 10)
+                                        (prefix t))
+  "**A SOURCE THAT IS A COMMAND** — because the thing being watched is often not in this process, or
+in this filesystem, at all.
+
+MEASURED, and it is why this exists: the operator's long-running work runs in a different mount
+namespace (`mnt:[4026533260]` against the head's `mnt:[4026531832]`), its state is on a path that
+does not exist in the head's filesystem, and `nsenter` answers `Operation not permitted`. A source
+that can only call a Lisp function or `with-open-file` cannot watch that — and the same shape covers
+an HTTP endpoint (`curl`), a `docker exec`, an agent task's log, and the `watch`-like case: anything
+whose answer a command can print.
+
+COMMAND is run through `/bin/sh -c`, so a pipeline, a redirect and a `docker exec` all work.
+
+**TIMEOUT IS NOT OPTIONAL, AND `uiop:run-program`'s `:timeout` DOES NOT DO IT.** Measured: with
+`:timeout 1` against a `sleep 30`, the pass took **30 seconds** — the option was accepted and
+ignored, so the collector thread was wedged for the whole of it while the head kept painting and
+every other series silently stopped. That is the worst-shaped failure this file has, and it was
+sitting in the argument list looking like protection.
+
+So the cap is coreutils' own `timeout`, in front of the shell: `timeout N /bin/sh -c CMD`. It kills
+the child, it is the same tool an operator would reach for at a prompt, and its absence is a
+numbered exit rather than a hang. A command that overran records nothing rather than a partial
+parse.
+
+A non-zero exit is NOT an error here: the output is still parsed, because `pg_fstat; exit 1` is a
+program with something to say.
+
+PREFIX puts the source's own name in front of every series it produces (`fuzz.findings`), so two
+command sources cannot collide — and `:prefix nil` is for a command whose keys are already unique."
+  (dash-sampler-add name
+                    (lambda ()
+                      (let* ((text (uiop:run-program (list "timeout" (princ-to-string timeout)
+                                                          "/bin/sh" "-c" command)
+                                                     :output :string :error-output :output
+                                                     :ignore-error-status t))
+                             (pairs (funcall parse text)))
+                        (if prefix
+                            (loop for (k . v) in pairs
+                                  collect (cons (format nil "~a.~a" name k) v))
+                            pairs)))))
+
 (defun dash-collect-once ()
   "One pass over every sampler. Returns the number of values recorded.
 
