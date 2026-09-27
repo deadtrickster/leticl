@@ -20264,3 +20264,225 @@ would. The gate is `turn-busy-p`: generating, or a call not finished."
     (leticl::%handle-key h (list :type :esc))
     (is (equal "interrupt" (getf (first (%sent wire)) :frame))
         "esc esc interrupts a turn whose only work is a running call")))
+
+;;; ================================================================ dash ;;;
+;;;
+;;; The dashboard vocabulary (dash.lisp), ported in philosophy from serenedash. Every test here
+;;; is one of ITS rules or one of the bugs THIS port had, because those are the two things worth
+;;; pinning: a rule nobody asserts is a rule that drifts, and a bug fixed twice is a bug that was
+;;; never asserted.
+
+(def-test a-dash-value-is-never-drawn-without-its-denominator (:suite leticl)
+  "**A VALUE IS NOT A FACT UNTIL ITS SCALE IS ON THE SAME LINE.** serenedash's rule, and the one
+its own storage panel was built to fix: `34.0G` alone could be almost empty or almost full, and
+the reader cannot tell which. The `:tail` is where the denominator goes, and this asserts the
+FORMATTERS that make it sayable rather than the panel that uses them."
+  ;; bytes: binary units, one decimal above K, none at B
+  (is (string= "34.0G" (dash-bytes (* 34 1024 1024 1024))))
+  ;; **ONE DECIMAL ABOVE B, ALWAYS** — `512.0K` and not `512K`, so the column is one width and
+  ;; two readings of the same quantity cannot differ by a character. `0B` is the exception
+  ;; because a count of bytes has no fraction worth showing.
+  (is (string= "512.0K" (dash-bytes (* 512 1024))))
+  (is (string= "0B" (dash-bytes 0)))
+  ;; **AND ABSENT IS NOT ZERO.** The first version coerced NIL to 0, so a panel with no samples
+  ;; read `0B` instead of `—`: an unmeasured thing rendering as a confident measurement, which is
+  ;; the exact failure this whole layer exists to prevent.
+  (is (null (dash-bytes nil)) "an unmeasured size is ABSENT, never 0B")
+  (is (null (dash-rate nil)) "and an unmeasured rate is absent, never 0 tok/s")
+  (is (null (dash-rate 0)) "**a rate of zero is also absent** — `0 tok/s` is a claim")
+  (is (string= "97.6 tok/s" (dash-rate 97.58)))
+  ;; percent: the decimal point is emitted whenever a digit count is GIVEN, so zero digits
+  ;; printed `86.%` until it went through an integer form.
+  (is (string= "86%" (dash-pct 0.8600 0)) "**zero digits, no stray point**")
+  (is (string= "86.0%" (dash-pct 0.86 1)))
+  (is (null (dash-pct nil)) "and no fraction is no percentage"))
+
+(def-test a-sparkline-is-drawn-against-a-shared-ceiling (:suite leticl)
+  "**A TRACE SCALED TO ITSELF SAYS SOMETHING ABOUT VARIANCE AND NOTHING ABOUT SIZE.** serenedash's
+measurement: a 260 MB pool that never moves rendered as a full-height line beside a 34 GB one,
+because each was stretched to its own minimum and maximum. A `:top` puts every trace on one scale.
+
+**And a flat series at zero draws NOTHING rather than a mid-height stripe** — fifteen idle pools
+each drawing a row of mid-block ink is a picture of activity that means its absence."
+  (let ((rising (list 0.0 1.0 2.0 3.0 4.0 5.0 6.0 7.0)))
+    (is (string= "▁▂▃▄▅▆▇█" (dash-spark rising :top 7))
+        "**against a ceiling, the glyph is the fraction of it** — not the sample's rank")
+    ;; half the ceiling is a mid block, wherever the series has been
+    ;; **A HALF IS THE HALF-BLOCK GLYPH.** `floor` mapped it to `▅` — five eighths — because the
+    ;; glyphs are not eight steps from nothing: `▁` is an eighth TALL, so index I is (I+1)/8.
+    ;; Every half-full reading came out a notch high, which is the kind of error only a reader
+    ;; notices.
+    (is (string= "▄▄" (dash-spark (list 3.5 3.5) :top 7)))
+    ;; and with no ceiling it scales to itself, which is right for a lone trace
+    (is (string= "▁█" (dash-spark (list 0.0 1.0))))
+    (is (string= "▄▄▄" (dash-spark (list 5.0 5.0 5.0)))
+        "a flat trace is one flat glyph, not a staircase of nothing")
+    ;; **THE ONE THAT MATTERS**: nothing to report draws nothing
+    (is (string= "" (dash-spark (list 0.0 0.0 0.0 0.0) :top 100))
+        "**an idle series is BLANK, not a stripe of mid-block ink**")
+    (is (string= "" (dash-spark (list 1.0))) "and one sample is not a shape")))
+
+(def-test a-dash-direction-is-above-the-noise-floor (:suite leticl)
+  "**The caption is the fix, not the line.** serenedash's correction: a 0.1% move reported as
+`climbing` is noise wearing a label — worse than saying nothing, because a label is read as
+evidence. The threshold is a fraction of the series' own scale."
+  (is (string= "climbing" (dash-direction (list 1.0 2.0 3.0 4.0 5.0) 20 0.02)))
+  (is (string= "falling" (dash-direction (list 5.0 4.0 3.0 2.0 1.0) 20 0.02)))
+  ;; 1% of 100 is 1, which is under the 2% floor
+  (is (string= "flat" (dash-direction (list 100.0 100.0 100.4 100.8 101.0) 20 0.02))
+      "**a move under the floor is FLAT** — noise wearing a label is worse than no label")
+  (is (null (dash-direction (list 1.0 2.0) 20 0.02)) "and two samples are not a trend"))
+
+(def-test a-series-is-recorded-and-goes-stale-rather-than-to-zero (:suite leticl)
+  "**STALE IS NOT ZERO, AND ABSENT IS NOT ZERO.** A frozen collector must not look like a quiet
+system — that is the whole reason the freshness chip carries three states rather than two."
+  (dash-reset-series)
+  (is (equal '(:no-data "no data") (dash-freshness "nothing" 1000))
+      "a series nobody sampled is NO DATA, not `live` and not a zero")
+  (dash-note "x" 1.0 :now 1000)
+  (is (= 1.0 (dash-last "x")))
+  (is (equal '(:live "live") (dash-freshness "x" 1000)))
+  (dash-note "x" 2.0 :now 2000)
+  (is (= 2.0 (dash-last "x")) "the newest sample is the one a panel reads")
+  ;; **THE BOUNDARY IS STRICTLY PAST three intervals of `*dash-interval*`** — 15s at the default
+  ;; 5s — so exactly 15s is still live and 18s is not. Asserted at 16s and 18s rather than at
+  ;; 15000/15001: a test that pins a `>` to the millisecond fails on the day somebody decides
+  ;; `>=` reads better, and the FACT being protected is the three-interval lag, not the operator.
+  (is (not (dash-stale-p "x" 16000)) "one interval late is a slow read, not staleness")
+  (is (dash-stale-p "x" 18000) "**well past three intervals it is stale**")
+  (is (eq :stale (first (dash-freshness "x" 18000))))
+  ;; **a NIL value is not recorded**, so the series' age is what makes staleness visible
+  (let ((before (dash-age-ms "x" 20000)))
+    (dash-note "x" nil :now 20000)
+    (is (= before (dash-age-ms "x" 20000))
+        "**a NIL sample records NOTHING** — substituting zero would be this function inventing a fact"))
+  (dash-reset-series))
+
+(def-test a-panel-is-data-and-the-grid-is-applied-by-the-renderer (:suite leticl)
+  "**A DASHBOARD YOU COMPOSE, NOT ONE YOU WRITE.** A panel returns ROWS and the renderer applies
+the one column grid, so a new panel is a `dash-register` call at a live REPL rather than a function
+in a module — and the grid cannot drift between panels because no panel draws it."
+  (dash-clear-panels)
+  (is (null (dash-panels)) "cleared")
+  (dash-register "z" :title "zed" :order 20 :rows (lambda (cols) (declare (ignore cols)) nil))
+  (dash-register "a" :title "aye" :order 10 :rows (lambda (cols) (declare (ignore cols)) nil))
+  (is (equal '("a" "z") (mapcar (lambda (p) (getf p :name)) (dash-panels)))
+      "**panels are ordered by `:order`, not by registration** — so a pane's layout is a fact
+ about the dashboard rather than about the order somebody typed the calls in")
+  ;; a panel whose rows function throws is DRAWN as broken, not drawn as empty
+  (dash-register "boom" :title "boom" :order 30
+                 :rows (lambda (cols) (declare (ignore cols)) (error "no")))
+  (let ((lines (dash-frame-lines 80 :nav (list :sel 0))))
+    (is (some (lambda (l) (search "(the panel returned nothing)"
+                                  (if (listp l) (apply #'concatenate 'string
+                                                       (mapcar (lambda (s) (princ-to-string (car s))) l))
+                                      l)))
+              lines)
+        "**an empty panel and a broken one must not look alike** — the same reason a stale series
+ must not look like a zero")
+    ;; and the key bar is the LAST line, generated from the table — which needs something
+    ;; registered in it, since `dash-bindings` is built from the offers rather than typed.
+    (dash-bind "g" "main" "dash")
+    (setf lines (dash-frame-lines 80 :nav (list :sel 0)))
+    (is (search "dash" (let ((l (car (last lines))))
+                         (if (listp l) (apply #'concatenate 'string
+                                              (mapcar (lambda (s) (princ-to-string (car s))) l))
+                             l)))
+        "the key bar is generated from the binding table and is always last"))
+  (dash-clear-panels))
+
+(def-test the-dashboard-nav-returns-nil-to-leave-and-a-state-to-stay (:suite leticl)
+  "**THE CONTRACT, AND IT IS SERENEDASH'S OWN.** `esc` with nothing open returns NIL — the caller's
+signal to LEAVE the pane. `esc` with a panel open closes it and returns a state.
+
+A nav that answered at depth 0 would make the pane inescapable; one that returned NIL at depth 1
+would make an open panel impossible to close. **Both are silent failures**, which is why both are
+asserted — and why this is the test that would have caught the version of this I wrote first,
+which returned a state at depth 0 and a state at depth 1."
+  (dash-clear-panels)
+  (dash-register "a" :rows (lambda (c) (declare (ignore c)) nil))
+  (dash-register "b" :rows (lambda (c) (declare (ignore c)) nil))
+  (is (null (dash-nav (list :sel 0 :open nil) "esc"))
+      "**esc at depth 0 is NIL** — the caller leaves the view")
+  (let ((open (dash-nav (list :sel 0 :open nil) "\r")))
+    (is (getf open :open) "enter opens the panel under the cursor")
+    (is (not (null (dash-nav open "esc"))) "**esc at depth 1 returns a state** — the panel closes")
+    (is (null (getf (dash-nav open "esc") :open)) "and it is closed"))
+  ;; and `j` cannot walk off the end: a cursor past the last panel is a cursor on nothing
+  (is (getf (dash-nav (list :sel 1) "j") :sel) 1 "(1- 2) is the last valid index")
+  (is (= 0 (getf (dash-nav (list :sel 0) "k") :sel)) "and k at the top stays at the top")
+  (is (null (dash-nav (list :sel 0) "q")) "**q leaves too** — the one key every pane answers to")
+  (dash-clear-panels))
+
+(def-test the-collector-runs-a-sampler-and-records-only-what-it-measured (:suite leticl)
+  "**A COLLECTOR THAT NEVER RAN IS A DASHBOARD THAT NEVER MOVES**, and the way this one failed was
+not subtle logic: five `defvar`s were lost to a paren repair, and because `(setf x t)` on a
+DECLARED-but-unbound `defvar` works fine, the first symptom was an unbound variable two lines
+into `dash-start` — **on the live head, at the moment the operator opened the pane.** The suite
+was green because nothing had ever started a collector.
+
+So this runs one, with a sampler that touches no network and no clock: what a collector does is
+call the sampler and record what it returns, and that is exactly what is asserted."
+  (dash-reset-series)
+  (let ((calls 0))
+    (dash-sampler-add "test" (lambda ()
+                               (incf calls)
+                               ;; **A NIL IN THE ALIST IS `NOT MEASURED`.** A sampler says so by
+                               ;; returning NIL, and the collector records nothing for it — the
+                               ;; alternative is the collector substituting a zero, which is a
+                               ;; fact about the world that nobody measured.
+                               (list (cons "t.one" 1.0) (cons "t.two" nil) (cons "t.three" 3.0))))
+    (is (= 2 (dash-collect-once)) "two values recorded, and the NIL one is not among them")
+    (is (= 2 (dash-collect-once)) "and again — a collector is idempotent per pass")
+    (is (= 2 calls) "the sampler was called once per pass")
+    (is (= 1.0 (dash-last "t.one")))
+    (is (null (dash-last "t.two")) "**the unmeasured series has NO sample**, not a zero")
+    (is (equal '(:no-data "no data") (dash-freshness "t.two"))
+        "so it reads as `no data` rather than as a live zero")
+    ;; **A SAMPLER THAT THROWS DOES NOT TAKE THE OTHERS WITH IT** — one dead endpoint must not
+    ;; cost every panel its history, and the failure is kept where a dashboard can draw it.
+    (dash-sampler-add "boom" (lambda () (error "endpoint down")))
+    (is (= 2 (dash-collect-once)) "the good samplers still recorded")
+    (is (equal "boom" (car *dash-last-error*)) "and the failing one is remembered")
+    (is (search "endpoint down" (cdr *dash-last-error*)))
+    ;; and starting is idempotent — two calls must not make two threads
+    (dash-start 1)
+    (let ((first-thread *dash-thread*))
+      (dash-start 1)
+      (is (eq first-thread *dash-thread*) "**`dash-start` twice is ONE collector**"))
+    (dash-stop)
+    (is (null *dash-thread*) "and it stops")
+    (setf *dash-samplers* nil *dash-last-error* nil)
+    (dash-reset-series)))
+
+(def-test a-whitespace-row-costs-no-screen-lines (:suite leticl)
+  "**The operator, watching: *\"line just disappeared lol, hole on the screen.\"*** They were right,
+and the cause was one character class: `%line-blank-p` asked `(char= ch #\\space)`, so a segment
+whose text is `\"  \\n \"` was NOT blank.
+
+What that cost, exactly: the row earned the air rule's separator AND drew its own whitespace-only
+line — **two screen lines for a row with nothing in it**, which is the hole. It appeared right
+after a row whose text arrives as whitespace, which is what a streamed round produces when it
+carries a newline and nothing else.
+
+**The distinction that makes this a fact about the SCREEN rather than about strings**: a tab and a
+newline occupy columns and say nothing, so *renders as nothing* has to include them. Asserted
+against `%row-invisible-p` — the question the walk asks — rather than against the character test,
+because it is the walk's answer that decides whether a line is drawn."
+  ;; the two an assistant row can arrive with while its text is still streaming
+  (flet ((row (text)
+           (list :item-id "w" :kind "assistant" :item (list :type "assistant" :text text))))
+    (is (%row-invisible-p (row "  \n ") 80)
+        "**a whitespace row with a newline in it renders as NOTHING** — it was not blank before")
+    (is (%row-invisible-p (row "\n") 80) "a bare newline, the smallest version of it")
+    (is (%row-invisible-p (row "\t \r\n") 80) "and a tab and a carriage return are columns too")
+    (is (%row-invisible-p (row "") 80) "an empty row, which was already right")
+    ;; **and a row with a single real character is NOT blank** — the fix must not swallow prose
+    (is (not (%row-invisible-p (row "a") 80)) "one letter is a row")
+    (is (not (%row-invisible-p (row "  x  ") 80)) "and leading space does not hide it"))
+  ;; the segment-level answer directly, since that is where the character test lives
+  (is (leticl::%line-blank-p (list (cons "  \n " nil))) "the segment IS blank")
+  (is (leticl::%line-blank-p (list (cons "" nil) (cons "\t" nil))) "and so is a pair of them")
+  (is (not (leticl::%line-blank-p (list (cons " \n x" nil)))) "but a line with a letter is not")
+  (is (not (leticl::%line-blank-p (list (cons 42 nil))))
+      "and a non-string is not blank either — it prints as its name under `~a`"))

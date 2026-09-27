@@ -872,6 +872,11 @@ is worse than no hint at all."
                  ((eq (head-mode head) :picker) "type a number to switch · /new [title] · esc closes")
                  (*pick-open* "a row number switches · ↑↓ then enter · or type a name · esc closes")
                  ((eq (head-mode head) :todos) "↑↓ moves · enter or tab unfolds · pgup/pgdn and the wheel scroll · esc closes")
+                 ;; **THE DASHBOARD'S HINT IS GENERATED FROM ITS OWN BINDING TABLE** (dash.lisp),
+                 ;; so a pane that offers a key it does not have cannot describe itself that way
+                 ;; — serenedash's rule, and the same reason the key bar there is built from
+                 ;; `BINDINGS` rather than typed.
+                 ((eq (head-mode head) :dash) (format nil "~a · esc closes" (dash-bindings)))
                  ((eq (head-mode head) :config) "arrows move · enter changes a row marked ✎ · esc closes")
                  ((eq (head-mode head) :subagents) "subagents this session spawned · esc closes")
                  ((eq (head-mode head) :jobs) "background jobs this session started · ↑↓ then enter reads one · esc closes")

@@ -47,6 +47,12 @@ through an eval socket and see the change on the next frame."
                (:file "src/commands")
                (:file "src/cards")
                (:file "src/chrome")
+               ;; **THE DASHBOARD VOCABULARY** (serenedash's philosophy, composed at runtime):
+               ;; values, series, panels and the keys. After `chrome` because it reads the
+               ;; loop's clock (`*now-ms*`) — a series stamped with a monotonic reading would
+               ;; not survive the comparison that makes `stale` mean anything — and before the
+               ;; panes, which are the only thing that draws it.
+               (:file "src/dash")
                (:file "src/panes")
                ;; `render` is the frame engine: it composes the screen out of
                ;; the cards, chrome and panes above, and owns the segment and

@@ -50,6 +50,14 @@ character — a per-character undo makes you hold the key and hope.")
 (defparameter *undo-max* 400
   "How many snapshots to keep before dropping the oldest.")
 
+(defvar *dash-nav* nil
+  "The dashboard pane's cursor state: a plist `:sel :scroll :open`.
+
+**A `defvar` and NOT a head slot**, and that is this tree's own rule rather than a preference: a
+new slot is a struct LAYOUT change, which SBCL refuses to redefine in a running image, so it needs
+a restart — and a pane's cursor is not worth one. `*pane-scroll*` is a global for the same reason.
+Reset when the pane opens, so it never shows a cursor from a dashboard that has since been
+re-registered.")
 (defvar *paste-ledger* nil
   "Alist of MARKER → the text that marker stands for.
 
@@ -1132,6 +1140,11 @@ two sides in circles."
      ;; already here — a running job appends, and that is how you see what it
      ;; has written since (app.rs:3272-3277, the same key on the peek pane).
      (%job-out-page head t))
+    (:dash
+     ;; Enter opens or closes the panel under the cursor, through the same nav every other key
+     ;; goes through — so the key and the drawing cannot disagree about which panel is selected.
+     (setf *dash-nav* (dash-nav *dash-nav* "\r") (head-dirty head) t)
+     t)
     (:todos
      ;; **Enter acts on WHAT THE CURSOR IS ON**, asked of the one enumeration rather than
      ;; re-derived (R44): the add control opens the card — the operator's *"add todo item … a
@@ -1226,6 +1239,27 @@ one thing this head must not need."
                (pane-scroll-by (if (member mode '(:job-out :peek)) (- n) n))
                (setf (head-dirty head) t)
                t))
+        ;; **THE DASHBOARD IS DISPATCHED AHEAD OF THE SHARED CASE**, and that is a correctness
+        ;; fix rather than tidiness: written as a clause INSIDE the case, the arm matched `:esc`
+        ;; and `:up` for EVERY pane (a case takes its first matching clause), so the jobs and
+        ;; peek panes stopped closing and stopped scrolling — **64 tests**, all of them about
+        ;; panes that have nothing to do with a dashboard. A pane whose keys belong to one
+        ;; function gets one entry point, and the others are untouched.
+        ;;
+        ;; Its keys are the ones it ACTS on and no more: a printable key it does not handle
+        ;; falls through to `:char` below and reaches the composer, which is this file's own
+        ;; rule (a pane that claimed every key was a head you could not talk to).
+        (if (and (eq mode :dash)
+                 (member type '(:esc :up :down :enter :page-up :page-down)))
+            (let ((next (dash-nav *dash-nav*
+                                  (case type
+                                    (:esc "esc") (:up "k") (:down "j")
+                                    (:enter "\r") (:page-up "K") (:page-down "J")))))
+              (if next
+                  (progn (setf *dash-nav* next (head-dirty head) t) t)
+                  ;; NIL means NOT MINE AT DEPTH ZERO — the nav's own contract — so the pane
+                  ;; leaves. That is also the only way out that is a way in.
+                  (shut)))
         (case type
           ((:esc :q-press) (shut))
           ;; **The todos pane opens where it always did** (R44) — on the repo's first row, which is
@@ -1306,8 +1340,14 @@ one thing this head must not need."
              (cond ((not empty) nil)
                    ((eql ch #\q) (shut))
                    ((and (eql ch #\o) (eq mode :subagents)) (%subagent-switch head) t)
+                   ;; the dashboard's own letters, and no others — `g`/`G` jump to the first
+                   ;; and last panel, which is the one navigation a `j`-only list cannot give.
+                   ((and (eq mode :dash) (member ch '(#\j #\k #\J #\K #\g #\G) :test #'eql))
+                    (setf *dash-nav* (dash-nav *dash-nav* (string ch))
+                          (head-dirty head) t)
+                    t)
                    (t nil))))
-          (t nil))))))
+          (t nil)))))))
 
 (defun %decision-key (head key type)
   "The keys an OPEN ASK owns, and only those — NIL when this key is not one.

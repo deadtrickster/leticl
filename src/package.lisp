@@ -197,7 +197,25 @@
    #:reading-hides-p #:hidden-run-lines #:newest-hidden-run-id #:hidden-run-marker
    #:*hidden-run-open* #:%set-hidden-run-open #:*hidden-run-head*
    #:%hidden-run-id #:%marker-onto-last-line #:%hidden-run-counts #:%hidden-run-counts-text #:%hidden-run-counts-segs #:%counts-clause-segs #:%row-invisible-p
-   #:marker-rising-p #:hidden-run-marker-room #:+hidden-run-marker-cols+ #:+hidden-run-marker-floor+ #:+hidden-run-count-rungs+ #:+hidden-run-seam-rungs+ #:+hidden-run-marker-ladder+
+   #:marker-rising-p
+   ;; dash — the dashboard vocabulary (dash.lisp). A panel is DATA, registered at runtime;
+   ;; these are the pieces an operator composes with from a live REPL.
+   #:dash-register #:dash-unregister #:dash-panels #:dash-clear-panels #:dash-panel-lines
+   #:dash-frame-lines #:dash-line #:dash-bar-text #:dash-style-for
+   ;; **THE ASTERISKS ARE PART OF THE NAME, and leaving them off is a silent, baffling bug.**
+   ;; `#:dash-samplers` exports a symbol CALLED `dash-samplers`, which nothing ever binds — while
+   ;; the variable is `*dash-samplers*`. Every one of these was written without its stars the
+   ;; first time, so a test in another package got `UNBOUND-VARIABLE` and read like a missing
+   ;; `defvar` rather than a typo in an export list. Eight symbols, one cause.
+   #:dash-note #:dash-values #:dash-last #:dash-stale-p #:dash-freshness
+   #:dash-age-ms #:dash-oldest-freshness #:dash-reset-series #:dash-direction #:dash-spark
+   #:dash-bytes #:dash-bytes-at #:dash-rate #:dash-pct #:dash-counter
+   #:dash-bind #:dash-bindings #:dash-nav #:dash-http-get #:dash-parse-metrics
+   #:dash-sample-system #:dash-collect-once #:dash-start #:dash-stop #:dash-sampler-add
+   #:dash-llama-panels #:dash-llama-dashboard
+   #:*dash-series* #:*dash-interval* #:*dash-panels* #:*dash-views* #:*dash-nav*
+   #:*dash-samplers* #:*dash-running* #:*dash-thread* #:*dash-last-error*
+   #:hidden-run-marker-room #:+hidden-run-marker-cols+ #:+hidden-run-marker-floor+ #:+hidden-run-count-rungs+ #:+hidden-run-seam-rungs+ #:+hidden-run-marker-ladder+
    #:*marker-seam* #:%set-marker-seam #:+operator-block-style+
    ;; R37's OPEN QUESTION, as a switch: two messages or one prose (the operator rules)
    #:*reading-join-prose* #:%set-reading-join-prose #:%reading-joined-items #:*reading-joined*

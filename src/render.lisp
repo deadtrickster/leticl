@@ -314,16 +314,32 @@ reference's `width::locate`."
   "A segment-line's text, for asking whether it renders as nothing."
   (if line (format nil "~{~a~}" (mapcar #'car line)) ""))
 
+(defun %white-char-p (ch)
+  "Every character that occupies columns without saying anything.
+
+**`#\\space` ALONE IS NOT THE QUESTION, and the cost was a hole on the operator's screen.**
+Measured 2026-09-26: an assistant row whose text is `\"  \\n \"` rendered as ONE line that this
+file did NOT consider blank — because the character it tripped over is a NEWLINE — so the row
+earned the air rule's separator AND drew its own whitespace-only line. **Two screen lines for a
+row with nothing in it**, which reads as a gap in the transcript: the operator's *\"line just
+disappeared lol, hole on the screen\"*.
+
+A tab counts for the same reason a space does: it is columns nobody can read. So does a carriage
+return, which a dialect may leave in a stream."
+  (member ch '(#\space #\tab #\newline #\return #\page) :test #'char=))
+
 (defun %line-blank-p (line)
-  "Does LINE render as nothing — every segment's text spaces or empty? The
+  "Does LINE render as nothing — every segment's text whitespace or empty? The
 question `%viewport-lines` asks of every line of every row it places, each
 frame; it used to be asked through `format nil` and `string-trim`, which is two
-copies per line to learn one bit."
+copies per line to learn one bit.
+
+See `%white-char-p` for why the answer is not `(char= ch #\\space)`."
   (every (lambda (seg)
            (let ((text (car seg)))
              ;; a non-string prints as its name under `~a`, which is not blank
              (and (stringp text)
-                  (every (lambda (ch) (char= ch #\space)) text))))
+                  (every #'%white-char-p text))))
          line))
 
 (defun item-row-class (item)
@@ -1444,7 +1460,7 @@ scrolls the transcript by a row every keystroke.
           (put-segments s 0 gutter (top-border head cols)))
         (cond
           ;; full-body screens replace the transcript
-          ((member (head-mode head) '(:help :status :config :jobs :subagents :peek :job-out :picker :todos :slash))
+          ((member (head-mode head) '(:help :status :config :jobs :subagents :peek :job-out :picker :todos :slash :dash))
            (let ((room (max 1 (- body-bottom body-top)))
                  (lines nil)
                  (sel-line nil))
@@ -1468,6 +1484,10 @@ scrolls the transcript by a row every keystroke.
                  (:picker (picker-lines (head-session head)
                                         (head-picker-sel head) cols))
                  (:todos (todos-lines head cols))
+                 ;; **THE DASHBOARD (dash.lisp).** Composed from whatever panels are
+                 ;; REGISTERED, so this line does not change when a panel is added — which is
+                 ;; the whole point of a panel being data.
+                 (:dash (dash-frame-lines cols :nav *dash-nav*))
                  ;; a listing that ARRIVED, drawn from the TOP like a document —
                  ;; `*pane-lines*` below takes this list's length, so its scroll
                  ;; clamps against the whole thing and `pane-view` windows it
