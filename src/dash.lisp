@@ -259,6 +259,14 @@ series, because a panel is only as live as its stalest input."
 ;;;   :kind   :plain (default) :dim :good :warn :crit :pending
 ;;;   :spark  a series name, drawn in the bar column instead of a bar
 
+(defvar *dash-line-map* nil
+  "The pane LINE each panel starts on, as a VECTOR — indexed with `aref` by `dash-panel-at-line`,
+which walks it backwards to find the box a click is inside. Written by the last `dash-frame-lines`.
+
+Read by the click through `dash-panel-at-line`, and by nothing else. **It is set by the DRAW and
+not returned**, because the frame's full-body arm binds a pane function's second value to the
+cursor's line — see the comment in `dash-frame-lines` for the crash that taught this.")
+
 (defvar *dash-panels* (make-hash-table :test #'equal))
 (defvar *dash-order* nil "Registration order, as names.")
 
@@ -513,7 +521,22 @@ was found by reading, not by looking."
         (dolist (l (dash-panel-lines p cols :sel-p (eql i sel) :now now))
           (push l lines))))
     (push (list (cons (dash-bindings) '(:dim t))) lines)
-    (values (nreverse lines) starts)))
+    ;; **THE STARTS ARE STASHED, NOT RETURNED, and the reason is a crash on the operator's
+    ;; screen.** This function's second value was the line each panel starts on, and the frame's
+    ;; full-body arm is
+    ;;
+    ;;     (multiple-value-setq (lines sel-line) (case (head-mode head) …))
+    ;;
+    ;; so that vector was bound to `sel-line` and handed to `scroll-pane-into-view`:
+    ;; **`#(2 9) is not of type REAL`, and the render died while the suite was green.**
+    ;;
+    ;; `*hist-bounds*` is this tree's own precedent for the fix — *set by `%viewport-lines` and
+    ;; read by the anchor* — and it is right here for a second reason: the click asks for the map
+    ;; at a moment when the pane was drawn by THIS function, so a stash written by the draw cannot
+    ;; disagree with the screen. A second function computing the layout would be a second layout,
+    ;; which `todos-stops` calls *\"the defect\"*.
+    (setf *dash-line-map* (copy-seq starts))
+    (nreverse lines)))
 
 (defun dash-panel-at-line (line starts)
   "Which panel a click on LINE lands on, or NIL.
@@ -702,6 +725,30 @@ rather than printed into a log nobody is reading."
 
 (defparameter +dash-llama-host+ "127.0.0.1")
 (defparameter +dash-llama-port+ 8080)
+
+(defun dash-register-defaults ()
+  "Register the dashboards this head ships, WITHOUT starting a collector.
+
+**Registration is free and collecting is not**, so they are split: this runs at head startup (it is
+a few plists and no I/O), and the collector starts when somebody opens the pane (`/dashboards`).
+A head that samples `/proc` and a model server every five seconds for an operator who never looks
+is a head doing work nobody asked for.
+
+**Why startup at all, when a panel is supposed to be composed at a REPL**: without it, a fresh head
+has the vocabulary and NO panels, which is what the operator got — *\"I restarted, no dashboards\"* —
+because the only thing that had ever registered one was a hand-typed eval in a session. The panels
+this head ships are therefore DEFAULT STATE, like the folds and the diff shape, and a REPL can
+still replace or clear them.
+
+Idempotent: `dash-register` replaces by name, so calling this twice is one set of panels."
+  (dash-llama-panels)
+  ;; **AND THE SAMPLERS, which is the half I first left out** — registering the panels alone gave
+  ;; a head that opened its pane to two boxes of dashes, because `/dashboards` starts a collector
+  ;; that had nothing to call. Registering a lambda is free; it is the THREAD and the I/O that
+  ;; wait for somebody to look.
+  (dash-sampler-add "llama" #'dash-sample-llama)
+  (dash-sampler-add "system" #'dash-sample-system)
+  (length (dash-panels)))
 
 (defun dash-llama-dashboard (&key (start t))
   "**THE ONE CALL A HEAD MAKES**: register the panels, register the samplers, and start

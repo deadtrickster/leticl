@@ -2306,13 +2306,15 @@ The panel is left CLOSED, because a click is a selection: opening on a click as 
 mis-aimed click both move the cursor and unfold a box, and the second half is the one you cannot see
 coming."
   (declare (ignore head))
-  (multiple-value-bind (lines starts) (dash-frame-lines 80 :nav *dash-nav*)
-    (declare (ignore lines))
-    (let ((i (dash-panel-at-line line starts)))
-      (when i
-        (setf *dash-nav* (list :sel i :scroll 0 :open nil)
-              (head-dirty *head*) t)
-        t))))
+  ;; **THE MAP FROM THE DRAW**, not a second layout: `*dash-line-map*` is written by
+  ;; `dash-frame-lines` on the frame the operator is looking at, so a click cannot disagree with
+  ;; the screen it was aimed at. (It used to be this function's return value, and the frame bound
+  ;; it to the cursor's line — see `dash-frame-lines`.)
+  (let ((i (dash-panel-at-line line *dash-line-map*)))
+    (when i
+      (setf *dash-nav* (list :sel i :scroll 0 :open nil)
+            (head-dirty *head*) t)
+      t)))
 
 (defun click-row->sel (head mode line)
   "The cursor ROW a click on pane LINE means, or NIL when it is not a row.

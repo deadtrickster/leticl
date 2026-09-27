@@ -1487,7 +1487,18 @@ scrolls the transcript by a row every keystroke.
                  ;; **THE DASHBOARD (dash.lisp).** Composed from whatever panels are
                  ;; REGISTERED, so this line does not change when a panel is added — which is
                  ;; the whole point of a panel being data.
-                 (:dash (dash-frame-lines cols :nav *dash-nav*))
+                 ;; **ONE VALUE, and that is a REQUIREMENT rather than a style.** This `case`
+                 ;; feeds a `multiple-value-setq (lines sel-line)`, so a pane function's SECOND
+                 ;; value becomes the cursor's LINE — `dash-frame-lines` returns the line each
+                 ;; panel starts on as its second, and the frame then handed that vector to
+                 ;; `scroll-pane-into-view`, which died with `#(2 9) is not of type REAL`.
+                 ;; MEASURED, on the operator's head: `render failed — the head is alive`.
+                 ;;
+                 ;; The starts vector is not wasted — `dash-click-sel` asks for it at click time,
+                 ;; which is the same re-ask `todos-click-sel` does. **`:todos` has always returned
+                 ;; three values here and gets away with it only because its second IS a line
+                 ;; number**, which is exactly the kind of luck a one-value rule removes.
+                 (:dash (values (dash-frame-lines cols :nav *dash-nav*)))
                  ;; a listing that ARRIVED, drawn from the TOP like a document —
                  ;; `*pane-lines*` below takes this list's length, so its scroll
                  ;; clamps against the whole thing and `pane-view` windows it

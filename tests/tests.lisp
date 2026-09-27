@@ -20532,7 +20532,10 @@ every panel but the first."
   (dash-register "four" :title "four" :order 2
                  :rows (lambda (cols) (declare (ignore cols))
                          (list (list :label "a") (list :label "b") (list :label "c") (list :label "d"))))
-  (multiple-value-bind (lines starts) (dash-frame-lines 60 :nav (list :sel 0))
+  (let ((lines (dash-frame-lines 60 :nav (list :sel 0)))
+        ;; **THE MAP COMES FROM THE DRAW**, which is the whole point: it is written by the same
+        ;; call that made these lines, so it cannot disagree with them.
+        (starts *dash-line-map*))
     (is (= 2 (length starts)) "one start line per panel")
     (is (search "2 dashboards registered" (let ((l (first lines)))
                                             (if (listp l) (apply #'concatenate 'string (mapcar #'car l)) l)))
@@ -20550,3 +20553,43 @@ every panel but the first."
   (is (getf (dash-nav (list :sel 0) "\r") :open) "enter opens the one under the cursor")
   (is (null (dash-nav (list :sel 0 :open nil) "esc")) "and esc at depth 0 is the caller's signal to leave")
   (dash-clear-panels))
+
+(def-test every-full-body-pane-gives-the-frame-ONE-line-value (:suite leticl)
+  "**The render died on the operator's screen while this suite was green**, and that is the whole
+reason this test exists: *\"render failed — the head is alive\"*, `#(2 9) is not of type REAL`.
+
+The cause was a shape, not a value. `%render`'s full-body arm feeds
+
+    (multiple-value-setq (lines sel-line) (case (head-mode head) …))
+
+so **every pane's SECOND value becomes the cursor's LINE.** `dash-frame-lines` returns the line each
+panel starts on — a vector — as its second, and the frame handed that vector to
+`scroll-pane-into-view`. Nothing in any test rendered the dashboard, so nothing noticed.
+
+**`:todos` has returned three values here since R44 and gets away with it only because its second
+IS a line number.** That is luck, not a contract, and a pane added later cannot be expected to share
+it. So the rule this pins is the one the frame actually depends on: a pane function may return
+whatever it likes, but the value that reaches `sel-line` must be a line number or NIL.
+
+Asserted by CALLING each pane the way the frame calls it and asking the same question the frame
+asks, rather than by reading the source — a source assertion would be the string-matching guard
+that R49 already recorded as defeatable."
+  (let ((h (%on-head :cols 90 :rows 30)))
+    ;; the dashboard is a pane like any other, and it is the one that broke
+    (dash-clear-panels)
+    (dash-register "p" :rows (lambda (c) (declare (ignore c)) (list (list :label "x" :value "1"))))
+    (multiple-value-bind (lines sel) (dash-frame-lines 90 :nav (list :sel 0))
+      (is (listp lines) "the dashboard's first value is its LINES, as the frame expects")
+      (is (or (null sel) (realp sel))
+          (format nil "**and its second is a LINE NUMBER or NIL, never a vector** — the frame
+ binds this straight into `sel-line` and hands it to `scroll-pane-into-view`. Got ~s, which is ~a."
+                  sel (type-of sel))))
+    ;; and the whole frame renders at every size, which is the assertion that would have caught it
+    (dolist (size '((80 . 24) (120 . 40) (200 . 60)))
+      (setf (head-cols h) (car size) (head-rows h) (cdr size))
+      (setf (head-mode h) :dash)
+      (is (listp (leticl::%render h))
+          (format nil "**the dashboard renders at ~dx~d** — this is the frame that failed on the
+ operator's head, and no test had ever asked for it" (car size) (cdr size))))
+    (setf (head-mode h) :normal)
+    (dash-clear-panels)))

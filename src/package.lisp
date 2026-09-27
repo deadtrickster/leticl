@@ -211,9 +211,9 @@
    #:dash-age-ms #:dash-oldest-freshness #:dash-reset-series #:dash-direction #:dash-spark
    #:dash-bytes #:dash-bytes-at #:dash-rate #:dash-pct #:dash-counter
    #:dash-bind #:dash-bindings #:dash-nav #:dash-http-get #:dash-parse-metrics
-   #:dash-panel-for-job #:dash-job-panels #:dash-panel-at-line
+   #:dash-panel-for-job #:dash-job-panels #:dash-panel-at-line #:*dash-line-map*
    #:dash-sample-system #:dash-collect-once #:dash-start #:dash-stop #:dash-sampler-add
-   #:dash-llama-panels #:dash-llama-dashboard
+   #:dash-llama-panels #:dash-llama-dashboard #:dash-register-defaults
    #:*dash-series* #:*dash-interval* #:*dash-panels* #:*dash-views* #:*dash-nav*
    #:*dash-samplers* #:*dash-running* #:*dash-thread* #:*dash-last-error*
    #:hidden-run-marker-room #:+hidden-run-marker-cols+ #:+hidden-run-marker-floor+ #:+hidden-run-count-rungs+ #:+hidden-run-seam-rungs+ #:+hidden-run-marker-ladder+

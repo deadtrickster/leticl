@@ -1795,6 +1795,11 @@ through `scripts/leticl-head`, the same two frames `/new` sends from the compose
     ;; reading here means the very first paint is already right (S5).
     (dolist (note (load-prefs-into head))
       (say head (format nil "~a~@[ · ~a~]" note (head-status-note head))))
+    ;; **THE DASHBOARDS THIS HEAD SHIPS, registered at startup and COLLECTING LATER.** Without
+    ;; this a fresh head had the vocabulary and no panels — measured: *"I restarted, no
+    ;; dashboards"* — because the only thing that ever registered one was a hand-typed eval.
+    ;; The collector stays off until the pane is opened; see `dash-register-defaults`.
+    (dash-register-defaults)
     (setf *head* head
           (head-stream head) stream
           (head-socket-path head) path
