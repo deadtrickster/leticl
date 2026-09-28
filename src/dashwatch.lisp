@@ -985,13 +985,15 @@ has not moved."
          (push (list (cons (format nil "  → ~a  " (getf sink :name)) '(:bold t))
                      (cons (format nil "~d series  " (length (getf sink :series))) '(:dim t))
                      (cons text (if err '(:fg :yellow) '(:dim t)))
-                     ;; **AND A `retain` THE FILE NAMED IS SAID OUT LOUD** — the node refuses that key,
-                     ;; so the head does not send it. A config option that silently does nothing is
-                     ;; worse than one that refuses, and this is the line that refuses it.
-                     (cons (if (getf sink :retain-refused)
-                               (format nil "  (retain ~a ignored: this node answers *unknown field retain*)"
-                                       (getf sink :retain-refused))
-                               "")
+                     ;; **AND WHAT RETENTION THIS SINK ASKS FOR** — because the whole point of a
+                     ;; per-series `retain` is that the OPERATOR set it, and a setting nobody can see
+                     ;; on the pane is a setting nobody can check. The dead `:retain-refused` branch
+                     ;; this replaces had the right instinct pointed at a field nothing writes any more.
+                     (cons (let ((all (getf sink :retains)))
+                             (if all
+                                 (format nil "  · ~d/~d with declared retention"
+                                         (count-if #'cdr all) (length all))
+                                 ""))
                            '(:dim t)))
                rows)))
      *dash-sinks*)
