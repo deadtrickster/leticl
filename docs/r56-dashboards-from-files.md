@@ -25,6 +25,9 @@ And, measured while designing this, **a defect in the flatness work itself** —
 
 ## 1. The two directories, and precedence
 
+> **RULED by the operator: shape (a).** Two directories, workspace beats user. And `lisp` is dropped
+> from the source kinds — §2 and §2a carry the consequences.
+
 ```
 ${XDG_CONFIG_HOME:-~/.config}/letibot/watchers/*.json      the shared, user-level directory
 ${XDG_CONFIG_HOME:-~/.config}/letibot/dashboards/*.json
@@ -279,7 +282,7 @@ A dashboard DRAWS. `dash-register`'s own argument list is the honest starting li
 | `format` | `:value` | `number` `bytes` `rate` `percent` `duration` `ago` `fixed` (+ `"digits": 1`). **Named, not a format string** — a `format` string in a data file is Lisp's `format` with extra steps, and it is how a data format becomes a programming language. Each name maps to a function the head already has (`dash-bytes`, `dash-rate`, `dash-pct`, `dash-direction`). |
 | `bar` | `:bar` | `{"of": NUMBER}` for a constant maximum, `{"of": "series"}` when the maximum is itself a series, `true` when the series is already 0..1, `{"segments": [{"of": …, "kind": …}]}` for the segmented bar, absent for none |
 | `spark` | `:spark` | `true` (this row's own series) or a series name |
-| `tail` | `:tail` | a literal, or a `{slot}` template. Slots: `{value} {unit} {peak} {min} {mean} {change} {direction} {age}` — resolved from the row's series. Justification: the shipped llama panel's tail is `"peak 114.4 tok/s  falling"`, and the renderer's `:tail` is documented as *"the DENOMINATOR — the unit, the ratio, or the sentence that keeps the value honest"*. A literal cannot say that sentence. |
+| `tail` | `:tail` | a literal, or a `{slot}` template. Slots: `{value} {unit} {peak} {min} {mean} {change} {direction} {age}`, **plus `{pct}` (this row's own bar fraction)** and two prefixed lookups, `{series:NAME}` and `{pct:NAME}` — resolved from the row's series. Justification: the shipped llama panel's tail is `"peak 114.4 tok/s  falling"`, and the renderer's `:tail` is documented as *"the DENOMINATOR — the unit, the ratio, or the sentence that keeps the value honest"*. A literal cannot say that sentence, and the shipped system panel's `of 251.6G · 34%` needs ANOTHER SERIES — so `{series:NAME}` is what lets a file say what a built-in already says. **`{pct}` and not `{pct:NAME}` is the ratio**: MEASURED, `{pct:sys.mem_total}` renders the denominator as a percentage of itself (409600%). An unknown slot is LEFT STANDING, so a typo is visible rather than silently nothing. |
 | `kind` | `:kind` | `plain dim good warn crit pending` |
 | `flatness` | — | `"tail"` draws the plateau sentence when there is one; `"warn"` / `"crit"` also set the row's kind then. **This is the door for the work already built**: without it `dash-flatness` is reachable only from Lisp. It carries R56's rule — `dash-flatness-said` returns NIL when the panel has something actionable to say, and the row's own `tail` wins. |
 
@@ -416,20 +419,34 @@ assertion is still true — 1e-7 is under BOTH floors — so the test passes wit
 floor, while its own docstring claims the floor is what makes it true. And **no test asserts
 `dash-floor-for` at any point** (`grep` for it in `tests/tests.lisp`: nothing).
 
-The direction of the real failure, measured: a byte counter that has genuinely stalled and jitters
-by ±100 bytes. The 1 MiB floor calls that FLAT; the 1.0 floor it actually gets calls it MOVING. So
-the plateau detector **under-reports on exactly the series it was built for** — bytes, the operator's
-long import.
+**Direction of the real failure, measured: the plateau detector UNDER-reports on exactly the series it
+was built for.** A byte counter that has genuinely stalled and jitters by ±100 bytes. The 1 MiB
+floor calls that FLAT; the 1.0 floor it actually gets calls it MOVING.
 
 ```
 floor-no-unit 1.0   floor-for-"B" 1.0
 a stalled 2 GB byte counter with ±100 byte jitter: flat-when-no-unit NIL, flat-when-unit-"B" NIL
 ```
 
-Fixing this is part of the build, not a separate row: the `series`/`unit` declaration is what makes
-the table live, and the three defects are the reason the field cannot be optional. The fixes are
-three small ones — a case-insensitive floor key, callers that pass units, and a test whose wobble
-sits between the two floors so it can fail.
+**AND THERE IS A FOURTH DEFECT, found by `/dash-reload` once the third was fixed:** declaring a unit
+went through `dash-series-new`, which is a CREATE — it replaced the series plist with an empty
+vector, so reloading a panel file on a running head threw away the very history the panel exists to
+draw, and the freshness chip went to `no data`. MEASURED: three samples became zero.
+
+**FIXED, and each fix is asserted.** (i) `dash-note` keeps the series' declared unit when the caller
+does not restate one. (ii) `dash-floor-for` compares both sides case-insensitively. (iii) the test
+that could not fail has a companion case where the two floors DISAGREE (a ±100 byte wobble on a 2 GB
+counter), and the suite asserts the floor table itself — it never did, which is how a green suite
+reported a floor of 1.0 for bytes. (iv) `dash-series-declare` updates the unit and leaves `:v` alone.
+
+The pre-existing case *"a jump inside the recent window is not flat"* also had to change: its jump
+was `1000.0 → 5000.0` on a `B` series, a 4 KB move, which was a real move only while the byte floor
+was accidentally 1.0. It is now 1000 → 5000000, and a sub-floor 4 KB move on the same series is
+asserted flat — the floor working as designed, from both sides.
+
+One more, found the same way: `%dash-slot-value`'s `direction` passed a series NAME to
+`dash-direction`, whose first argument is the values VECTOR. That is a hard error (`#\s is not of
+type REAL`), not a wrong answer — the failure mode this tree prefers.
 
 ---
 
@@ -461,12 +478,35 @@ sits between the two floors so it can fail.
 
 ## 9. Build order (each step usable alone)
 
-1. Read the two directories; register panels from files; report broken files in the pane. (This
-   alone gives the operator the dashboards directory, one file per dashboard, and the minimum
-   example in §3.)
-2. Declare `series` units — which fixes §7 and makes the flatness floors live.
-3. File reload on mtime during the collector tick, and a `/dash-reload` verb.
+1. ~~Read the two directories; register panels from files; report broken files in the pane.~~
+   **BUILT** — commit `814909e`, `src/dashfiles.lisp`. This alone gives the operator the dashboards
+   directory, one file per dashboard, and the minimum example in §3. Plus `/dash-reload`, the
+   per-panel file note in the header, and `enabled: false` for suppression. The two example files
+   are in `~/.config/letibot/dashboards/` (`machine.json`, working now; `import.json`, the template
+   for the long import).
+2. ~~Declare `series` units.~~ **BUILT, and it is what fixed §7's four defects** — the field is part
+   of step 1 because a file that declares a unit is the only thing that makes the floor table live.
+3. File reload on mtime during the collector tick.
 4. Watchers as sources: `command` / `file` / `job_output`, their intervals, and the `watch` claim.
 5. The job lifecycle: start on claim, stop on settle, and the collector's run condition.
-6. Ship the built-ins as `examples/dashboards/` files, so the shipped panels are also the worked
+6. The execution gate for `command` (§2a), and the pane's `read` / `run` / `waiting` marks.
+7. Ship the built-ins as `examples/dashboards/` files, so the shipped panels are also the worked
    examples of the format.
+
+**The `watch` field already registers** — `dash-register :job` — so an `import.json` naming a job
+that does not exist yet draws `waiting` and one of R56's five states, which is `tick-dash-feeds`'
+case and not a stub. What is missing is a watcher that produces the numbers.
+
+## 10. What is NOT built, said plainly
+
+- **Watchers.** No `watchers/` directory is read yet. The directory convention is decided (§1) and
+  the format is designed (§2, §2a), but nothing produces a series from a file.
+- **The job lifecycle.** `watch` binds a PANEL to a job (the existing, working `:job`), so the panel
+  draws the job's own state and totals. The other direction — a job found on disk, its watcher
+  started, stopped when it settles, and the collector running because a watcher is active — is §4
+  and is not built.
+- **The execution gate** (§2a). Until it exists, no file may RUN anything, which is exactly why the
+  gate is safe to leave for step 6: the only sources implemented are the ones that read.
+- **On-disk history across a restart** (§4).
+- **`examples/dashboards/`** (step 7). The two files in the operator's own directory are the working
+  examples meanwhile.
