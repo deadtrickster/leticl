@@ -21641,26 +21641,97 @@ type memory, kind metric, fields {name, value}. No new door\"*.
 
 Built by `json-encode-to-string` — the tree's own JSON convention — and not by a format string, which
 is how a series name with a quote in it becomes a body the node rejects."
-  (let* ((body (dash-flowy-body "import.rows" 41.0))
-         (decoded (json-decode body)))
+  (let* ((body (dash-flowy-body "import.rows" 41.0 :points 200 :seconds 3600))
+         (decoded (json-decode body))
+         (fields (getf decoded :fields)))
     (is (equal "memory" (getf decoded :type)))
     (is (equal "metric" (getf decoded :kind)) "**type and kind are the two the node keys on**")
     (is (equal "import.rows" (getf decoded :title))
         "the TITLE is the series name — newest-wins is keyed on it, so re-pushing is an update")
-    (is (equal "import.rows" (getf (getf decoded :fields) :name)))
-    (is (= 41.0 (getf (getf decoded :fields) :value)))
-    ;; **AND NO `retain`, WHICH IS A MEASUREMENT RATHER THAN A PREFERENCE.** The briefing and all
-    ;; three pushers on this box carry `retain: {points: 200}`, and this node answers
-    ;; `bad request body: json: unknown field "retain"` to every shape that has it. Asserting the
-    ;; ABSENCE is what keeps a future edit from putting it back because the scripts have it.
+    (is (equal "import.rows" (getf fields :name)))
+    (is (= 41.0 (getf fields :value)))
+    ;; **THE NESTING, WHICH IS THE WHOLE CORRECTION (R56, fifth amendment).** `retain` lives INSIDE
+    ;; `fields` and a top-level one is an unknown field the door refuses with 400.
+    (is (equal 200 (getf (getf fields :retain) :points))
+        "**`retain` is INSIDE `fields`** — `flowy/internal/store/dashboards.go:594`'s `RetentionOf`
+ unmarshals `a.Fields` to find it, so this is the shape the node reads")
+    (is (equal 3600 (getf (getf fields :retain) :seconds))
+        "and `seconds` rides beside `points`, which is what suits a watcher that samples rarely")
     (is (null (getf decoded :retain))
-        "**the body carries no `retain`, because the NODE refuses that key** — posting it is a 400
- for every series, and the scripts on this box that carry it are wrong about this node")
-    (is (not (search "retain" body))
-        "and not anywhere else in the body either — `retain` inside `fields` is accepted as an
- ordinary field, which would be pretending a key works because it stopped being rejected")
+        "**and there is NO top-level `retain`** — measured, that is `400 json: unknown field`.
+ Asserting the absence is what keeps a well-meaning edit from hoisting it back out")
+    ;; **NO HINT IS LEGAL TOO, and it means the node's own default.**
+    (is (null (getf (getf (json-decode (dash-flowy-body "x" 1.0)) :fields) :retain))
+        "a reading that says nothing about retention carries no key — the node's `RetainDefaultPoints`
+ (4096) is the ordinary case, not an accident")
+    ;; and the node's OWN rule about half a hint, from `TestRetentionOf`
+    (let ((p (getf (getf (json-decode (dash-flowy-body "x" 1.0 :points 5)) :fields) :retain)))
+      (is (= 5 (getf p :points)))
+      (is (= 0 (getf p :seconds))
+          "a count alone takes no age bound, which the node reads as ZERO"))
+    (let ((s (getf (getf (json-decode (dash-flowy-body "x" 1.0 :seconds 60)) :fields) :retain)))
+      (is (= 0 (getf s :points))
+          "**an age bound alone keeps the default COUNT** — the node's own assertion, and the reason
+ a missing half is 0 rather than absent")
+      (is (= 60 (getf s :seconds))))
     ;; and it is real JSON, not something that merely looks like it
     (is (search "\"kind\":\"metric\"" body) "and the encoder emits the keys the node expects")))
+
+(def-test a-retain-that-cannot-be-read-is-reported-and-omitted (:suite leticl)
+  "**RETENTION IS A CAPABILITY, NOT A WORKAROUND** (R56, fifth amendment): a `produced` counter on an
+overnight import wants a different window from a load average, and `seconds` exists for a watcher that
+samples rarely.
+
+Three places can say it, most specific wins, and a `retain` that cannot be read is REPORTED RATHER
+THAN REFUSED — because the node's own trade on the write path is explicit (`dashboards.go:591`: *a
+measurement must not be lost to protect the housekeeping*), while a typo in a FILE is a person
+sitting in front of the pane."
+  ;; the number form, the object form, and the two that must not read as a request
+  (is (equal '(:points 10) (leticl::dash-retain-from-value 10 "f"))
+      "a bare number is `points` — the short form for the common case")
+  (is (equal '(:points 10 :seconds 60) (leticl::dash-retain-from-value (list :points 10 :seconds 60) "f")))
+  (multiple-value-bind (r e) (leticl::dash-retain-from-value "soon" "f.json")
+    (is (null r) "**a hint that is not a number or an object is not sent at all**")
+    (is (and e (search "f.json" e)) "and the report names the file it came from"))
+  (multiple-value-bind (r e) (leticl::dash-retain-from-value (list :points -5) "f.json")
+    (is (null r) "a negative count is not a request to keep nothing")
+    (is (not (null e)) "it is a report"))
+  ;; **THE THREE PLACES, MOST SPECIFIC WINNING**
+  (let* ((watcher (list :name "imp" :file #P"/tmp/w.json" :scope :user
+                        :series (list (list :name "rows" :unit "rows" :retain 20)
+                                      (list :name "bytes" :unit "B"))))
+         (spec (list :name "s" :kind "flowy" :seat "x" :addr "y" :retain 500
+                     :series (list (list :name "imp.rows" :retain (list :points 7))
+                                   "imp.bytes"))))
+    (multiple-value-bind (retains errors) (dash-sink-retains spec watcher '("imp.rows" "imp.bytes"))
+      (is (null errors) "nothing to report")
+      (is (= 7 (getf (cdr (assoc "imp.rows" retains :test #'string=)) :points))
+          "**the SINK's own series entry wins** — the most specific thing said about that series")
+      (is (= 500 (getf (cdr (assoc "imp.bytes" retains :test #'string=)) :points))
+          "**and the sink's default covers a series that said nothing** — a series chooses, and the
+ sink's owner chooses for what is left")))
+  ;; the middle rung on its own, which is where a series already describes itself
+  (let* ((watcher (list :name "imp" :file #P"/tmp/w.json" :scope :user
+                        :series (list (list :name "rows" :retain 20))))
+         (spec (list :series '("imp.rows"))))
+    (multiple-value-bind (retains errors) (dash-sink-retains spec watcher '("imp.rows"))
+      (is (null errors) "nothing to report")
+      (is (= 20 (getf (cdr (assoc "imp.rows" retains :test #'string=)) :points))
+          "**the watcher's own `series` declaration is the natural home** — that is where a series
+ already says what it is (unit, label), and `dashboards.go:572`'s argument is that the PRODUCER is
+ the only party that knows its push rate.
+
+ **And the KEY is the qualified name the sink publishes**, which was a bug: the first cut keyed this
+ by the file's unqualified names, so the lookup the body function does never matched and no retention
+ was applied while the alist looked right.")))
+  ;; a typo at both levels is two reports and no malformed body
+  (let* ((watcher (list :name "imp" :file #P"/tmp/w.json" :scope :user
+                        :series (list (list :name "rows" :retain "soon"))))
+         (spec (list :series '("imp.rows") :retain "lot")))
+    (multiple-value-bind (retains errors) (dash-sink-retains spec watcher '("imp.rows"))
+      (is (= 2 (length errors)) "**both typos are reported** — the sink's default and the series' own")
+      (is (null (cdr (assoc "imp.rows" retains :test #'string=)))
+          "and nothing malformed is carried, so nothing malformed is ever posted"))))
 
 (def-test a-sink-runs-a-command-with-the-reading-on-stdin (:suite leticl)
   "**A SINK IS A SOURCE POINTED THE OTHER WAY.** The command runs once per series with the body on

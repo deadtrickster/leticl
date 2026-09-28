@@ -397,42 +397,170 @@ silent with nothing on the pane. The caller owns the accumulation for exactly th
            (setf (gethash wname *dash-watchers*) watcher)
            (let ((errs '()))
              (dolist (sink (getf (getf entry :spec) :sinks))
-               (handler-case (dash-sink-add-from-spec sink watcher)
+               ;; **A SINK NAME COLLISION BETWEEN FILES IS REPORTED, NOT SILENTLY RESOLVED.** Two
+               ;; watcher files that each declare a sink called `node` are both right and would both
+               ;; work alone — but a sink name is a KEY in `*dash-sinks*`, so the second registration
+               ;; REPLACES the first and the first watcher's series stop being pushed with nothing on
+               ;; the pane to say so. MEASURED: my own two watcher files did exactly this while I was
+               ;; proving retention, and the first one's readings simply stopped.
+               ;;
+               ;; The same rule as every other broken-file case: the file is not refused, the working
+               ;; half still works, and the pane carries one line naming both files. A file that
+               ;; declares ONE sink is unaffected, and the default name is qualified by the watcher
+               ;; (`<watcher>-sink`), so the ordinary case cannot collide at all.
+               (let* ((sname (or (getf sink :name)
+                                 (format nil "~a-sink" (getf watcher :name))))
+                      (prior (gethash sname *dash-sinks*))
+                      (pfile (and prior (getf prior :file))))
+                 (when (and pfile (not (equal pfile (getf entry :path))))
+                   (push (cons (getf entry :path)
+                               (format nil "sink ~a is already declared by ~a — this file's series would not be pushed under it"
+                                       sname (file-namestring pfile)))
+                         errs)))
+               (handler-case
+                   (multiple-value-bind (sname serrs) (dash-sink-add-from-spec sink watcher)
+                     (declare (ignore sname))
+                     ;; a `retain` that could not be read is REPORTED here, one level out from the
+                     ;; sink — the publisher still works, and the pane says which key was ignored
+                     (dolist (e serrs) (push e errs)))
                  (error (e) (push (cons (getf entry :path) (format nil "~a" e)) errs))))
              (values t (nreverse errs))))))))
 
 ;;; ------------------------------------------------------------ 4. the sinks ;;;
 
-(defun dash-flowy-body (series value)
-  "The body flowy's node ACCEPTS, MEASURED against the node itself rather than read off the scripts.
+(defun dash-retain-plist (points seconds)
+  "POINTS and SECONDS as the `retain` object the node reads, or NIL when neither is given.
+
+**NIL KEYS ARE OMITTED RATHER THAN SENT AS NULL.** The node's `Retention` is a Go struct of ints, so
+`{\"points\":null}` decodes to 0 and means *the default* — which is the right ANSWER by accident. A
+body that says what it means is the difference between a protocol and a coincidence."
+  (when (or (and points (integerp points) (plusp points))
+            (and seconds (integerp seconds) (plusp seconds)))
+    ;; the node's own rule, from `TestRetentionOf`: *an age bound alone keeps the default count*, and
+    ;; a count alone takes no age bound — so a missing half is ZERO, which is the node's own word for
+    ;; "the default" and "no bound" respectively.
+    (list :points (if (and points (integerp points) (plusp points)) points 0)
+          :seconds (if (and seconds (integerp seconds) (plusp seconds)) seconds 0))))
+
+(defun dash-flowy-body (series value &key points seconds)
+  "The body flowy's node reads, MEASURED against the node and then against its SOURCE.
 
     {\"type\":\"memory\",\"kind\":\"metric\",\"title\":\"<name>\",
-     \"fields\":{\"name\":\"<name>\",\"value\":<v>}}
+     \"fields\":{\"name\":\"<name>\",\"value\":<v>,\"retain\":{\"points\":N,\"seconds\":M}}}
 
-**THERE IS NO `retain` KEY, AND THE NODE IS WHY.** The briefing — and all three pushers on this box,
-including `push-gpu-report.py` — say a metric row carries `retain: {points: 200}`. MEASURED against
-`POST /api/artifacts` on this node, every shape with a top-level `retain` is REFUSED:
+**`retain` GOES INSIDE `fields`, AND THAT IS THE WHOLE CORRECTION** (R56, fifth amendment).
+`flowy/internal/store/dashboards.go:585` reads it off the row's FIELDS:
 
-    {…,\"fields\":{…},\"retain\":{\"points\":200}}  → 400  json: unknown field \"retain\"
-    {…,\"fields\":{…},\"retain\":200}                 → 400  the same
-    {\"type\",\"kind\",\"title\",\"fields\":{name,value}}       → 200  accepted
-    the same shape with NO \"kind\"                       → 200  accepted (kind is optional)
-    the same shape with NO \"type\"                       → 400  type is required
+    func RetentionOf(a *Artifact) Retention { ... json.Unmarshal(a.Fields, &outer) ... }
 
-(`retain` INSIDE `fields` is accepted too — as an ordinary field the node keeps, not as a retention
-policy, so putting it there would be pretending a key works because it stopped being rejected.)
+so `fields.retain` is the policy and a TOP-LEVEL `retain` is an unknown field the door refuses with
+400 — which is what I measured, honestly, against the wrong shape. The briefing had the nesting wrong
+and I tested the briefing's shape instead of the document's; §11 records that, because a doc that says
+who got it wrong is the only kind that stops it recurring.
 
-**The consequence, stated rather than hidden: this head does not ask for a retention policy.**
-Whatever the node keeps is the node's own default, and §11's note that *the node IS the persistence*
-is true but not because leticl configured it. A `retain` key in a watcher file is READ and NOT SENT;
-the pane says so, because a config key that silently does nothing is worse than one that refuses.
+**And retention is real, not cosmetic.** `RetainDefaultPoints = 4096` (`dashboards.go:567`), the
+ceiling is `RetainMaxPoints = 65536`, the ceiling cannot be raised by a producer (*\"keep ten million
+is a denial of service written as a preference\"*), and it is wired on the WRITE path —
+`artifacts.go:340` calls `pruneAfterMetric` → `pruneSeries`, enforcing points AND seconds. So a
+`retain` here is a CAPABILITY: a `produced` counter on an overnight import wants a different window
+from a load average, and `seconds` suits a watcher that samples rarely.
 
 **Built by `json-encode-to-string`** rather than a format string, because the tree already has one
 JSON convention (`src/json.lisp`) and hand-rolling a second is how a series name with a quote in it
-becomes a body the node rejects. The plist → object and keyword → snake_case rules are what this
-needs."
-  (json-encode-to-string (list :type "memory" :kind "metric" :title series
-                               :fields (list :name series :value value))))
+becomes a body the node rejects."
+  (let ((retain (dash-retain-plist points seconds)))
+    (json-encode-to-string
+     (list :type "memory" :kind "metric" :title series
+           :fields (if retain
+                       (list :name series :value value :retain retain)
+                       (list :name series :value value))))))
+
+(defun dash-retain-from-value (value what)
+  "VALUE (a `retain` from a file) as `(values PLIST ERROR)`.
+
+  · a POSITIVE WHOLE NUMBER is `points` — the short form for the common case;
+  · an OBJECT may carry `points`, `seconds`, or both;
+  · anything else is REPORTED and omitted, never sent.
+
+**REPORTED AND OMITTED RATHER THAN REFUSED, and the two halves come from two different places.**
+The node tolerates a garbage hint by DESIGN — `dashboards.go:591`'s comment, verbatim: *\"UNPARSABLE IS
+THE DEFAULT, NOT AN ERROR. This is read on the write path, and losing a measurement to protect the
+housekeeping is the wrong trade.\"* That is right for a SERVER reading a row, and this is not that: a
+`retain` in a watcher file is a person's typo, they are sitting in front of the pane, and a key that
+silently does nothing is the defect this whole feature keeps naming. So the omission is total (nothing
+malformed is ever posted) and the report is a line the operator can act on."
+  (cond
+    ((null value) (values nil nil))
+    ((and (integerp value) (plusp value)) (values (list :points value) nil))
+    ((listp value)
+     (let ((p (getf value :points))
+           (s (getf value :seconds)))
+       (cond
+         ((and (or (null p) (and (integerp p) (plusp p)))
+               (or (null s) (and (integerp s) (plusp s)))
+               (or p s))
+          (values (list :points (or p 0) :seconds (or s 0)) nil))
+         (t (values nil (format nil "~a: \"retain\" must carry a positive whole \"points\" or \"seconds\"~@[ (got points ~s)~]~@[ (got seconds ~s)~]"
+                                what p s))))))
+    (t (values nil (format nil "~a: \"retain\" is ~s — it must be a number of points, or an object with points/seconds"
+                           what value)))))
+
+(defun dash-sink-retains (spec watcher series)
+  "The retention each of a sink's SERIES is pushed with, as `(values ALIST ERRORS)`.
+
+ALIST is `((FULLY-QUALIFIED-SERIES . PLIST) …)`, keyed by the names the sink actually PUBLISHES —
+the caller passes them in already qualified, and **that is a bug fix rather than a convenience**: the
+first cut built this list from the FILE's names, which are unqualified, so every key missed the
+qualified series the body function looks up and no `retain` was ever applied. MEASURED on the live
+head: `:RETAINS ((\"load1\") (\"srcfiles\"))` — right shape, wrong keys, silently no retention.
+
+**THREE PLACES CAN SAY IT, AND THE ORDER IS THE POINT.** A series knows its own push rate best —
+`dashboards.go:572`'s own argument for carrying retention on the reading at all: *\"a node-wide number
+cannot be right for a series sampled every five seconds and one pushed hourly at the same time.\"* So
+the most specific wins:
+
+  1. the sink's `series` entry as an OBJECT — the last word, and the only place that can override what
+     the series itself declared;
+  2. the watcher's `series` declaration — where a series already describes itself (unit, label), and
+     therefore its natural home;
+  3. the sink's own `retain` — the default for everything that sink publishes.
+
+**A `retain` THAT CANNOT BE READ IS REPORTED AND OMITTED.** The errors land on the pane and nothing
+malformed is ever posted. The node tolerates a bad hint by design (it would rather keep a measurement
+than lose one), but a typo in a FILE is a person sitting in front of the pane, and a key that silently
+does nothing is the defect this feature keeps naming."
+  (let ((errors '())
+        (default nil)
+        (sink-per '())
+        (watch-per '())
+        (file (getf watcher :file))
+        (wname (getf watcher :name)))
+    (flet ((take (value)
+             ;; **`PROGN` AND AN EXPLICIT NIL, because `(if e (push …) r)` returns the PUSHED LIST** when
+             ;; the test is true — so a malformed `retain` leaked the whole error list in as the
+             ;; DEFAULT. MEASURED: the test asserting that nothing malformed is carried caught it.
+             (multiple-value-bind (r e) (dash-retain-from-value value file)
+               (if e (progn (push (cons file e) errors) nil) r)))
+           (qualify (n)
+             (if (search "." n) n (format nil "~a.~a" wname n))))
+      (setf default (take (getf spec :retain)))
+      ;; **THE SINK'S OWN ENTRIES COME FIRST, BECAUSE AN ALIST IS SEARCHED FRONT TO BACK** and the
+      ;; most specific thing said about a series has to be found FIRST. The first cut pushed both
+      ;; lists and `nreverse`d the whole thing, which put the WATCHER's entry in front — so the least
+      ;; specific rung won. MEASURED by the test asserting the sink's override.
+      (dolist (s (getf spec :series))
+        (when (and (listp s) (stringp (getf s :name)) (member :retain s))
+          (let ((r (take (getf s :retain))))
+            (when r (push (cons (qualify (getf s :name)) r) sink-per)))))
+      (dolist (s (getf watcher :series))
+        (when (and (stringp (getf s :name)) (member :retain s))
+          (let ((r (take (getf s :retain))))
+            (when r (push (cons (qualify (getf s :name)) r) watch-per))))))
+    (setf per (append (nreverse sink-per) (nreverse watch-per)))
+    (values (mapcar (lambda (s)
+                      (cons s (or (cdr (assoc s per :test #'string=)) default)))
+                    series)
+            errors)))
 
 (defun dash-flowy-seat-file (seat)
   "Where a seat's environment lives: `~/.config/flowy/env-<seat>`.
@@ -465,7 +593,7 @@ post. Every expansion is quoted through `%dash-sh-quote`, because these values c
           (namestring seat-file)
           timeout timeout))
 
-(defun dash-sink-add (name &key kind series command body body-fn file (retain 200) timeout)
+(defun dash-sink-add (name &key kind series command body body-fn file (retain 200) retains timeout)
   "Register a sink. Returns NAME.
 
 A sink PUBLISHES readings: `dash-sinks-run` calls COMMAND once per series with the body on stdin.
@@ -484,7 +612,7 @@ feature ships; the template stays for everything a person writes out by hand."
   (setf (gethash name *dash-sinks*)
         (list :name name :kind (or kind "command") :series series
               :command command :body body :body-fn body-fn :file file
-              :retain retain :timeout (or timeout 15)))
+              :retain retain :retains retains :timeout (or timeout 15)))
   name)
 
 (defparameter +dash-flowy-addr-default+ nil
@@ -503,9 +631,15 @@ box's address in the source of a head that runs on every box.")
 **The refusals are the design.** A sink that names a seat whose environment this head cannot find is
 REFUSED BY NAME rather than run — the operator's rule, verbatim: *\"If a watcher names a seat it
 cannot read a token for, that is a refusal, not a fallback.\"* And `seat` is a NAME and never a
-token, so nothing in a watcher file is a credential."
-  (let* ((name (or (getf spec :name) (format nil "~a-sink" (getf watcher :name))))
-         (kind (or (getf spec :kind) "command"))
+token, so nothing in a watcher file is a credential.
+
+**It returns `(values NAME ERRORS)`**, because a `retain` that cannot be read is a REPORT rather than
+a refusal: the sink still publishes, and the pane says which key was ignored. One function with two
+outcomes, because the alternative — signaling on the retain and refusing the sink — would take a
+working publisher down over a housekeeping hint."
+  (let ((errors '())
+        (name (or (getf spec :name) (format nil "~a-sink" (getf watcher :name))))
+        (kind (or (getf spec :kind) "command"))
          (series (or (getf spec :series)
                      ;; the watcher's own declared series, which is the reason sinks live in a
                      ;; watcher file: its subject is what that watcher produces
@@ -529,16 +663,17 @@ token, so nothing in a watcher file is a credential."
                   (or (and seat-file (namestring seat-file)) "seat file")))
          (unless addr
            (error "~a: a flowy sink needs an \"addr\", or FLOWY_ADDR in this head's environment" name))
-         (dash-sink-add name :kind "flowy" :series series :retain retain :timeout timeout
-                        :file (getf watcher :file)
-                        :command (dash-flowy-command seat seat-file addr timeout)
-                        :body-fn (lambda (series-name value)
-                                   (dash-flowy-body series-name value)))
-         ;; **A `retain` IN THE FILE IS REPORTED AND NOT SENT** — the node refuses the key, and a
-         ;; config option that silently does nothing is worse than one that refuses. The sink still
-         ;; records it, so the pane can say what was ignored and why.
-         (when (member :retain spec)
-           (setf (getf (gethash name *dash-sinks*) :retain-refused) retain))))
+         (multiple-value-bind (retains rerrs) (dash-sink-retains spec watcher series)
+           (dolist (e rerrs) (push e errors))
+           (dash-sink-add name :kind "flowy" :series series :retain retain :retains retains
+                          :timeout timeout
+                          :file (getf watcher :file)
+                          :command (dash-flowy-command seat seat-file addr timeout)
+                          :body-fn (lambda (series-name value)
+                                     (let ((r (cdr (assoc series-name retains :test #'string=))))
+                                       (dash-flowy-body series-name value
+                                                        :points (getf r :points)
+                                                        :seconds (getf r :seconds))))))))
       (t
        (let ((command (getf spec :command))
              (body (getf spec :body)))
@@ -547,7 +682,7 @@ token, so nothing in a watcher file is a credential."
          (dash-sink-add name :kind "command" :series series
                         :command command :body (or body "{\"series\":\"{series}\",\"value\":{value}}")
                         :file (getf watcher :file) :retain retain :timeout timeout))))
-    name))
+    (values name (nreverse errors))))
 
 (defmacro %dash-with-payload ((payload path-var) &body body)
   "Bind PATH-VAR to a temp file holding PAYLOAD, run BODY, delete the file.

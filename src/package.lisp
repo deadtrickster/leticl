@@ -235,6 +235,8 @@
    #:dash-sink-add #:dash-sink-add-from-spec #:dash-sink-run #:dash-sinks-run #:dash-sink-notes
    #:dash-sink-names #:dash-flowy-body #:dash-flowy-command #:dash-flowy-seat-file
    #:dash-sinks-reset #:dash-series-declare
+   ;; R56 fifth amendment: retention is a CAPABILITY — `retain` rides inside `fields`
+   #:dash-sink-retains #:dash-retain-from-value #:dash-retain-plist
    #:+dash-watcher-states+ #:*dash-watchers* #:*dash-sinks* #:*dash-sink-errors*
    #:*dash-sink-stat* #:*dash-workspace-commands*
    #:dash-llama-panels #:dash-llama-dashboard #:dash-register-defaults

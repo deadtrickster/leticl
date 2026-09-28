@@ -585,36 +585,85 @@ systemd units, and they all agree on the design, in their own words:
 > — newest wins by hlc, so RE-PUSHING THE SAME NAME IS AN UPDATE RATHER THAN A PILE."*
 
 **And it answers §4's open question without inventing anything.** On-disk history was declined for a
-reason (*a sample-log format, its truncation, its replay*) and the node KEEPS the series — re-pushing
-the same name is an update, so leticl keeps none of it. **But not for the reason the briefing gave:**
-see below, `retain` is refused by this node, so the retention is the node's own default rather than
-something leticl configured. The §4 reasoning was right and this is what makes it right.
+reason (*a sample-log format, its truncation, its replay*) and the node KEEPS the series: re-pushing
+the same name is an update, and retention holds a window of readings by default (4096 points) or to a
+producer's own `retain`. So leticl keeps no history at all. The §4 reasoning was right, and this is
+what makes it right.
 
-### The wire, MEASURED against the node rather than read off the scripts
+**AND §4's OTHER HALF IS NOW DIFFERENTLY RIGHT** (R56, fifth amendment). I declined on-disk history on
+the grounds that `produced` is a MONOTONIC ABSOLUTE, so a restarted head refills the primary series
+from one sample — and that still holds *for the LOCAL series*, which is what §4 is about. But a
+PROMOTED dashboard's history is no longer local: the node holds it, so it survives **a head restart, a
+head REPLACEMENT, and the head being gone entirely** — which is much closer to what the operator meant
+when they said *"this survives is an interesting question"*.
+
+Nothing is built for that here, deliberately. The reason to note it rather than act on it: it changes
+what the PANE would have to draw (a series whose history is on the node is a series that can be
+CHARTED FROM THE NODE, not from this process's memory), and that is a different feature from this one.
+The honest summary: **local history still does not survive a restart; published history does, and
+whether the pane should read it back is an open question rather than a gap.**
+
+### The wire, MEASURED against the node and then against its SOURCE
 
 `POST $FLOWY_ADDR/api/artifacts`, `Authorization: Bearer $FLOWY_TOKEN`:
 
 ```json
-{"type":"memory","kind":"metric","title":"<series>","fields":{"name":"<series>","value":<v>}}
+{"type":"memory","kind":"metric","title":"<series>",
+ "fields":{"name":"<series>","value":<v>,"retain":{"points":N,"seconds":M}}}
 ```
 
-**THERE IS NO `retain` KEY, AND THE NODE IS THE AUTHORITY.** The briefing — and all three pushers on
-this box, including `push-gpu-report.py` — carry `retain: {points: 200}`. Posted to this node, every
-shape that has it is refused. MEASURED, one variant at a time:
+**`retain` IS INSIDE `fields`, AND THIS SECTION SAID OTHERWISE FOR A DAY.** The correction belongs on
+the record with its cause: the briefing gave the nesting wrong — the block it quoted reads as
+`retain` beside `value` if you count braces by eye, and `}}` closing `value` is what makes it look that
+way — and I tested the briefing's shape instead of the document's. **So the wrong shape entered
+through the briefing and was confirmed by an honest measurement of the wrong thing.** The error is the
+briefing's; the duty not to measure a shape somebody paraphrased rather than published is mine, and it
+is the same mistake this tree spends its time telling letibot not to make.
+
+`flowy/internal/store/dashboards.go:585-604` is the authority, read directly:
+
+```go
+func RetentionOf(a *Artifact) Retention {
+    r := Retention{Points: RetainDefaultPoints}
+    if a == nil || len(a.Fields) == 0 { return r }
+    var outer struct{ Retain *Retention `json:"retain"` }
+    if err := json.Unmarshal(a.Fields, &outer); err != nil || outer.Retain == nil { return r }
+    ...
+```
+
+**WHAT IS STILL TRUE, AND WORTH KEEPING: a TOP-LEVEL `retain` is refused.** MEASURED, one variant at a
+time, and it is a real fact about this door even though it is not a defect in anything:
 
 | body | the node's answer |
 |---|---|
-| `{type,kind,title,fields:{name,value}}` | **200, accepted** |
-| `+ "retain":{"points":200}` | **400** `bad request body: json: unknown field "retain"` |
-| `+ "retain":200` | **400** the same |
-| `retain` inside `fields` | 200 — but as an ordinary field, not a policy |
-| the same shape with no `kind` | 200, accepted (`kind` is optional) |
-| the same shape with no `type` | **400** `type is required` |
+| no `retain` anywhere | **200**, `RetainDefaultPoints` (4096) applies |
+| `retain` INSIDE `fields` | **200, and it is the POLICY** |
+| top-level `"retain":{"points":200}` | **400** `bad request body: json: unknown field "retain"` |
+| top-level `"retain":200` | **400** the same |
+| no `kind` | 200 (`kind` is optional) |
+| no `type` | **400** `type is required` |
 
-So the head does not send it, and a `retain` key in a watcher file is READ AND REPORTED RATHER THAN
-SENT — the pane says so, because a config option that silently does nothing is worse than one that
-refuses. **The consequence for §4: the node is still the persistence, but nothing in this feature
-asked it to be**, and a future node that honours a policy would need a new field here.
+**And retention is real, enforced, and AMORTISED — three facts, each one a reader could get wrong:**
+
+  · **it is wired on the WRITE path**: `artifacts.go:340` calls `pruneAfterMetric` → `pruneSeries`,
+    in the caller's own transaction, and *a prune failure fails the write* (the deliberate choice its
+    comment defends: *"the alternative — log it and carry on — means a store that silently grows
+    without bound while every push reports success"*);
+  · **it bounds two ways**: `points` always, `seconds` as the policy (*"a dashboard window is measured
+    in time, not in samples"*), and `RetainMaxPoints = 65536` is a ceiling a producer cannot raise —
+    *"keep ten million is a denial of service written as a preference"*;
+  · **and it is AMORTISED, not exact.** `pruneSeries` returns early while `n <= 2 * Points`, so a
+    `points: 3` series lives in the band **[3, 6]** and is trimmed only on crossing it. MEASURED live:
+    from 4 readings, three pushes land on exactly 3 — the seventh crosses `2*3` and the delete fires.
+    **A reader who counts 6 and concludes retention is broken has not read the source**, which says
+    why (*"a rewrite every few hundred samples rather than every one"*). That band is a real
+    behaviour this feature's docs must state, because it is exactly the shape of a false negative.
+
+**And a malformed hint is tolerated BY DESIGN on that side**: `dashboards.go:591` — *"UNPARSABLE IS THE
+DEFAULT, NOT AN ERROR. This is read on the write path, and losing a measurement to protect the
+housekeeping is the wrong trade."* The head reports a bad `retain` in a FILE anyway, because that is a
+person's typo in front of the pane rather than a row arriving on a hot path — different situation,
+different trade, and both are stated.
 
 And the read-back, MEASURED (`flowy get '/api/artifacts?kind=metric&limit=400'`):
 
@@ -630,11 +679,10 @@ it as an array and `jq` refused, which is worth knowing before somebody writes a
 And the row carries `author` and `node`, so *which seat pushed this* is the node's record and not
 something the pusher has to assert.
 
-**One more thing the read-back shows and a naive reader would get wrong:** a metric name appears MANY
-times in a listing — one row per push — because *newest wins* is how a READER resolves them, not how
-the store collapses them. The operator's own scripts state the rule (*"re-pushing the same name is an
-update rather than a pile"*) and this is what it looks like from the outside: a pile that reads as one
-value. Rows 12 apart in `limit=400` were `leticlproof.load1` at three different values.
+**A metric name appears MANY times in a listing** — one row per retained reading. That is not a pile
+to be deduplicated: *newest wins* is how a READER resolves them, and the count IS the retention
+window. `leticlproof.srcfiles` read **99 rows** while retention was at work; three `leticlproof.load1`
+rows twelve apart in one listing are one series, three readings, and the older two are the history.
 
 ### The seat, and why the token never enters the head
 
