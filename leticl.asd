@@ -58,6 +58,11 @@ through an eval socket and see the change on the next frame."
                ;; not survive the comparison that makes `stale` mean anything — and before the
                ;; panes, which are the only thing that draws it.
                (:file "src/dash")
+               ;; **THE FILES A DASHBOARD CAN BE** (R56): the panel vocabulary above rendered
+               ;; from data on disk, so an agent in another project can write one without
+               ;; editing this head's source at all. After `dash`, whose vocabulary it only
+               ;; calls — it is a READER of that API and adds no drawing of its own.
+               (:file "src/dashfiles")
                (:file "src/panes")
                ;; `render` is the frame engine: it composes the screen out of
                ;; the cards, chrome and panes above, and owns the segment and

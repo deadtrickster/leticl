@@ -1807,6 +1807,13 @@ through `scripts/leticl-head`, the same two frames `/new` sends from the compose
     ;; dashboards"* — because the only thing that ever registered one was a hand-typed eval.
     ;; The collector stays off until the pane is opened; see `dash-register-defaults`.
     (dash-register-defaults)
+    ;; **AND THEN THE FILES, WHICH SHADOW THE BUILT-INS BY NAME** (R56). A file always wins: the
+    ;; panels above are DEFAULT STATE like the folds and the diff shape, and the operator's own
+    ;; dashboard for their import must be able to replace one. The workspace is not known yet at
+    ;; this point — the daemon says it in the session wiring — so this loads the user directory
+    ;; now and `/dashboards` loads the project's when the head can name it
+    ;; (`dash-file-load-needed-p`).
+    (dash-load-file-panels head)
     (setf *head* head
           (head-stream head) stream
           (head-socket-path head) path

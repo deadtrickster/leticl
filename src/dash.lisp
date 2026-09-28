@@ -217,7 +217,18 @@ rather than dropping to the floor and looking idle.
 **AND IT PUBLISHES A NEW VECTOR RATHER THAN APPENDING TO THE OLD ONE.** The old one may be in a
 painter's hands right now — see `*dash-series*` for why that is not a hypothetical. The retention
 rule is unchanged: past `+dash-hist+` the oldest eighth is dropped, which keeps this O(1)-ish
-amortized rather than shifting the whole series on every tick."
+amortized rather than shifting the whole series on every tick.
+
+**AND A SAMPLE NEVER ERASES THE UNIT THE SERIES WAS DECLARED WITH** (R56, §7). This is the defect
+that made the whole per-unit floor table dead: a caller with no unit passed the empty string, the
+new plist was
+rebuilt with the empty string, and the fresh list REPLACED the one `dash-series-new` had just
+declared — so
+`dash-floor-for` read the 1.0 default for every series in a running head, including the byte
+counters, and a genuinely stalled counter jittering by ±100 bytes was called *moving*. MEASURED in
+the live head before the fix: `(getf (gethash sys.mem_used *dash-series*) :unit)` was the EMPTY
+string while that series had just been declared `B`. The unit is a claim about the SERIES, so it
+outlives any sample that does not restate it."
   (when (and value (numberp value))
     (let* ((old (gethash name *dash-series*))
            (v (and old (getf old :v)))
@@ -238,7 +249,10 @@ amortized rather than shifting the whole series on every tick."
         (setf (aref next keep) (float value)
               (aref times keep) when-now)
         (setf (gethash name *dash-series*)
-              (list :name name :unit unit :v next :t times :at when-now))))
+              (list :name name :unit (if (and unit (plusp (length unit)))
+                                         unit
+                                         (or (and old (getf old :unit)) ""))
+                    :v next :t times :at when-now))))
     value))
 
 ;;; ---------------------------------------------------- FLATNESS, robustly ;;;
@@ -301,9 +315,18 @@ Samples and not seconds for the reason its sibling above gives — `*dash-interv
 
 (defun dash-floor-for (unit)
   "The absolute floor for UNIT, or the default. Case-insensitive, because a unit is a word somebody
-typed rather than an enum."
+typed rather than an enum.
+
+**AND THAT CLAIM WAS FALSE WHEN WRITTEN (R56, §7).** The function downcased the UNIT and compared
+it against a table whose keys carry their own case, so `B` — the single most likely spelling for a
+byte series, and the one the suite's own `%feed` uses — never matched itself. MEASURED on the live
+head: `(:BYTES 1048576.0 :B 1.0 :PCT 5.0 :S 30.0 :UNKNOWN 1.0)`. So a byte counter that had genuinely
+stalled and jittered by ±100 bytes got the 1.0 default and was called MOVING, while the 1 MiB floor
+that exists for exactly that series was unreachable. One spelling of case-insensitivity on both
+sides of the comparison is the whole fix.`"
   (or (and unit
-           (cdr (assoc (string-downcase unit) +dash-flat-floor+ :test #'string=)))
+           (let ((u (string-downcase unit)))
+             (cdr (assoc u +dash-flat-floor+ :test #'string-equal))))
       +dash-flat-unit-default+))
 
 (defun dash-median (values)
@@ -796,13 +819,27 @@ that hides the one line it belongs to."
          (chip (second fresh))
          (chip-kind (first fresh))
          (inner (max 20 (- cols 4)))
+         ;; **WHICH FILE IT CAME FROM** (R56). A panel this head was told about by a file and one it
+         ;; ships must not look alike — the operator asked for the dashboards directory to be
+         ;; VISIBLE, and the header is where a reader is already looking to find out what the box is.
+         ;; A separate key rather than text folded into `:title`, because `:title` is the file's own
+         ;; data and a panel reporting a title it was never given is a small lie in the one place a
+         ;; reader trusts absolutely.
+         (fnote (let ((n (getf panel :file-note)))
+                  (when (and n (stringp n))
+                    (truncate-to-width (format nil "  ~a" n) (max 0 (- cols 24))))))
          (head (format nil "┌─~a " title))
          (chip-text (format nil " ~a ─┐" (or chip "")))
          (fill (make-string (max 1 (- cols (string-width head) (string-width chip-text)))
                             :initial-element #\─))
          (rows (ignore-errors (funcall (getf panel :rows) cols))))
     (append
-     (list (list (cons (concatenate 'string head fill) '(:fg :cyan))
+     (list (list (cons (concatenate 'string head (or fnote "")
+                                    ;; the filler gives back exactly what the note took, so the
+                                    ;; box edge lands on the last column as it always did
+                                    (subseq fill 0 (max 1 (- (length fill)
+                                                             (if fnote (length fnote) 0)))))
+                  '(:fg :cyan))
                  (cons chip-text (case chip-kind
                                    (:live '(:fg :green))
                                    (:stale '(:bold t :fg :yellow))
@@ -851,6 +888,11 @@ was found by reading, not by looking."
                       '(:bold t)))
           lines)
     (push nil lines)
+    ;; **AND WHAT THE FILES SAID** (R56): how many panels came from disk, and one `!` line per file
+    ;; that could not be read. It sits between the heading and the panels because it is about the
+    ;; list rather than about any panel in it — and a broken file must be visible from the pane,
+    ;; since `/dash-reload`'s status note is gone by the time a reader looks.
+    (dolist (l (dash-file-notes)) (push l lines))
     (dolist (p panels)
       (vector-push-extend (length lines) starts)
       (let ((i (position p panels)))

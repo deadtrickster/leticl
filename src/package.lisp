@@ -222,6 +222,11 @@
    #:dash-sample-system #:dash-collect-once #:dash-start #:dash-stop #:dash-sampler-add
    ;; R56 amended — a source that is a COMMAND, for what this head cannot reach any other way
    #:dash-command-add #:dash-parse-pairs
+   ;; R56: the same vocabulary, read from FILES — see `src/dashfiles.lisp`
+   #:dash-load-file-panels #:dash-file-load-needed-p #:dash-file-notes #:dash-file-dirs
+   #:dash-panel-from-spec #:dash-spec-row #:dash-read-spec-file #:dash-workspace-config-dir
+   #:dash-ms-text #:dash-ago-text #:+dash-file-format+
+   #:*dash-file-errors* #:*dash-file-scope* #:*dash-file-workspace*
    #:dash-llama-panels #:dash-llama-dashboard #:dash-register-defaults
    #:*dash-series* #:*dash-interval* #:*dash-panels* #:*dash-views* #:*dash-nav*
    #:*dash-samplers* #:*dash-running* #:*dash-thread* #:*dash-last-error*

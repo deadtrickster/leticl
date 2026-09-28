@@ -21042,10 +21042,24 @@ is one line among eleven."
   ;; **BUT A REAL MOVE IS NOT FLAT** — the floor must not swallow the thing being watched. The jump
   ;; has to fall INSIDE the recent window, or the tail is flat for the honest reason that it has not
   ;; moved since.
-  (%feed "jumping" '(1000.0 1000.0 1000.0 1000.0 1000.0 5000.0 5000.0 5000.0 5000.0 5000.0 5000.0 5000.0)
+  ;;
+  ;; **THE JUMP IS ABOVE THE FLOOR, AND THAT IS THIS TEST'S OWN CORRECTION (R56, §7).** It was
+  ;; `1000.0 → 5000.0` — a 4 KB move on a `B` series — which was a *real move* only while the byte
+  ;; floor was accidentally 1.0. Once `dash-floor-for` stopped downcasing one side of its own
+  ;; comparison, `B` became a megabyte and that 4 KB move correctly reads as noise. The claim being
+  ;; tested is *the floor must not swallow the thing being watched*, so the move has to be a thing
+  ;; worth watching: 1000 → 5000000 on a byte series.
+  (%feed "jumping" '(1000.0 1000.0 1000.0 1000.0 1000.0 5000000.0 5000000.0 5000000.0 5000000.0 5000000.0 5000000.0 5000000.0)
          :step 1000 :unit "B")
   (is (not (dash-plateau-p "jumping" 11500))
       "**a jump inside the recent window is not flat** — the floor is a noise guard, not a blindfold")
+  ;; and a SUB-floor move on the same series is flat, which is the same statement from the other
+  ;; side: below the floor is noise, above it is movement
+  (%feed "wobbling" '(1000.0 1000.0 1000.0 1000.0 1000.0 5000.0 5000.0 5000.0 5000.0 5000.0 5000.0 5000.0)
+         :step 1000 :unit "B")
+  (is (dash-plateau-p "wobbling" 11500)
+      "**a 4 KB move on a BYTE series is noise**, and calling it a move is what made every flat
+ series in the head report itself as having just moved")
   ;; and once the jump ages past the window, the tail IS flat — which is the plateau this is for
   (%feed "settled" (append (list 1000.0 5000.0) (make-list 20 :initial-element 5000.0))
          :step 1000 :unit "B")
@@ -21179,3 +21193,286 @@ worst-shaped failure this file has, so the timeout is asserted rather than assum
   (setf *dash-samplers* nil)
   (dash-clear-panels)
   (dash-reset-series))
+
+;;; ============================================ R56: a dashboard is a FILE ;;;
+;;;
+;;; **THE OPERATOR'S OWN WORDS ARE THE REQUIREMENT**: *"if ill ask an agent in a different project to
+;;; create me a nice dashboard for the long running import… that is the goal of having common lisp
+;;; here."* An agent in another project cannot edit this head's source, so a dashboard that exists
+;;; only as a `dash-register` call in `src/dash.lisp` can only ever be written by the one person who
+;;; did not need the feature. These tests are about the FILE — the reading, the refusals, and the two
+;;; defects in the flatness work that only a declared unit could expose.
+
+(defvar *dash-test-dir-n* 0
+  "A counter, because `get-universal-time` is a WHOLE SECOND and two calls inside one test returned
+the same directory — which made the precedence test pass for the wrong reason: both files landed in
+ONE directory, so the collision it means to check across two directories never happened.")
+
+(defun %dash-temp-dir ()
+  "A directory of our own, under the system temp. **NEVER the operator's `~/.config/letibot/`** —
+the suite has already been caught editing their `head.toml` (`*write-prefs*`' docstring), and a test
+that reads their dashboard directory would be the same defect with worse consequences: it would draw
+their panels into the test's own panel list and call it a result."
+  (let ((dir (merge-pathnames (format nil "leticl-dashtest-~a-~a/" (get-universal-time)
+                                      (incf *dash-test-dir-n*))
+                              (uiop:temporary-directory))))
+    (ensure-directories-exist dir)
+    dir))
+
+(defun %dash-write-file (dir name text)
+  (let ((path (merge-pathnames name dir)))
+    (with-open-file (s path :direction :output :if-exists :supersede :if-does-not-exist :create)
+      (write-string text s))
+    path))
+
+(def-test a-dashboard-is-a-file-and-its-rows-come-from-the-data (:suite leticl)
+  "**THE WHOLE POINT OF R56, in one test**: a panel that a head has never seen, described entirely
+by a file on disk, registered and drawing real rows.
+
+The file is JSON and not Lisp, which is the decision that cannot change later without breaking every
+file anybody wrote: letibot could never read a Lisp dashboard, and an agent in another project would
+have to know Common Lisp to draw a progress bar."
+  (dash-reset-series)
+  (dash-clear-panels)
+  (let* ((dir (%dash-temp-dir))
+         (path (%dash-write-file
+                dir "import.json"
+                (concatenate 'string
+                             "{ \"format\": 1, \"name\": \"impt\", \"title\": \"the import\","
+                             "  \"order\": 7,"
+                             "  \"rows\": ["
+                             "    { \"label\": \"rows\", \"series\": \"imp.rows\","
+                             "      \"format\": \"number\", \"bar\": { \"of\": 200 },"
+                             "      \"tail\": \"of 200\" },"
+                             "    { \"label\": \"read\", \"series\": \"imp.bytes\","
+                             "      \"format\": \"bytes\", \"kind\": \"dim\" } ] }"))))
+    (dash-note "imp.rows" 50.0)
+    (dash-note "imp.bytes" 2048.0)
+    (multiple-value-bind (n errors) (dash-load-file-panels nil (list (cons dir :user)))
+      (is (= 1 n) "one file, one panel")
+      (is (null errors) "and nothing to report about it")
+      (let ((panel (gethash "impt" *dash-panels*)))
+        (is (not (null panel)) "**the panel exists, and nothing typed it at a REPL**")
+        (is (equal "the import" (getf panel :title)) "with the title the file gave")
+        (is (= 7 (getf panel :order)) "and its place in the order")
+        (let ((rows (funcall (getf panel :rows) 60)))
+          (is (= 2 (length rows)) "the rows are the file's rows, in the file's order")
+          (is (equal "rows" (getf (first rows) :label)))
+          (is (equal "50" (getf (first rows) :value))
+              "**the number the head happened to have, formatted by the file's `format`**")
+          (is (= 0.25 (getf (first rows) :bar))
+              "and the bar is the fraction of the file's own denominator — 50 of 200")
+          (is (equal "of 200" (getf (first rows) :tail)))
+          (is (equal "2.0K" (getf (second rows) :value)) "`format: bytes` is the shipped formatter")
+          (is (eq :dim (getf (second rows) :kind)) "and `kind` reaches the renderer")
+          ;; a row with no value yet is a DASH, never a zero — the file's rule and the file's
+          ;; `dash-rate` rule agree: an absent sample is not a measurement of nothing
+          (dash-note "imp.rows" nil)
+          (is (equal "of 200" (getf (first (funcall (getf panel :rows) 60)) :tail))
+              "a row whose series goes quiet still says what it was measuring"))))
+    ;; **A DECLARATION IS A CLAIM ABOUT THE UNITS, NOT A FILTER** — a key the source emits and the
+    ;; file never named is still recorded, or the one number the operator needed could be dropped
+    ;; silently by a typo in a list nobody re-reads.
+    (dash-note "imp.surprise" 9.0)
+    (is (= 9.0 (dash-last "imp.surprise")) "an undeclared series is still a series")
+    (dash-clear-panels)
+    (dash-reset-series)))
+
+(def-test a-file-this-head-cannot-read-is-reported-and-breaks-nothing (:suite leticl)
+  "**The answer to *what does a head do with a file it cannot understand*: no file in these
+directories can stop the head from starting, and no file can stop another file from working.**
+
+A directory an operator edits by hand will contain a broken file eventually, and *the head refused to
+start* is the wrong answer to every one of these. The three cases are deliberately different: a
+version this head does not read is REPORTED (the author is saying *this is not the old format*),
+while an unknown KEY inside a known format is IGNORED (additive, and a head that renders what it can
+beats one that refuses a file it mostly understands)."
+  (dash-reset-series)
+  (dash-clear-panels)
+  (let* ((dir (%dash-temp-dir))
+         (good (%dash-write-file
+                dir "a-good.json"
+                "{ \"format\": 1, \"name\": \"good\", \"rows\": [ { \"label\": \"x\", \"series\": \"g.x\" } ] }"))
+         (newer (%dash-write-file dir "b-newer.json"
+                                  "{ \"format\": 2, \"name\": \"newer\", \"rows\": [] }"))
+         (broken (%dash-write-file dir "c-broken.json" "{ \"format\": 1, \"name\": "))
+         (odd (%dash-write-file dir "d-odd.json" "[1, 2, 3]"))
+         (unknown-key (%dash-write-file
+                       dir "e-unknown.json"
+                       (concatenate 'string
+                                    "{ \"format\": 1, \"name\": \"sturdy\", \"_note\": \"why 0.5\","
+                                    "  \"tomorrow\": { \"a\": 1 },"
+                                    "  \"rows\": [ { \"label\": \"x\", \"series\": \"u.x\" } ] }"))))
+    (declare (ignore good broken odd))
+    (dash-note "g.x" 1.0)
+    (multiple-value-bind (n errors) (dash-load-file-panels nil (list (cons dir :user)))
+      (is (= 2 n) "**the two readable files load** — the good one and the one with an unknown key")
+      (is (not (null (gethash "sturdy" *dash-panels*)))
+          "so a file carrying keys this head has never heard of is still a panel")
+      (is (not (null (gethash "good" *dash-panels*))) "and a plain file is a panel")
+      (is (null (gethash "newer" *dash-panels*))
+          "**a file for a format this head does not read is NOT registered**")
+      (is (= 3 (length errors)) "three files could not be used, and each says why")
+      (let ((msgs (mapcar (lambda (e) (format nil "~a" (cdr e))) errors))
+            (paths (mapcar (lambda (e) (file-namestring (car e))) errors)))
+        (is (some (lambda (m) (search "format 2" m)) msgs)
+            "**the version message names the number it read and the number it wants**")
+        (is (some (lambda (m) (search "top level" m)) msgs)
+            "an array at the top level says so rather than being read as rows")
+        (is (member "c-broken.json" paths :test #'string=)
+            "**and a file the PARSER cannot read is a message, not a crash** — its own words are
+ yason's and are not asserted here, because a message that quotes a parser is a message that breaks
+ when the parser is upgraded")))
+    (dash-clear-panels)
+    (dash-reset-series)))
+
+(def-test a-workspace-file-shadows-a-user-file-by-name (:suite leticl)
+  "**The precedence the operator ruled: a UNION by name, and on a collision the workspace file wins.**
+
+Not *the workspace directory replaces the user one* — a project adds one dashboard without having to
+restate the rest. And this is a NEW rule rather than an inherited one, which is why it is asserted:
+MEASURED, neither head has a workspace-level config of any kind, and the tree's only real precedent
+(`modes.tsv`) is one user-level file keyed by project root. `enabled: false` is the third case and
+the reason the key exists: it is the only way a project can suppress a user-level panel WITHOUT
+editing the operator's own file."
+  (dash-reset-series)
+  (dash-clear-panels)
+  (let* ((user (%dash-temp-dir))
+         (ws (%dash-temp-dir)))
+    (%dash-write-file user "both.json"
+                      "{ \"format\": 1, \"name\": \"both\", \"title\": \"from the user\", \"rows\": [] }")
+    (%dash-write-file user "quiet.json"
+                      "{ \"format\": 1, \"name\": \"quiet\", \"title\": \"the operator's own\", \"rows\": [] }")
+    (%dash-write-file ws "both.json"
+                      "{ \"format\": 1, \"name\": \"both\", \"title\": \"from the project\", \"rows\": [] }")
+    (%dash-write-file ws "shh.json"
+                      "{ \"format\": 1, \"name\": \"quiet\", \"enabled\": false }")
+    (multiple-value-bind (n errors) (dash-load-file-panels nil (list (cons user :user) (cons ws :workspace)))
+      (is (null errors) "nothing broken")
+      (is (= 1 n) "**one panel survives the collision, not two**")
+      (is (equal "from the project" (getf (gethash "both" *dash-panels*) :title))
+          "and it is the WORKSPACE file's — the project overrides without restating the rest")
+      (is (null (gethash "quiet" *dash-panels*))
+          "**`enabled: false` suppresses a panel the project did not write**")
+      (is (eq :workspace (getf (gethash "both" *dash-file-scope*) :scope))
+          "and the pane can say where it came from"))
+    (dash-clear-panels)
+    (dash-reset-series)))
+
+(def-test a-declared-unit-survives-the-samples-that-do-not-restate-it (:suite leticl)
+  "**R56 §7, defect one, and it made the whole per-unit floor table dead in every running head.**
+
+`dash-note` rebuilt the series plist on every sample with the caller's `:unit`, which defaults to
+`\"\"` — so a series declared `B` had its unit ERASED by the first sample taken through the ordinary
+path. MEASURED in the live head before this fix: `(getf (gethash \"sys.mem_used\" *dash-series*)
+:unit)` was `\"\"` on a series that had just been declared, so `dash-floor-for` answered 1.0 for
+everything and `+dash-flat-floor+` was reachable only from this suite's own `%feed`.
+
+And the consequence is the direction nobody would guess: a byte counter that has genuinely STALLED
+and jitters by ±100 bytes is called MOVING under a 1.0 floor, so the plateau detector
+**under-reports on exactly the series it was built for**."
+  (dash-reset-series)
+  (leticl::dash-series-declare "u.bytes" "B")
+  (is (equal "B" (getf (gethash "u.bytes" *dash-series*) :unit)) "declared")
+  (dash-note "u.bytes" 1.0)
+  (is (equal "B" (getf (gethash "u.bytes" *dash-series*) :unit))
+      "**and the first ordinary sample does not erase it**")
+  ;; a caller that DOES state a unit still wins, so nothing lost a capability
+  (dash-note "u.re" 1.0 :unit "%")
+  (is (equal "%" (getf (gethash "u.re" *dash-series*) :unit)) "an explicit unit is still taken")
+  (dash-reset-series))
+
+(def-test a-declaration-does-not-throw-away-the-history (:suite leticl)
+  "**R56 §7's sibling, and `/dash-reload` is the verb that found it.** Declaring a unit went through
+`dash-series-new`, which is a CREATE: it replaced the series plist with an empty vector, so reloading
+a panel file on a running head threw away the very history the panel exists to draw and sent the
+freshness chip to `no data`. MEASURED: three samples became zero."
+  (dash-reset-series)
+  (dotimes (i 5) (dash-note "h.s" (float i)))
+  (is (= 5 (length (dash-values "h.s"))))
+  (leticl::dash-series-declare "h.s" "B")
+  (is (= 5 (length (dash-values "h.s")))
+      "**the samples are still there** — a declaration is about units, and the samples are the series")
+  (is (equal "B" (getf (gethash "h.s" *dash-series*) :unit)) "and the unit landed")
+  (is (= 4.0 (dash-last "h.s")) "the newest sample is still the newest sample")
+  (dash-reset-series))
+
+(def-test the-floor-table-is-case-insensitive-so-a-megabyte-is-reachable (:suite leticl)
+  "**R56 §7, defect two: the docstring claimed case-insensitivity and the code downcased one side.**
+
+`+dash-flat-floor+`'s keys carry their own case (`B`, `%`), and the lookup downcased the UNIT before
+comparing — so `B`, the single most likely spelling for a byte series, never matched itself.
+MEASURED on the live head: `(:BYTES 1048576.0 :B 1.0 :PCT 5.0 :S 30.0 :UNKNOWN 1.0)`.
+
+**And no test asserted the table at all**, which is why a green suite could report a floor of 1.0 for
+bytes. This one asserts the table itself, because the defect was in the table's reachability rather
+than in anything that consumed it."
+  (is (= 1048576.0 (dash-floor-for "B")) "**`B` is a megabyte** — the unit the suite's own `%feed` uses")
+  (is (= 1048576.0 (dash-floor-for "b")) "and case is not part of the answer")
+  (is (= 1048576.0 (dash-floor-for "bytes")) "nor is the spelling")
+  (is (= 5.0 (dash-floor-for "%")) "a percent series has its own floor")
+  (is (= 30.0 (dash-floor-for "s")) "and a duration one")
+  ;; **AN UNKNOWN UNIT GETS THE DEFAULT, and the default is deliberately small** — a floor is a
+  ;; guard against float noise, not a judgement about what counts as a change
+  (is (= 1.0 (dash-floor-for "rows")) "an unnamed unit gets the default floor")
+  (is (= 1.0 (dash-floor-for nil)) "and so does no unit at all"))
+
+(def-test a-floor-between-the-two-defaults-is-what-the-test-was-missing (:suite leticl)
+  "**The test named for the floor could not fail, and this is the fix.**
+
+`a-flat-series-does-not-fire-on-rounding` feeds a ±1e-7 wobble with `:unit B` and asserts flat — and
+that assertion is TRUE under the 1.0 default as well as under the 1 MiB floor, so it passed with and
+without the floor while its own docstring claimed the floor was what made it true. This is the same
+question asked where the two answers differ: **a wobble LARGER than the default and SMALLER than the
+byte floor**."
+  ;; 100 bytes of jitter, around a 2 GB counter: 100 > 1.0 (the default) and 100 < 1048576 (the floor)
+  (dash-reset-series)
+  (%feed "b.stalled" (loop for i from 0 below 20
+                           collect (+ 2000000000.0 (* 100.0 (if (evenp i) 1 -1))))
+         :step 5000 :unit "B")
+  (is (dash-plateau-p "b.stalled" 200000)
+      "**a stalled byte counter jittering by ±100 bytes is FLAT** — with the 1.0 default it was
+ reported as moving, which is the under-reporting this whole rule exists to prevent")
+  ;; **and the same series with NO declared unit is NOT flat**, which is the measurement that proves
+  ;; the floor is doing the work rather than the window
+  (dash-reset-series)
+  (%feed "b.unknownunit" (loop for i from 0 below 20
+                               collect (+ 2000000000.0 (* 100.0 (if (evenp i) 1 -1))))
+         :step 5000)
+  (is (not (dash-plateau-p "b.unknownunit" 200000))
+      "the same wobble under the DEFAULT floor reads as movement — so the two floors disagree here,
+ which is exactly what the original test needed and did not have")
+  (dash-reset-series))
+
+(def-test a-slot-that-is-not-a-name-is-left-standing (:suite leticl)
+  "**The boundary of the format, asserted rather than promised.** `{slots}` are a closed list of
+names plus two prefixed lookups — no conditionals, no expressions, no arithmetic — because a data
+format that can compute is a programming language wearing a data format, and the operator's ruling is
+that the contents are DATA and not Lisp.
+
+The two prefixed forms exist for a measured reason: the SHIPPED system panel's memory row reads
+`of 251.6G · 34%`, which is another series' value and its ratio. Without them a file could never say
+what a built-in already says, so a file could never replace one — which is the whole feature."
+  (let* ((spec (list :series "s.x" :format "bytes" :bar (list :of "s.total")
+                    :tail (concatenate 'string "of {series:s.total} · {pct} · "
+                                       "{oops} · {value}"))))
+    (dash-reset-series)
+    (dash-note "s.x" 1024.0)
+    (dash-note "s.total" 4096.0)
+    (let ((text (leticl::%dash-fill-slots (getf spec :tail) spec "s.x" "1.0K" 1024.0)))
+      (is (search "of 4.0K" text) "**a lookup by name is a lookup, not an expression**")
+      (is (search "25%" text)
+          "**and `{pct}` is the row's OWN bar fraction** — the ratio the built-in's `34%` is. The
+ first cut of this test asserted `{pct:s.total}` and MEASURED that it renders the DENOMINATOR as a
+ percentage of itself (409600%), which is a lookup that reads plausibly and means nothing")
+      (is (search "{oops}" text)
+          "**an unknown slot is LEFT STANDING** so a typo is visible on the panel rather than
+ silently becoming nothing — the same reason a stale series must not be drawn as a zero")
+      (is (search "1.0K" text) "and `{value}` is the row's own rendered value")
+      (is (null (leticl::%dash-slot-value "oops" spec "s.x" "1.0K" 1024.0))
+          "the resolver answers NIL for a name it does not know, which is what leaves the text")
+      ;; and `{pct:NAME}` is for a series that already IS a fraction, which is the other half
+      (dash-note "s.frac" 0.5)
+      (is (equal "50%" (leticl::%dash-slot-value "pct:s.frac" spec "s.x" "1.0K" 1024.0))
+          "a fraction series renders as its percentage"))
+    (dash-reset-series)))
