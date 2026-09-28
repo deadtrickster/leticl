@@ -227,6 +227,16 @@
    #:dash-panel-from-spec #:dash-spec-row #:dash-read-spec-file #:dash-workspace-config-dir
    #:dash-ms-text #:dash-ago-text #:+dash-file-format+
    #:*dash-file-errors* #:*dash-file-scope* #:*dash-file-workspace*
+   ;; R56: WATCHERS and SINKS — what produces a series from a file, and where it is published
+   #:dash-watcher-load #:dash-watchers-dirs #:dash-watchers-reset #:dash-watcher-notes
+   #:dash-watcher-source-fn #:dash-watcher-start #:dash-watcher-stop #:dash-watcher-running-p
+   #:dash-watcher-job #:dash-watcher-note-job #:dash-watchers-active-p #:tick-dash-watchers
+   #:dash-watcher-count #:dash-command-source-fn #:dash-file-source-fn #:dash-parse-json-object
+   #:dash-sink-add #:dash-sink-add-from-spec #:dash-sink-run #:dash-sinks-run #:dash-sink-notes
+   #:dash-sink-names #:dash-flowy-body #:dash-flowy-command #:dash-flowy-seat-file
+   #:dash-sinks-reset #:dash-series-declare
+   #:+dash-watcher-states+ #:*dash-watchers* #:*dash-sinks* #:*dash-sink-errors*
+   #:*dash-sink-stat* #:*dash-workspace-commands*
    #:dash-llama-panels #:dash-llama-dashboard #:dash-register-defaults
    #:*dash-series* #:*dash-interval* #:*dash-panels* #:*dash-views* #:*dash-nav*
    #:*dash-samplers* #:*dash-running* #:*dash-thread* #:*dash-last-error*

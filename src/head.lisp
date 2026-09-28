@@ -1711,6 +1711,11 @@ Oldest request first."
              ;; (`leticl-dash-collector`) without writing a frame from a thread that does not own
              ;; the connection. See `tick-dash-feeds`.
              (tick-dash-feeds head)
+             ;; **AND THE WATCHERS' LIFECYCLE** (R56), on the same thread for the same reason: it asks
+             ;; for the job list while something is waiting, and asking is `%send`. It is also where a
+             ;; job-bound watcher STARTS the collector — an import that runs for hours cannot have its
+             ;; history begin when somebody happens to open the pane and looks at it.
+             (tick-dash-watchers head)
              ;; 1. drain. An error while FOLDING a frame must not kill the loop
              ;; either: a frame this head cannot handle is one bad frame, not a
              ;; reason to lose the session. The failure is remembered so the
@@ -1814,6 +1819,11 @@ through `scripts/leticl-head`, the same two frames `/new` sends from the compose
     ;; now and `/dashboards` loads the project's when the head can name it
     ;; (`dash-file-load-needed-p`).
     (dash-load-file-panels head)
+    ;; **AND THE WATCHERS AND THEIR SINKS, from the same two directories' `watchers/`.** Registered
+    ;; here and STARTED later, deliberately: reading a file is a few plists, while running a command
+    ;; on a timer is work nobody asked for until a job is claimed or somebody opens the pane. The
+    ;; lifecycle is `tick-dash-watchers`, on the main loop.
+    (dash-watcher-load head)
     (setf *head* head
           (head-stream head) stream
           (head-socket-path head) path

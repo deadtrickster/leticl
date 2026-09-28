@@ -21476,3 +21476,470 @@ what a built-in already says, so a file could never replace one — which is the
       (is (equal "50%" (leticl::%dash-slot-value "pct:s.frac" spec "s.x" "1.0K" 1024.0))
           "a fraction series renders as its percentage"))
     (dash-reset-series)))
+
+;;; ================================ R56: WATCHERS and SINKS — the round trip ;;;
+;;;
+;;; A watcher PRODUCES series from a file; a sink PUBLISHES them. The operator's ask was to *\"ship the
+;;; whole package incl flowy integration\"*, and the reason it is worth testing end to end is that the
+;;; round trip is what turns three parked questions into things with a screen behind them.
+
+(def-test a-watcher-is-a-file-and-it-produces-prefixed-series (:suite leticl)
+  "**The operator's second complaint was *\"they still dont belong to jobs\"*.** A panel carried `:job`
+and nothing produced the numbers. A watcher FILE does, and its own name is the prefix on everything
+it produces — so two watchers cannot collide and a dashboard can name `import.rows` without knowing
+which file made it."
+  (dash-clear-panels)
+  (dash-reset-series)
+  (dash-watchers-reset)
+  (let* ((dir (%dash-temp-dir))
+         (path (%dash-write-file
+                dir "import.json"
+                (concatenate 'string
+                             "{ \"format\": 1, \"name\": \"impt\", \"watch\": \"long-import\","
+                             "  \"interval\": 1,"
+                             "  \"series\": [ { \"name\": \"rows\", \"unit\": \"rows\" } ],"
+                             "  \"source\": { \"command\": \"echo rows 41\" } }"))))
+    (declare (ignore path))
+    (multiple-value-bind (n errors) (dash-watcher-load nil (list (cons dir :user)))
+      (is (= 1 n) "one file, one watcher")
+      (is (null errors) "and nothing to report about it")
+      (let ((w (gethash "impt" *dash-watchers*)))
+        (is (not (null w)) "the watcher exists")
+        (is (equal '("long-import") (getf w :watch))
+            "and it claims a job by the SAME rule the pane uses")
+        ;; **THE UNIT IS DECLARED AT LOAD, BEFORE ANY SAMPLE** — this is what makes the floor table
+        ;; live, and it is why `series` cannot be optional (design §7).
+        (is (equal "rows" (getf (gethash "impt.rows" *dash-series*) :unit))
+            "**and its declared unit is in place before the first sample** — the whole reason the
+ `series` field exists, because a declared unit is what makes the per-unit floor table live")
+        (multiple-value-bind (started state note) (dash-watcher-start w)
+          (declare (ignore state))
+          (is (not (null started)) "it starts")
+          (is (null note) "with no complaint")
+          (dash-collect-once)
+          (is (= 41.0 (dash-last "impt.rows"))
+              "**and its command's output reaches a series PREFIXED with the watcher's name**")
+          (dash-watcher-stop w)
+          (is (not (dash-watcher-running-p w)) "stopping removes the sampler")
+          (is (= 41.0 (dash-last "impt.rows"))
+              "**and does NOT erase what it collected** — the operator's own condition, and the
+ reason a stop is not a reset"))))
+    (dash-watchers-reset)
+    (dash-clear-panels)
+    (dash-reset-series)))
+
+(def-test a-workspace-command-source-is-refused-and-the-refusal-names-the-file (:suite leticl)
+  "**The parked question, as a DEFAULT rather than an answer.** The operator: *\"too many unknown
+unknown to make realiable decision… ship the whole package incl flowy integration first\"*, and the
+judgement that unblocked it — build the mechanism, default a WORKSPACE watcher's `command` source to
+OFF, refusing in one line that names the file.
+
+So this asserts the interim rule AND that it is one variable wide: a user-level watcher runs
+anything, a workspace one does not, and flipping `*dash-workspace-commands*` flips it."
+  (dash-clear-panels)
+  (dash-reset-series)
+  (dash-watchers-reset)
+  (let* ((dir (%dash-temp-dir))
+         (body (concatenate 'string
+                            "{ \"format\": 1, \"name\": \"ws\","
+                            "  \"source\": { \"command\": \"echo rows 7\" } }")))
+    (%dash-write-file dir "ws.json" body)
+    (multiple-value-bind (n errors) (dash-watcher-load nil (list (cons dir :workspace)))
+      (is (= 1 n) "the file is READ and the watcher registered — a refusal to RUN is not a refusal to be")
+      (is (null errors) "and it is not a load error, because it is not one")
+      (let ((w (gethash "ws" *dash-watchers*)))
+        (is (eq :workspace (getf w :scope)) "it knows it is a workspace watcher")
+        (multiple-value-bind (started state note) (dash-watcher-start w)
+          (declare (ignore state))
+          (is (not started) "**it does NOT start**")
+          (is (and note (search "ws.json" note))
+              "**and the refusal NAMES THE FILE** — a reader looking at one line in a pane is trying
+ to find out which file to edit, and a message without a filename is a message they cannot act on")
+          (is (search "WORKSPACE" note) "and says which rule refused it"))))
+    ;; **AND THE SAME FILE IN THE USER DIRECTORY RUNS** — so the gate is about WHERE the file came
+    ;; from and not about the source kind
+    (dash-watchers-reset)
+    (let ((udir (%dash-temp-dir)))
+      (%dash-write-file udir "ws.json" body)
+      (dash-watcher-load nil (list (cons udir :user)))
+      (let ((w (gethash "ws" *dash-watchers*)))
+        (multiple-value-bind (started state note) (dash-watcher-start w)
+          (declare (ignore state))
+          (is (not (null started)) "a USER-level watcher may run a command — that directory is the operator's own hand")
+          (is (null note) "with no complaint")
+          (dash-watcher-stop w))))
+    ;; and the flip is one variable
+    (dash-watchers-reset)
+    (let* ((wdir (%dash-temp-dir)))
+      (declare (ignore wdir))
+      (let ((leticl::*dash-workspace-commands* t))
+        (let ((d2 (%dash-temp-dir)))
+          (%dash-write-file d2 "ws.json" body)
+          (dash-watcher-load nil (list (cons d2 :workspace)))
+          (let ((w (gethash "ws" *dash-watchers*)))
+            (multiple-value-bind (started state note) (dash-watcher-start w)
+              (declare (ignore state note))
+              (is (not (null started)) "**and `*dash-workspace-commands*` is the whole decision** — a default to
+ flip, not a design to redo, which is exactly what was asked for")
+              (dash-watcher-stop w))))))
+    (dash-watchers-reset)
+    (dash-reset-series)))
+
+(def-test a-file-source-is-argv-so-a-path-is-only-a-path (:suite leticl)
+  "**The defect in the first cut of the design, asserted so it cannot come back.** `file` was specified
+as *sugar for `cat -- PATH`*, and because a `command` source runs through `/bin/sh -c`, a PATH passed
+to a shell would make a path a MINI-PROGRAM: a file named `x; curl … | sh` is a command, not a
+filename. Run as argv there is nothing to quote and nothing to inject.
+
+The measurement is that a path which is literally shell syntax is read as a FILENAME — the command
+fails to find it, and nothing runs."
+  (dash-clear-panels)
+  (dash-reset-series)
+  (let* ((dir (%dash-temp-dir))
+         ;; a real file whose NAME is shell syntax — **and with no `/` in it**, because a filename
+         ;; cannot contain a separator and the first cut of this test built a path that did not exist
+         (nasty (merge-pathnames "nosuch; echo 999 999" dir)))
+    (with-open-file (s nasty :direction :output :if-exists :supersede :if-does-not-exist :create)
+      (write-string "rows 5" s))
+    (dash-series-declare "rows" "rows")
+    (dash-series-declare "999" "rows")
+    (let ((fn (dash-file-source-fn nasty)))
+      ;; **A SOURCE FUNCTION IS A SAMPLER, NOT A SIDE EFFECT** — it RETURNS `(key . value)` pairs for
+      ;; whoever called it, which is `dash-collect-once`. The first cut of this test called it and
+      ;; dropped the result, and MEASURED exactly nothing: a test that discards what it is asserting
+      ;; about is a test that cannot fail for the right reason.
+      ;;
+      ;; **And the keys are UNPREFIXED here**: `dash-file-source-fn` is the raw source, and the
+      ;; watcher's own name is prefixed on by `dash-watcher-source-fn`, one level up. The first cut
+      ;; asserted `shelltest.rows` and was reading a series nothing ever wrote.
+      (dolist (pair (funcall fn)) (dash-note (car pair) (cdr pair)))
+      (is (= 5.0 (dash-last "rows"))
+          "**the file is READ, semicolon and all** — run as argv, a path is only a path")
+      (is (null (dash-last "999"))
+          "**and nothing was EXECUTED**: had this gone through a shell, the command would have been
+ `cat -- nosuch` followed by `echo 999 999`, so the parse would carry a `999` series. Run as argv,
+ the whole string is one filename and the only number that arrives is the file's own.")
+      (is (probe-file nasty) "and the file is still there, under its own name"))
+    (dash-reset-series)))
+
+(def-test the-shell-quoting-holds-on-a-value-out-of-a-file (:suite leticl)
+  "A sink's `addr` comes out of a FILE, and `FLOWY_ADDR=$addr` with a value of `; rm -rf /` is a
+command injection wearing a config key. Every expansion in the generated command goes through this."
+  (is (equal "'ok'" (leticl::%dash-sh-quote "ok")) "a plain value is quoted")
+  (is (equal "'a;b'" (leticl::%dash-sh-quote "a;b"))
+      "**a semicolon cannot end the command**")
+  (is (equal "'$(id)'" (leticl::%dash-sh-quote "$(id)")) "and a substitution cannot run")
+  (is (equal "'a'\\''b'" (leticl::%dash-sh-quote "a'b"))
+      "**and a quote inside closes, escapes and reopens** — the one character that needs care inside
+ single quotes")
+  (is (equal "''" (leticl::%dash-sh-quote nil)) "and nothing is an empty word rather than a hole"))
+
+(def-test the-flowy-body-is-what-the-node-reads (:suite leticl)
+  "**MEASURED against all three pushers on this box** (`flowy-push-metrics.sh`, `flowy-push-gpu.sh`,
+`push-gpu-report.py`), which their own headers describe as *\"a metric row is an ordinary artifact:
+type memory, kind metric, fields {name, value}. No new door\"*.
+
+Built by `json-encode-to-string` — the tree's own JSON convention — and not by a format string, which
+is how a series name with a quote in it becomes a body the node rejects."
+  (let* ((body (dash-flowy-body "import.rows" 41.0))
+         (decoded (json-decode body)))
+    (is (equal "memory" (getf decoded :type)))
+    (is (equal "metric" (getf decoded :kind)) "**type and kind are the two the node keys on**")
+    (is (equal "import.rows" (getf decoded :title))
+        "the TITLE is the series name — newest-wins is keyed on it, so re-pushing is an update")
+    (is (equal "import.rows" (getf (getf decoded :fields) :name)))
+    (is (= 41.0 (getf (getf decoded :fields) :value)))
+    ;; **AND NO `retain`, WHICH IS A MEASUREMENT RATHER THAN A PREFERENCE.** The briefing and all
+    ;; three pushers on this box carry `retain: {points: 200}`, and this node answers
+    ;; `bad request body: json: unknown field "retain"` to every shape that has it. Asserting the
+    ;; ABSENCE is what keeps a future edit from putting it back because the scripts have it.
+    (is (null (getf decoded :retain))
+        "**the body carries no `retain`, because the NODE refuses that key** — posting it is a 400
+ for every series, and the scripts on this box that carry it are wrong about this node")
+    (is (not (search "retain" body))
+        "and not anywhere else in the body either — `retain` inside `fields` is accepted as an
+ ordinary field, which would be pretending a key works because it stopped being rejected")
+    ;; and it is real JSON, not something that merely looks like it
+    (is (search "\"kind\":\"metric\"" body) "and the encoder emits the keys the node expects")))
+
+(def-test a-sink-runs-a-command-with-the-reading-on-stdin (:suite leticl)
+  "**A SINK IS A SOURCE POINTED THE OTHER WAY.** The command runs once per series with the body on
+STDIN, which is what makes `curl --data-binary @-` work and what means this head needs no HTTP client
+— ever.
+
+**AND `uiop:run-program`'s `:input` DOES NOT TAKE A STRING**, MEASURED: handed one it fails with a
+complaint that begins *The file*, because a string designator is read as a PATHNAME. That is the
+second option in this feature that looked like an API and was a trap — `:timeout` on the same
+function was the first — so the payload goes through a temp file, and this test is what proves the
+body actually arrives."
+  (dash-reset-series)
+  (dash-sinks-reset)
+  (let ((out (merge-pathnames "leticl-sink-out.txt" (uiop:temporary-directory))))
+    (ignore-errors (delete-file out))
+    (dash-note "s.rows" 12.0)
+    (dash-sink-add "probe"
+                   :series '("s.rows")
+                   :body "{\"series\":\"{series}\",\"value\":{value}}"
+                   :command (format nil "cat > ~a; printf 200" (leticl::%dash-sh-quote (namestring out))))
+    (multiple-value-bind (posted failed) (dash-sink-run (gethash "probe" *dash-sinks*))
+      (is (= 1 posted) "**the command ran and answered 200** — the HTTP code its command PRINTS is the
+ answer, not its exit status, because a curl that could not connect still exits 0 with `000`")
+      (is (= 0 failed) "and nothing failed")
+      (is (equal "{\"series\":\"s.rows\",\"value\":12.0}"
+                 (string-trim '(#\space #\newline) (uiop:read-file-string out)))
+          "**and the body arrived on the command's STDIN with both slots filled**"))
+    (ignore-errors (delete-file out)))
+  (dash-sinks-reset)
+  (dash-reset-series))
+
+(def-test a-nil-reading-is-never-pushed-to-the-node (:suite leticl)
+  "**`dash-note`'s rule pointed outward, and it matters more here.** A series nobody measured has no
+value; pushing a zero would be this head inventing a fact on the NODE, where it outlives the process
+and cannot be retracted — newest-wins never sees a deletion, so a renamed or stopped thing reads
+exactly like a live one at its last value.
+
+The operator's own scrapers already learned this: `flowy-push-metrics.sh` names a box rather than
+deriving it from `uname -n`, *\"so a renamed box reads exactly like a stopped box\"*."
+  (dash-reset-series)
+  (dash-sinks-reset)
+  (let ((marker (merge-pathnames "leticl-sink-ran.txt" (uiop:temporary-directory))))
+    (ignore-errors (delete-file marker))
+    (dash-sink-add "probe" :series '("never.measured")
+                   :body "{\"value\":{value}}"
+                   :command (format nil "cat > /dev/null; printf 200; touch ~a"
+                                    (leticl::%dash-sh-quote (namestring marker))))
+    (multiple-value-bind (posted failed) (dash-sink-run (gethash "probe" *dash-sinks*))
+      (is (= 0 posted) "no reading, no push")
+      (is (= 0 failed) "**and that is not a FAILURE either** — a quiet series is not an error, which is
+ the difference between a node missing a counter and a node being told a lie")
+      (is (not (probe-file marker)) "**the command was never run at all**"))
+    (ignore-errors (delete-file marker)))
+  (dash-sinks-reset)
+  (dash-reset-series))
+
+(def-test a-flowy-sink-names-a-seat-and-a-refusal-is-not-a-fallback (:suite leticl)
+  "**The operator's rule, verbatim: *\"Do not read another seat's token and do not push under a name
+that is not the one configured. If a watcher names a seat it cannot read a token for, that is a
+refusal, not a fallback.\"***
+
+The head never reads the token: it checks the seat's env file EXISTS, and the SHELL sources it inside
+the sink's command, so the credential lives in one process's environment for the length of one curl.
+That is what makes a watcher file safe to commit — and `seat` is a NAME, never a credential."
+  (dash-reset-series)
+  (dash-sinks-reset)
+  (let* ((watcher (list :name "w" :file #P"/tmp/w.json" :scope :user :series nil))
+         (spec (list :name "s" :kind "flowy" :seat "definitely-not-a-seat-here"
+                     :addr "http://example.invalid:1" :series '("a.b"))))
+    ;; **THE MESSAGE IS COMPUTED OUTSIDE `is`, AND THAT IS A FINDING ABOUT THIS SUITE'S ASSERTION.**
+    ;; MEASURED: fiveam's `is` is a DWIM macro that DESTRUCTURES its form to build a reason string —
+    ;; `(is (handler-case A (error (e) B)))` is read as predicate `handler-case`, expected `A`, actual
+    ;; `(error (e) B)` — so a test whose form is not a predicate gets its argument list reinterpreted
+    ;; and the error escapes the handler that was written to catch it. Testing a refusal means
+    ;; catching a condition, so the catch happens here and `is` sees a plain string.
+    (let ((msg (handler-case (progn (dash-sink-add-from-spec spec watcher) nil)
+                 (error (e) (format nil "~a" e)))))
+      (is (and (stringp msg) (search "definitely-not-a-seat-here" msg) t)
+          "**a seat whose env file this head cannot find is REFUSED BY NAME** — not run, and not
+ silently unauthenticated: `set -a; . missing; set +a` would leave the token EMPTY, curl would send
+ `Bearer ` and get a 401, and a misconfiguration would read as a node problem"))
+    ;; and no sink was registered by the refusal
+    (is (null (dash-sink-names)) "nothing was registered under a name nobody can authenticate"))
+  ;; **AND THE BUILDABLE CASE CARRIES NO TOKEN.** The seat file that DOES exist on this box is
+  ;; `~/.config/flowy/env-claude-lab2x1`; the generated command must name it by PATH and never
+  ;; contain a credential, so a watcher file is safe to commit.
+  (when (probe-file (dash-flowy-seat-file "claude-lab2x1"))
+    (let* ((watcher (list :name "w" :file #P"/tmp/w.json" :scope :user :series nil))
+           (spec (list :name "s" :kind "flowy" :seat "claude-lab2x1"
+                       :addr "http://example.invalid:1" :retain 200 :series '("a.b"))))
+      (dash-sink-add-from-spec spec watcher)
+      (let ((sink (gethash "s" *dash-sinks*)))
+        (is (search "env-claude-lab2x1" (getf sink :command))
+            "the seat's env FILE is what the command names")
+        (is (search "$FLOWY_TOKEN" (getf sink :command))
+            "**and the token is an ENVIRONMENT VARIABLE the shell expands** — a variable reference,
+ not a value, which is the difference between a committable file and a leaked secret")
+        (is (search "FLOWY_TOKEN:?" (getf sink :command))
+            "**and the second belt**: if the file exists and is empty, `${VAR:?}` stops it with a
+ message rather than sending an unauthenticated post")
+        (is (null (search "Bearer ey" (getf sink :command)))
+            "**and no credential is in the command at all** — `Bearer` is followed by a VARIABLE, so
+ a watcher file can be committed without leaking the seat it pushes under"))))
+  (dash-sinks-reset)
+  (dash-reset-series))
+
+(def-test a-watcher-belongs-to-a-job-as-a-lifecycle (:suite leticl)
+  "**The operator's second complaint, answered as a LIFECYCLE rather than a field.** *\"they still
+dont belong to jobs\"* — and belonging means: found on disk, claimed by a job that appears, started,
+stopped when it settles, and what it collected kept.
+
+Every step here is asserted, including the one that is easy to get wrong: a watcher whose job is gone
+stops, and its SERIES SURVIVE the stop."
+  (dash-clear-panels)
+  (dash-reset-series)
+  (dash-watchers-reset)
+  (let* ((dir (%dash-temp-dir))
+         (h (%on-head)))
+    (%dash-write-file
+     dir "import.json"
+     (concatenate 'string
+                  "{ \"format\": 1, \"name\": \"impt\", \"watch\": \"long-import\","
+                  "  \"series\": [ { \"name\": \"rows\", \"unit\": \"rows\" } ],"
+                  "  \"source\": { \"command\": \"echo rows 3\" } }"))
+    (dash-watcher-load h (list (cons dir :user)))
+    (let ((w (gethash "impt" *dash-watchers*)))
+      ;; FOUND
+      (is (= 0 (getf w :state)) "**found** — on disk, read, nothing started")
+      ;; CLAIMED: no job yet, so nothing runs
+      (setf (head-jobs h) nil)
+      (tick-dash-watchers h)
+      (is (= 0 (getf w :state))
+          "**a watcher bound to a job that does not exist yet is not started** — waiting is a state,
+ not a fault (the same as a panel's `waiting`)")
+      ;; RUNNING: the daemon reports a job whose command matches
+      (setf (head-jobs h) (list (list :id "j7" :command "./long-import --db x" :running t)))
+      (tick-dash-watchers h)
+      (is (dash-watcher-running-p w) "**claimed and started** by the same match rule the pane uses")
+      (is (equal "j7" (getf w :job)) "and it remembers WHICH job claimed it, for the pane")
+      (is (dash-watchers-active-p)
+          "**and the collector's run condition is now true with no pane open** — an import that runs
+ for hours cannot have its history begin when somebody happens to look")
+      ;; it collects
+      (dash-collect-once)
+      (is (= 3.0 (dash-last "impt.rows")) "it produces its series while the job runs")
+      ;; STOPPED: the job settles
+      (setf (head-jobs h) (list (list :id "j7" :command "./long-import --db x" :running nil
+                                     :state "exited 0")))
+      (tick-dash-watchers h)
+      (is (not (dash-watcher-running-p w)) "**stopped when the job settled**")
+      (is (= 3 (getf w :state)) "and it says so")
+      (is (= 3.0 (dash-last "impt.rows"))
+          "**AND WHAT IT COLLECTED DID NOT EVAPORATE** — the operator's own condition. The series live
+ in `*dash-series*`, which no part of the stop touches, and the panel keeps drawing them with a
+ staleness chip."))
+    (dash-watchers-reset)
+    (dash-clear-panels)
+    (dash-reset-series)))
+
+(def-test a-job-output-watcher-is-fed-by-the-event-and-not-a-poll (:suite leticl)
+  "**A `job_output` source cannot be a sampler, and that is a wire fact rather than a preference:**
+`SessionEvent::JobOutput` has exactly one publish site — inside the daemon's `ReadJobOutput` arm — so
+there is nothing to poll for; the window arrives as an EVENT and this is its reader.
+
+So a watcher whose source is the job's own output runs NO PROCESS at all. If the import prints its
+own numbers, this is the whole watcher."
+  (dash-clear-panels)
+  (dash-reset-series)
+  (dash-watchers-reset)
+  (let* ((dir (%dash-temp-dir))
+         (h (%on-head)))
+    (%dash-write-file
+     dir "import.json"
+     (concatenate 'string
+                  "{ \"format\": 1, \"name\": \"impt\", \"watch\": \"long-import\","
+                  "  \"series\": [ { \"name\": \"rows\", \"unit\": \"rows\" } ],"
+                  "  \"source\": { \"job_output\": true } }"))
+    (dash-watcher-load h (list (cons dir :user)))
+    ;; **THE HEAD KNOWS THE JOB'S COMMAND, AND THE EVENT DOES NOT** — the job list is what makes a
+    ;; command-substring watch work at all for a `job_output` source; see `dash-watcher-note-job`.
+    (setf (head-jobs h) (list (list :id "j7" :command "./long-import --db x" :running t)))
+    (let ((leticl::*head* h))
+    (let ((w (gethash "impt" *dash-watchers*)))
+      (multiple-value-bind (started state note) (dash-watcher-start w)
+        (declare (ignore state))
+        (is (not started) "it registers no sampler, because there is nothing to poll")
+        (is (null note) "**and that is not a failure** — it is the one source kind with no process"))
+      ;; the event arrives — **`:lines`, the field the `JobOutput` arm actually carries.** The first
+      ;; cut of this test passed `:text` and MEASURED the whole source producing nothing, which is
+      ;; exactly the silent failure this feature's docstrings keep warning about.
+      (dash-watcher-note-job (list :job "j7" :lines "rows 88
+pending 2
+garbage line
+"))
+      (is (= 88.0 (dash-last "impt.rows"))
+          "**the job's own output reaches the watcher's series, prefixed with its name** — and the
+ watch matched the job's COMMAND, which the window does not carry, so this is also what proves the
+ job list is consulted rather than the id alone")
+      (is (= 2.0 (dash-last "impt.pending")) "every parsable line, not just the first")
+      (is (null (dash-last "impt.garbage"))
+          "and a line that says nothing is not a series — `dash-parse-pairs`' rule, unchanged")))
+    (dash-watchers-reset)
+    (dash-clear-panels)
+    (dash-reset-series)))
+
+(def-test a-watcher-file-that-cannot-work-is-reported-and-broken-nothing (:suite leticl)
+  "The dashboards directory's rule, one directory over: **no file can stop the head from starting, and
+no file can stop another file from working.**
+
+And one case of its own: a source naming TWO kinds is refused, the same rule `:span` has in the link
+layer, because a source with two kinds has no defined precedence — and the answer a head invents in
+that gap is invisible until somebody is watching a number that is not the one they configured."
+  (dash-clear-panels)
+  (dash-reset-series)
+  (dash-watchers-reset)
+  (let* ((dir (%dash-temp-dir)))
+    (%dash-write-file dir "a-good.json"
+                      "{ \"format\": 1, \"name\": \"good\", \"source\": { \"command\": \"echo x 1\" } }")
+    (%dash-write-file dir "b-two-kinds.json"
+                      (concatenate 'string
+                                   "{ \"format\": 1, \"name\": \"two\","
+                                   "  \"source\": { \"command\": \"echo x 1\", \"file\": \"/etc/hostname\" } }"))
+    (%dash-write-file dir "c-no-source.json" "{ \"format\": 1, \"name\": \"bare\" }")
+    (%dash-write-file dir "d-format2.json" "{ \"format\": 2, \"name\": \"tomorrow\" }")
+    (%dash-write-file dir "e-bad-interval.json"
+                      "{ \"format\": 1, \"name\": \"slow\", \"interval\": \"soon\", \"source\": { \"command\": \"echo x 1\" } }")
+    (multiple-value-bind (n errors) (dash-watcher-load nil (list (cons dir :user)))
+      (is (= 2 n) "**two files work** — the good one, and the one that names no source at all")
+      (is (not (null (gethash "good" *dash-watchers*))) "the good one is registered")
+      (is (not (null (gethash "bare" *dash-watchers*)))
+          "**a watcher with no source is registered and useless rather than absent** — so a pane can
+ show a row for it and the operator can see the file did not do what they meant")
+      (is (= 3 (length errors)) "and three are reported")
+      (let ((msgs (mapcar (lambda (e) (format nil "~a" (cdr e))) errors)))
+        (is (some (lambda (m) (search "exactly ONE" m)) msgs)
+            "**two source kinds is a refusal** — a source with no defined precedence is a number
+ nobody can predict")
+        (is (some (lambda (m) (search "format 2" m)) msgs)
+            "a newer version is reported by number, never guessed at")
+        (is (some (lambda (m) (search "positive number" m)) msgs)
+            "and `\"interval\": \"soon\"` is a named refusal rather than a watcher that runs at the
+ collector's cadence and looks like it was configured")))
+    (dash-watchers-reset)
+    (dash-reset-series)))
+
+(def-test an-always-on-watcher-follows-the-collector-and-does-not-lead-it (:suite leticl)
+  "A watcher with no `watch` is the shipped `system`/`llama` shape, and the two directions are not
+symmetric: a JOB-BOUND watcher STARTS the collector (an import that runs for hours cannot have its
+history begin when somebody looks), while an ALWAYS-ON one waits for it, because starting a collector
+for a watcher nobody asked about is exactly the work `dash-register-defaults` refuses to do.
+
+Both directions are asserted here, because the asymmetry is the whole design and getting it backwards
+in one direction is silent."
+  (dash-clear-panels)
+  (dash-reset-series)
+  (dash-watchers-reset)
+  (let* ((dir (%dash-temp-dir))
+         (h (%on-head)))
+    (%dash-write-file
+     dir "on.json"
+     (concatenate 'string
+                  "{ \"format\": 1, \"name\": \"on\","
+                  "  \"source\": { \"command\": \"echo rows 1\" } }"))
+    (dash-watcher-load h (list (cons dir :user)))
+    (let ((w (gethash "on" *dash-watchers*)))
+      (is (null (getf w :watch)) "it names no job, so it is always-on")
+      ;; the collector is NOT running: the watcher must not start it
+      (let ((leticl::*dash-running* nil))
+        (tick-dash-watchers h)
+        (is (not (dash-watcher-running-p w))
+            "**a head whose collector is off does not start sampling for a watcher nobody asked
+ about** — writing a watcher file is asking for the numbers, not for a background poll"))
+      ;; the collector IS running (somebody opened the pane): now it follows
+      (let ((leticl::*dash-running* t))
+        (tick-dash-watchers h)
+        (is (dash-watcher-running-p w)
+            "**and when the collector runs it follows** — the pane being open is what makes an
+ always-on watcher's cost something somebody asked for")
+        (dash-watcher-stop w)))
+    (dash-watchers-reset)
+    (dash-clear-panels)
+    (dash-reset-series)))

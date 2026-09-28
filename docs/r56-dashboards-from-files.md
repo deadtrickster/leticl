@@ -150,7 +150,60 @@ the other two read.**
 to do nothing, so the cap is coreutils' `timeout` in front of the shell (`dash-command-add`'s
 docstring records the 30-second wedge that found this).
 
-### §2a. Which watchers may RUN — the operator's question
+### §2a. Which watchers may RUN — **PARKED, NOT ANSWERED**
+
+> **THE OPERATOR'S RULING, and it supersedes my recommendation: *"too many unknown unknown to make
+> realiable decision. we need to ship the whole package incl flowy integration first."***
+>
+> So the question is parked rather than answered, and it is recorded here with all three shapes so the
+> decision is **RECOVERABLE** when there is evidence instead of speculation. It must not become
+> forgotten.
+>
+> **The one judgement made so the build was not blocked:** build the mechanism, and default a WORKSPACE
+> watcher's `command` source to **OFF**, with a one-line refusal naming the file. That ships the whole
+> path without shipping the hole, and it is a **default to flip** (`*dash-workspace-commands*`) rather
+> than a design to redo. A USER-level watcher may use any source kind — that directory is the
+> operator's own hand.
+
+**The question:** may a watcher that arrived in a workspace execute at all, and if so what makes that a
+decision rather than a default? Dropping `lisp` removed the field that *looked* dangerous and left the
+one that is: `{"command": "curl … | sh"}` in a cloned checkout executes more directly, and with less
+ceremony, than the `lisp` form ever did.
+
+**The three shapes, as the operator put them, with what is known about each:**
+
+1. **A gate.** The tree already has one, and this is the class it exists for — a thing that wants to
+   run, named by something that is not the operator. A workspace watcher's first run raises a card
+   naming the file and the command; once approved it is remembered. *Cost:* a card in a flow that
+   should be quiet. *Precedent:* the gate is how this product decides whether something may run.
+   *The unknown that made it unrulable:* the head's own unattended timer is not an agent tool call, so
+   it is not obviously the same permission store — and an approval's only stable key is the command
+   text, which changes the moment a path does.
+2. **Asymmetric kinds.** A USER-level watcher may use any source; a WORKSPACE watcher may only use
+   sources that READ — `job_output`, and `file` with a path inside the workspace. *This one has a
+   MEASURED counter-example:* `dash-command-add` records that the operator's long import runs in
+   another mount namespace, that `nsenter` answers `Operation not permitted`, and that its state is on
+   a path which does not exist in the head's filesystem. So neither `file` nor `job_output` can reach
+   it, and only `command` can — this shape forbids exactly the dashboard that was asked for, unless
+   the watcher is allowed to be user-level. **That is the question to settle with evidence.**
+3. **Trust the checkout** — a repo you cloned can already run code at build time, so a watcher adds no
+   new authority. *Coherent, and to be argued rather than assumed:* `cargo build` running `build.rs`
+   is invoked by the operator, in the project, watching it, while the head runs a watcher on a
+   **timer, unattended, in the background, while they are doing something else** — and `cd`-ing into a
+   fresh clone to look at it is an ordinary thing to do.
+
+**What ends the park:** §11's round trip. When a watcher runs end to end — produced, drawn, and visible
+on the node — the trust question stops being speculation, and the vocabulary conflicts being
+catalogued become things with a screen behind them.
+
+**Why parking is the right call rather than a compromise.** The mechanism IS the evidence. Every day
+spent choosing between the three shapes above was a day spent writing no watcher — and the shapes are
+not decidable from a design document. They are decidable from having run one.
+
+### §2b. The argument I made, kept for the record
+
+*Superseded by the ruling above. Kept because the reasoning is the input to whatever is ruled later;
+read it as one of the three shapes, not as settled.*
 
 Dropping `lisp` removed the field that *looked* dangerous and left the one that is:
 `{"command": "curl https://…/x.sh | sh"}` in a cloned checkout executes more directly and with less
@@ -158,7 +211,8 @@ ceremony than the `lisp` form ever did. So the question is not which field is da
 **may a watcher that arrived in a workspace execute at all, and if so what makes that a decision
 rather than a default?**
 
-**The rule, and it is two clauses.**
+**The rule, as I would have it** — the mechanism built now defaults workspace `command` sources OFF
+instead, so this is a proposal rather than a description of the code:
 
 1. **A USER-level watcher may use any of the three kinds, with no gate.** `~/.config/letibot/` is
    the operator's own directory, behind their own hand — the same standing as `head.toml`, which
@@ -499,14 +553,118 @@ case and not a stub. What is missing is a watcher that produces the numbers.
 
 ## 10. What is NOT built, said plainly
 
-- **Watchers.** No `watchers/` directory is read yet. The directory convention is decided (§1) and
-  the format is designed (§2, §2a), but nothing produces a series from a file.
-- **The job lifecycle.** `watch` binds a PANEL to a job (the existing, working `:job`), so the panel
-  draws the job's own state and totals. The other direction — a job found on disk, its watcher
-  started, stopped when it settles, and the collector running because a watcher is active — is §4
-  and is not built.
-- **The execution gate** (§2a). Until it exists, no file may RUN anything, which is exactly why the
-  gate is safe to leave for step 6: the only sources implemented are the ones that read.
-- **On-disk history across a restart** (§4).
-- **`examples/dashboards/`** (step 7). The two files in the operator's own directory are the working
+*(This section is kept up to date as the build proceeds; §11 is what replaced the biggest item in it.)*
+
+- **`examples/dashboards/`** (step 7). The files in the operator's own directory are the working
   examples meanwhile.
+- **On-disk history across a restart** (removed deliberately — §11's node IS the persistence).
+- **The execution gate** — parked, §2a, with the workspace `command` default OFF as the interim.
+
+---
+
+## 11. The SINK: flowy, measured rather than assumed
+
+**A sink is a SOURCE POINTED THE OTHER WAY** — a command the collector runs with the reading on
+STDIN. `curl` is the first and probably only one, and it means **no HTTP in leticl, ever**. Same
+timeout discipline, same failure handling as a sampler: a failing sink is recorded on the pane and
+does not take the pass down.
+
+### Why a sink and not an HTTP client
+
+leticl cannot speak HTTP and was never going to: the only sockets in the tree are
+`sb-bsd-sockets:local-socket` in `src/hack.lisp` — no TCP, no TLS, and `head.lisp` already records
+why (*a TLS stack in a zero-dep image*). A direct POST was therefore never available, and MEASURED on
+this box, it is not needed: there are three working pushers already
+(`~/.local/bin/flowy-push-metrics.sh`, `flowy-push-gpu.sh`, `~/bin/push-gpu-report.py`) wired to
+systemd units, and they all agree on the design, in their own words:
+
+> *"Nothing on the node can reach these machines — claude-lab2x1 measured that and it is a property of
+> the network, not a gap — SO THE BOXES PUSH."*
+>
+> *"A METRIC ROW IS AN ORDINARY ARTIFACT: type memory, kind metric, fields {name, value}. NO NEW DOOR
+> — newest wins by hlc, so RE-PUSHING THE SAME NAME IS AN UPDATE RATHER THAN A PILE."*
+
+**And it answers §4's open question without inventing anything.** On-disk history was declined for a
+reason (*a sample-log format, its truncation, its replay*) and the node KEEPS the series — re-pushing
+the same name is an update, so leticl keeps none of it. **But not for the reason the briefing gave:**
+see below, `retain` is refused by this node, so the retention is the node's own default rather than
+something leticl configured. The §4 reasoning was right and this is what makes it right.
+
+### The wire, MEASURED against the node rather than read off the scripts
+
+`POST $FLOWY_ADDR/api/artifacts`, `Authorization: Bearer $FLOWY_TOKEN`:
+
+```json
+{"type":"memory","kind":"metric","title":"<series>","fields":{"name":"<series>","value":<v>}}
+```
+
+**THERE IS NO `retain` KEY, AND THE NODE IS THE AUTHORITY.** The briefing — and all three pushers on
+this box, including `push-gpu-report.py` — carry `retain: {points: 200}`. Posted to this node, every
+shape that has it is refused. MEASURED, one variant at a time:
+
+| body | the node's answer |
+|---|---|
+| `{type,kind,title,fields:{name,value}}` | **200, accepted** |
+| `+ "retain":{"points":200}` | **400** `bad request body: json: unknown field "retain"` |
+| `+ "retain":200` | **400** the same |
+| `retain` inside `fields` | 200 — but as an ordinary field, not a policy |
+| the same shape with no `kind` | 200, accepted (`kind` is optional) |
+| the same shape with no `type` | **400** `type is required` |
+
+So the head does not send it, and a `retain` key in a watcher file is READ AND REPORTED RATHER THAN
+SENT — the pane says so, because a config option that silently does nothing is worse than one that
+refuses. **The consequence for §4: the node is still the persistence, but nothing in this feature
+asked it to be**, and a future node that honours a policy would need a new field here.
+
+And the read-back, MEASURED (`flowy get '/api/artifacts?kind=metric&limit=400'`):
+
+```json
+{"artifacts":[{"id":"01M3…","type":"memory","kind":"metric","project":"Lab",
+   "title":"leticlproof.load1","fields":{"name":"leticlproof.load1","value":19.88},
+   "author":"claude-lab2x1","node":"dogfood","hlc":…,"created":"2026-09-28T20:59:03…"}],
+ "project":"Lab"}
+```
+
+**The reply is an OBJECT (`{artifacts, project}`), not an array** — the first read-back I tried sliced
+it as an array and `jq` refused, which is worth knowing before somebody writes a parser against it.
+And the row carries `author` and `node`, so *which seat pushed this* is the node's record and not
+something the pusher has to assert.
+
+**One more thing the read-back shows and a naive reader would get wrong:** a metric name appears MANY
+times in a listing — one row per push — because *newest wins* is how a READER resolves them, not how
+the store collapses them. The operator's own scripts state the rule (*"re-pushing the same name is an
+update rather than a pile"*) and this is what it looks like from the outside: a pile that reads as one
+value. Rows 12 apart in `limit=400` were `leticlproof.load1` at three different values.
+
+### The seat, and why the token never enters the head
+
+MEASURED: the seat is an env FILE per seat — `~/.config/flowy/env-<seat>` — sourced in a shell with
+`set -a`, and the gpu unit's own comment says why it is not `EnvironmentFile=`: *"That parser takes
+only literal KEY=value: it rejects the `export` prefix and cannot evaluate the `$(cat ...)` that reads
+the seat token."*
+
+The head therefore does not read a token at all. It checks that the seat's file EXISTS, and the
+SHELL sources it inside the sink's command, so the credential is in one process's environment for the
+length of one curl and never in the head's memory, its pane, or its logs.
+
+**And it is a refusal, not a fallback** (the operator's rule, verbatim: *"If a watcher names a seat it
+cannot read a token for, that is a refusal, not a fallback"*). Three places, which is two more than
+needed and is deliberate:
+
+  · the head refuses to build the sink at all when the seat file is absent, naming the file it looked
+    for — otherwise `set -a; . missing; set +a` leaves `$FLOWY_TOKEN` EMPTY, curl sends `Bearer ` and
+    gets a 401, and a misconfiguration reads as a node problem;
+  · the command itself carries `: "${FLOWY_TOKEN:?…}"`, so the failure is a message rather than a
+    silent unauthenticated post if the file exists and is empty;
+  · and `"seat"` is a NAME, never a token. Nothing in a watcher file can contain a credential, so a
+    watcher file is safe to commit — which is the property that makes this shippable at all.
+
+### The frame-grid divergence — NOTED, not resolved
+
+flowy's own grid is `{label: 22, value: 10, bar: 18}` and this head's is `{label 24, value 11, bar 18}`
+(`+dash-col-label+`, `+dash-col-value+`, `+dash-col-bar+` in `src/dash.lisp`). **Not adopted, not
+harmonised, and not hidden:** the two are two columns off on label and one on value, which is a
+cosmetic difference in a pane and would be a silent behaviour change to whichever side moved. The
+operator is filing it with four other known divergences between the three implementations; this is
+the note that makes it visible rather than the fix that makes it disappear.
+

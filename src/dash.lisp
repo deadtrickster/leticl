@@ -893,6 +893,11 @@ was found by reading, not by looking."
     ;; list rather than about any panel in it — and a broken file must be visible from the pane,
     ;; since `/dash-reload`'s status note is gone by the time a reader looks.
     (dolist (l (dash-file-notes)) (push l lines))
+    ;; **AND THE WATCHERS AND SINKS** (R56) — a watcher is a thing that runs, so the pane is where a
+    ;; reader finds out whether it is running, what it is bound to, and whether its last push landed.
+    ;; A sink that is quietly failing is the case this exists for: a dashboard missing a counter
+    ;; reads as a job that has not moved.
+    (dolist (l (nreverse (append (dash-watcher-notes) (dash-sink-notes)))) (push l lines))
     (dolist (p panels)
       (vector-push-extend (length lines) starts)
       (let ((i (position p panels)))
@@ -1137,6 +1142,13 @@ rather than printed into a log nobody is reading."
             (when (dash-note (car pair) (cdr pair)) (incf n)))
         (error (e) (setf *dash-last-error* (cons (car s) (format nil "~a" e))))))
     (incf *dash-samples-taken*)
+    ;; **AND THEN THE SINKS, once per pass** — a source pointed the other way, so it runs at the same
+    ;; cadence and under the same discipline. `fboundp` because `src/dashwatch.lisp` loads AFTER this
+    ;; file (it is a reader of this vocabulary and belongs after it), and a forward reference that is
+    ;; called from the collector thread is a call that will always find its definition — this is the
+    ;; one place that ordering is visible, so it is stated rather than left to inference.
+    (when (and (fboundp 'dash-sinks-run) (plusp (hash-table-count *dash-sinks*)))
+      (ignore-errors (dash-sinks-run)))
     n))
 
 (defun dash-start (&optional (interval nil))
@@ -1277,6 +1289,10 @@ NUMBERS, and neither is derived from the other."
       (when (and panel (getf panel :feed))
         (dolist (pair (ignore-errors (funcall (getf panel :feed) window)))
           (when (dash-note (car pair) (cdr pair)) (incf n)))))
+    ;; **AND THE WATCHERS THAT CLAIM THIS JOB** — a `job_output` source is an EVENT, not a poll, so
+    ;; this is its only reader. Same `fboundp` reasoning as `dash-collect-once`'s sink pass.
+    (when (fboundp 'dash-watcher-note-job)
+      (incf n (or (ignore-errors (dash-watcher-note-job window)) 0)))
     n))
 
 ;;; ========================================================= the five states ;;;;

@@ -372,6 +372,8 @@ on ClientFrame::Slash)."
        ;; the first time the pane is opened rather than never. `dash-file-load-needed-p` is the
        ;; guard, so this is one file read per attached workspace and not per keypress.
        (when (dash-file-load-needed-p head) (dash-load-file-panels head))
+       ;; and the project's WATCHERS, by the same guard and for the same reason (R56)
+       (when (dash-file-load-needed-p head) (dash-watcher-load head))
        (setf *dash-nav* (list :sel 0 :scroll 0 :open nil))
        (dash-start)
        (%open-pane head :dash))
@@ -381,10 +383,13 @@ on ClientFrame::Slash)."
        ;; it found — including every file it could not understand, which is the only way a broken
        ;; file is visible without opening the pane.
        (multiple-value-bind (n errors) (dash-load-file-panels head)
-         (say head (if errors
-                       (format nil "~d panel~:p from a file · ~d broken: ~{~a~^, ~}"
-                               n (length errors) (mapcar (lambda (e) (file-namestring (car e))) errors))
-                       (format nil "~d panel~:p from a file" n)))))
+         (multiple-value-bind (wn werrors) (dash-watcher-load head)
+           (let ((all (append errors werrors)))
+             (say head (if all
+                           (format nil "~d panel~:p · ~d watcher~:p from a file · ~d broken: ~{~a~^, ~}"
+                                   n wn (length all)
+                                   (mapcar (lambda (e) (file-namestring (car e))) all))
+                           (format nil "~d panel~:p · ~d watcher~:p from a file" n wn)))))))
       ((string= verb "todos")
        ;; **`/todos add` opens the card without opening the pane** (R44): the verb is the
        ;; keystroke-saving spelling of the pane's own first row, and `add` is a word this verb

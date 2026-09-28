@@ -63,6 +63,12 @@ through an eval socket and see the change on the next frame."
                ;; editing this head's source at all. After `dash`, whose vocabulary it only
                ;; calls — it is a READER of that API and adds no drawing of its own.
                (:file "src/dashfiles")
+               ;; **AND WHAT PRODUCES THE NUMBERS, AND WHERE THEY GO** (R56): watchers — a command, a
+               ;; file or a job's own output — and SINKS, a command the collector runs with the
+               ;; reading on stdin. After `dashfiles`, whose directory convention and refusal rules
+               ;; it reuses rather than restates. One file for both because a sink is a source
+               ;; pointed the other way: same timeout, same failure discipline, same visibility.
+               (:file "src/dashwatch")
                (:file "src/panes")
                ;; `render` is the frame engine: it composes the screen out of
                ;; the cards, chrome and panes above, and owns the segment and
