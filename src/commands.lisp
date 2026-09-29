@@ -804,6 +804,22 @@ store's ids are the primary key, so without this the first add after a restart c
   "A fresh id for one of the operator's items. See `*operator-todos*` for why items have them."
   (format nil "t~d" (incf *operator-todo-seq*)))
 
+(defun operator-todos-workspace (&optional (head *head*))
+  "Which project the operator's rows belong to: **the DAEMON's workspace, or NIL.**
+
+**One function, because three write paths have to agree about it** — the add, the remove and the
+whole-list save. A second spelling would let one of them file a row under a different key from the
+others, and the symptom is a row that appears once and then cannot be found: `insert or replace`
+writes it under one project, the reload reads another, and the operator sees their item vanish.
+
+The key is the daemon's own workspace for the reason `load-operator-todos` gives: it is the same
+string `modes.tsv` keys a project root by, and it is the project whose board the model reads.
+
+NIL — no session yet, or a daemon that has not said — is the orphan key, and storing it means the row
+belongs to no project rather than to the wrong one. Reads do the same, so a head that attaches later
+picks those rows up by `store-adopt-orphan-todos`."
+  (and head (ignore-errors (%daemon-workspace head))))
+
 (defun save-operator-todos ()
   "Write the operator's list down, if this head is allowed to write.
 
@@ -816,14 +832,26 @@ docstring gives: the fifth site is the one that would forget.
 because it could not be written — would lose the operator's words to a permissions error, which is
 strictly worse than a list that survives only this session."
   (when *write-prefs*
-    (unless (store-replace-todos *operator-todos*)
+    (unless (store-replace-todos *operator-todos* (operator-todos-workspace))
       ;; once per save is enough; the pane is where the operator reads it and a repeating notice
       ;; would push everything else off the status line
       nil))
   *operator-todos*)
 
-(defun load-operator-todos ()
-  "The operator's list from the STORE onto `*operator-todos*`, answering a note or NIL.
+(defun load-operator-todos (&optional workspace)
+  "The operator's list FOR WORKSPACE from the STORE onto `*operator-todos*`, answering a note or NIL.
+
+**PER PROJECT, on the operator's ruling** — *\"todos must be perproject\"*. They found the leak
+themselves: a row written in a leticl window (`push leticl to github`) turned up on the RANO daemon's
+board, because one table with no key plus a push on every HELLO put this head's whole list in front of
+every session's model. The workspace is the DAEMON's own — the same string `modes.tsv` keys a project
+root by — so *which project is this* has one answer in this tree rather than two.
+
+**WORKSPACE IS NIL AT STARTUP AND THAT IS THE SHAPE, not an oversight.** `run` calls this before the
+socket exists, so the daemon has not yet said where it is seated. The list is loaded AGAIN on the HELLO
+arm, which is also the moment a SWITCH lands — so attaching and switching both reload and push the
+project they are in. A NIL workspace loads the rows that belong to no project, which is the closest
+honest answer for a head that does not yet know which project it is in.
 
 **SQLITE, on the operator's ruling:** *\"regarding local todo storage - use sqlite as always, not
 files.\"* `src/store.lisp` owns the database; this is the one caller that reads it at startup.
@@ -837,28 +865,38 @@ claim this code is in no position to make.
 
 A store that is not there answers NIL and says nothing: the list stays in memory for the session,
 which is the same behaviour as before that store existed."
-  (let ((items (store-load-todos)))
+  (let ((items (store-load-todos workspace)))
     (cond
-      ;; the table is empty and the old file is not: the operator's items are in the file
+      ;; the table is empty FOR THIS PROJECT and the old file is not: the items are in the file
       ((and (null items) (operator-todos-path) (probe-file (operator-todos-path)))
        (multiple-value-bind (old readable) (read-operator-todos)
          (if (and readable old)
              (progn (setf *operator-todos* (copy-list old))
                     (note-todo-ids *operator-todos*)
-                    (store-replace-todos old)
+                    (store-replace-todos old workspace)
                     (format nil "moved ~d todo~:p into the head's database from ~a"
                             (length old) (file-namestring (operator-todos-path))))
              (progn (setf *operator-todos* (copy-list (or items nil)))
                     (when (and readable (null old)) nil)))))
       (t (setf *operator-todos* (copy-list (or items nil)))
          ;; **and the id counter learns what is already there**, so the next add cannot mint an id
-         ;; the store already holds — see `note-todo-ids` for the measurement
+         ;; the store already holds — see `note-todo-ids` for the measurement.
+         ;;
+         ;; **AND IT LEARNS IT OVER THE WHOLE TABLE, not just this project.** Ids are the store's
+         ;; PRIMARY KEY across every workspace (`t7` is unique in the FILE), so a counter raised past
+         ;; this project's ids alone can still mint one another project holds — and `insert or
+         ;; replace` would OVERWRITE somebody else's row rather than adding one. That is the same
+         ;; defect `note-todo-ids`' docstring measures, one project over.
          (note-todo-ids *operator-todos*)
-         ;; **and the daemon gets the list when the session is known** — NOT here. This runs before
-         ;; the socket is connected (`run` loads prefs at `head.lisp:1670`, connects at `:1678`), so a
-         ;; push from here hits `%send`'s disconnected guard and sends nothing. The push lives in the
-         ;; HELLO arm, which is the first moment both are true.
-         nil))))
+         (let ((ceiling (store-todo-id-ceiling)))
+           (when (> ceiling *operator-todo-seq*)
+             (setf *operator-todo-seq* ceiling)))
+         ;; **and the store's own one-off sentence is passed on** — the orphan adoption is the one
+         ;; step that claims to know a row's project without being told, so it is said rather than
+         ;; silent. Read and cleared here, because it is news once.
+         (let ((note *store-note*))
+           (setf *store-note* nil)
+           note)))))
 
 (defvar *todo-file-unreadable* nil
   "Set when the todo file existed and could not be read, so a save must not overwrite it.")
@@ -946,7 +984,7 @@ and so the identity is minted in the one place that owns the list, not by whoeve
         ;; command path has to be what makes that true. SEQ is the item's index, which is the order
         ;; the pane draws.
         (when *write-prefs*
-          (store-save-todo item (length *operator-todos*)))
+          (store-save-todo item (length *operator-todos*) (operator-todos-workspace)))
         ;; **AND TELL THE DAEMON, so the reminder can see it.** The board on the daemon holds one
         ;; list with two authors, and this head is the source of truth for its own half; the idle nag
         ;; asks that board for unfinished work, so until these rows reach it a reminder could only

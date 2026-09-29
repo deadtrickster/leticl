@@ -715,6 +715,19 @@ and a `hello` with a snapshot). Returns T when the queue moved."
        ;; A HELLO is the moment the session is known and the socket is live, and it is also the
        ;; moment a SWITCH lands — so this covers attach and switch with one send, the same rule the
        ;; comments below give for the settings request.
+       ;;
+       ;; **AND IT RELOADS FIRST, because todos are PER PROJECT** (the operator's ruling: *"todos must
+       ;; be perproject"*). `run` loaded them before the daemon had said where it is seated, so the
+       ;; list in hand at this moment belongs to whatever workspace was known then — nothing. Reading
+       ;; it again here is what makes attach correct AND makes a switch correct: the HELLO that lands
+       ;; on a different project replaces the rows with that project's.
+       ;;
+       ;; Without the reload the push below would send the PREVIOUS project's rows to the new
+       ;; project's board, which is the leak the operator found (a leticl row on rano's board) with
+       ;; the sign flipped — now it would be rano's rows on leticl's, and it would happen on every
+       ;; switch rather than once.
+       (let ((note (load-operator-todos (operator-todos-workspace head))))
+         (when note (say head note)))
        (push-operator-todos head)
        (clear-note head))
      ;; A `Switch` lands as a Hello on the new session, so asking here covers

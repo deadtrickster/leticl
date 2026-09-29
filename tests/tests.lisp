@@ -14422,23 +14422,24 @@ and a store that cannot be opened leaves the list in memory rather than taking t
            ;; backslash. It never touches the SQL string (prepare/bind), which is the point.
            (let ((item (list :id "t1" :content (format nil "quotes \" here and a~%newline")
                              :detail "back\\slash" :status "open")))
-             (is (leticl::store-save-todo item 1) "the row saved")
-             (is (equal (list item) (leticl::store-load-todos))
+             (is (leticl::store-save-todo item 1 "proj-a") "the row saved")
+             (is (equal (list item) (leticl::store-load-todos "proj-a"))
                  "**and came back byte for byte** — the value is BOUND, never interpolated"))
            ;; **ORDER IS THE SEQ COLUMN**, so a list the operator reorders returns in their order
-           (leticl::store-save-todo (list :id "t0" :content "first" :detail "" :status "open") 0)
-           (is (equal '("t0" "t1") (mapcar (lambda (i) (getf i :id)) (leticl::store-load-todos)))
+           (leticl::store-save-todo (list :id "t0" :content "first" :detail "" :status "open") 0 "proj-a")
+           (is (equal '("t0" "t1") (mapcar (lambda (i) (getf i :id)) (leticl::store-load-todos "proj-a")))
                "a lower seq sorts ahead of a higher one")
            ;; **A DELETION IS A DELETION**
            (is (leticl::store-delete-todo "t0") "the row was deleted")
-           (is (equal '("t1") (mapcar (lambda (i) (getf i :id)) (leticl::store-load-todos)))
+           (is (equal '("t1") (mapcar (lambda (i) (getf i :id)) (leticl::store-load-todos "proj-a")))
                "and it does not come back")
            ;; **the whole-list rewrite the migration uses**
            (is (leticl::store-replace-todos
                 (list (list :id "n1" :content "one" :detail "" :status "open")
-                      (list :id "n2" :content "two" :detail "" :status "open")))
+                      (list :id "n2" :content "two" :detail "" :status "open"))
+                "proj-a")
                "replace-todos ran")
-           (is (equal '("n1" "n2") (mapcar (lambda (i) (getf i :id)) (leticl::store-load-todos)))
+           (is (equal '("n1" "n2") (mapcar (lambda (i) (getf i :id)) (leticl::store-load-todos "proj-a")))
                "and left exactly those two, in that order"))
       (leticl::store-close))
     ;; **A STORE THAT CANNOT BE OPENED IS NOT A DEAD HEAD.** A directory that is not writable, a
@@ -14447,7 +14448,7 @@ and a store that cannot be opened leaves the list in memory rather than taking t
     (let ((leticl::*store-path-override* "/proc/definitely/not/writable.db")
           (leticl::*store-unavailable* nil))
       (is (not (leticl::store-available-p)) "an unopenable store reports UNAVAILABLE")
-      (is (null (leticl::store-load-todos)) "and answers NIL rather than signalling")))
+      (is (null (leticl::store-load-todos "proj-a")) "and answers NIL rather than signalling")))
   (setf leticl::*store-path-override* nil))
 
 (def-test the-todo-reader-keeps-every-item-it-reads (:suite leticl)
@@ -22270,3 +22271,132 @@ lost in a resize race — so this is not a corner: it is a thing that WILL happe
  CLASSIFYING a key escaped `run-loop` — and an unhandled error on the main thread with
  `--disable-debugger` prints the condition and QUITS THE HEAD. Nothing a key can do may take the head
  down, which is the rule `%handle-key`'s own guard has always followed.")))
+
+(def-test the-operators-rows-belong-to-a-project-and-not-to-the-head (:suite leticl)
+  "**The operator's ruling, after they found the leak themselves** — *\"todos must be perproject\"* —
+and finding it was the hard part: a row written in a leticl window (`push leticl to github`) turned up
+on the RANO daemon's board.
+
+The mechanism was two facts that are each fine alone: the store was ONE table with no key, and
+`push-operator-todos` sends the whole list to every session on HELLO. So a head-wide list became one
+project's work items — on the daemon's board, which the MODEL reads as its plan, and which
+`unfinished_plan` reads to decide what to nag about. Marked open, that row would have had the rano
+model asked about leticl work.
+
+This is the store's half of the fix. The key is the daemon's own workspace — the same string
+`modes.tsv` keys a project root by — so *which project is this* has one answer in this tree."
+  (let ((leticl::*store-path-override* (format nil "/tmp/leticl-scope-~a.db" (random 1000000))))
+    (unwind-protect
+         (progn
+           (leticl::store-close)
+           (dolist (suffix '("" "-wal" "-shm"))
+             (let ((f (concatenate 'string leticl::*store-path-override* suffix)))
+               (when (probe-file f) (ignore-errors (delete-file f)))))
+           ;; two projects, one row each
+           (leticl::store-save-todo (list :id "t1" :content "push leticl to github"
+                                          :detail "" :status "open")
+                                    1 "leticl")
+           (leticl::store-save-todo (list :id "t2" :content "migrate the buffer accessors"
+                                          :detail "" :status "open")
+                                    1 "rano")
+           ;; **THE LEAK, AS ONE ASSERTION.** Before the workspace key this list held BOTH rows and
+           ;; went to whichever daemon asked first.
+           (is (equal '("push leticl to github")
+                      (mapcar (lambda (i) (getf i :content))
+                              (leticl::store-load-todos "leticl")))
+               "**a leticl head sees only leticl rows** — the rano row is not its business")
+           (is (equal '("migrate the buffer accessors")
+                      (mapcar (lambda (i) (getf i :content))
+                              (leticl::store-load-todos "rano")))
+               "and rano sees only its own, so the nag can only ever name work in THIS project")
+           (is (null (leticl::store-load-todos "stroppy"))
+               "a project with no rows has none — not the other projects'")
+           ;; **AND A WHOLE-LIST REWRITE TOUCHES ONLY ITS OWN PROJECT.** The migration path used to
+           ;; be `delete from operator_todo` with no key, which under per-project rows would empty
+           ;; every other project's list — a migration in one workspace silently deleting another's
+           ;; work.
+           (is (leticl::store-replace-todos
+                (list (list :id "t9" :content "replacement" :detail "" :status "open"))
+                "leticl")
+               "the rewrite ran")
+           (is (equal '("replacement")
+                      (mapcar (lambda (i) (getf i :content))
+                              (leticl::store-load-todos "leticl")))
+               "leticl's list is the new one")
+           (is (equal '("migrate the buffer accessors")
+                      (mapcar (lambda (i) (getf i :content))
+                              (leticl::store-load-todos "rano")))
+               "**and rano's is UNTOUCHED** — a rewrite is scoped like everything else here"))
+      (leticl::store-close))
+    (setf leticl::*store-path-override* nil)))
+
+(def-test a-row-that-belonged-to-no-project-is-adopted-once-and-said (:suite leticl)
+  "Every row written before this column existed has `workspace = ''`, and there are only two honest
+things to do with them: show them in every project (the bug) or give them to one.
+
+The head doing the asking is the only head that ever wrote them in practice, so the assignment is
+almost always right — but it is still an inference, which is why it is REPORTED rather than silent, and
+why it happens once: the `update` leaves nothing for the next caller to find.
+
+**A head that does not know its project adopts nothing.** The alternative is that whichever head
+starts first claims every unowned row, which is how a row ends up in the wrong project permanently —
+the exact failure this whole change is about."
+  (let ((leticl::*store-path-override* (format nil "/tmp/leticl-orphan-~a.db" (random 1000000))))
+    (unwind-protect
+         (progn
+           (leticl::store-close)
+           (dolist (suffix '("" "-wal" "-shm"))
+             (let ((f (concatenate 'string leticl::*store-path-override* suffix)))
+               (when (probe-file f) (ignore-errors (delete-file f)))))
+           ;; a row from before the column: saved with no workspace
+           (leticl::store-save-todo (list :id "t1" :content "an old row" :detail "" :status "open")
+                                    1 nil)
+           (is (equal '("an old row")
+                      (mapcar (lambda (i) (getf i :content)) (leticl::store-load-todos nil)))
+               "an orphan is visible to a head that does not know its project yet")
+           ;; **NIL ADOPTS NOTHING** — this is the guard, and it is the reason the adoption is safe
+           (is (zerop (leticl::store-adopt-orphan-todos nil))
+               "**a head with no project claims nothing** — otherwise whichever head started first\n would own every unowned row")
+           (is (= 1 (leticl::store-adopt-orphan-todos "/home/dead/Projects/leticl"))
+               "and the head that knows its project adopts the row")
+           (is (equal '("an old row")
+                      (mapcar (lambda (i) (getf i :content))
+                              (leticl::store-load-todos "/home/dead/Projects/leticl")))
+               "which is now that project's row")
+           (is (zerop (leticl::store-adopt-orphan-todos "/home/dead/Projects/rano"))
+               "**and the adoption happened ONCE** — rano cannot take what leticl already owns")
+           (is (null (leticl::store-load-todos "/home/dead/Projects/rano"))
+               "so rano's list is empty, not leticl's rows under a new name"))
+      (leticl::store-close))
+    (setf leticl::*store-path-override* nil)))
+
+(def-test an-id-minted-in-one-project-cannot-overwrite-anothers-row (:suite leticl)
+  "**Ids are the store's PRIMARY KEY across the whole file, not within a project** — `t7` is unique
+everywhere. So a counter raised past only the CURRENT project's ids can still mint one that another
+project holds, and `insert or replace` then overwrites a real row instead of adding one.
+
+That is exactly the defect `note-todo-ids` already documents for a restart (*\"a fresh
+`operator-todo-add` minted `t1`\"*), one project along — and per-project rows would have introduced it
+if the load only looked at its own list. `store-todo-id-ceiling` answers over the whole table for that
+reason."
+  (let ((leticl::*store-path-override* (format nil "/tmp/leticl-ids-~a.db" (random 1000000))))
+    (unwind-protect
+         (progn
+           (leticl::store-close)
+           (dolist (suffix '("" "-wal" "-shm"))
+             (let ((f (concatenate 'string leticl::*store-path-override* suffix)))
+               (when (probe-file f) (ignore-errors (delete-file f)))))
+           (leticl::store-save-todo (list :id "t9" :content "someone else's row"
+                                          :detail "" :status "open")
+                                    1 "rano")
+           (is (= 9 (leticl::store-todo-id-ceiling))
+               "**the ceiling is read over EVERY project** — leticl's own list is empty here")
+           (is (equal '("t9") (mapcar (lambda (i) (getf i :id)) (leticl::store-load-todos "rano")))
+               "and the row is where it was put")
+           ;; a head loading leticl's (empty) list still must not mint t9
+           (is (zerop (length (leticl::store-load-todos "leticl")))
+               "leticl has no rows of its own")
+           (is (= 9 (leticl::store-todo-id-ceiling))
+               "**but the ceiling covers rano's**, so the next add here cannot be t9"))
+      (leticl::store-close))
+    (setf leticl::*store-path-override* nil)))

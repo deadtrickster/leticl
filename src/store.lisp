@@ -108,6 +108,14 @@ no detail, and a NULL title as a row it will not draw."
 (sb-alien:define-alien-routine ("sqlite3_finalize" %sq-finalize) sb-alien:int
   (stmt %sq-stmt))
 
+(sb-alien:define-alien-routine ("sqlite3_changes" %sq-changes) sb-alien:int
+  (db %sq-db))
+;; 
+;; `sqlite3_changes` is how a WRITE reports how much it wrote. It is the only way to tell *the
+;; statement ran* from *the statement matched nothing*, which are different facts: a `delete` of a
+;; row that is not there succeeds and changes nothing, and the orphan adoption needs the count to know
+;; whether it has anything to REPORT.
+
 (defparameter +sqlite-transient+
   ;; `SQLITE_TRANSIENT` is `(sqlite3_destructor_type)-1`: it tells sqlite to take its OWN COPY of
   ;; a bound string, because ours is a Lisp string that the GC may move. Passing 0 (SQLITE_STATIC)
@@ -197,7 +205,8 @@ The attempt is cached: `%store-db` opens once and reuses the handle, and a failu
                                           seq    integer not null,
                                           title  text not null,
                                           detail text not null default '',
-                                          status text not null default 'open')"
+                                          status text not null default 'open',
+                                          workspace text not null default '')"
                                        (sb-sys:int-sap 0) (sb-sys:int-sap 0) err))
                          (progn (setf *store-unavailable* (or (sb-alien:deref err) "schema failed"))
                                 (%sq-close db))
@@ -213,6 +222,22 @@ The attempt is cached: `%store-db` opens once and reuses the handle, and a failu
                          ;; almost never the thing the caller wants.
                          (progn
                            (setf *store-handle* db *store-file* path *store-unavailable* nil)
+                           ;; **AND THE COLUMN FOR A DATABASE THAT PREDATES IT.**
+                           ;;
+                           ;; `create table if not exists` is a no-op on a database that already has
+                           ;; the table, so a head upgrading from before todos were per-project would
+                           ;; keep a table with no `workspace` column and every statement naming it
+                           ;; would fail — the whole feature silently dead on exactly the head that
+                           ;; had rows to migrate.
+                           ;;
+                           ;; The `alter` is run and its failure IGNORED, which is the small honest
+                           ;; move: SQLite has no `add column if not exists`, and the only failure
+                           ;; here is `duplicate column name`, which means the schema is already
+                           ;; right. Anything else would have failed the `create` above too.
+                           (ignore-errors
+                            (%sq-exec db
+                                      "alter table operator_todo add column workspace text not null default ''"
+                                      (sb-sys:int-sap 0) (sb-sys:int-sap 0) err))
                            db))))
             (sb-alien:free-alien cell)
             (sb-alien:free-alien err)))))))
@@ -258,8 +283,25 @@ each site is how a reader checks it."
 
 ;;; ------------------------------------------------------- the operator's rows ;;;
 
-(defun store-load-todos ()
-  "Every stored item, oldest first, as the plists `*operator-todos*` holds.
+(defun store-load-todos (workspace)
+  "Every stored item for WORKSPACE, oldest first, as the plists `*operator-todos*` holds.
+
+**PER PROJECT, and that is the operator's ruling** — *\"todos must be perproject\"* — after they
+found the leak: a row created in a leticl window (`push leticl to github`) appeared on the RANO
+daemon's board, because this used to be one table with no key and `push-operator-todos` sent the
+whole list to every session on HELLO. The daemon's board is per-session and project-scoped and the
+MODEL reads it as its plan, so a head-wide list became one project's work items — and
+`unfinished_plan` would have handed the rano model a check naming leticl work.
+
+The key is the daemon's own workspace, the same string `modes.tsv` keys a project root by, so the two
+notions of *which project is this* cannot disagree.
+
+**ROWS WITH NO WORKSPACE ARE ADOPTED, ONCE, AND THE ADOPTION IS SAID.** Every row written before this
+column existed has `workspace = ''`, and there are only two honest things to do with them: leave them
+visible everywhere (which is the bug), or assign them to the workspace that first asks. Guessing is
+avoidable because the head doing the asking is the only head that ever wrote them in practice — but it
+is still a guess, so it is REPORTED rather than silent, and it happens once because the update leaves
+nothing behind for the next caller.
 
 **NIL for a store that is not there**, which the caller cannot distinguish from an empty list — and
 that is the honest answer rather than a guess: a head with no database and a head whose list is
@@ -267,27 +309,68 @@ empty both have nothing to draw, and inventing a difference would be inventing a
   (let ((db (%store-db)))
     (when db
       (handler-case
-          (with-statement (stmt db "select id, title, detail, status from operator_todo order by seq")
-            (let ((out nil))
-              (loop while (= +sqlite-row+ (%sq-step stmt))
-                    do (push (list :id (%sq-column-text stmt 0)
-                                   :content (%sq-column-text stmt 1)
-                                   :detail (or (%sq-column-text stmt 2) "")
-                                   :status (or (%sq-column-text stmt 3) "open"))
-                             out))
-              (nreverse out)))
+          (progn
+            (let ((adopted (store-adopt-orphan-todos workspace)))
+              (when (plusp adopted)
+                ;; SAID, because it is the one step here that claims to know which project a row
+                ;; belongs to without being told.
+                (setf *store-note*
+                      (format nil "~d todo~:p written before todos were per-project now belong~@[ to ~a~]"
+                              adopted workspace))))
+            (with-statement (stmt db "select id, title, detail, status from operator_todo
+                                        where workspace = ? order by seq")
+              (%bind-text stmt 1 (or workspace ""))
+              (let ((out nil))
+                (loop while (= +sqlite-row+ (%sq-step stmt))
+                      do (push (list :id (%sq-column-text stmt 0)
+                                     :content (%sq-column-text stmt 1)
+                                     :detail (or (%sq-column-text stmt 2) "")
+                                     :status (or (%sq-column-text stmt 3) "open"))
+                               out))
+                (nreverse out))))
         (error (e) (setf *store-unavailable* (format nil "~a" e)) nil)))))
 
-(defun store-save-todo (item &optional seq)
-  "Insert or replace ITEM. SEQ is its place in the list; defaults to the item's own id order.
+(defvar *store-note* nil
+  "A one-off sentence the store wants said — currently the orphan-row adoption.
+
+A `defvar` read and cleared by `load-operator-todos`, which is the caller that can actually put it on
+the screen: this file has no opinion about the status line, and threading a head through a store
+function to say one sentence would be the tail wagging the dog.")
+
+(defun store-adopt-orphan-todos (workspace)
+  "Give every row with no workspace to WORKSPACE. Returns how many moved.
+
+**The rows that predate the column, and the only place a project is inferred rather than known.** See
+`store-load-todos` for why this is a one-time report rather than a silent assignment. NIL or an empty
+WORKSPACE adopts nothing: a head that does not yet know its project must not be the one to claim every
+unowned row — that would hand them to whichever head started first."
+  (if (or (null workspace) (zerop (length workspace)))
+      0
+      (let ((db (%store-db)))
+        (when db
+          (handler-case
+              (with-statement (stmt db "update operator_todo set workspace = ? where workspace = ''")
+                (%bind-text stmt 1 workspace)
+                (if (= +sqlite-done+ (%sq-step stmt))
+                    (%sq-changes db)
+                    0))
+            (error (e) (setf *store-unavailable* (format nil "~a" e)) 0))))))
+
+(defun store-save-todo (item &optional seq workspace)
+  "Insert or replace ITEM for WORKSPACE. SEQ is its place in the list; defaults to the item's own id order.
 
 **`insert or replace` rather than a delete and an insert**: the id is the key, so a later save of the
-same item is an edit, and doing it as two statements would leave a window with no row in it."
+same item is an edit, and doing it as two statements would leave a window with no row in it.
+
+**WORKSPACE IS WRITTEN ON EVERY SAVE, including an edit.** A row edited by a head that knows its
+project keeps that project; the alternative — leaving the column alone on update — would let a row
+keep a stale owner after a rename. NIL is stored as the empty string, which is the orphan marker
+`store-adopt-orphan-todos` looks for."
   (let ((db (%store-db)))
     (when db
       (handler-case
           (with-statement (stmt db "insert or replace into operator_todo
-                                     (id, seq, title, detail, status) values (?,?,?,?,?)")
+                                     (id, seq, title, detail, status, workspace) values (?,?,?,?,?,?)")
             (%bind-text stmt 1 (getf item :id))
             (%sq-bind-int64 stmt 2 (or seq
                                        (ignore-errors (parse-integer (or (getf item :id) "")
@@ -296,8 +379,36 @@ same item is an edit, and doing it as two statements would leave a window with n
             (%bind-text stmt 3 (getf item :content))
             (%bind-text stmt 4 (getf item :detail))
             (%bind-text stmt 5 (or (getf item :status) "open"))
+            (%bind-text stmt 6 (or workspace ""))
             (= +sqlite-done+ (%sq-step stmt)))
         (error (e) (setf *store-unavailable* (format nil "~a" e)) nil)))))
+
+(defun store-todo-id-ceiling ()
+  "The highest `tN` id anywhere in the table, whatever project it belongs to — or 0.
+
+**Across EVERY workspace, deliberately.** Ids are the store's PRIMARY KEY over the whole file, so a
+counter raised past only the current project's ids can still mint one that another project holds — and
+`insert or replace` then OVERWRITES a real row instead of adding one. That is `note-todo-ids`' own
+measured defect, one project along; with todos now per-project it would have been introduced by the
+very change that scoped them.
+
+The parse is in SQL because the ids are `tN` and the alternative is loading every row of every project
+to look at them. `substr(id, 2)` drops the namespace letter and `cast(... as integer)` turns the rest
+into a number — and a row whose id is not that shape casts to 0, which is below every real id and so
+cannot raise the ceiling by accident. That is the safe direction: an unreadable id must not make the
+counter skip a range it never used."
+  (let ((db (%store-db)))
+    (when db
+      (handler-case
+          (with-statement (stmt db "select max(cast(substr(id, 2) as integer)) from operator_todo
+                              where id like 't%'")
+            (if (= +sqlite-row+ (%sq-step stmt))
+                (let ((sap (%sq-column-text-ptr stmt 0)))
+                  (if (and sap (not (sb-sys:sap= sap (sb-sys:int-sap 0))))
+                      (or (ignore-errors (parse-integer (%sq-column-text-str stmt 0) :junk-allowed t)) 0)
+                      0))
+                0))
+        (error (e) (setf *store-unavailable* (format nil "~a" e)) 0)))))
 
 (defun store-delete-todo (id)
   "Remove the row ID. T when the statement ran."
@@ -309,19 +420,24 @@ same item is an edit, and doing it as two statements would leave a window with n
             (= +sqlite-done+ (%sq-step stmt)))
         (error (e) (setf *store-unavailable* (format nil "~a" e)) nil)))))
 
-(defun store-replace-todos (items)
-  "Rewrite the whole list: every row deleted, ITEMS inserted in order. T when it ran.
+(defun store-replace-todos (items workspace)
+  "Rewrite this WORKSPACE's list: its rows deleted, ITEMS inserted in order. T when it ran.
 
 **For the migration and for a test**, not for the interactive path: an add saves one row and a
 removal deletes one, because a wholesale rewrite on every keystroke is a transaction per key and a
-window in which the list is not on disk at all."
+window in which the list is not on disk at all.
+
+**It deletes only ITS OWN project's rows.** A `delete from operator_todo` with no key was the shape
+that made this file's list one list; keeping it here would mean a migration in one workspace silently
+emptying every other project's todos."
   (let ((db (%store-db)))
     (when db
       (handler-case
           (progn
-            (with-statement (stmt db "delete from operator_todo")
+            (with-statement (stmt db "delete from operator_todo where workspace = ?")
+              (%bind-text stmt 1 (or workspace ""))
               (%sq-step stmt))
             (loop for item in items for i from 1
-                  do (store-save-todo item i))
+                  do (store-save-todo item i workspace))
             t)
         (error (e) (setf *store-unavailable* (format nil "~a" e)) nil)))))

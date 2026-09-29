@@ -234,6 +234,11 @@ shared record. The second file's note comes out of `load-retired-into`."
     ;; come through here with them — `with-replay-globals` binds `*operator-todos*` to NIL, and a
     ;; recorded screen must not draw the todos of the day it is being replayed on.
     (let ((note (load-retired-into head)))
+      ;; **NO WORKSPACE YET, and that is deliberate rather than forgotten.** This runs from `run`
+      ;; before the socket exists, so the daemon has not said where it is seated; the load that
+      ;; matters happens again on the HELLO arm, where the project IS known. Passing nothing here
+      ;; loads only the rows that belong to no project, which is the honest answer for a head that
+      ;; does not yet know its own.
       (let ((todos (load-operator-todos)))
         (when todos (push todos notes)))
       (nreverse notes))))

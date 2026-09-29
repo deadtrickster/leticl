@@ -2283,6 +2283,8 @@ keeps finding elsewhere."
             ;; **and the STORE follows it, one row at a time** — a list that lost a row on
             ;; restart would come back with the row, which is the same defect as losing the add
             (when leticl::*write-prefs*
+              ;; (the remove path needs no workspace: the id is the primary key, so a row is
+              ;; deleted where it lives whichever project that is)
               (leticl::store-delete-todo id))
             ;; **and the DAEMON's board, so the reminder stops counting it.** The board holds the
             ;; operator's rows beside the model's and the idle nag reads it; a removal this head
