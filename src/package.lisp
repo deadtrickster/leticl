@@ -173,6 +173,8 @@
    #:newest-payload-row-p #:newest-payload-item-id #:*payload-head*
    #:quit-card-lines #:secret-card-lines
    #:todos-lines #:repo-todo-lines #:repo-todo-rows #:repo-todo-rows-cached
+   ;; R44 editable: marking a shared TODO.md row is ONE LINE of the file
+   #:repo-todo-toggle #:%todo-toggle
    #:read-todo-md #:strip-todo-markup
    #:peek-row-count #:pane-escape-target #:pane-initial-sel #:picker-initial-sel
    ;; the job-output overlay the jobs pane's enter opens

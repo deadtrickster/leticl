@@ -895,7 +895,16 @@ the mark cannot be what tells a row from a heading."
   (let ((out nil)
         (section nil)
         (items nil)                     ; newest first: mark, head, body
-        (collecting nil))
+        (collecting nil)
+        ;; **THE SOURCE LINE EVERY ITEM WAS PARSED FROM** (R44 editable), so a caller can rewrite
+        ;; exactly one line of the file instead of regenerating it.
+        ;;
+        ;; This is not a convenience. `%todo-row-lines` re-renders a row from its PARSED fields, so
+        ;; writing the rows back would reformat the whole file and discard everything this parser
+        ;; does not model — prose between items, the `Deps:` indent, wrapping, trailing space. On a
+        ;; SHARED, COMMITTED file that is a diff nobody asked for and a conflict for whoever else is
+        ;; editing it. The line number is what makes the edit surgical instead.
+        (line-no 0))
     (labels ((flush ()
                (when section
                  (if (null items)
@@ -920,10 +929,11 @@ the mark cannot be what tells a row from a heading."
                        ;; oldest first under the heading
                        (dolist (it (reverse items))
                          (push (list :indent 8 :mark (first it) :text (second it)
-                                     :body (third it) :item t)
+                                     :body (third it) :item t :line (fourth it))
                                out))))))
              (end-item () (setf collecting nil)))
       (dolist (line (uiop:split-string body :separator '(#\newline)))
+        (incf line-no)
         (cond
           ;; `##` and deeper. `###` is a subsection and owns its own items, which
           ;; is what org's outline says too.
@@ -938,7 +948,8 @@ the mark cannot be what tells a row from a heading."
            (multiple-value-bind (mark text) (%todo-mark-of line)
              (cond
                (mark
-                (push (list mark (strip-todo-markup text) nil) items)
+                ;; the LINE is the fifth element, carried so an edit can address the file
+                (push (list mark (strip-todo-markup text) nil line-no) items)
                 (setf collecting t))
                ((zerop (length (string-trim " " line)))
                 ;; a blank line CLOSES an item: two items a blank apart would
@@ -1010,6 +1021,86 @@ project's queue.")
             *repo-todo-stamp* stamp
             *repo-todo-cache* (repo-todo-rows workspace)))
     *repo-todo-cache*))
+
+(defun %todo-md-toggle-line (text line-no)
+  "TEXT (a TODO.md) with line LINE-NO's checkbox flipped, or `(values NIL REASON)`.
+
+**ONE LINE, and every other byte of the file identical.** The alternative — parse the rows, flip one,
+render them all back — is what `%todo-row-lines` would give you, and it would reformat the whole file:
+prose between items, the indent under an item, wrapping and trailing space all go, because the parser
+does not model them. On a file the operator COMMITS and COLLABORATES on, that is a diff nobody asked
+for plus a conflict for whoever else is editing it. So the edit is a splice on one line.
+
+**The marks are `[ ]`, `[x]` and `[~]`, and only the first and second flip.** `[~]` means *in
+progress* — a state somebody is holding — and a space bar that cleared it would be dropping somebody's
+claim on a row. Flipping `[~]` is not defined here rather than guessed at; the caller says so.
+
+**THREE VALUES AND NOT TWO, because two positions meant two things.** The first cut returned
+`(values TEXT MARK)` on success and `(values NIL REASON)` on failure, so the SECOND value was a keyword
+in one case and a sentence in the other — and a caller that reached for it got `:open` where it expected
+a reason. MEASURED, in this feature's own test: `TYPE-ERROR expected-type: SEQUENCE datum: :OPEN`.
+
+So: `(values TEXT MARK REASON)`. TEXT is NIL exactly when nothing was written, MARK is `:done`/`:open`
+exactly when something was, and REASON is a sentence exactly when nothing was."
+  (let* ((lines (uiop:split-string text :separator '(#\newline)))
+         (line (and (> line-no 0) (<= line-no (length lines)) (nth (1- line-no) lines))))
+    (cond
+      ((null line) (values nil nil (format nil "line ~d is not in the file any more" line-no)))
+      (t (let ((at (or (search "[ ]" line) (search "[x]" line) (search "[X]" line)
+                       (search "[~]" line))))
+           (cond
+             ((null at) (values nil nil "that line has no checkbox to mark"))
+             ((or (search "[~]" line) (and (>= (length line) (+ at 3)) (string= "[~]" (subseq line at (+ at 3)))))
+              ;; `[~]` is somebody's claim; said rather than silently cleared
+              (values nil nil "that row is in progress — a space bar does not clear somebody's claim"))
+             (t
+              (let* ((was (subseq line at (+ at 3)))
+                     (now (if (or (string= was "[ ]")) "[x]" "[ ]"))
+                     (fresh (concatenate 'string (subseq line 0 at) now (subseq line (+ at 3)))) )
+                (setf (nth (1- line-no) lines) fresh)
+                (values (format nil "~{~a~^~%~}" lines)
+                        (if (string= now "[x]") :done :open)
+                        nil)))))))))
+
+(defun repo-todo-toggle (workspace line-no)
+  "Flip the checkbox on LINE-NO of WORKSPACE's TODO.md. Returns `(values MARK REASON)`.
+
+**The shared half of the todo list, and the whole point is that it is a FILE.** R44's split, in the
+operator's own words: the todos that live near the session are the head's own (per project, in sqlite,
+and nobody else sees them), and the ones you tick here are the ones you mean to SHARE — they are
+committed, they travel with the repo, and another person may be editing the same file.
+
+That is why this returns a reason rather than signalling: every refusal is something to SAY (no
+checkbox on that line, an in-progress row, a file that cannot be written), and a space bar that
+appears to do nothing is the defect this pane has already been fixed for twice.
+
+**The write is a whole-file rewrite of a file whose only change is one line**, so a reader
+mid-`git diff` sees one line move. It is not atomic — a crash between the read and the write could
+truncate — and that is accepted rather than hidden: a TODO.md is in git, `git checkout` is the
+recovery, and a temp-file-and-rename dance would be a second thing to get wrong for a file whose
+worst case is one lost edit."
+  (let ((path (and workspace (plusp (length workspace))
+                   (format nil "~a/TODO.md" workspace))))
+    (cond
+      ((null path) (values nil "this session has no workspace, so there is no TODO.md"))
+      ((not (probe-file path)) (values nil (format nil "no TODO.md in ~a" workspace)))
+      (t (handler-case
+             (let* ((text (uiop:read-file-string path)))
+               (multiple-value-bind (new mark why) (%todo-md-toggle-line text line-no)
+                 ;; the same three-value shape as `%todo-md-toggle-line`, for the same reason: a
+                 ;; MARK and a REASON must not share a position, or a caller cannot tell *ticked* from
+                 ;; *refused* without knowing which branch produced it.
+                 (cond
+                   (new (with-open-file (out path :direction :output :if-exists :supersede
+                                                  :if-does-not-exist :error
+                                                  :external-format :utf-8)
+                          (write-string new out))
+                        ;; the cache is keyed on (mtime len) and this write may land inside the same
+                        ;; second as the read that filled it — so it is dropped rather than trusted
+                        (setf *repo-todo-cache* nil *repo-todo-stamp* nil)
+                        (values mark nil))
+                   (t (values nil why)))))
+           (error (e) (values nil (format nil "TODO.md could not be written: ~a" e))))))))
 
 (defun repo-todo-lines (workspace)
   "The repo's TODO.md as plain lines, for callers that want text. The pane uses

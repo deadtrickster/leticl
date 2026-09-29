@@ -1351,9 +1351,20 @@ one thing this head must not need."
           ((:delete) (when (eq mode :todos) (%todo-remove head))
                      (eq mode :todos))
           ((:enter) (when empty (%pane-enter head)) empty)
+          ;; **SPACE MARKS A TODO, AND IT OWNS THE KEY WHILE THE PANE IS UP** — the same rule delete
+          ;; and enter keep beside it. The operator asked for the key by naming the convention (*"space
+          ;; for marking todo?"*), and it is free in this pane: a space was previously a `:char` that
+          ;; fell through and typed a SPACE into the composer while the todos pane was covering the
+          ;; screen, which is a key doing something invisible to a buffer nobody can see.
+          ;;
+          ;; `:char` and not a named type: a space arrives as a character, so this is the only arm
+          ;; that can see it. It claims the key on EVERY stop — `%todo-toggle` is what decides whether
+          ;; there is anything to mark, and it says so when there is not, because a key that appears
+          ;; to do nothing is the defect this pane has been fixed for twice.
           ((:char)
            (let ((ch (getf key :ch)))
-             (cond ((not empty) nil)
+             (cond ((and (eq mode :todos) empty (eql ch #\space)) (%todo-toggle head) t)
+                   ((not empty) nil)
                    ((eql ch #\q) (shut))
                    ((and (eql ch #\o) (eq mode :subagents)) (%subagent-switch head) t)
                    ;; the operator's own ask: the job row links to its dashboard
@@ -2243,6 +2254,69 @@ made it a negative index, which the old conversion threw away."
     (multiple-value-bind (lines sel stop-lines) (todos-lines head 80)
       (declare (ignore lines sel))
       (position line stop-lines))))
+
+(defun %todo-toggle (head)
+  "Mark the row under the cursor done, or open again. T when a key was taken.
+
+**The missing half of an editable list.** Add and delete existed; a row you can create and destroy but
+never FINISH is not editable, and until this the only hand that could move one of the operator's rows
+was the MODEL's — `todo_write`'s `operator` field, naming the row by quoting its words. So the operator
+could be reminded about a row they had already done and had no key to say so.
+
+**Which section decides what the mark MEANS, and the two are genuinely different things:**
+
+  · `(:mine . ID)` — the head's OWN rows: per project, in sqlite, pushed to the daemon's board as
+    `:by operator`. Ticking one flips its status, saves that row, and re-pushes the board — so the idle
+    nag stops naming it. Nobody else ever sees it;
+  · `(:repo . I)` — a row of the workspace's **TODO.md**: the SHARED queue, committed, and possibly
+    being edited by somebody else right now. Ticking one writes ONE LINE of that file. The operator's
+    own split, and the reason they are two sections rather than one list.
+
+The third case is a refusal that SAYS so, on every path — the model's rows are not stops (no key acts
+on them), a heading has no checkbox, and a `[~]` row is somebody's claim.
+
+`space` because it is the todo convention everywhere else, and because it is free here: Enter is add
+and unfold, delete is remove, and a space that typed a character into the composer while the pane was
+up was already the fall-through this key now owns."
+  (multiple-value-bind (stop i) (todo-stop-at head)
+    (declare (ignore i))
+    (case (car stop)
+      (:mine
+       (let* ((id (cdr stop))
+              (item (find id *operator-todos* :key (lambda (x) (getf x :id)) :test #'equal)))
+         (if (null item)
+             (progn (say head "that row is not in this head's list any more") t)
+             (let* ((done (string-equal (or (getf item :status) "open") "completed"))
+                    (now (if done "open" "completed")))
+               (setf (getf item :status) now)
+               ;; **ONE ROW, not the whole list** — `save-operator-todos` would be a transaction per
+               ;; keypress, which the store's own docstring refuses for the add path and for the same
+               ;; reason.
+               (when *write-prefs*
+                 (store-save-todo item nil (operator-todos-workspace head)))
+               ;; **and the daemon's board, so the reminder stops counting it.** The nag reads that
+               ;; board; a tick this head kept to itself would leave the model being asked about work
+               ;; that is finished.
+               (push-operator-todos head)
+               (say head (if done "marked open again" "marked done"))
+               t))))
+      (:repo
+       ;; **THE SHARED FILE, one line of it.** The row's index is into `repo-todo-rows-cached`, and
+       ;; the LINE comes from the row itself — recorded by the parser, because re-deriving it here is
+       ;; a second arithmetic over the same file (R44's *two enumerations is the defect*).
+       (let* ((ws (getf (session-wiring (head-session head)) :workspace))
+              (row (nth (cdr stop) (repo-todo-rows-cached ws)))
+              (line (getf row :line)))
+         (cond
+           ((null line) (say head "that row cannot be addressed in the file") t)
+           (t (multiple-value-bind (mark why) (repo-todo-toggle ws line)
+                (say head (cond (why why)
+                                ((eq mark :done) "marked done in TODO.md")
+                                (t "marked open again in TODO.md")))
+                ;; and the pane redraws from the file it just changed
+                (setf *repo-todo-cache* nil *repo-todo-stamp* nil)
+                t)))))
+      (t (say head "nothing to mark on that row") t))))
 
 (defun %todo-remove (head)
   "Delete the operator's own item under the cursor. T when a key was taken.

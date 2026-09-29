@@ -22400,3 +22400,115 @@ reason."
                "**but the ceiling covers rano's**, so the next add here cannot be t9"))
       (leticl::store-close))
     (setf leticl::*store-path-override* nil)))
+
+;;; ================================ marking a shared TODO.md, ONE line of it ;;;
+
+(def-test marking-a-todo-md-row-rewrites-one-line-and-nothing-else (:suite leticl)
+  "**The shared half of the list, and the whole hazard is that it is a FILE.**
+
+R44's split, in the operator's own terms: the todos near the session are the head's own (per project,
+sqlite, nobody else sees them) and the ones in `TODO.md` are the ones to SHARE — committed, travelling
+with the repo, possibly being edited by somebody else right now.
+
+`read-todo-md` is LOSSY: it parses lines into rows and `%todo-row-lines` re-renders from the parsed
+fields. So the obvious implementation — flip a mark in the parsed list, write the rows back — would
+REFORMAT THE ENTIRE FILE, dropping every byte the parser does not model: prose between items, the
+indent under an item, wrapping, trailing space. On a shared, committed file that is a diff nobody asked
+for and a conflict for the next person. Hence one line, spliced.
+
+This asserts the property that makes that true, byte for byte: **every line but the marked one is
+IDENTICAL.**"
+  (let* ((text (format nil "# TODO~%~
+~%~
+## 1. Bugs~%~
+- [ ] first item~%~
+  a detail line with trailing space   ~%~
+- [x] second item~%~
+- [~~] third, in progress~%~
+~%~
+Some prose between sections that no parser models.~%~
+~%~
+## 2. Later~%~
+- [ ] fourth~%"))
+         ;; line 4 is `- [ ] first item`
+         (orig-lines (uiop:split-string text :separator '(#\newline))))
+    (multiple-value-bind (new mark why) (leticl::%todo-md-toggle-line text 4)
+      (is (null why) "no refusal")
+      (is (eq :done mark) "**an open row ticks**")
+      (let ((new-lines (uiop:split-string new :separator '(#\newline))))
+        (is (= (length orig-lines) (length new-lines))
+            "**the line count is unchanged** — nothing was added or dropped")
+        (is (equal "- [x] first item" (nth 3 new-lines)) "and line 4 is the only one that moved")
+        (loop for a in orig-lines for b in new-lines for i from 1
+              unless (= i 4)
+                do (is (equal a b)
+                       (format nil "**line ~d is byte-identical** — this is the property that makes the
+ edit safe on a file other people are editing" i))))
+      ;; and back again
+      (multiple-value-bind (again mark2 why2) (leticl::%todo-md-toggle-line new 4)
+        (declare (ignore why2))
+        (is (eq :open mark2) "a done row reopens")
+        (is (equal text again) "**and the round trip returns the ORIGINAL file, byte for byte**")))
+    ;; **THE TWO REFUSALS, both said rather than silent.**
+    (multiple-value-bind (none mark why) (leticl::%todo-md-toggle-line text 1)
+      (is (null none) "a heading has no checkbox")
+      (is (null mark) "and nothing to report as marked")
+      (is (and why (search "no checkbox" why)) "and the refusal says so"))
+    ;; **LINE 7, not 6** — the first cut of this test asserted the `[x]` line, which flips happily,
+    ;; so the `[~~]` refusal was never actually exercised. Counting lines in a fixture is exactly the
+    ;; kind of arithmetic a test should not be trusted to do by eye; the parser's own test asserts
+    ;; the numbering for that reason.
+    (multiple-value-bind (none mark why) (leticl::%todo-md-toggle-line text 7)
+      (is (null none) "**`[~~]` does not flip** — it is somebody's claim on the row")
+      (is (null mark) "nothing was marked")
+      (is (and why (search "in progress" why)) "and that is said in those words"))
+    (multiple-value-bind (none mark why) (leticl::%todo-md-toggle-line text 9999)
+      (is (null none) "a line past the end is refused")
+      (is (null mark) "nothing marked")
+      (is (and why (search "not in the file" why)) "by name"))))
+
+(def-test the-parser-records-which-line-each-row-came-from (:suite leticl)
+  "The line number is what makes the edit surgical, so it has to come from the SAME walk that produced
+the rows — not from a second pass. Re-deriving it is R44's own defect (*two enumerations is the
+defect*): the parser skips headings, joins wrapped bodies and drops blanks, so an index into the rows
+does not name a line in the file."
+  (let* ((rows (leticl::read-todo-md (format nil "## S~%~
+- [ ] alpha~%~
+  detail~%~
+- [x] beta~%~
+- [ ] gamma~%")))
+         (items (remove-if-not (lambda (r) (getf r :item)) rows)))
+    (is (= 3 (length items)) "three item rows")
+    (is (equal '(2 4 5) (mapcar (lambda (r) (getf r :line)) items))
+        "**and each names its own line in the FILE** — 2, 4 and 5, with the detail line under the
+ first one carrying no row of its own")
+    (is (eq :open (getf (first items) :mark)))
+    (is (eq :done (getf (second items) :mark)))))
+
+(def-test marking-a-host-only-todo-is-refused-for-rows-it-cannot-own (:suite leticl)
+  "The other section is the head's OWN list — per project, in sqlite. Marking one flips its status,
+saves THAT ROW, and re-pushes the board so the idle nag stops naming it.
+
+The refusals matter as much as the action: the model's rows are not stops, a heading has no checkbox,
+and a `[~]` TODO.md row is somebody's claim. Each says something, because a key that appears to do
+nothing is the defect this pane has been fixed for twice."
+  (dash-reset-series)
+  (let ((leticl::*operator-todos* (list (list :id "t1" :content "mine" :detail "" :status "open")))
+        (leticl::*write-prefs* nil)          ; no store writes in a test
+        (h (%on-head)))
+    (setf (head-mode h) :todos
+          (head-picker-sel h) 1)             ; stop 0 is the add control
+    (is (equal '(:mine . "t1") (leticl::todo-stop-at h))
+        "the cursor is on the operator's own row")
+    ;; **the flip itself**
+    (is (leticl::%todo-toggle h) "space takes the key")
+    (is (string-equal "completed" (getf (first leticl::*operator-todos*) :status))
+        "**and the row is done** — a row you can create and destroy but never finish is not editable")
+    (is (leticl::%todo-toggle h) "and again")
+    (is (string-equal "open" (getf (first leticl::*operator-todos*) :status))
+        "**the round trip reopens it**, so a mis-press costs one press to undo")
+    ;; **the add control is not a row** — refused by name rather than silently
+    (setf (head-picker-sel h) 0)
+    (is (leticl::%todo-toggle h) "the key is still taken, so it does not fall through to the composer")
+    (is (string-equal (head-status-note h) "nothing to mark on that row")
+        "**and it SAYS so** — a key that appears to do nothing is the defect this pane keeps finding")))
