@@ -232,6 +232,8 @@
    ;; R56: the same vocabulary, read from FILES — see `src/dashfiles.lisp`
    #:dash-load-file-panels #:dash-file-load-needed-p #:dash-file-notes #:dash-file-dirs
    #:dash-panel-from-spec #:dash-spec-row #:dash-read-spec-file #:dash-workspace-config-dir
+   ;; R57 A1: the two closed row vocabularies, and the check that refuses an unknown word
+   #:+dash-row-kinds+ #:+dash-row-formats+ #:dash-spec-vocabulary-check
    #:dash-ms-text #:dash-ago-text #:+dash-file-format+
    #:*dash-file-errors* #:*dash-file-scope* #:*dash-file-workspace*
    ;; R56: WATCHERS and SINKS — what produces a series from a file, and where it is published

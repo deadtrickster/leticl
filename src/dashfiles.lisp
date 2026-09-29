@@ -118,6 +118,47 @@ conventions*, which is what `src/json.lisp` exists to be."
             (values nil "the file's top level is not a JSON object")))
     (error (e) (values nil (format nil "~a" e)))))
 
+(defun dash-spec-vocabulary-check (spec path)
+  "Signal when SPEC names a row `kind` or `format` this head does not have. NIL when every word is
+known — **and that NIL is deliberate: an unreadable word is not the same as an absent one.**
+
+**THE REFUSAL IS AT LOAD, NOT AT DRAW, and that is the whole point.** These two words were validated
+nowhere: `%dash-spec-kind` fell back to `:plain` and `%dash-format-value` to `~:d`, so a typo rendered
+as a plausible row for ever and the author — who is not at a REPL — never saw a nil to notice. A file
+is the boundary where the person who wrote the word is absent, so it is the boundary that has to
+speak.
+
+**AND IT NAMES THE FILE, THE WORD, AND THE ROW**, because a message that says *invalid kind* leaves
+the reader grepping. The row's label is the handle they wrote themselves.
+
+This is the same shape as `dash-spec-format-check` beside it — one pass over the spec at load, one
+named refusal — rather than a check inside the renderer, for the reason `dash-load-file-panels`
+gives: no file in these directories can stop the head from starting, and no file can stop another file
+from working. A refusal here is a line in the pane.
+
+**PATH IS NOT USED IN ANY MESSAGE HERE, and that is the caller's arrangement rather than an oversight:**
+`dash-load-file-panels` catches the signal and pairs it with the path it was reading, so the pane shows
+`machine.json: <this sentence>`. The parameter stays because it is what says which file is being
+checked — and `dash-spec-format-check` beside it has the same shape."
+  ;; **THE DECLARATION COMES AFTER THE DOCSTRING**, which is CLHS's order
+  ;; (`[[declaration* | docstring]]` reads as docstring first, then declarations). Written the other
+  ;; way round the docstring stops being the docstring — MEASURED: the suite's own docstring check
+  ;; reported it as *"1 body form that is not a form"*, because a string after a `declare` is a plain
+  ;; string form in a body, which is the exact thing that check exists to find.
+  (declare (ignore path))
+  (dolist (row (getf spec :rows))
+    (when (listp row)
+      (let ((kind (getf row :kind))
+            (fmt (getf row :format))
+            (label (or (getf row :label) (getf row :series) "a row")))
+        (when (and kind (stringp kind) (not (member kind +dash-row-kinds+ :test #'string-equal)))
+          (error "\"kind\": \"~a\" on row \"~a\" is not a kind this head draws — the words are ~{~a~^, ~}"
+                 kind label +dash-row-kinds+))
+        (when (and fmt (stringp fmt) (not (member fmt +dash-row-formats+ :test #'string-equal)))
+          (error "\"format\": \"~a\" on row \"~a\" is not a format this head renders — the words are ~{~a~^, ~}. **A word it does not know cannot be rendered HONESTLY**, and the cost is a misread of magnitude with no symptom: a byte counter would print 19953650499584 where the author meant 185.8G."
+                 fmt label +dash-row-formats+)))))
+  nil)
+
 (defun dash-spec-format-check (spec path)
   "Signal unless SPEC declares the format this head reads. NIL is version 1 — a file that does not
 say is the first version, which is the only reading that is not a guess."
@@ -136,11 +177,39 @@ say is the first version, which is the only reading that is not a guess."
   "**A CLOSED set of NAMES, never a format string.** A `format` string in a data file is Lisp's
 `format` with extra steps, and it is how a data format becomes a programming language — which is
 this design's own stated failure condition. Each name maps to a function or a two-line form the head
-already has.")
+already has.
+
+**CLOSED AT THE FILE BOUNDARY, and the criterion is the one R57 settled** — *closed iff an unknown
+value forces the renderer to GUESS; open iff the renderer can render the unknown itself honestly.*
+An unknown `format` cannot render honestly at all: it fell through to `~:d`, so a byte counter an
+author wrote as `bytes` and meant as `185.8G` came out `19953650499584`. **A silent misread of
+magnitude with no symptom**, which is worse than a mis-coloured row, and invisible to the author
+because they are not at a REPL to see the nil.
+
+The LISP API is a different boundary and stays OPEN: `dash-register` takes any `:kind` keyword and
+`dash-style-for` answers NIL for one it does not know, which is where runtime invention lives and an
+unstyled row misleads nobody.")
 
 (defparameter +dash-row-kinds+ '("plain" "dim" "good" "warn" "crit" "pending")
-  "The renderer's `:kind` vocabulary, named here so an unknown word falls back to `plain` instead of
-becoming a keyword the painter has never seen.")
+  "The renderer's `:kind` vocabulary, **closed at the FILE boundary** for the reason
+`+dash-row-formats+` gives. It used to fall back to `:plain` silently, so a typo on an alarm row —
+`\"critcal\"` — rendered as an ordinary row: precisely the cost R57 §3.3 names for a guessed tone,
+*\"a guessed colour mis-states consequence, silently, and the reader has no way to know.\"*")
+
+(defun %dash-list-has-duplicates-p (list)
+  "T when LIST holds the same word twice. **A registry is not a bag with a lookup rule.**
+
+letibot found the cost of not checking: its classifier held `git symbolic-ref` in BOTH the read arm
+and the write arm, the match takes the FIRST, and a command that rewrites `.git/HEAD` was therefore
+judged a read and admitted at every tier. Its own conclusion is the rule here — *\"a set that can
+hold a name twice is not a registry; it is a bag with a lookup rule, and which of the two entries
+wins is decided by source order.\"* And the compiler had already said so as `unreachable pattern`:
+*\"a warning is not a decision.\"*
+
+The lists below are short and hand-written, which is exactly the case where a duplicate is a typo
+nobody notices — so the check is a TEST that fails the suite rather than a note, because in Lisp a
+warn is a line nobody reads."
+  (not (equal list (remove-duplicates list :test #'string-equal))))
 
 (defun dash-ms-text (ms)
   "A duration in MS as words a reader can act on, or NIL."
@@ -534,6 +603,10 @@ whose file was deleted."
                     (push (cons path msg) errors)
                     (progn
                       (dash-spec-format-check spec path)
+                      ;; **AND THE ROW VOCABULARY, at the same moment and for the same reason** — an
+                      ;; unknown `kind` or `format` is a typo the author cannot see, because they are
+                      ;; not at a REPL, so the boundary where they are absent is the one that speaks.
+                      (dash-spec-vocabulary-check spec path)
                       (let* ((name (or (getf spec :name) (%dash-file-stem path)))
                              (enabled (if (member :enabled spec)
                                           (getf spec :enabled)

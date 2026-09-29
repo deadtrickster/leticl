@@ -22512,3 +22512,96 @@ nothing is the defect this pane has been fixed for twice."
     (is (leticl::%todo-toggle h) "the key is still taken, so it does not fall through to the composer")
     (is (string-equal (head-status-note h) "nothing to mark on that row")
         "**and it SAYS so** — a key that appears to do nothing is the defect this pane keeps finding")))
+
+;;; ============ a closed set is closed AT THE FILE BOUNDARY, and says so ============
+
+(def-test an-unknown-row-kind-in-a-file-is-refused-by-name (:suite leticl)
+  "**The criterion R57 settled, applied where it bites**: *closed iff an unknown value forces the
+renderer to GUESS; open iff the renderer can render the unknown itself honestly.*
+
+An unknown `:kind` renders honestly as unstyled — from the API, where runtime invention lives and
+`dash-style-for` answering NIL for a keyword it does not know misleads nobody. **From a FILE it is a
+typo the author cannot see**, because they are not at a REPL to watch a nil go past. So the file is the
+boundary that has to speak.
+
+What it cost: `%dash-spec-kind` fell back to `:plain` silently, so `\"critcal\"` on an alarm row rendered
+as an ordinary row — R57 §3.3's own words: *\"a guessed colour mis-states consequence, silently, and the
+reader has no way to know.\"*
+
+**The typo in this test is `critcal`, not `zzz`, on purpose.** A test whose word could never be typed
+documents the mechanism; a test whose word is one keystroke from the right one documents the FAILURE,
+which is what a reader six months from now needs."
+  ;; the plausible typo: one transposition away from `crit`
+  (let ((spec (list :rows (list (list :label "errors" :series "imp.errors" :kind "critcal")))))
+    ;; **THE CATCH IS OUTSIDE `is`, and it has to be**: fiveam's `is` DESTRUCTURES its form to build
+    ;; a reason string, so `(is (handler-case A (error (e) B)))` is read as predicate `handler-case`
+    ;; with arguments `A` and `(error (e) B)` — and the condition the handler was written to catch
+    ;; ESCAPES. MEASURED, this is the third time in one session that a refusal test failed for this
+    ;; reason rather than for the behaviour, so it is written down here rather than rediscovered.
+    (is (not (null (handler-case (progn (leticl::dash-spec-vocabulary-check spec #P"/tmp/x.json") nil)
+                     (error (e) (format nil "~a" e)))))
+        "**`critcal` is refused** — an alarm row that would have drawn as ordinary")
+    (let ((msg (handler-case (progn (leticl::dash-spec-vocabulary-check spec #P"/tmp/x.json") nil)
+                 (error (e) (format nil "~a" e)))))
+      (is (search "critcal" msg) "**the message names the WORD**, so the author can fix it")
+      (is (search "errors" msg) "and the ROW, by the label they wrote themselves")
+      (is (search "crit" msg) "**and lists the words that exist**, because a refusal that does not say
+ what it wanted leaves the reader grepping the source")))
+  ;; every known word passes, so the guard is not merely strict
+  (dolist (k +dash-row-kinds+)
+    (is (null (leticl::dash-spec-vocabulary-check
+               (list :rows (list (list :label "r" :kind k))) #P"/tmp/x.json"))
+        (format nil "`~a` is a word this head draws" k)))
+  ;; and absent is not unknown: a row with no `kind` is the common case
+  (is (null (leticl::dash-spec-vocabulary-check (list :rows (list (list :label "r"))) #P"/tmp/x.json"))
+      "**a row that says nothing about its kind is not a row with a bad one**"))
+
+(def-test an-unknown-row-format-is-refused-because-it-cannot-render-honestly (:suite leticl)
+  "**The same treatment, and this is the one with teeth.** An unknown `format` fell through to `~:d`, so a
+byte counter the author wrote as `bytes` — and meant as `185.8G` — printed `19953650499584`. **A silent
+misread of magnitude with no symptom**, and the author never sees it because they are not at a REPL.
+
+The criterion decides it without argument: an unknown `kind` at least renders as *something* honest
+(unstyled) from the API; an unknown `format` **cannot render honestly at all**, which is why the word has
+to come from a closed list."
+  (let ((spec (list :rows (list (list :label "read" :series "imp.bytes" :format "byte")))))
+    (let ((msg (handler-case (progn (leticl::dash-spec-vocabulary-check spec #P"/tmp/x.json") nil)
+                 (error (e) (format nil "~a" e)))))
+      (is (search "byte" msg)
+          "**`byte` for `bytes` is refused** — the singular, which is the typo a person actually types")
+      (is (search "read" msg) "and the row is named")
+      (is (search "185.8G" msg)
+          "**and the message says what WOULD have happened** — the raw number instead of a readable
+ size, which is the whole reason this word is closed")
+      (is (search "bytes" msg) "and the words that do exist are listed")))
+  (dolist (f +dash-row-formats+)
+    (is (null (leticl::dash-spec-vocabulary-check
+               (list :rows (list (list :label "r" :format f))) #P"/tmp/x.json"))
+        (format nil "`~a` is a format this head renders" f))))
+
+(def-test the-two-closed-lists-are-registries-and-not-bags-with-a-lookup-rule (:suite leticl)
+  "**letibot's finding, applied before it can happen here.** Its classifier held `git symbolic-ref` in
+BOTH the read arm and the write arm; the match takes the FIRST, so a command that rewrites `.git/HEAD`
+was judged a read and admitted at EVERY tier. Its own conclusion is the rule: *\"a set that can hold a
+name twice is not a registry; it is a bag with a lookup rule, and which of the two entries wins is
+decided by source order.\"* And the compiler had already said so, as `unreachable pattern` — *\"a warning
+is not a decision.\"*
+
+**A warning is not a decision here either**, which is why this is a test that FAILS the suite rather
+than a `warn` in the loader: in Lisp a warn is a line nobody reads. The two lists are short and
+hand-written, which is exactly the case where a duplicate is a typo nobody notices — and the failure it
+would cause is the quietest kind, a word that validates and then never matches the arm that acts on it."
+  (is (not (leticl::%dash-list-has-duplicates-p +dash-row-kinds+))
+      "**`+dash-row-kinds+` holds no word twice**")
+  (is (not (leticl::%dash-list-has-duplicates-p +dash-row-formats+))
+      "**and neither does `+dash-row-formats+`**")
+  ;; the check can actually fire, so the two assertions above are not vacuous
+  (is (leticl::%dash-list-has-duplicates-p '("a" "b" "a"))
+      "**and the check FAILS on a list that does hold a word twice** — a guard that cannot fail is the
+ defect this suite has now found four times (the floor test, `format`'s silent fallback, the `[~~]`
+ refusal asserted on the wrong line, and this)")
+  ;; and the two sets are disjoint from each other, which is the sibling question: `plain` is a kind and
+  ;; never a format, and a word that were both would make one spelling mean two things
+  (is (null (intersection +dash-row-kinds+ +dash-row-formats+ :test #'string-equal))
+      "**no word is in both lists** — a word that is a kind AND a format would read as valid either way
+ and act as only one of them"))
