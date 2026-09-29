@@ -1141,8 +1141,9 @@ seated there."
            ;; the protected form's `(values …)` needs six closes to get back to the `handler-case`
            ;; itself, and seven reached past it — which left THIS clause outside the `handler-case`
            ;; as a stray form, so `(error (e) …)` read as a call to the function `e`. Measured the
-           ;; same way as the `dash-watcher-source-fn` defect: walk the file with a paren counter and
-           ;; read where the depth lands, rather than counting by eye.
+           ;; same way as the `dash-watcher-source-fn` defect: `scripts/count-parens.py FILE FIRST LAST`
+           ;; prints the depth at every line, and it goes to 5 here and 0 at the clause, rather than
+           ;; to 4 and 0 — which is the whole of the difference and took a counter to see.
            (error (e) (values nil (format nil "TODO.md could not be read: ~a" e))))))))
 
 (defun %todo-md-item-text (raw-line)
