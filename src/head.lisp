@@ -1739,13 +1739,27 @@ paragraph exists rather than a line saying \"live\".")
 what `*idle-poll-ms*` sets and what the operator's sluggish-scroll complaint was about: a FRAME count
 answers *how fast does it draw*, and this answers *how often does it look at the input at all*.
 
-**NOT YET MEASURED ON A RESTARTED HEAD, and saying so rather than quoting arithmetic as if it were a
-reading.** The figure the change predicts is ~500 passes/s (a 2 ms wait and a pass under a
-microsecond); the OLD figure that `+notice-ttl-ms+`'s docstring recorded from its own instrument was
-**~38 passes/s**, which is consistent with a 30 ms wait and is the number this change moves. But this
-counter could not confirm the new one, because the loop running when it was pushed was executing its
-old body — `*loop-passes*` stayed at 0 while the head kept painting, which is itself the measurement
-that proved the restart is needed. **The reading is owed on the next head start.**
+**MEASURED, both sides, on a real head running the real loop with no daemon and no terminal** (an
+idle head has nothing dirty and nothing live, so it takes the branch under test every pass):
+
+    wait 30 ms  ->   69 passes in 2.0 s =   34 passes/s, 28.99 ms per pass
+    wait  2 ms  ->  974 passes in 2.0 s =  487 passes/s,  2.05 ms per pass
+
+So the change is **14x**, and a pass is now 2.05 ms against a wait of 2.00 ms — the wait and the work
+are finally the same order, where before the wait was 400x the work. The OLD reading also
+corroborates `+notice-ttl-ms+`'s docstring, which got ~38 passes/s from the note-expiry instrument on
+an idle screen: 34 and 38 are one configuration measured twice by two methods.
+
+**THE FIRST ATTEMPT AT THIS MEASUREMENT WAS WRONG IN A WAY WORTH KEEPING.** It `let`-bound
+`*idle-poll-ms*` for the old value and reported 486 and 486 — because `run-loop` runs in its OWN
+THREAD, and a thread does not inherit the parent's dynamic bindings. **Two identical numbers read as
+agreement rather than as a probe measuring one configuration twice.** `setf` on the global is what the
+second attempt used.
+
+**And this counter could not confirm anything on the head it was pushed to** — `*loop-passes*` stayed
+at 0 there while the head kept painting, because that head's loop is executing its OLD body. That is
+itself the measurement that proved a restart is needed, and it is why the reading above is from a
+THROWAWAY head rather than from the live one.
 
 A `defvar`, so a live push does not reset a running head's count.")
 
