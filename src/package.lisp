@@ -166,6 +166,8 @@
    #:*card-scroll* #:*card-page* #:*scroll-notch*
    ;; R57's sibling: the loop's own wait, which IS the head's input latency
    #:*idle-poll-ms* #:*frames-painted* #:*loop-passes*
+   ;; R57: one bad byte on stdin must not take the keyboard — see head.lisp's `%input-loop`
+   #:+input-external-format+
    #:%wheel-batch #:%wheel-notches
    ;; R40: which row `ctrl-t` acts on, so a seam names the chord only there
    #:newest-payload-row-p #:newest-payload-item-id #:*payload-head*

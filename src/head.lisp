@@ -177,14 +177,71 @@ reports beside the level, so \"terse\" is a number and not a mood.")
 ack's accounting, which `/status` shows as `seq · N rendered` the way the
 reference does. Counted by this head, not by the daemon.")
 
+(defparameter +input-external-format+ '(:utf-8 :replacement #\?)
+  "How fd 0 is decoded. **The `:replacement` IS THE FIX, not a nicety.**
+
+MEASURED: a byte that is not valid UTF-8 on stdin makes SBCL's UTF-8 decoder signal
+`STREAM-DECODING-ERROR: :UTF-8 stream` — the operator's *\"complaining about wrong character code
+while i was typing\"*. Reproduced with a one-byte file:
+
+    lone continuation 0x80   -> STREAM-DECODING-ERROR: :UTF-8 stream
+    0xff                     -> the same
+    latin1 e9 (e-acute)      -> the same
+    esc [ 0x80               -> the same   (a mouse sequence with one bad byte)
+    valid utf-8              -> read fine
+
+`read-char` with a bare `:utf-8` therefore signals on the FIRST undecodable byte, and a terminal can
+send one at any moment: a mis-encoded key, a paste from a Latin-1 file, a byte lost in a resize race.
+
+**The head must not care.** It renders cells and it is not the terminal's editor: one byte it cannot
+decode is one wrong glyph, and refusing the WHOLE stream for it means the reader's keyboard stops.
+`:replacement` makes the decoder produce `#\?` for that byte and carry on, which is the same trade this
+tree makes everywhere else — an unknown thing is DRAWN as something honest rather than taken as a
+reason to stop. And it is why this is a parameter rather than a literal: the encoding is a choice about
+this head's input, and a head on a terminal that is genuinely not UTF-8 wants a different answer.
+
+**It is also not a substitute for `%input-loop`'s guard.** A guard says *something went wrong and here
+it is*; this says *this is not wrong*. Both are wanted: the format handles the byte, and the guard
+handles everything the format cannot — a closed fd, a mailbox failure — because the reader thread is
+the one thing whose death is silent.")
+
 (defun %input-loop (head)
-  "Terminal → keys mailbox."
+  "Terminal → keys mailbox.
+
+**NOTHING HERE MAY END THE THREAD, AND IT HAD NO GUARD AT ALL.** The operator: *\"it was complaining
+about wrong character code while i was typing\"* — and that message is `STREAM-DECODING-ERROR`, MEASURED,
+raised by this loop's own `read-char` on a byte that is not valid UTF-8. See `+input-external-format+`
+for the fix at the source; this guard is the second half, for everything the DECODER cannot be asked to
+tolerate.
+
+An error here does not reach `run-loop`'s guards: it kills THIS thread, and the mailbox is then never
+written again while the head keeps painting and answering evals. Typing stops and the only symptom is
+that the screen stops changing — the worst shape a failure can take, because nothing says anything.
+
+So an unreadable byte is SAID and the loop goes on. The status note is the right register for it: the
+reader is at the keyboard, that is exactly where they are looking, and the note expires on its own
+rather than needing to be cleared. `handler-case` around the WHOLE body, not just `read-key`: sending
+to the mailbox is the other half that must not end the only reader there is.
+
+The `:eof` return is OUTSIDE the guard on purpose — a closed stdin is a fact about the terminal, not
+an error, and a guard that swallowed it would leave a thread spinning on a dead fd."
   (let ((in (sb-sys:make-fd-stream 0 :input t :element-type 'character
-                                   :external-format :utf-8 :buffering :none)))
+                                   :external-format +input-external-format+)))
     (loop
-      (let ((key (read-key in)))
-        (sb-concurrency:send-message (head-keys head) key)
-        (when (eq (getf key :type) :eof) (return))))))
+      (let ((key nil) (eof nil))
+        (handler-case
+            (progn
+              (setf key (read-key in))
+              (sb-concurrency:send-message (head-keys head) key))
+          (error (e)
+            ;; said, not swallowed: a reader whose keys are being dropped must be told, and the
+            ;; expiry means the message does not have to be cleaned up
+            (ignore-errors (say head (format nil "input: ~a" e)))
+            ;; a byte this decoder cannot read is CONSUMED rather than re-read, or the loop spins on
+            ;; it: reading one char off the stream advances past whatever arrived
+            (ignore-errors (read-char in nil nil))))
+        (when (or (and key (eq (getf key :type) :eof)) (eq key :eof))
+          (return))))))
 
 ;;; ------------------------------------------------------------ frames ;;;
 
@@ -1868,16 +1925,28 @@ reason — a live push must not reset a running head's count.")
              ;; and its measurements; this is only the ordering that rule requires. The non-wheel keys
              ;; go first, in arrival order, so an `esc` or a printable key that changes what a notch
              ;; MEANS is applied BEFORE the gesture — the gesture lands on the view it was made on.
-             (multiple-value-bind (others wheel-kind wheel-notches)
-                 (%wheel-batch (%drain (head-keys head)))
-               (dolist (key others)
-                 (handler-case (%handle-key head key)
-                   (error (e) (ignore-errors (say head (format nil "key error: ~a" e))))))
-               (when (and wheel-kind (plusp wheel-notches))
-                 (handler-case
-                     (%handle-key head (list :type :mouse :kind wheel-kind
-                                             :notches wheel-notches :x 0 :y 0))
-                   (error (e) (ignore-errors (say head (format nil "key error: ~a" e)))))))
+             ;;
+             ;; **AND THE WHOLE BATCH IS INSIDE A GUARD, WHICH IS A REGRESSION THIS EXTRACTION CAUSED
+             ;; AND ITS OWN REPORT CAUGHT.** The inline version had every key inside a `handler-case`;
+             ;; writing the batch as a call put `%drain` and `%wheel-batch` OUTSIDE it, so an error
+             ;; raised while merely READING or CLASSIFYING a key escaped `run-loop` — and with
+             ;; `--disable-debugger` an unhandled error on the main thread prints the condition and
+             ;; QUITS THE HEAD. The operator's report was *"it was complaining about wrong character
+             ;; code while i was typing"* and a restart. The outer `handler-case` is the fix: nothing
+             ;; a KEY can do — being malformed, unreadable, or unclassifiable — may take the head down,
+             ;; which is the same rule `%handle-key`'s own guard has always followed.
+             (handler-case
+                 (multiple-value-bind (others wheel-kind wheel-notches)
+                     (%wheel-batch (%drain (head-keys head)))
+                   (dolist (key others)
+                     (handler-case (%handle-key head key)
+                       (error (e) (ignore-errors (say head (format nil "key error: ~a" e))))))
+                   (when (and wheel-kind (plusp wheel-notches))
+                     (handler-case
+                         (%handle-key head (list :type :mouse :kind wheel-kind
+                                                 :notches wheel-notches :x 0 :y 0))
+                       (error (e) (ignore-errors (say head (format nil "key error: ~a" e)))))))
+               (error (e) (ignore-errors (say head (format nil "key batch error: ~a" e)))))
              (handler-case (%poll-resize head)
                (error (e) (ignore-errors (say head (format nil "resize error: ~a" e)))))
              ;; `*replaying*`: a replay has no socket to come back to, and

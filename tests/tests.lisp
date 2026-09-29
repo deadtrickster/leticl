@@ -22200,3 +22200,73 @@ name. The behavioural half is already covered by the anchor's own test."
  over bounds`) and the code says it in parentheses, which is what makes the two distinguishable.")
     (is (search "(not (find until-id" src)
         "the condition is still there, so the fix is a binding and not the removal of the guard")))
+
+;;; ========================= one bad byte must not take the keyboard ;;;
+
+(def-test a-byte-the-decoder-cannot-read-does-not-kill-typing (:suite leticl)
+  "**The operator, twice: *\"it was complaining about wrong character code while i was typing\"*, and a
+restart.** That message is `STREAM-DECODING-ERROR: :UTF-8 stream`, and it comes from `read-char` on this
+head's own fd 0 when the terminal sends a byte that is not valid UTF-8. MEASURED, one byte at a time:
+
+    lone continuation 0x80   -> STREAM-DECODING-ERROR
+    0xff                     -> the same
+    latin1 e9 (e-acute)      -> the same
+    esc [ 0x80               -> the same   (a mouse sequence with one bad byte)
+
+and `%input-loop` **had no guard at all**, so that signal killed the reader thread: the mailbox was
+never written again, typing stopped, and the only symptom was a screen that stopped changing.
+
+Two fixes, and this test pins BOTH halves. `+input-external-format+` carries `:replacement`, so the
+byte becomes `#\?` — the head must not refuse a stream over one glyph it cannot name, the same trade it
+makes when it draws an unknown shape instead of stopping. And the loop's own `handler-case` covers what
+the decoder cannot be asked to tolerate.
+
+A terminal can send such a byte at any moment — a mis-encoded key, a paste out of a Latin-1 file, a byte
+lost in a resize race — so this is not a corner: it is a thing that WILL happen to a reader who types."
+  (flet ((feed (label bytes)
+           (let ((path (merge-pathnames (format nil "leticl-byte-~a.bin" label)
+                                        (uiop:temporary-directory))))
+             (with-open-file (s path :direction :output :element-type '(unsigned-byte 8)
+                                 :if-exists :supersede :if-does-not-exist :create)
+               (write-sequence (coerce bytes '(vector (unsigned-byte 8))) s))
+             (with-open-file (in path :direction :input :element-type 'character
+                                      :external-format +input-external-format+)
+               (read-key in)))))
+    ;; **THE HEAD'S OWN FORMAT DECODES EVERY ONE OF THEM.** Each returns a key; none signals.
+    (dolist (case '(("80" (#x80))
+                    ("ff" (#xff))
+                    ("latin1" (#xe9))
+                    ("esc-csi-80" (#x1b #x5b #x80))
+                    ("colon-80" (#x3a #x80))))
+      ;; **THE CATCH HAPPENS OUTSIDE `is`.** fiveam's `is` DESTRUCTURES its form to build a reason
+      ;; string, so `(is (handler-case A (error (e) B)))` is read as predicate `handler-case` with
+      ;; arguments `A` and `(error (e) B)` — and `e` ends up FUNCALLED instead of bound. MEASURED
+      ;; here: `UNDEFINED-FUNCTION E`.
+      (let ((outcome (handler-case (progn (funcall #'feed (first case) (second case)) :ok)
+                       (error (e) (format nil "signalled ~a" (type-of e))))))
+        (is (eq :ok outcome)
+            (format nil "**a ~a byte decodes instead of signalling** — the operator's typing must not
+ stop because the terminal sent one glyph the head cannot name (got ~a)" (first case) outcome))))
+    ;; and a VALID multi-byte character is still itself — the replacement must not be a blunt
+    ;; downgrade of the encoding, which would silently corrupt every non-ASCII key
+    (is (char= (code-char 252)                     ; ü
+               (getf (feed "umlaut" '(#xc3 #xbc)) :ch))
+        "**and a real multi-byte character still arrives as itself** — `:replacement` replaces the
+ BYTE, not the encoding"))
+  ;; **AND THE STREAM IS NOT THE ONLY GUARD.** The reader thread is the one whose death is silent, so
+  ;; the loop must survive what the decoder cannot be asked to tolerate. Asserted on the source, because
+  ;; `%input-loop` opens fd 0 and a test image has no terminal to make it fail.
+  (let ((src (%src-text "head.lisp")))
+    (is (search "+input-external-format+" src)
+        "the input stream is opened with the named format")
+    (is (search ":replacement" src)
+        "**which carries `:replacement`** — the fix at the source, not only a guard around it")
+    (is (search "(defun %input-loop" src) "the loop is still there"))
+  ;; and the MAIN loop's key batch is guarded, which is a regression this session introduced
+  (let ((src (%src-text "head.lisp")))
+    (is (search "key batch error" src)
+        "**`%wheel-batch` and the drain are inside a guard** — extracting the batch as a call put them
+ OUTSIDE the `handler-case` that used to wrap every key, so an error raised while merely READING or
+ CLASSIFYING a key escaped `run-loop` — and an unhandled error on the main thread with
+ `--disable-debugger` prints the condition and QUITS THE HEAD. Nothing a key can do may take the head
+ down, which is the rule `%handle-key`'s own guard has always followed.")))
