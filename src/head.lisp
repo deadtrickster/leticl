@@ -1686,6 +1686,75 @@ Oldest request first."
         (%send head (make-screen-answer req cols rows-n rows)))
       (setf (head-screen-reqs head) nil))))
 
+(defparameter *idle-poll-ms* 0.002
+  "How long the loop waits when there is nothing to do. **This number IS the head's input
+latency**, and it was 30 ms until the operator said scrolling *\"feels sluggish, steppier\"*.
+
+**MEASURED, all three at the operator's own size (63 rows x 210 cols, an 87-item transcript):**
+
+  · a full `%render`: **0.07 ms** — so render alone could sustain ~15,000 passes/s;
+  · an idle pass (`tick-notice`, both dash ticks, both drains, `live-frame-due-p`): **under
+    0.001 ms**, i.e. below the timer's resolution — free;
+  · the old `(sleep 0.03)`: **30 ms**, about 430 times the cost of the work it guarded.
+
+**WHY THE OLD NUMBER WAS SO BAD, and it is the second half of the diagnosis.** A paint CLEARS
+`head-dirty`, so the pass after a paint had nothing to do and slept again. That made the loop's
+event ceiling **one wheel event per 30 ms — 33 a second** — however fast input arrived. A trackpad
+sends far more than that, so events queued and each paint jumped by however many had accumulated:
+
+  · *sluggish* — the first notch waited up to 30 ms to be read at all;
+  · *steppier* — the scroll moved in 3N-row jumps at 33 Hz instead of 3-row steps at the rate the
+    finger actually moved.
+
+Two symptoms, one number.
+
+**POLLING IS THE RIGHT SHAPE HERE, and the measurement is why that is not a contradiction.** The
+usual objection to a polling loop is that it spends CPU discovering there is nothing to do; at 500
+wakeups/s of sub-microsecond work that is under 0.1% of a core, and the syscall overhead dominates
+the pass itself. An event-driven loop would have to wait on the KEYS mailbox, which cannot wake it
+for a daemon FRAME — so it would trade an *input* latency of 2 ms for a *frame* latency of whatever
+that wait was, and a frame latency is a streaming reply's responsiveness. Polling both queues at a
+rate above any input device's is simpler and strictly better while a pass is free.
+
+**A `defparameter` and not a `defconstant`**, for the reason every tunable in this tree is: the file
+pusher skips constants, so a `defconstant` could not be recompiled to a new value on a live image.
+
+**BUT THE DOCSTRING'S FIRST VERSION OVERCLAIMED, and the measurement that caught it is worth
+keeping.** It said the value could never be changed on a running head were it a constant — true —
+and implied the SAME about this parameter being live, which is FALSE for this variable in a way it is
+not for `*scroll-notch*`. MEASURED: pushed to a running head, `*loop-passes*` stayed at 0 while the
+head kept painting, because **the loop is executing its old body**. CL does not re-enter a function
+that has been redefined under a running call, and `run-loop` is entered once and runs for ever. So:
+
+  · the 30 ms wait is still in force on the head that was already running when this landed — **this
+    change needs a head RESTART, and it is one of the few here that does**; and
+  · once restarted, `(setf *idle-poll-ms* …)` takes effect on the very next pass, because the loop
+    reads it every time round rather than capturing it.
+
+That distinction — a value read per pass versus a body already running — is the whole reason this
+paragraph exists rather than a line saying \"live\".")
+
+(defvar *loop-passes* 0
+  "How many times the main loop has come round. **The instrument for the loop's own PERIOD**, which is
+what `*idle-poll-ms*` sets and what the operator's sluggish-scroll complaint was about: a FRAME count
+answers *how fast does it draw*, and this answers *how often does it look at the input at all*.
+
+**NOT YET MEASURED ON A RESTARTED HEAD, and saying so rather than quoting arithmetic as if it were a
+reading.** The figure the change predicts is ~500 passes/s (a 2 ms wait and a pass under a
+microsecond); the OLD figure that `+notice-ttl-ms+`'s docstring recorded from its own instrument was
+**~38 passes/s**, which is consistent with a 30 ms wait and is the number this change moves. But this
+counter could not confirm the new one, because the loop running when it was pushed was executing its
+old body — `*loop-passes*` stayed at 0 while the head kept painting, which is itself the measurement
+that proved the restart is needed. **The reading is owed on the next head start.**
+
+A `defvar`, so a live push does not reset a running head's count.")
+
+(defvar *frames-painted* 0
+  "How many frames this head has painted. **The instrument for this class of question**, and it did
+not exist when scrolling was reported as sluggish: `*idle-poll-ms*` is only justifiable against a
+pass cost, and a pass cost is only measurable against a count of passes. A `defvar` for the house
+reason — a live push must not reset a running head's count.")
+
 (defun run-loop (head)
   (loop while (head-running head)
         do (let ((rendered 0)
@@ -1695,6 +1764,7 @@ Oldest request first."
              ;; about the DAEMON going quiet, so it is measured from the last
              ;; frame to land, on OUR clock and not on the event's own `ts`
              (setf *now-ms* (internal-real-time-ms))
+             (incf *loop-passes*)
              (tick-notice head)
              ;; **the wait for a daemon this head asked to stop** — before the
              ;; drain, so the row it marks dirty is painted in THIS pass, and so
@@ -1767,10 +1837,18 @@ Oldest request first."
              ;; event sets `head-dirty`; the CLOCK asks for a frame while anything
              ;; on it is a function of time, because a number computed from
              ;; `*now-ms*` and never asked for is a number drawn once (R13 — see
-             ;; `live-frame-p`). An idle head has neither, so it still sleeps.
+             ;; `live-frame-p`). An idle head has neither, so it waits.
+             ;;
+             ;; **AND THE WAIT IS SHORT BECAUSE A PASS IS FREE, MEASURED.** This was
+             ;; `(sleep 0.03)`, and that single number was the whole of the head's input
+             ;; latency — see `*idle-poll-ms*` for the three measurements. The short
+             ;; version: a pass costs under a microsecond and a full frame 0.07 ms, so a
+             ;; 30 ms sleep was ~430x the cost of the work it guarded, and because a paint
+             ;; CLEARS `head-dirty` the next pass slept again — capping the head at one
+             ;; wheel event per 30 ms whatever rate the trackpad sent at.
              (if (or (head-dirty head) (live-frame-due-p head))
                  (%render-and-paint head)
-                 (sleep 0.03))
+                 (sleep *idle-poll-ms*))
              ;; 2b. answer every screen request with the frame just painted
              (%answer-screen-requests head)
              ;; 3. ack, and only when a frame was actually read this pass: an

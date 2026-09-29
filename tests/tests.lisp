@@ -22043,3 +22043,50 @@ in one direction is silent."
     (dash-watchers-reset)
     (dash-clear-panels)
     (dash-reset-series)))
+
+;;; ============================= the loop's wait, which is the head's latency ;;;
+
+(def-test the-idle-wait-is-small-and-is-not-written-in-by-hand (:suite leticl)
+  "**The operator: *\"your scroll feels sluggish, steppier\"* — and one number was the whole of it.**
+
+`head.lisp`'s loop waited `(sleep 0.03)`, and MEASURED at their own terminal (63x210, an 87-item
+transcript) a full frame costs **0.07 ms** while an idle pass costs **under 0.001 ms**. So the sleep
+was ~430x the work it guarded. Worse, a paint CLEARS `head-dirty`, so the pass after a paint slept
+again — capping the loop at one wheel event per 30 ms, so the scroll jumped in 3N-row steps at 33 Hz
+however fast the trackpad sent.
+
+**This asserts the SOURCE rather than the behaviour, because a sleep is not observable from a test
+image** — and the tree already has the mechanism (`the-registry-and-the-dispatcher-cannot-drift`
+reads the dispatcher's own text for exactly this reason: a `cond` of literals cannot be read back at
+run time). Two claims: the loop uses the named constant, and the constant is small."
+  (let ((src (%src-text "head.lisp")))
+    (is (search "(sleep *idle-poll-ms*)" src)
+        "**the loop waits on the constant** — a literal there is a number nobody can change on a
+ running head and nobody can find without reading the loop. This is a TEXTUAL check, not a
+ behavioural one: a sleep is not observable from a test image, which is why the tree's own
+ `the-registry-and-the-dispatcher-cannot-drift` reads the dispatcher's text for the same reason.
+
+ **And there is deliberately NO assertion that the old literal `0.03` is absent.** The first version
+ had one and it was wrong twice over: it failed on the loop's own comment explaining the change, and
+ a helper written to strip prose from code desynced on the second attempt. A guard that forbids a
+ number in the source also forbids DOCUMENTING the number in the source — and the docstring above
+ the constant is where the next reader learns why it changed. Prose is allowed to say what the code
+ used to do.")
+    (is (and (numberp leticl::*idle-poll-ms*) (plusp leticl::*idle-poll-ms*))
+        "and it is a real interval")
+    (is (< leticl::*idle-poll-ms* 0.005)
+        "**and the wait is under 5 ms** — the constant's own docstring carries the three measurements;
+ this is the assertion that it stays in the range those measurements justify")
+    (is (plusp leticl::*idle-poll-ms*)
+        "**and it is not zero**, which would be a busy-spin with no wait at all: the point is that a
+ pass is CHEAP, not that the loop should never yield")))
+
+(def-test a-frame-is-counted-so-a-pass-cost-can-be-measured-against-something (:suite leticl)
+  "`*frames-painted*` did not exist when scrolling was reported as sluggish, and that is why the
+diagnosis took a detour: `*idle-poll-ms*` is only justifiable against a pass cost, and a pass cost is
+only measurable against a count of passes. The instrument comes with the fix."
+  (let ((h (%on-head)))
+    (let ((before *frames-painted*))
+      (leticl::%render-and-paint h)
+      (is (> *frames-painted* before) "a paint counts a frame")
+      (is (not (= *frames-painted* 0)) "and the count is a live total, not a per-call number"))))

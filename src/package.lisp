@@ -164,6 +164,8 @@
    #:%choose-verbosity #:prefs-verbosity
    #:permission-card-lines #:card-content-window #:card-scroll-by #:reset-card-scroll
    #:*card-scroll* #:*card-page* #:*scroll-notch*
+   ;; R57's sibling: the loop's own wait, which IS the head's input latency
+   #:*idle-poll-ms* #:*frames-painted* #:*loop-passes*
    ;; R40: which row `ctrl-t` acts on, so a seam names the chord only there
    #:newest-payload-row-p #:newest-payload-item-id #:*payload-head*
    #:quit-card-lines #:secret-card-lines

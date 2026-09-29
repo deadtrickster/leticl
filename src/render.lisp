@@ -1756,6 +1756,7 @@ land in the middle of one. Without that, a push races the paint and an
 in-flight call reaches a function that changed under it — an error in the main
 thread, which is a dead head. `--tree` takes the same lock per file."
   (sb-thread:with-mutex ((paint-lock))
+    (incf *frames-painted*)
     (handler-case
         (progn
           (%render head)
