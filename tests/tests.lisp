@@ -22669,16 +22669,25 @@ Some prose.
       (is (= 7 last)
           "and the blank line at 8 and the prose at 9 are not in it, though both are below it"))))
 
-(def-test the-composed-prompt-REFERENCES-the-subtree-and-does-not-copy-it (:suite leticl)
-  "**A reference, not a transcription** — the rule flowy uses for a sparkline and leticl uses for a
-`{series:NAME}` tail, and here it has teeth: pasting the subtree into the prompt would hand the model a
-COPY that goes stale the moment anything edits `TODO.md` — including the operator, who is about to edit
-the prompt and may well tick a row first. The file is right there for the model to `read`.
+(def-test the-composed-prompt-is-the-instruction-AND-the-literal-tree (:suite leticl)
+  "**THE RULE HERE REVERSED, AND THIS TEST IS WHERE THAT IS RECORDED.** It was
+`the-composed-prompt-REFERENCES-the-subtree-and-does-not-copy-it`, and it asserted *the children's text
+is NOT copied in* under the rule *a reference, not a transcription* — which is right about DURABLE
+state (a scratchpad, a board, anything that sits) and wrong about a PROMPT, which is consumed once in
+the turn it is sent.
 
-So the text names three things and nothing else: the file, the item's OWN WORDS (from the raw line, not
-from the parsed row — `strip-todo-markup` is the renderer's transformation and would hand back a
-spelling the file does not contain), and the line range, which is the handle a reader that can `read`
-needs so it does not have to guess between two same-named items."
+The operator's ruling, twice: *\"whole tree - we keep context\"*, then *\"the literal text of the whole
+tree goes into the prompt, which is exactly where context belongs — the model reads the why and the
+surrounding items as prose, once, at the moment it is asked.\"*
+
+**AND IT IS THE WHOLE FILE, NOT THE SUBTREE** — *\"untagged siblings included - not the tagged node and
+not its spine.\"* So the assertion that keeps this true is that a SIBLING is present as well as a child:
+an assertion about a child alone passes on a subtree copy and would miss the rule entirely.
+
+**AND THE LABEL IS STILL THE TITLE ALONE**, which is the part the operator confirmed separately and what
+keeps the two decisions compatible — the quoted words stop at the file's own first line while the body
+follows as literal text. Both halves are asserted here, because it is precisely their COEXISTENCE that a
+later reader would be tempted to 'tidy'."
   (let* ((dir (%dash-temp-dir))
          (file (merge-pathnames "TODO.md" dir)))
     (with-open-file (s file :direction :output :if-exists :supersede :if-does-not-exist :create)
@@ -22691,6 +22700,8 @@ needs so it does not have to guess between two same-named items."
   - [ ] the flattening
   - [ ] the indent
 - [ ] a leaf
+- [ ] a wrapped one
+  its body continues here
 " s))
     (multiple-value-bind (text why) (leticl::repo-todo-implement-text (namestring dir) 4)
       (is (null why) (format nil "no refusal (~a)" why))
@@ -22701,18 +22712,34 @@ needs so it does not have to guess between two same-named items."
           "**and the line range**, which is the handle that cannot be ambiguous — the operator's own
  spec: *\"name the subtree unambiguously enough that the model finds it\"*")
       (is (search "subtree" text) "and it says `subtree` when there is one")
-      ;; **AND IT DOES NOT PASTE THE SUBTREE.** This is the assertion that keeps the rule true.
-      (is (not (search "the flattening" text))
-          "**the children's text is NOT copied in** — a transcript of a subtree goes stale the moment
- anything edits the file, and the model can read the file")
-      (is (not (search "- [ ]" text))
-          "and neither is the markdown itself — the prompt is a sentence, not a fragment of the file"))
+      (is (search "checkout" text)
+          "**and the CHECKOUT is named** — with worktrees *the model's TODO.md* is ambiguous, because its
+ workspace holds its own branch's copy (R58)")
+      ;; **THE LITERAL TREE — the reversal.** These three were `(not (search …))` before the ruling.
+      (is (search "- [ ] fix the parser" text)
+          "**the markdown ITSELF, verbatim** — the prompt was once a sentence and is now a sentence plus
+ the file")
+      (is (search "the flattening" text) "**the CHILD is there**")
+      (is (search "- [ ] a leaf" text)
+          "**and the untagged SIBLING is there too** — `untagged siblings included - not the tagged node
+ and not its spine`, which is the whole difference between the whole tree and a subtree copy")
+      (is (search "## 1. Bugs" text)
+          "**and the heading above it**, which is context the line range cannot carry"))
     ;; a leaf says `line`, singular, and claims no subtree
     (multiple-value-bind (text why) (leticl::repo-todo-implement-text (namestring dir) 7)
       (is (null why) "a leaf composes too")
       (is (search "line 7." text) "**`line 7.` and not a range** — one line is not a subtree")
       (is (not (search "subtree" text)) "and it does not claim one")
       (is (search "a leaf" text) "with the leaf's own words"))
+    ;; **THE LABEL IS THE TITLE ALONE WHILE THE BODY IS STILL PRESENT — the two decisions TOGETHER**
+    (multiple-value-bind (text why) (leticl::repo-todo-implement-text (namestring dir) 8)
+      (is (null why) "a wrapped item composes")
+      (is (search "\"a wrapped one\" —" text)
+          "**the quoted label STOPS AT THE FILE'S OWN FIRST LINE** — the assertion the operator confirmed,
+ and the reason the literal text below it is not a contradiction")
+      (is (search "its body continues here" text)
+          "**and the body IS in the literal text** — that is where the why belongs, per *\"when you build a
+ component you want to know why\"*"))
     ;; and a file with no TODO.md is refused by name rather than composing nonsense
     (let ((empty (%dash-temp-dir)))
       (multiple-value-bind (text why) (leticl::repo-todo-implement-text (namestring empty) 1)

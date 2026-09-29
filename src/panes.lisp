@@ -1262,16 +1262,47 @@ range — a range that claims trailing empty lines would make the prompt name li
 (defun repo-todo-implement-text (workspace line-no)
   "The sentence to put in the composer for the `TODO.md` subtree at LINE-NO — or `(values NIL REASON)`.
 
-**A REFERENCE, NOT A TRANSCRIPTION**, and that is the rule flowy uses for a sparkline and leticl uses
-for a `{series:NAME}` tail: *name the thing, do not copy it.* Pasting the subtree would hand the model a
-copy that goes stale the moment anything edits `TODO.md` — including the operator, who is about to edit
-the prompt and may well tick a row first — and the file is RIGHT THERE for it to read. So the text names
-the file, the item's own words, and the exact line range.
+**AN INSTRUCTION AND THE LITERAL TREE, which is the operator's ruling arriving twice.** First:
+*\"whole tree - we keep context.\"* Then, on where that context lands: *\"the literal text of the whole
+tree goes into the prompt, which is exactly where context belongs — the model reads the why and the
+surrounding items as prose, once, at the moment it is asked.\"*
 
-**THE LINE RANGE IS BOTH KINDS OF HANDLE AT ONCE.** The words are how a person finds it; the range is
-how a reader that can `read` finds it without guessing which of two same-named items was meant. Naming
-the file as `TODO.md` and not an absolute path, because it is the workspace's own and the model is
-seated there."
+**THIS REVERSES WHAT THIS FUNCTION DID FIRST, AND WHY IT IS NOT A CONTRADICTION IS LIFETIME.** The first
+cut was *a reference, not a transcription* — name the file and the range, paste nothing — on the rule
+that a COPY goes stale. That rule is right about DURABLE state: this head's scratchpad, the model's
+board, anything that sits. **A prompt is consumed once**, in the turn it is sent, so *goes stale* does
+not apply to it, and the operator's reason is the better one for the case at hand: the model reads the
+why and its neighbours at the moment it is asked, rather than hunting for them.
+
+**THE WHOLE FILE AND NOT THE SUBTREE**, which is the ruling's own distinction: *\"untagged siblings
+included - not the tagged node and not its spine.\"* Siblings are not descendants, so a copy that
+included them is a copy of everything. MEASURED, that is a lot of text — this repo's own `TODO.md` is
+~63 KB and rano's is ~107 KB — and it is deliberate: the body is the WHY (*\"because I expect todos have
+not only titles right? bodies too. so when you build a component you want to know why\"*), and an item
+read without its neighbours is an item whose reasons were cut off.
+
+**THE LABEL IS STILL THE TITLE ALONE, WHICH IS WHAT KEEPS THE TWO DECISIONS COMPATIBLE.** The quoted
+words are the item's own FIRST LINE and the body is not joined onto them, because at this level a body
+line and a CHILD's line are both just *one line under the parent*. So the prompt has three parts with
+three jobs and none is redundant: the label names WHAT, the literal text carries the WHY, and the range
+is the handle.
+
+**AND THE TEXT IS THE FILE AS READ — byte for byte**, not a re-rendering of the parsed rows. The parser
+models boxes, titles and indented bodies; it does not model the prose between items, the blank lines or
+the wrapping, so a round trip through it would hand the model a file that is not the one on disk.
+
+**THE PATH IS NAMED WITH ITS CHECKOUT**, because with worktrees *the model's `TODO.md`* is ambiguous —
+its workspace holds its own branch's copy (R58).
+
+**AND NOTHING HERE WRITES A FILE.** *\"we can do copying via model … it is essentially a scratch pad
+for shared todos\"* — the model writes the scratchpad, so there is no tree-copy operation here and no
+divergence for the head to resolve.
+
+**UNPLACED ON PURPOSE: the sha, the file hash and the mtime at this moment.** The operator: *\"when you
+copy you have things - hash and commit and modified timestamp of the shared todo.md\"*, and those are
+what answer *did upstream change under me* later. **Where they go — the ask, the scratchpad's text, or
+both — is NOT ruled**, and the instruction is explicit: *\"Do not invent a store for it; note that it is
+unplaced.\"* So it is noted and not built. The composer is the obvious place once it is ruled."
   (multiple-value-bind (path root tried) (repo-todo-path workspace)
     (cond
       ((or (null path) (not (probe-file path)))
@@ -1288,13 +1319,21 @@ seated there."
                       ;; what the operator selected character for character — the parsed row's text
                       ;; has been through `strip-todo-markup`, which is the RENDERER's transformation
                       ;; and would hand the model a spelling the file does not contain.
-                      (let ((words (%todo-md-item-text row)))
+                      (let* ((words (%todo-md-item-text row))
+                             (label (%repo-checkout-label workspace))
+                             (where (if label (format nil " (the ~a checkout)" label) ""))
+                             (what (if (= first last)
+                                       (format nil "Implement the TODO.md item \"~a\" — TODO.md line ~d."
+                                               words first)
+                                       (format nil "Implement the TODO.md subtree \"~a\" — TODO.md lines ~d–~d."
+                                               words first last))))
                         (values
-                         (if (= first last)
-                             (format nil "Implement the TODO.md item \"~a\" — TODO.md line ~d."
-                                     words first)
-                             (format nil "Implement the TODO.md subtree \"~a\" — TODO.md lines ~d–~d."
-                                     words first last))
+                         ;; **THE LITERAL TREE FOLLOWS THE INSTRUCTION**, and `text` is the file AS READ —
+                         ;; byte for byte, so what the model sees is what is on disk rather than a
+                         ;; re-rendering of the parsed rows (which drops the prose between items, the blank
+                         ;; lines and the wrapping, none of which the parser models).
+                         (format nil "~a~%~%The whole of ~a~a as it stands, so the surrounding items and their reasons are in view rather than the named lines alone:~%~%~a"
+                                 what path where text)
                          nil))))))
            ;; **ONE FEWER CLOSE ON THE LINE ABOVE, ONE MORE HERE**, and the depth is what says so:
            ;; the protected form's `(values …)` needs six closes to get back to the `handler-case`
@@ -1419,6 +1458,21 @@ so a row's box sits at its indent whether or not the cursor is on it. HERE is
 that cursor; OPEN unfolds the body under the row, one dim line per detail line at
 `pad + 8`. A folded item with a body ends in ` ···` — ONE space, plain, measured:
 ours drew two and dimmed it.
+
+**AND THE BODY IS THE WHY, WHICH IS THE WHOLE REASON THIS ROW UNFOLDS AT ALL.** The operator: *\"because
+I expect todos have not only titles right? bodies too. so when you build a component you want to know
+why.\"* **MEASURED on this head's own `TODO.md`, on `T1 · the payload window` (file line 440): the body
+is 24 lines and 1643 bytes, EVERY line of it is drawn when the row is open, and opening adds exactly
+24 lines to the pane.** So nothing here is *preserved but unreachable* — and that was worth measuring
+rather than assuming, because a body parsed into a field nobody can see is indistinguishable from a
+body that was never kept.
+
+**The title/body split is therefore STRUCTURAL, and it is why the `i` prompt takes the first line and
+nothing more.** Those 24 lines are the item's BODY; the label `%todo-md-item-text` builds for the
+composer is the title alone, because at this level a body line and a CHILD's line are both just *one
+line under the parent* — so joining them would paste the whole body into the composer under the name of
+the item's words, which is the transcription `repo-todo-implement-text` exists to refuse. The prompt
+names the line RANGE instead, and the body is the reason that range is worth naming.
 
 The indent is its own segment so the colour lands on the box and not in front of
 the whitespace; `TodoMark::painted` in the reference exists for the same reason,
