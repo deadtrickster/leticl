@@ -1323,8 +1323,8 @@ one thing this head must not need."
           ;; DOWN moves forward through the pane.
           ((:page-down) (scroll (max 1 (- *pane-room* 1))))
           ((:page-up) (scroll (- (max 1 (- *pane-room* 1)))))
-          ((:wheel-down) (scroll 3))
-          ((:wheel-up) (scroll -3))
+          ((:wheel-down) (scroll *scroll-notch*))
+          ((:wheel-up) (scroll (- *scroll-notch*)))
           ;; Tab unfolds a todo, BESIDE enter and under enter's own condition, so
           ;; the two cannot disagree about whose key it is. On every OTHER pane it
           ;; is not the pane's key at all: it used to set `head-dirty` to NIL
@@ -1445,8 +1445,15 @@ long as the picker stayed open."
         ;; one place that knows, and it exists because the ladders' `:wheel-*` arms never
         ;; matched and a wheel did nothing anywhere. A wheel is `:wheel-up`/`:wheel-down`
         ;; by the time it reaches here.
-        ((:wheel-up) (when empty (card-scroll-by (- *card-page*)) (setf (head-dirty head) t)))
-        ((:wheel-down) (when empty (card-scroll-by *card-page*) (setf (head-dirty head) t)))
+        ;; **THE WHEEL NOTCHES, IT DOES NOT PAGE** — and that is a parity fix rather than an
+        ;; opinion. letibot moves a card by the same `by` its page keys use ONLY on the page keys:
+        ;; the wheel is `3` and a page is `screen_rows` (`app.rs:5364-5369`). This head's two wheel
+        ;; arms were added beside the page arms when the `:wheel-*` KIND bug was fixed — and they
+        ;; took the page arms' AMOUNT along with their polarity, so a card jumped a whole page per
+        ;; notch where the reference moves three rows. A copy that came with a bug fix is the kind
+        ;; that goes unnoticed: the wheel worked, so nobody measured how far.
+        ((:wheel-up) (when empty (card-scroll-by (- *scroll-notch*)) (setf (head-dirty head) t)))
+        ((:wheel-down) (when empty (card-scroll-by *scroll-notch*) (setf (head-dirty head) t)))
         (t nil)))))
 
 (defun %payload-key (head key type)
@@ -1785,8 +1792,8 @@ of R36 keeps — the anchor is a record of the top row of the last frame, never 
       ((:page-down) (%scroll-view head (- (max 1 (- (head-rows head) 3)))))
       ((:wheel-up) (when (>= (head-scroll head) *scroll-max*)
                      (fetch-row-above head))
-                   (%scroll-view head 3))
-      ((:wheel-down) (%scroll-view head -3))
+                   (%scroll-view head *scroll-notch*))
+      ((:wheel-down) (%scroll-view head (- *scroll-notch*)))
       ((:ctrl)
        (case (getf key :ch)
          ((#\c) (%ctrl-c head))

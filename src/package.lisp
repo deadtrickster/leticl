@@ -163,7 +163,7 @@
    ;; R42's sibling: the rung persists, and the interactive writer that keeps it
    #:%choose-verbosity #:prefs-verbosity
    #:permission-card-lines #:card-content-window #:card-scroll-by #:reset-card-scroll
-   #:*card-scroll* #:*card-page*
+   #:*card-scroll* #:*card-page* #:*scroll-notch*
    ;; R40: which row `ctrl-t` acts on, so a seam names the chord only there
    #:newest-payload-row-p #:newest-payload-item-id #:*payload-head*
    #:quit-card-lines #:secret-card-lines

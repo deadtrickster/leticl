@@ -1248,6 +1248,32 @@ by different amounts would be two conventions for one idea.
 
 A `defparameter` and not a `defconstant`: the file pusher SKIPS constants.")
 
+(defparameter *scroll-notch* 3
+  "How many rows ONE WHEEL NOTCH moves a viewport — the transcript, a pane, a card.
+
+**THE UNIT IS A RENDERED ROW, NOT A TRANSCRIPT ROW, and that is the whole reason the number is 3
+rather than 1.** A wheel notch is a row at a time in a pager, because a pager's rows ARE screen rows.
+A transcript row here can be two screen rows after wrapping, so a notch of one wrapped row reads as
+nothing happened and the reader scrolls three times to move one message. letibot states this in its own
+words at `crates/tui/src/app.rs:5368` — *\"Three lines a notch: a wheel notch is a row at a time in a
+pager, but a transcript row can be two screen rows after wrapping, and a notch that moves one wrapped
+row reads as nothing happened.\"* — and this head had the same number with no note saying why, which is
+how a considered number becomes a magic one.
+
+**Three, and the two implementations agree by ARRIVAL rather than by copying**, which is the same
+pattern R57 catalogues for the row shape, the no-reading states and the trim-at-2× policy. Neither
+side read the other's number; both wrote the same comment about wrapping.
+
+**A `defparameter` and not a `defconstant`**: the file pusher SKIPS constants, so a constant here
+could never be changed on a running head — and a head whose entire purpose is runtime redefinition is
+exactly the wrong place to pin an input's feel. It is also the number a reader is most likely to want
+different: a trackpad and a notched wheel on one desk, a wrapped transcript on a narrow terminal, and
+a pane of one-line rows where 3 is already most of a screen.
+
+One value for every viewport on purpose. `*card-page*` pages and this notches, and the wheel and the
+page keys must not disagree about WHICH — but two viewports differing about how far a notch goes would
+be two conventions for one gesture, which is the defect `*card-page*`'s docstring names for paging.")
+
 (defvar *card-scroll* 0
   "How far the CARD's content viewport has been scrolled, in rows.
 

@@ -4860,7 +4860,9 @@ the same dead-code class as `:tools-open`."
   (let ((h (%make-head)))
     (setf (head-scroll h) 0)
     (leticl::%handle-key h (list :type :mouse :x 5 :y 5 :kind :wheel-up))
-    (is (= 3 (head-scroll h)) "wheel up scrolls the transcript back three")
+    (is (= *scroll-notch* (head-scroll h))
+        "wheel up scrolls the transcript back one NOTCH — **the constant, not the literal 3**, because
+ two copies of one number is how they come to disagree")
     (leticl::%handle-key h (list :type :mouse :x 5 :y 5 :kind :wheel-down))
     (is (= 0 (head-scroll h)) "and wheel down follows again")
     (is (equal "" (composer-buffer (head-composer h))) "and nothing landed in the composer"))
@@ -4868,7 +4870,26 @@ the same dead-code class as `:tools-open`."
         (h (%make-head)))
     (setf (head-mode h) :help)
     (leticl::%handle-key h (list :type :mouse :x 5 :y 5 :kind :wheel-down))
-    (is (= 3 *pane-scroll*) "in a pane the wheel scrolls the pane")))
+    (is (= *scroll-notch* *pane-scroll*) "in a pane the wheel scrolls the pane")))
+
+(def-test the-wheel-notch-and-the-page-keystep-are-different-numbers (:suite leticl)
+  "**Two numbers that were the same by accident, and the accident is why a card jumped a page.**
+
+The wheel arms were added BESIDE the page arms when the `:wheel-*` KIND bug was fixed, and they
+took the page arms' amount along with their polarity. A page is `*card-page*` (10) and a notch is
+`*scroll-notch*` (3), so a card moved a page per notch while the transcript and the panes moved
+there. letibot moves all three by the same small `by` on a wheel and by the viewport on the page
+keys, so this is parity as well as feel.
+
+Asserted as a RELATION rather than two literals, because the defect this guards against is
+specifically *somebody made them equal again* — and a test with the same number on both sides would
+pass while that happened."
+  (is (not (= *scroll-notch* *card-page*))
+      "a notch and a page are different amounts — if this ever fails, the wheel and the page keys have
+ been folded into one number and a card's notch is a page again")
+  (is (< *scroll-notch* *card-page*)
+      "**and the notch is the SMALLER one**, which is the direction the bug went: the copy made the
+ wheel as big as the page rather than the other way round"))
 
 (def-test parked-in-the-scrollback-the-last-row-says-so (:suite leticl)
   "The reference's banner: `── scrolled back · N lines below · ↓ or esc to follow`,
@@ -13100,7 +13121,15 @@ class of lie this head keeps finding."
         (leticl::%handle-key h (list :type :home))
         (is (= 0 leticl::*card-scroll*) "Home is the top")
         (leticl::%handle-key h (list :type :mouse :kind :wheel-down))
-        (is (= *card-page* leticl::*card-scroll*) "the wheel pages it too")
+        ;; **THE WHEEL NOTCHES A CARD; THE PAGE KEYS PAGE IT.** This asserted `*card-page*` and read
+        ;; *"the wheel pages it too"* — which was the wheel arms' AMOUNT being copied from the page
+        ;; arms when their `:wheel-*` KIND was fixed, so a notch jumped a whole page where letibot
+        ;; moves three rows (`app.rs:5364-5369`: the wheel is `3`, a page is `screen_rows`). Asserted
+        ;; against `*scroll-notch*` now, and the two constants are asserted different where the
+        ;; notch is defined, so a future reader cannot make them agree by accident and keep this
+        ;; test green.
+        (is (= *scroll-notch* leticl::*card-scroll*)
+            "the wheel notches it — one notch, not a page")
         (leticl::%handle-key h (list :type :page-up))
         (is (= 0 leticl::*card-scroll*) "and PgUp comes back, clamped at the top")))))
 
