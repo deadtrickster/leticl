@@ -3720,8 +3720,27 @@ answer twice.
 Folded reasoning still shows its LAST line under the header, on the rail: the
 operator can see the model is still thinking and what about, without opening it.
 Calls are drawn oldest first — the session pushes them, so the list is newest
-first and was drawn that way."
-  (when (and turn (string= (turn-state-name turn) "running"))
+first and was drawn that way.
+
+**AND IT DRAWS WHILE A CALL RUNS, WHICH IS WHAT THIS GATE GOT WRONG.** The gate was the turn's state
+NAME, `\"running\"` — and the daemon sets that to `\"finished\"` when the round's GENERATION ends, which is
+exactly when a tool call STARTS. MEASURED on the operator's own head while fixing this: a `bash` call at
+`:state \"running\"` under a turn whose name read `\"finished\"`, so this function returned NIL for the whole
+of a long command and the call was **not on the screen at all** — *\"rano again hanged on tool call - look,
+it is not even printed on the screen.\"* An invisible call is indistinguishable from a wedged head, which
+is the same complaint `turn-busy-p`'s docstring records in its fifth place.
+
+**THIS IS THE THIRD PLACE THE SAME CONFUSION WAS FOUND, AND THE FIRST ONE A READER LOOKS AT.** The status
+row was fixed first (`turn-busy-p`, whose docstring has the measurement: the past tense for work in
+progress), then the esc arm (`%normal-key`: *\"gated on the name, esc esc did NOTHING while a command
+ran\"*), and this one was left behind both. Where a call is LIVE the gate is `turn-busy-p`.
+
+**The double-draw the old gate protected against is still protected, by construction rather than by the
+gate.** A turn's text and reasoning are APPENDED to the transcript and CLEARED when generation ends
+(`:appended` names the item that took them, and MEASURED, `:text` is `\"\"` at state `\"finished\"`), so
+the answer is drawn once, from the transcript, and the live block has nothing to repeat. Both parts are
+already drawn only when non-empty, so the two cannot both draw the same bytes."
+  (when (and turn (turn-busy-p turn))
     (let ((ind (activity-indent cols))
           (out nil))
       ;; **R37: the rung hides the WORKING of a live turn and never the turn.** What goes is

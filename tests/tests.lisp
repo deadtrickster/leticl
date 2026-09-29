@@ -23082,3 +23082,60 @@ own explanation of the silence was wrong.
         (is (not (search "ctrl-o" r))
             "**and no key is promised that cannot act** — the second half of the same rule")
         (is (not (search "nothing to do" r)) "and again it is not the idle sentence")))))
+
+(def-test a-running-call-is-drawn-though-the-turn-s-name-reads-finished (:suite leticl)
+  "**THE OPERATOR'S OWN REPORT: *\"rano again hanged on tool call - look, it is not even printed on the
+screen.\"***
+
+MEASURED on that head: the turn's state NAME was `\"finished\"` while one `bash` call sat at
+`:state \"running\"` — because the daemon sets `finished` when the round's GENERATION ends, which is
+exactly when a tool call starts. `turn-lines` gated on that name, so it returned NIL for the whole of a
+long command and **the call was never drawn**; the reader saw prose, then nothing, then a spinner. An
+invisible call is indistinguishable from a wedged head.
+
+**Third place the same confusion was found.** `turn-busy-p`'s docstring records the first (the status
+row read *Responded in 12.4s* for work in progress) and `%normal-key`'s the second (*\"gated on the
+name, esc esc did NOTHING while a command ran\"*). Both were fixed; this one, the one the reader is
+actually looking at, was left behind.
+
+**And the reason the old gate existed is held here too** — a finished turn must not be drawn from the
+live block as well as the transcript, or the answer appears twice. That is not the gate's job any more:
+a turn's text and reasoning are appended and CLEARED when generation ends, so case 3 below asserts the
+old answer still holds."
+  (labels ((seg-text (l) (if (null l) "" (format nil "~{~a~}" (mapcar #'car l))))
+           (txt (lines) (format nil "~{~a~^~%~}" (mapcar #'seg-text lines)))
+           (turn-with (state calls)
+             (list :turn-id "t1" :state (list :state state)
+                   :text "" :reasoning "" :raw-calls "" :calls calls)))
+    (let ((leticl::*verbosity* :normal)
+          (prefs (list :show-reasoning nil :show-tools nil :diff "split" :links t))
+          (live (list :call-id "c1" :name "bash" :target "cargo test"
+                      :state (list :state "running"))))
+      ;; **1. THE BUG.** The name says finished; the call is running.
+      (let ((lines (turn-lines (turn-with "finished" (list live)) 100 prefs)))
+        ;; **`is` DESTRUCTURES ITS FORM** — `(is lines …)` reads `LINES` as the form to evaluate and
+        ;; refuses a symbol, so the assertion is on the PREDICATE and not on the value. That trap has a
+        ;; documented entry in this suite and it still caught me.
+        (is (not (null lines))
+            "**a turn whose NAME is `finished` and which holds a RUNNING call still draws** — this is
+ the whole fix; before it this was NIL and the call was invisible on the operator's screen")
+        (is (search "cargo test" (txt lines))
+            "and the row names the call's TARGET, so the reader can see what is running")
+        (is (not (search "no result" (txt lines)))
+            "**and it does NOT say `no result`** — that row is for an unanswered call, and a call that is
+ RUNNING has a state to draw instead; saying otherwise would be the same class of lie as the status
+ row's past tense"))
+      ;; **2. NO REGRESSION WHILE GENERATING**, which is the only case the old gate allowed.
+      (is (search "cargo test" (txt (turn-lines (turn-with "running" (list live)) 100 prefs)))
+          "a turn that IS generating still draws its call, exactly as before")
+      ;; **3. THE PROTECTION THE OLD GATE SUPPLIED, still true.** A finished turn with nothing live must
+      ;; draw NOTHING from here, because the transcript already holds it.
+      (is (null (turn-lines (turn-with "finished"
+                                       (list (list :call-id "c1" :name "bash"
+                                                   :state (list :state "finished"))))
+                            100 prefs))
+          "**a finished turn with no live call draws nothing** — the answer is drawn once, from the
+ transcript, and the live block must not repeat it")
+      ;; ...and the same for a turn that never had a call at all
+      (is (null (turn-lines (turn-with "finished" nil) 100 prefs))
+          "and neither does a finished turn with no calls at all"))))
