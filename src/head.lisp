@@ -1878,6 +1878,30 @@ not exist when scrolling was reported as sluggish: `*idle-poll-ms*` is only just
 pass cost, and a pass cost is only measurable against a count of passes. A `defvar` for the house
 reason — a live push must not reset a running head's count.")
 
+(defvar *code-generation* 0
+  "Bumped by every live push, so a cache that holds **what CODE derived from a file** can tell that the
+code changed.
+
+**THE TRAP THIS EXISTS FOR, MEASURED on the operator's own head.** `*repo-todo-cache*` in
+`panes.lisp` validates itself against the FILE — the path and an `(mtime, len)` stamp — which is the
+right key for the file being edited while somebody watches it. It is the WRONG key for a live push:
+
+  1. the pane reads `TODO.md` with the code that is loaded, and caches the rows;
+  2. a push redefines `read-todo-md` so its rows carry `:line`, the number the surgical edit and the
+     `i` composition both address the file by;
+  3. the file has not changed, so the stamp matches, so the cache is trusted — and the pane keeps
+     drawing rows the OLD code produced, twenty of them with `:line` NIL;
+  4. `i` then refuses **on every repo row**, with a sentence that blames the row (*\"that row cannot be
+     addressed in the file\"*) rather than the cache — a false refusal, on the good rows.
+
+That is the third face of the same hazard `tui-eval`'s own docstring records twice: the render gate
+checks that the head can PAINT, not that the change is LOADED, and this one is neither — the change is
+loaded and a value derived from the old one is still live. A cache with a generation is the fix
+`*hist-generation*` already carries for the DATA version of this question; this is the CODE version.
+
+A `defvar`, so a push does not reset the counter (which would invalidate every cache on every push
+rather than only the caches that must be).")
+
 (defun run-loop (head)
   (loop while (head-running head)
         do (let ((rendered 0)

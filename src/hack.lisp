@@ -227,6 +227,17 @@ to *standard-output* would corrupt the TUI and desync it from the screen."
                                 (eval form))))))
               ;; visible immediately is a property of the loop: the eval marks
               ;; the head dirty, the loop repaints on its next tick
+              ;;
+              ;; **AND A PUSH INVALIDATES EVERY CACHE THAT HOLDS WHAT CODE DERIVED.**
+              ;; The dirty flag is not enough on its own: a cache validated against
+              ;; the FILE it was read from stays valid across a redefinition — the
+              ;; file did not move — so the head goes on showing values the previous
+              ;; code produced. MEASURED on the operator's head: a push that added
+              ;; `:line` to the todo rows left twenty rows drawn without one, and
+              ;; every repo row then refused the gesture that needs it. A cache that
+              ;; holds derived values keys on this counter (`*hist-generation*` is
+              ;; the DATA half of the same rule).
+              (incf *code-generation*)
               (setf (head-dirty head) t)
               (format nil "{\"ok\":true,\"value\":~a,\"ms\":~a}"
                       (json-encode-to-string (prin1-to-string value))

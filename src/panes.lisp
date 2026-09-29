@@ -1002,6 +1002,18 @@ the mark cannot be what tells a row from a heading."
 (defvar *repo-todo-cache* nil "The rows last read, or NIL.")
 (defvar *repo-todo-stamp* nil "The (mtime len) they were read at.")
 
+(defvar *repo-todo-generation* -1
+  "The `*code-generation*` the cached rows were read UNDER, which is the half of the key the file's
+stamp cannot supply.
+
+**The file's `(mtime, len)` answers *did the FILE change*, and a live push is not the file changing.**
+MEASURED on the operator's own head: the pane cached the rows, a push redefined `read-todo-md` to carry
+`:line`, the stamp still matched, and every repo row went on being drawn without one — so `i` refused
+on all of them, blaming the row. `-1` rather than 0 so the FIRST read is taken as stale whatever the
+counter happens to hold, including in a fresh image (where both are 0).
+
+See `*code-generation*` in `head.lisp` for the whole reading.")
+
 (defun %todo-stamp (path)
   (ignore-errors
     (let ((w (sb-posix:stat path)))
@@ -1012,13 +1024,19 @@ the mark cannot be what tells a row from a heading."
 project's queue.")
 
 (defun repo-todo-rows-cached (workspace)
-  "The repo's rows, re-read when the file changes (or the workspace does)."
+  "The repo's rows, re-read when the file changes (or the workspace does), OR WHEN THE CODE DOES."
   (let* ((path (and (plusp (length (or workspace "")))
                     (format nil "~a/TODO.md" workspace)))
          (stamp (and path (probe-file path) (%todo-stamp path))))
-    (unless (and (equal path *repo-todo-path*) (equal stamp *repo-todo-stamp*))
+    (unless (and (equal path *repo-todo-path*)
+                 (equal stamp *repo-todo-stamp*)
+                 ;; **THE CODE'S OWN GENERATION IS PART OF THE KEY.** A push can change the SHAPE these
+                 ;; rows have without the file moving at all, and a cache that only watches the file
+                 ;; then hands back what the old code produced — see `*code-generation*`.
+                 (eql *code-generation* *repo-todo-generation*))
       (setf *repo-todo-path* path
             *repo-todo-stamp* stamp
+            *repo-todo-generation* *code-generation*
             *repo-todo-cache* (repo-todo-rows workspace)))
     *repo-todo-cache*))
 

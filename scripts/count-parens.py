@@ -61,9 +61,15 @@ def scan(text):
                 block = 1
                 i += 2
                 continue
-            if nxt in "()":
-                i += 2
-                continue
+            # **`#(` IS AN OPEN PAREN FOR THIS TOOL'S PURPOSES, AND SKIPPING IT WAS A BUG.**
+            # The reader treats `#(` as the vector dispatch, but the `)` that closes a vector is
+            # the same character that closes a list — so skipping the `#(` while still counting
+            # its `)` makes the depth drift DOWN by one at every `#(...)` in the file, and every
+            # line after the first one after that reports a wrong depth. `#()` in a `(or new #())`
+            # was enough: this tool reported a negative depth in `tests/tests.lisp` on a file the
+            # COMPILER reads without complaint, which is the one thing it must never do — a tool
+            # that cries wolf is a tool the next hand stops reading. `#)` is not a thing the reader
+            # accepts, so there is nothing to skip here.
             if nxt == "\\":
                 i += 3
                 continue

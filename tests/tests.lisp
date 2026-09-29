@@ -22741,3 +22741,62 @@ than this could copy."
         "**and it says why** — a key that appears to do nothing is the defect this pane keeps finding")
     (is (equal "" (composer-buffer (head-composer h)))
         "**and nothing was composed** — the board is not a source of prompts")))
+
+(def-test a-live-push-drops-the-rows-the-old-code-derived (:suite leticl)
+  "**The file's stamp is not the code's stamp, and MEASURED on the operator's own head it cost every
+repo row its gesture.** The pane's cache validated itself against `TODO.md`'s path and `(mtime, len)`,
+which is the right key for the file being edited while somebody watches it — and the wrong key for a
+live push, which changes the SHAPE of the rows without moving the file:
+
+  1. the pane reads the file with the loaded code and caches the rows;
+  2. a push redefines `read-todo-md` so each item row carries `:line`;
+  3. the file did not change, so the stamp matches, so the cache is trusted — and the pane keeps
+     drawing rows the OLD code produced, with `:line` NIL;
+  4. `i` then refuses on EVERY repo row, and the sentence it refuses with blames the row.
+
+`*code-generation*` is the missing half: bumped by the eval socket, recorded in the cache beside the
+path and the stamp. This test holds both directions — a bump must drop the cache, and no bump must
+KEEP it, because a key that invalidates on every read is not a cache.
+
+**The path and stamp are taken FROM A REAL READ rather than re-derived here**, which is a correction:
+the first cut built them by hand as `~aTODO.md` where `repo-todo-rows-cached` builds `~a/TODO.md`, and
+`(namestring dir)` ends in a slash — so the paths differed by one character, the cache was invalid for
+a reason the test was not about, and every assertion in it failed. A fixture that reproduces the
+function's key by hand is a fixture that measures its own spelling."
+  (let* ((dir (%dash-temp-dir))
+         (file (merge-pathnames "TODO.md" dir))
+         (ws (namestring dir))
+         (saved (list leticl::*repo-todo-cache* leticl::*repo-todo-path*
+                      leticl::*repo-todo-stamp* leticl::*repo-todo-generation*)))
+    (unwind-protect
+         (progn
+           (with-open-file (s file :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string (format nil "## S~%- [ ] alpha~%- [ ] beta~%") s))
+           (let ((lines (lambda ()
+                          (mapcar (lambda (r) (getf r :line))
+                                  (remove-if-not (lambda (r) (getf r :item))
+                                                 (leticl::repo-todo-rows-cached ws))))))
+             (is (equal '(2 3) (funcall lines))
+                 "**the premise: the loaded code records a line per item**, which is what `i` and the
+ surgical edit address the file by")
+
+             ;; **THE CACHE AS THE OLD CODE LEFT IT** — the rows without a line, and the path and
+             ;; stamp exactly as the read above left them, so the cache looks VALID by the file's key.
+             (setf leticl::*repo-todo-cache*
+                   (list (list :indent 8 :mark :open :text "old shape" :body nil :item t :line nil)))
+             (incf leticl::*code-generation*)
+             (is (equal '(2 3) (funcall lines))
+                 "**a push drops it** — the rows come back from the file with a line again, though the
+ file's own stamp never moved. Remove the generation from the cache's key and this fails; it is the
+ fail-first half.")
+
+             ;; and the other direction, so the fix is not \"read the file every time\"
+             (setf leticl::*repo-todo-cache*
+                   (list (list :indent 8 :mark :open :text "MARKER" :body nil :item t :line 2)))
+             (is (string= "MARKER" (getf (first (leticl::repo-todo-rows-cached ws)) :text))
+                 "**and with no push the cache HOLDS** — a key that re-reads every time is not a cache,
+ and this pane reads a 63 KB file while the operator looks at it")))
+      (setf leticl::*repo-todo-cache* (first saved)
+            leticl::*repo-todo-path* (second saved)
+            leticl::*repo-todo-stamp* (third saved)
+            leticl::*repo-todo-generation* (fourth saved)))))
