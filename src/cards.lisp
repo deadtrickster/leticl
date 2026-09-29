@@ -2777,7 +2777,12 @@ something copies them."
      ("ended_in_reasoning" . "the turn stopped mid-thought; ctrl-r shows it and asking again continues")
      ("reasoning_stall" . "nothing to do — the model was thinking without writing; the turn is still running")
      ("repetition_collapse" . "the turn was cut short by a repeat detector; asking again usually gets past it")
-     ("interrupt_idle" . "nothing to do — there was no turn running to interrupt")
+     ;; **THE IDLE SENTENCE, and it is only the IDLE one.** `note-remedy` answers this code from the
+    ;; turn's own state instead of from this table — see `%interrupt-idle-remedy`. The old wording here
+    ;; (*there was no turn running to interrupt*) was drawn over a screen that said *Responding ·
+    ;; 11m26s* and *1 job running*, because the daemon's `interrupt_idle` is a sentence about
+    ;; GENERATION and the reader was asking about a CALL.
+    ("interrupt_idle" . "nothing to do — no turn was generating")
      ("promote_idle" . "nothing to do — no command was running to background")
      ("cache_reuse_shortfall" . "nothing to do — the cache was reused less than the daemon hoped; /status has the numbers")
      ("fabric_refresh_failed" . "nothing can be done from here — the fabric did not refresh")
@@ -2836,14 +2841,55 @@ daemon knows what happened; only this file knows that the gesture for clearing a
 letibot composes its own for the same reason, and R29 requires the two heads to OFFER a
 remedy in the same places, not to say the same words.")
 
+(defun %interrupt-idle-remedy ()
+  "Why an `esc esc` did nothing — which is NOT always *nothing was running*.
+
+**MEASURED on the operator's own head, four times in a row.** `esc esc` on a turn that was waiting on a
+CALL came back `interrupt_idle — nothing was generating`, and this head drew its fixed sentence —
+*nothing to do — there was no turn running to interrupt* — over a screen that said *Responding · 11m26s*
+and *1 job running*. Four presses, four refusals, and every one of them a false statement about the
+reader's own screen.
+
+**The daemon is speaking about GENERATION and the reader is asking about a CALL.** `Interrupt` is handed
+to the engine at a STEP BOUNDARY and letibot's own docstring defines it as *stops generation at the next
+token*; while a tool call is executing there is no token and no boundary to reach. At the far end the
+worker's arm treats anything that arrives elsewhere as *arrived between turns*, which is how a live turn
+gets called idle.
+
+**AND THE TWO CASES ARE GENUINELY DIFFERENT, so this does not replace one sentence with a better one — it
+reads the state.** A command that is RUNNING can be backgrounded by `ctrl-o` (letibot's `Promote` is
+documented as honoured by the exec backend mid-turn, which is the seam an interrupt never uses), and a
+call the daemon has not yet STARTED is not reachable by any key in this head."
+  (let* ((head *head*)
+         (turn (and head (session-turn (head-session head))))
+         (calls (and turn (getf turn :calls)))
+         (running (and calls
+                       (some (lambda (c)
+                               (string= (or (getf (getf c :state) :state) "") "running"))
+                             calls))))
+    (cond
+      (running
+       "the turn is waiting on a RUNNING COMMAND — ctrl-o moves it to the background, which is the gesture that reaches a call; esc esc reaches the model's generation, not a command")
+      ((and turn (turn-busy-p turn))
+       "the turn is waiting on the daemon — it holds a call the daemon has not started, so nothing typed here reaches it and esc esc cannot help")
+      (t "nothing to do — no turn was generating"))))
+
 (defun note-remedy (w)
   "The line that says what the reader can DO about W, or NIL for a code this head does
 not know.
 
 NIL is for an unknown code only — an old head meeting a new daemon's warning names
 nothing, because any sentence here would be invented. Every code in this head's own set
-has an entry, which is what the suite checks."
-  (cdr (assoc (getf w :code) +note-remedies+ :test #'string=)))
+has an entry, which is what the suite checks.
+
+**ONE CODE IS ANSWERED FROM THE STATE RATHER THAN FROM THE TABLE**, and it is the one whose fixed
+sentence was measurably false: `interrupt_idle`. See `%interrupt-idle-remedy` — the table entry stays
+and is what it falls back to when no turn is busy, so the rule this function keeps (a code names an act,
+or says there is none and why) is unchanged."
+  (let ((code (getf w :code)))
+    (if (and code (string= code "interrupt_idle"))
+        (%interrupt-idle-remedy)
+        (cdr (assoc code +note-remedies+ :test #'string=)))))
 
 (defun item-lines (item cols prefs)
   "One transcript row to segment lines.

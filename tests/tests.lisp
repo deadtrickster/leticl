@@ -23035,3 +23035,50 @@ sections and both be right."
     (is (some (lambda (r) (search "one file, two branches" (getf r :text)))
               (leticl::repo-todo-rows (namestring wt)))
         "and the pane draws it")))
+
+(def-test an-interrupt-that-could-not-act-says-why-rather-than-that-nothing-was-running (:suite leticl)
+  "**MEASURED on the operator's own head, four times in a row: `esc esc` refused, and the sentence the
+head drew was FALSE about the screen it was drawn on.**
+
+The daemon's warning is `interrupt_idle`, its detail reads *\"arrived between turns; nothing was
+generating\"*, and this head rendered its fixed remedy — *nothing to do — there was no turn running to
+interrupt* — over a turn that was holding a call, on a screen saying *Responding · 11m26s* and *1 job
+running*. `Interrupt` reaches the engine at a STEP BOUNDARY and stops GENERATION; a running tool call
+has neither, so the one key that stops a runaway turn is dead exactly when it is wanted, and the head's
+own explanation of the silence was wrong.
+
+**Three states, because two of them have different answers and the third has none:**
+
+  · no busy turn — the old sentence, and it is true;
+  · a RUNNING command — `ctrl-o` (`Promote`), which letibot documents as honoured by the exec backend
+    mid-turn, and which is therefore the gesture that DOES reach what the interrupt could not;
+  · a call the daemon has NOT STARTED — nothing here reaches it, and the remedy must not promise a key
+    that cannot act, which is the same rule in the other direction."
+  (let ((code "interrupt_idle"))
+    ;; 1. no head at all: the idle sentence, which is the table's own
+    (is (search "no turn was generating" (leticl::note-remedy (list :code code)))
+        "**with no turn in hand it says the honest idle thing** — the fallback the guard test walks")
+    ;; 2. a turn waiting on a RUNNING command names the key that reaches a call
+    (let ((h (%make-head)))
+      (setf (leticl::session-turn (leticl::head-session h))
+            (list :calls (list (list :state (list :state "running" :progress-note "j101")
+                                     :name "bash"))))
+      (let* ((leticl::*head* h)
+             (r (leticl::note-remedy (list :code code))))
+        (is (search "ctrl-o" r)
+            "**`ctrl-o` is named** — the gesture that reaches a running command, where `esc esc` cannot")
+        (is (not (search "nothing to do" r))
+            "**and it does NOT say there was nothing to do**, which is the defect this test exists for")
+        (is (search "RUNNING COMMAND" r) "it names what the interrupt could not reach")))
+    ;; 3. a call the daemon has not started — the gap the oracle sits in
+    (let ((h (%make-head)))
+      (setf (leticl::session-turn (leticl::head-session h))
+            (list :calls (list (list :state (list :state "proposed") :name "edit"))))
+      (let* ((leticl::*head* h)
+             (r (leticl::note-remedy (list :code code))))
+        (is (search "has not started" r)
+            "**the daemon-side wait is named as the daemon's** — a call proposed and never started is not
+ something a key in this head reaches")
+        (is (not (search "ctrl-o" r))
+            "**and no key is promised that cannot act** — the second half of the same rule")
+        (is (not (search "nothing to do" r)) "and again it is not the idle sentence")))))
