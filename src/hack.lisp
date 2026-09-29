@@ -237,7 +237,19 @@ to *standard-output* would corrupt the TUI and desync it from the screen."
               ;; every repo row then refused the gesture that needs it. A cache that
               ;; holds derived values keys on this counter (`*hist-generation*` is
               ;; the DATA half of the same rule).
-              (incf *code-generation*)
+              ;;
+              ;; **AND IT MUST NOT DEPEND ON `head.lisp` HAVING BEEN PUSHED FIRST.**
+              ;; The order is leticl.asd's, and measured, it lands THIS file before
+              ;; `head.lisp` — so the first `--tree` after this counter was added
+              ;; failed on the next file with `UNBOUND-VARIABLE *CODE-GENERATION*`,
+              ;; because every eval from that moment ran through this new
+              ;; `hack-handle` with the variable `head.lisp` defines still undefined.
+              ;; The eval itself had already run, so pushes kept landing while every
+              ;; reply said `ok:false`: a half-pushed tree that `--tree` correctly
+              ;; refused to call finished. `boundp` is what makes the bump independent
+              ;; of the order rather than of the tree.
+              (setf *code-generation*
+                    (1+ (if (boundp '*code-generation*) *code-generation* 0)))
               (setf (head-dirty head) t)
               (format nil "{\"ok\":true,\"value\":~a,\"ms\":~a}"
                       (json-encode-to-string (prin1-to-string value))
