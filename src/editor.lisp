@@ -772,6 +772,13 @@ than guessing, which is the same rule an absent descriptor row gets."
                              (say head (format nil "no /command starts with ~s" buf)))))))
               (setf (head-dirty head) t)))))))
 
+(defun %wheel-notches (key)
+  "How many notches this event stands for. **A batch, not one event** — see the loop's
+`wheel-notches`: several events drained in one pass are summed and applied as ONE move, so by the
+time the key ladders see them the count is in `:notches`. Defaults to 1, which is what a single
+event from a test or a terminal without batching carries."
+  (or (getf key :notches) 1))
+
 (defun %key-type (key)
   "The TYPE the ladders dispatch on.
 
@@ -1323,8 +1330,8 @@ one thing this head must not need."
           ;; DOWN moves forward through the pane.
           ((:page-down) (scroll (max 1 (- *pane-room* 1))))
           ((:page-up) (scroll (- (max 1 (- *pane-room* 1)))))
-          ((:wheel-down) (scroll *scroll-notch*))
-          ((:wheel-up) (scroll (- *scroll-notch*)))
+          ((:wheel-down) (scroll (* (%wheel-notches key) *scroll-notch*)))
+          ((:wheel-up) (scroll (- (* (%wheel-notches key) *scroll-notch*))))
           ;; Tab unfolds a todo, BESIDE enter and under enter's own condition, so
           ;; the two cannot disagree about whose key it is. On every OTHER pane it
           ;; is not the pane's key at all: it used to set `head-dirty` to NIL
@@ -1452,8 +1459,10 @@ long as the picker stayed open."
         ;; took the page arms' AMOUNT along with their polarity, so a card jumped a whole page per
         ;; notch where the reference moves three rows. A copy that came with a bug fix is the kind
         ;; that goes unnoticed: the wheel worked, so nobody measured how far.
-        ((:wheel-up) (when empty (card-scroll-by (- *scroll-notch*)) (setf (head-dirty head) t)))
-        ((:wheel-down) (when empty (card-scroll-by *scroll-notch*) (setf (head-dirty head) t)))
+        ((:wheel-up) (when empty (card-scroll-by (- (* (%wheel-notches key) *scroll-notch*)))
+                                (setf (head-dirty head) t)))
+        ((:wheel-down) (when empty (card-scroll-by (* (%wheel-notches key) *scroll-notch*))
+                                  (setf (head-dirty head) t)))
         (t nil)))))
 
 (defun %payload-key (head key type)
@@ -1792,8 +1801,8 @@ of R36 keeps — the anchor is a record of the top row of the last frame, never 
       ((:page-down) (%scroll-view head (- (max 1 (- (head-rows head) 3)))))
       ((:wheel-up) (when (>= (head-scroll head) *scroll-max*)
                      (fetch-row-above head))
-                   (%scroll-view head *scroll-notch*))
-      ((:wheel-down) (%scroll-view head (- *scroll-notch*)))
+                   (%scroll-view head (* (%wheel-notches key) *scroll-notch*)))
+      ((:wheel-down) (%scroll-view head (- (* (%wheel-notches key) *scroll-notch*))))
       ((:ctrl)
        (case (getf key :ch)
          ((#\c) (%ctrl-c head))

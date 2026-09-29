@@ -1166,6 +1166,45 @@ already looking and is the same place the answer will land."
       (setf (head-dirty head) t)
       t)))
 
+(defun %wheel-batch (keys)
+  "KEYS split into `(values OTHER-KEYS KIND NOTCHES)`: the keys to dispatch in order, and the wheel
+gesture the batch amounts to as ONE direction and a count.
+
+**THE OPERATOR ASKED FOR THIS IN ONE WORD — *\"batching\"* — and the reason is not only throughput.**
+A pass reads whatever arrived, and a trackpad sends far more events than a screen can show: applying
+each one paints a frame that is immediately superseded. Coalescing makes the cost of a pass ONE move
+and ONE paint however fast the finger moves, so the loop's period stops being a function of the input
+device.
+
+**AND IT IS EXTRACTED FROM THE LOOP SO IT CAN BE TESTED.** Inline, the only way to exercise it was to
+run the loop and watch a screen; as a function of a key list it is a pure question with a pure answer,
+and the two interesting answers are the ones an inline version gets wrong — a mixed batch, and a
+gesture that turns around.
+
+**OPPOSITE DIRECTIONS CANCEL, which is what makes a turn-around end where the finger ended.** An
+up-then-down gesture is not two moves that happen to follow each other; it is one net movement, and if
+the batch were applied as \"the last direction wins\" a flick-scroll that returned to its start would
+jump by the whole flick instead of staying put. One notch of the new direction cancels one of the old,
+and the batch flips sides only when the old side is used up.
+
+**THE NON-WHEEL KEYS ARE RETURNED IN ORDER AND DISPATCHED FIRST**, so a printable key or an `esc` that
+changes what a notch MEANS (a pane opened, a mode left) is applied before the gesture — the gesture
+lands on the view it was made on."
+  (let ((others '())
+        (kind nil)
+        (notches 0))
+    (dolist (key keys)
+      (let ((t* (%key-type key)))
+        (if (member t* '(:wheel-up :wheel-down))
+            (let ((n (or (getf key :notches) 1)))
+              (cond
+                ((or (null kind) (eq kind t*)) (setf kind t*) (incf notches n))
+                (t (decf notches n)
+                   (when (minusp notches)
+                     (setf kind t* notches (- notches))))))
+            (push key others))))
+    (values (nreverse others) kind notches)))
+
 ;;; ------------------------------------------------------------- the loop ;;;
 
 (defun %drain (mailbox)
@@ -1825,9 +1864,20 @@ reason — a live push must not reset a running head's count.")
                  (error (e)
                    (setf *last-render-error* e
                          (head-dirty head) t))))
-             (dolist (key (%drain (head-keys head)))
-               (handler-case (%handle-key head key)
-                 (error (e) (ignore-errors (say head (format nil "key error: ~a" e))))))
+             ;; **WHEEL NOTCHES ARE COALESCED INTO ONE MOVE PER PASS** — `%wheel-batch` holds the rule
+             ;; and its measurements; this is only the ordering that rule requires. The non-wheel keys
+             ;; go first, in arrival order, so an `esc` or a printable key that changes what a notch
+             ;; MEANS is applied BEFORE the gesture — the gesture lands on the view it was made on.
+             (multiple-value-bind (others wheel-kind wheel-notches)
+                 (%wheel-batch (%drain (head-keys head)))
+               (dolist (key others)
+                 (handler-case (%handle-key head key)
+                   (error (e) (ignore-errors (say head (format nil "key error: ~a" e))))))
+               (when (and wheel-kind (plusp wheel-notches))
+                 (handler-case
+                     (%handle-key head (list :type :mouse :kind wheel-kind
+                                             :notches wheel-notches :x 0 :y 0))
+                   (error (e) (ignore-errors (say head (format nil "key error: ~a" e)))))))
              (handler-case (%poll-resize head)
                (error (e) (ignore-errors (say head (format nil "resize error: ~a" e)))))
              ;; `*replaying*`: a replay has no socket to come back to, and

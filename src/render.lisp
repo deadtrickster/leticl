@@ -469,7 +469,24 @@ place leaves the vector and its count identical, and that case is the generation
 
 **And the tick, because a running call is the fourth way a row changes with no event at
 all** — see `%hist-live-tick`, which is NIL whenever nothing is running and so costs the
-ordinary frame nothing."
+ordinary frame nothing.
+
+**THE TICK IS A MEASURED 50x CLIFF, AND IT HAS TO STAY UNTIL THE CACHE SPLITS.** At the operator's
+2075-item session: a cache HIT is 0.2 ms per render and a MISS is 11-13 ms, walking ~2017 lines — and
+while a call runs the tick changes ten times a second, so EVERY frame is a miss. That is the remaining
+sluggishness.
+
+I tried keying on the in-flight COUNTS instead of the clock — which is what the marker's own text is
+made of (`[2 tool calls, 43 thinking lines]`), so it looked like the honest key — and it is WRONG, for
+a reason worth recording: **a COMMITTED row draws a live duration.** `cards.lisp:3049` renders a
+running call's committed row as `◐ {Verb} {subject} · 1.2s` through the same `call-lines` the turn pane
+uses, so a key that does not move with the clock FREEZES that timer at whatever tenth it was built on.
+The operator reported exactly that symptom once already, which is why the tick is here.
+
+So the fix is not a coarser key — it is the SPLIT the operator named: *\"only the most recent line
+changes… the composition of previous conversation can be cached.\"* The walk must be cacheable as a
+SETTLED PREFIX plus a rebuilt TIP, with the tick invalidating only the tip. That is a change to
+`%history-until`'s walk, not to this key.\""
   (list *hist-generation* cols (session-items (head-session head))
         (%hist-live-tick head)))
 
@@ -546,9 +563,33 @@ thirty rows appended, and the view jumped to `row-62`."
           (busy (and (session-turn s) (turn-busy-p (session-turn s)))))
     (loop while (and (>= next-i 0)
                      (or (< (length lines) (1+ need))
-                         ;; the anchor's row has not been reached yet: keep walking down to it
+                         ;; **the anchor's row has not been reached yet: keep walking down to it.**
+                         ;;
+                         ;; **AND IT SEARCHES `raw`, NOT `bounds` — which is a bug this line had, and it
+                         ;; cost 11 ms on every frame of a scrolled-up reader.** `bounds` is DERIVED
+                         ;; from `raw` after this loop (see the `mapcar` at the end); during the walk
+                         ;; it is NIL on every miss. So the search over `bounds` was always NIL, the
+                         ;; condition was always true, and the anchor never stopped the walk — every
+                         ;; miss walked the WHOLE transcript down to the oldest row.
+                         ;;
+                         ;; MEASURED at the operator's 2075-item session, 63x210:
+                         ;;
+                         ;;     cache MISS with the anchor reachable   11 ms  (2017 lines)
+                         ;;     cache MISS with no anchor at all      0.2 ms
+                         ;;
+                         ;; and the anchor is passed only when `head-scroll` is positive, so this was
+                         ;; paid by a reader SCROLLING UP and never by one at the bottom — which is
+                         ;; exactly the shape of the complaint (*"scroll feels sluggish"*) and why it
+                         ;; survived: the bottom of the transcript was always fast.
+                         ;;
+                         ;; A HIT hid it completely, because a hit returns the cached lines without
+                         ;; entering the loop at all. So the cost appeared only when the cache was
+                         ;; cold — a resize, a generation bump, and the live tick's ten changes a
+                         ;; second while a call runs, which is the window the operator watches.
+                         ;;
+                         ;; `raw` entries are `(item-id . (start . end))`, hence `:key #'car`.
                          (and until-id
-                              (not (find until-id bounds :key #'first :test #'string=)))
+                              (not (find until-id raw :key #'car :test #'string=)))
                          ;; **and a run in hand is finished before the window stops.** A reader
                          ;; whose viewport ends inside a run of hidden work must still be told how
                          ;; much of it there was; a marker dropped for being past `need` is a run

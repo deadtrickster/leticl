@@ -22090,3 +22090,113 @@ only measurable against a count of passes. The instrument comes with the fix."
       (leticl::%render-and-paint h)
       (is (> *frames-painted* before) "a paint counts a frame")
       (is (not (= *frames-painted* 0)) "and the count is a live total, not a per-call number"))))
+
+;;; ============================= batching, and the anchor that walked the world ;;;
+
+(def-test a-batch-of-notches-is-one-move-and-a-turnaround-nets-out (:suite leticl)
+  "**The operator asked for this in one word — *\"batching\"* — and the two answers worth having are
+the ones an inline version gets wrong.**
+
+A pass reads whatever arrived. Applied one at a time, a trackpad's burst is N events and N paints, of
+which only the last can be seen; coalesced, it is one move and one paint, so the loop's period stops
+being a function of the input device.
+
+**And a gesture that TURNS AROUND nets out to where the finger ended**, which is not the same as \"the
+last direction wins\": a flick that went down and came back would jump by the whole flick rather than
+staying put. One notch of the new direction cancels one of the old.
+
+`%wheel-batch` is a function rather than inline loop code precisely so this can be a pure question."
+  (flet ((wheel (kind &optional (n 1)) (list :type :mouse :kind kind :notches n))
+         (plain (ch) (list :type :char :ch ch)))
+    ;; one direction accumulates
+    (multiple-value-bind (others kind notches)
+        (%wheel-batch (list (wheel :wheel-down) (wheel :wheel-down) (wheel :wheel-down)))
+      (is (null others) "nothing but wheels")
+      (is (eq :wheel-down kind) "one direction")
+      (is (= 3 notches) "**three events, ONE move of three notches** — the whole point"))
+    ;; a turnaround nets out, and does not jump
+    (multiple-value-bind (others kind notches)
+        (%wheel-batch (list (wheel :wheel-down 5) (wheel :wheel-up 5)))
+      (declare (ignore others kind))
+      (is (zerop notches)
+          "**down five then up five is NO move at all** — a flick that came back where it started must
+ not jump by the whole flick, which is what `last direction wins` would do. The batch may still carry
+ the OLD direction, which is harmless: the loop applies a batch only when the count is positive."))
+    ;; a turnaround that overshoots flips sides with the remainder
+    (multiple-value-bind (others kind notches)
+        (%wheel-batch (list (wheel :wheel-down 2) (wheel :wheel-up 5)))
+      (declare (ignore others))
+      (is (eq :wheel-up kind) "it flips to the new direction")
+      (is (= 3 notches) "**and carries the REMAINDER**, so two down and five up is three up"))
+    ;; and a mixed batch keeps the plain keys, in order, to dispatch first
+    (multiple-value-bind (others kind notches)
+        (%wheel-batch (list (plain #\a) (wheel :wheel-down) (plain #\b)))
+      (is (equal '(#\a #\b) (mapcar (lambda (k) (getf k :ch)) others))
+          "**the non-wheel keys come back IN ORDER** — they are dispatched before the gesture, so a
+ key that changes what a notch means still lands first")
+      (is (eq :wheel-down kind))
+      (is (= 1 notches) "and the gesture is still one move"))
+    (multiple-value-bind (others kind notches)
+        (%wheel-batch nil)
+      (is (null others) "an empty batch is nothing")
+      (is (null kind) "with no gesture")
+      (is (zerop notches)))))
+
+(def-test the-wheels-arms-honour-a-batch-of-more-than-one-notch (:suite leticl)
+  "`%wheel-batch` decides the count; this is what the three arms DO with it. Asserted because the arms
+read `:notches` through `%wheel-notches`, and an arm that ignored it would scroll one notch for a
+batch of ten — the batching would be invisible."
+  (let ((h (%on-head)))
+    ;; the transcript: `head-scroll` counts rows back from the BOTTOM, so `wheel-up` is the
+    ;; direction that increases it. (Wheel-DOWN is asserted in `the-wheel-scrolls-the-transcript...`,
+    ;; which starts the head scrolled back for exactly that reason.)
+    (setf (head-scroll h) 0 *scroll-max* 100)
+    (leticl::%handle-key h (list :type :mouse :kind :wheel-up :notches 5 :x 0 :y 0))
+    (is (= (* 5 *scroll-notch*) (head-scroll h))
+        "**five notches in one event move five notches**")
+    (leticl::%handle-key h (list :type :mouse :kind :wheel-down :notches 2 :x 0 :y 0))
+    (is (= (* 3 *scroll-notch*) (head-scroll h)) "and back down by two")
+    ;; a pane
+    (let ((*pane-scroll* 0) (*pane-lines* 100) (*pane-room* 10)
+          (h2 (%on-head)))
+      (setf (head-mode h2) :help)
+      (leticl::%handle-key h2 (list :type :mouse :kind :wheel-down :notches 4 :x 0 :y 0))
+      (is (= (* 4 *scroll-notch*) *pane-scroll*) "the pane takes the whole batch")
+      ;; and a single event with no :notches is still one notch — every existing caller
+      (leticl::%handle-key h2 (list :type :mouse :kind :wheel-down :x 0 :y 0))
+      (is (= (* 5 *scroll-notch*) *pane-scroll*) "and an event without a batch size is one notch"))))
+
+(def-test the-anchor-search-walks-the-walk-it-is-building (:suite leticl)
+  "**A one-word bug that cost 11 ms on every frame of a scrolled-up reader.**
+
+`%history-until` stops walking early when it has `need` lines — but it must keep going until the
+ANCHOR's row has been rendered, or `%anchor-end` cannot find the row the reader was parked on and the
+view jumps (R36, and its own test covers that behaviour).
+
+It searched `bounds` for the anchor. **`bounds` is DERIVED FROM `raw` AFTER the loop** — during the
+walk it is NIL on every miss — so `(find until-id bounds)` was always NIL, the condition was always
+true, and every miss walked the whole transcript to the oldest row. MEASURED at 2075 items, 63x210:
+
+    cache MISS, anchor reachable   11 ms   (2017 lines)
+    cache MISS, no anchor           0.2 ms
+
+and the anchor is passed only when `head-scroll` is positive — so this was paid by a reader SCROLLING
+UP and never by one at the bottom, which is why it survived a year of normal use. A cache HIT hid it
+too, because a hit returns without entering the loop; the cost appeared only when the cache was cold,
+which includes the live tick's ten changes a second while a call runs.
+
+**Asserted on the SOURCE, like the dispatcher-drift test, because the defect is a VARIABLE NAME** — a
+pure question about which binding the condition reads, which no amount of exercising the walk would
+name. The behavioural half is already covered by the anchor's own test."
+  (let ((src (%src-text "render.lisp")))
+    (is (search "(find until-id raw" src)
+        "**the anchor condition searches `raw`**, the list the walk is building")
+    (is (not (search "(find until-id bounds" src))
+        "and NOT `bounds`, which does not exist yet while the walk runs — that spelling is the bug.
+
+ **The comment above the condition in `render.lisp` deliberately does NOT spell that form out.** The
+ first version of this test failed on that comment: a source assertion cannot tell code from the prose
+ explaining the code, so the fix's own explanation defeated it. Prose says it in words (`the search
+ over bounds`) and the code says it in parentheses, which is what makes the two distinguishable.")
+    (is (search "(not (find until-id" src)
+        "the condition is still there, so the fix is a binding and not the removal of the guard")))
