@@ -187,7 +187,7 @@ Second value is the cursor's LINE: two lines per session, after a two-line heade
     ("ctrl-s" . "the session list: type a number or part of a name to switch")
     ("tab" . "complete the /command being typed; more tabs walk the matches")
     ("click" . "in the session list, picks the row under the pointer; enter still switches")
-    ("ctrl-p" . "the todos pane: the model's plan, and the repo's TODO.md read-only — ↑↓ moves, enter or tab unfolds an item, pgup/pgdn scrolls")
+    ("ctrl-p" . "the todos pane: the model's plan, and the repo's TODO.md — ↑↓ moves, enter or tab unfolds, space marks, i composes a prompt from a subtree, pgup/pgdn scrolls")
     ("/new [title]" . "start a session in this daemon and go there")
     ("/switch WHAT" . "go to a session by number, id or part of its name")
     ("ctrl-r" . "fold or unfold the model's thinking")
@@ -1062,6 +1062,108 @@ exactly when something was, and REASON is a sentence exactly when nothing was."
                         (if (string= now "[x]") :done :open)
                         nil)))))))))
 
+(defun %todo-md-subtree-range (text line-no)
+  "The RAW LINES of TEXT covering the subtree that starts at LINE-NO: `(values FIRST LAST)`.
+
+**READ FROM THE FILE, NOT FROM THE PARSED ROWS, and that is forced rather than chosen.** MEASURED on
+this head: `read-todo-md` FLATTENS the tree — every item comes back `:item T :indent 8`, so
+
+    - [ ] parent task
+      - [ ] child one      <- indented two spaces in the FILE
+
+both arrive at indent 8, and a sibling after them does too. The real nesting is gone, so a subtree
+cannot be recovered from the rows at all. This walks the raw lines, where the indentation still is.
+
+**The rule is markdown's list rule**, which is also rano's schema's rule: the block runs until a
+non-blank line whose indent is at or below the parent's, and blank lines and anything deeper belong to
+it. Blank lines do not end it because a subtree with a blank line between two children is still one
+subtree, and it is how this repo's own TODO.md is written.
+
+**THE LAST NON-BLANK LINE IS THE END**, so a run of blanks after the subtree is not swallowed into the
+range — a range that claims trailing empty lines would make the prompt name lines that say nothing."
+  (let* ((lines (uiop:split-string text :separator '(#\newline)))
+         (n (length lines)))
+    (when (and (> line-no 0) (<= line-no n))
+      (let* ((first (1- line-no))
+             (base (let ((l (nth first lines)))
+                     (- (length l) (length (string-left-trim " " l)))))
+             (last first))
+        (loop for i from (1+ first) below n
+              for raw = (nth i lines)
+              for blank = (zerop (length (string-trim '(#\space #\tab) raw)))
+              for indent = (- (length raw) (length (string-left-trim " " raw)))
+              do (cond
+                   ;; deeper or blank: inside the subtree
+                   ((or blank (> indent base))
+                    (unless blank (setf last i)))
+                   ;; at or below the parent and not blank: the subtree ended before this line
+                   (t (loop-finish))))
+        (values (1+ first) (1+ last))))))
+
+(defun repo-todo-implement-text (workspace line-no)
+  "The sentence to put in the composer for the `TODO.md` subtree at LINE-NO — or `(values NIL REASON)`.
+
+**A REFERENCE, NOT A TRANSCRIPTION**, and that is the rule flowy uses for a sparkline and leticl uses
+for a `{series:NAME}` tail: *name the thing, do not copy it.* Pasting the subtree would hand the model a
+copy that goes stale the moment anything edits `TODO.md` — including the operator, who is about to edit
+the prompt and may well tick a row first — and the file is RIGHT THERE for it to read. So the text names
+the file, the item's own words, and the exact line range.
+
+**THE LINE RANGE IS BOTH KINDS OF HANDLE AT ONCE.** The words are how a person finds it; the range is
+how a reader that can `read` finds it without guessing which of two same-named items was meant. Naming
+the file as `TODO.md` and not an absolute path, because it is the workspace's own and the model is
+seated there."
+  (let* ((path (and workspace (plusp (length workspace)) (format nil "~a/TODO.md" workspace))))
+    (cond
+      ((null path) (values nil "this session has no workspace, so there is no TODO.md"))
+      ((not (probe-file path)) (values nil (format nil "no TODO.md in ~a" workspace)))
+      (t (handler-case
+             (let* ((text (uiop:read-file-string path))
+                    (lines (uiop:split-string text :separator '(#\newline)))
+                    (row (nth (1- line-no) lines)))
+               (cond
+                 ((or (null row) (null line-no))
+                  (values nil "that row is no longer in the file"))
+                 (t (multiple-value-bind (first last) (%todo-md-subtree-range text line-no)
+                      ;; **THE WORDS COME FROM THE RAW LINE**, so what the model reads back matches
+                      ;; what the operator selected character for character — the parsed row's text
+                      ;; has been through `strip-todo-markup`, which is the RENDERER's transformation
+                      ;; and would hand the model a spelling the file does not contain.
+                      (let ((words (%todo-md-item-text row)))
+                        (values
+                         (if (= first last)
+                             (format nil "Implement the TODO.md item \"~a\" — TODO.md line ~d."
+                                     words first)
+                             (format nil "Implement the TODO.md subtree \"~a\" — TODO.md lines ~d–~d."
+                                     words first last))
+                         nil))))))
+           ;; **ONE FEWER CLOSE ON THE LINE ABOVE, ONE MORE HERE**, and the depth is what says so:
+           ;; the protected form's `(values …)` needs six closes to get back to the `handler-case`
+           ;; itself, and seven reached past it — which left THIS clause outside the `handler-case`
+           ;; as a stray form, so `(error (e) …)` read as a call to the function `e`. Measured the
+           ;; same way as the `dash-watcher-source-fn` defect: walk the file with a paren counter and
+           ;; read where the depth lands, rather than counting by eye.
+           (error (e) (values nil (format nil "TODO.md could not be read: ~a" e))))))))
+
+(defun %todo-md-item-text (raw-line)
+  "RAW-LINE's own words, with the markdown bullet and checkbox taken off.
+
+**NOT `strip-todo-markup`** — that one is the RENDERER's and strips emphasis and code markers for the
+screen. This is naming a line back to the model, so the words should be the file's own."
+  (let* ((t* (string-left-trim " \t" raw-line))
+         ;; the bullet: `- [ ] `, `* [x] ` or a bare `[ ] `
+         (t* (cond ((and (>= (length t*) 2)
+                         (member (char t* 0) '(#\- #\*) :test #'char=)
+                         (char= (char t* 1) #\space))
+                    (string-left-trim " " (subseq t* 2)))
+                   (t t*)))
+         (t* (cond ((>= (length t*) 3)
+                    (let ((at (or (search "[ ]" t*) (search "[x]" t*) (search "[X]" t*)
+                                  (search "[~]" t*) (search "[-]" t*))))
+                      (if (and at (zerop at)) (string-left-trim " " (subseq t* 3)) t*)))
+                   (t t*))))
+    (string-trim " " t*)))
+
 (defun repo-todo-toggle (workspace line-no)
   "Flip the checkbox on LINE-NO of WORKSPACE's TODO.md. Returns `(values MARK REASON)`.
 
@@ -1260,11 +1362,11 @@ and the row it lands on is still a row."
           the daemon log, not the head's
         [x] a model item  — model
     <blank>
-      the repo's TODO.md — the operator's queue, read-only here:
+      the repo's TODO.md — what the PROJECT intends, not the model's board:
           Dependency graph
         [x] T1 …
     <blank>
-      the file itself is in the workspace; this pane never writes it.
+      space ticks one line of it in place; i composes a prompt from a subtree.
 
 **THREE VALUES**: the lines, the cursor's LINE, and a vector of every stop's line, parallel to
 `todos-stops`. The second is an `aref` of the third — never arithmetic over one of the three lists
@@ -1354,7 +1456,14 @@ stops: the recorded index was the length before some pushes and after others."
         (emit (list (cons "    none written yet. The model writes them with todo_write, and the row above adds one of yours."
                           '(:dim t)))))
       (emit nil)
-      (emit (list (cons "  the repo's TODO.md — the operator's queue, read-only here:" '(:dim t))))
+      ;; **letibot's sentence, and it is load-bearing rather than tidy**: two sections that look alike
+      ;; and BEHAVE differently have to say which is which. One is what the project intends, the other
+      ;; is what the agent is doing — and until this pane had a key that writes the file, a reader
+      ;; could tell them apart by the `— you` / `— model` marks alone. They are not a plan in two
+      ;; places, and they are not synced: nothing here reaches the model's board, and nothing on that
+      ;; board ticks this file.
+      (emit (list (cons "  the repo's TODO.md — what the PROJECT intends (space ticks it, i composes a prompt):"
+                        '(:dim t))))
       (if (null rows)
           (emit (list (cons "    no sections found." '(:dim t))))
           (loop for r in rows
@@ -1378,7 +1487,7 @@ stops: the recorded index was the length before some pushes and after others."
                    (when item-row (vector-push-extend first-line stop-lines))
                    (when item-row (incf at))))
       (emit nil)
-      (emit (list (cons "  the file itself is in the workspace; this pane never writes it."
+      (emit (list (cons "  space ticks one line of that file, in place; it is not the board the model is reminded of."
                         '(:dim t)))))
     (values (nreverse out)
             (if (or (zerop (length stop-lines)) (zerop n)) 0 (aref stop-lines sel))

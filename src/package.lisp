@@ -175,6 +175,8 @@
    #:todos-lines #:repo-todo-lines #:repo-todo-rows #:repo-todo-rows-cached
    ;; R44 editable: marking a shared TODO.md row is ONE LINE of the file
    #:repo-todo-toggle #:%todo-toggle
+   ;; R57: a TODO.md subtree becomes a PROMPT — a reference, never a transcription
+   #:repo-todo-implement-text #:%todo-implement #:%todo-md-subtree-range
    #:read-todo-md #:strip-todo-markup
    #:peek-row-count #:pane-escape-target #:pane-initial-sel #:picker-initial-sel
    ;; the job-output overlay the jobs pane's enter opens

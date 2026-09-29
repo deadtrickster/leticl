@@ -1364,6 +1364,12 @@ one thing this head must not need."
           ((:char)
            (let ((ch (getf key :ch)))
              (cond ((and (eq mode :todos) empty (eql ch #\space)) (%todo-toggle head) t)
+                   ;; **`i` COMPOSES AN INSTRUCTION FROM A TODO.md SUBTREE.** A letter and not a
+                   ;; named key because it is a composer action, and it is free in this pane: the
+                   ;; letters taken here are `q` (quit), `o` and `d` (subagents, jobs) and the dash's
+                   ;; `jkJKgG`. Gated on `empty` like the others, so a half-typed prompt is not
+                   ;; replaced by a key pressed to scroll.
+                   ((and (eq mode :todos) empty (eql ch #\i)) (%todo-implement head) t)
                    ((not empty) nil)
                    ((eql ch #\q) (shut))
                    ((and (eql ch #\o) (eq mode :subagents)) (%subagent-switch head) t)
@@ -2255,6 +2261,49 @@ made it a negative index, which the old conversion threw away."
       (declare (ignore lines sel))
       (position line stop-lines))))
 
+(defun %todo-implement (head)
+  "Compose a prompt from the `TODO.md` subtree under the cursor. T when a key was taken.
+
+**AN INSTRUCTION, NOT A BOARD WRITE**, in the operator's words: *\"take the todo subtree and implement
+it.\"* The gesture puts a SENTENCE IN THE COMPOSER and does not submit — *\"the operator gets to edit the
+instruction before sending, which matters because 'implement this' is rarely the whole of what they
+mean\"* — which is the same shape `%op-call-draft-open` already has for the operator-call door.
+
+**NOTHING CROSSES THE WIRE, and that is what dissolves every objection a promotion had.** R57's
+amendment records letibot's four: an authorship question (a pulled row needs a `by`, and a third author
+was the real blocker), the half-replace problem, prompt-content changing as a side effect, and
+hierarchy. A prompt has none of them — the operator is the author of their own sentence, nothing on the
+board moves, a prompt IS a turn so changing what the model is told is the point, and the tree stays in
+the file where it never left.
+
+**AND THE BOARD STAYS THE MODEL'S OWN DECOMPOSITION.** `todo_write` is how it breaks work down; a board
+pre-filled with the project's intent would be the model being handed a plan instead of making one. Its
+own first `todo_write` of the turn produces that row with better wording than this could copy.
+
+Only a `TODO.md` row composes anything. The session's own rows are already the board."
+  (multiple-value-bind (stop i) (todo-stop-at head)
+    (declare (ignore i))
+    (if (not (eq (car stop) :repo))
+        (progn (say head "that is a session row — only a TODO.md item becomes a prompt") t)
+        (let* ((ws (getf (session-wiring (head-session head)) :workspace))
+               (row (nth (cdr stop) (repo-todo-rows-cached ws)))
+               (line (getf row :line)))
+          (cond
+            ((null line) (say head "that row cannot be addressed in the file") t)
+            (t (multiple-value-bind (text why) (repo-todo-implement-text ws line)
+                 (cond
+                   (why (say head why) t)
+                   (t
+                    ;; **THE COMPOSER, REPLACED RATHER THAN APPENDED.** `%op-call-draft-open` sets
+                    ;; the buffer for the same reason: an instruction composed from a subtree is a
+                    ;; whole thought, and appending it to a half-typed prompt would silently join two
+                    ;; of the operator's sentences into one the model reads as a single request.
+                    (setf (composer-buffer (head-composer head)) text
+                          (composer-cursor (head-composer head)) (length text)
+                          (head-dirty head) t)
+                    (say head "composed from TODO.md — edit it, then enter sends it")
+                    t)))))))))
+
 (defun %todo-toggle (head)
   "Mark the row under the cursor done, or open again. T when a key was taken.
 
@@ -2382,7 +2431,7 @@ keeps finding elsewhere."
        (say head "that is the model's own item — this head cannot write its list, so dropping the row here would take it off your screen while the model went on holding it. ask the model to drop it")
        t)
       (:repo
-       (say head "the repo's TODO.md is the operator's queue and this pane never writes it — edit the file itself")
+       (say head "a TODO.md item is the project's intent, not the model's board — space ticks that one line in place, and i composes a prompt from its subtree")
        t)
       (t nil))))
 

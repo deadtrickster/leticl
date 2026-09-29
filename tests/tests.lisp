@@ -5257,9 +5257,12 @@ and Enter did nothing to the file's items."
                    "a heading with items sits four in")
                (is (some (lambda (l) (string= "        [x] T1 first ···" l)) text)
                    "an item eight in, its `···` one space after the text")
-               (is (string= "  the file itself is in the workspace; this pane never writes it."
+               ;; **THIS ASSERTION CAUGHT A SENTENCE THE PANE HAD MADE FALSE.** It read *"this pane
+               ;; never writes it"* until space began ticking a line in place — and a test holding the
+               ;; old words is exactly what should fail when the words stop being true.
+               (is (string= "  space ticks one line of that file, in place; it is not the board the model is reminded of."
                             (car (last text)))
-                   "and the reference's closing line"))
+                   "and the closing line says what the pane DOES to that file, and which board it is not"))
              ;; **the cursor's ring is `(:add :repo2 :repo3 :repo5 :repo6)`** — the add row, then
              ;; every repo row that IS an item. Headings are drawn and skipped, which is what
              ;; letibot does with its own `stops`.
@@ -22472,11 +22475,12 @@ Some prose between sections that no parser models.~%~
 the rows — not from a second pass. Re-deriving it is R44's own defect (*two enumerations is the
 defect*): the parser skips headings, joins wrapped bodies and drops blanks, so an index into the rows
 does not name a line in the file."
-  (let* ((rows (leticl::read-todo-md (format nil "## S~%~
-- [ ] alpha~%~
-  detail~%~
-- [x] beta~%~
-- [ ] gamma~%")))
+  (let* ((rows (leticl::read-todo-md "## S
+- [ ] alpha
+  detail
+- [x] beta
+- [ ] gamma
+"))
          (items (remove-if-not (lambda (r) (getf r :item)) rows)))
     (is (= 3 (length items)) "three item rows")
     (is (equal '(2 4 5) (mapcar (lambda (r) (getf r :line)) items))
@@ -22605,3 +22609,135 @@ would cause is the quietest kind, a word that validates and then never matches t
   (is (null (intersection +dash-row-kinds+ +dash-row-formats+ :test #'string-equal))
       "**no word is in both lists** — a word that is a kind AND a format would read as valid either way
  and act as only one of them"))
+
+;;; ============ a subtree becomes a PROMPT, and the file is the source of its shape ============
+
+(def-test a-subtree-is-read-from-the-raw-lines-because-the-parser-flattens-them (:suite leticl)
+  "**MEASURED on this head, and it is why this function exists at all:** `read-todo-md` FLATTENS the
+tree. Every item comes back `:item T :indent 8`, so a parent and the child indented under it are
+INDISTINGUISHABLE in the parsed rows, and a sibling after them too:
+
+    - [ ] parent task
+      - [ ] child one      <- two spaces deeper in the FILE, indent 8 in the ROWS
+
+So a subtree cannot be recovered from the parse. The raw lines still carry the indentation, so that is
+what this reads — the same reason rano's schema is defined over byte ranges rather than over a parsed
+tree."
+  ;; **A PLAIN STRING AND NOT `(format nil …)`, and that is a trap this test found rather than
+  ;; style.** The idiom every fixture here uses — `line~%` at the end of a source line — puts a `~`
+  ;; immediately before the source NEWLINE, and `~<newline>` is FORMAT's line-continuation directive:
+  ;; it emits the newline and then SKIPS ALL FOLLOWING WHITESPACE. So `  - [ ] child one~%` ends up as
+  ;; `- [ ] child one` with the indentation silently gone, and this test was asserting a subtree over a
+  ;; fixture that no longer had one — MEASURED: the file holds two spaces, the format output holds
+  ;; none, and the compiled image disagreed with the live head about the same function.
+  ;;
+  ;; A literal with REAL newlines has no directives in it at all, so the indentation is the bytes.
+  (let ((text "# TODO
+
+## 3. Performance
+- [ ] parent task
+  - [ ] child one
+  - [x] child two
+- [ ] a sibling
+
+Some prose.
+"))
+    ;; the parent's subtree is its own line plus the two children, and stops at the sibling
+    ;; **THE LINE NUMBERS ARE THE FIXTURE'S OWN, RENUMBERED WHEN THE FIXTURE BECAME A PLAIN STRING.**
+    ;; The `# TODO` and the blank line under it above the heading are lines 1 and 2, so the heading is
+    ;; 3 and the parent is 4 — the numbers below used to say 2 and 5 because the `(format nil …)`
+    ;; fixture had two fewer lines in it. An assertion about a line number is only as good as the
+    ;; fixture it is about, and this is the second thing that fixture got wrong.
+    (multiple-value-bind (first last) (leticl::%todo-md-subtree-range text 4)
+      (is (= 4 first) "it starts at the item itself")
+      (is (= 6 last)
+          "**and ends at its last child, NOT at the sibling below it** — the sibling sits at the parent's
+ own indent, which is where the block ends"))
+    ;; a leaf is its own line
+    (multiple-value-bind (first last) (leticl::%todo-md-subtree-range text 5)
+      (is (= 5 first) "a leaf starts at itself")
+      (is (= 5 last)
+          "**and is one line**, so the prompt says `line` and not a range — a range of one is a
+ sentence about a subtree that does not exist"))
+    ;; **THE BLANK LINE AND THE PROSE ARE NOT IN IT**, asserted on the LAST item, which is the one with
+    ;; a blank line and a paragraph under it. A range that swallowed trailing blanks would name lines
+    ;; that say nothing, and a model reading that range back finds a hole. This assertion was first
+    ;; written as a repeat of the leaf's own `(= 5 last)` — the same number twice about two different
+    ;; questions, which tests nothing the first one had not already settled.
+    (multiple-value-bind (first last) (leticl::%todo-md-subtree-range text 7)
+      (is (= 7 first) "the last item starts at itself")
+      (is (= 7 last)
+          "and the blank line at 8 and the prose at 9 are not in it, though both are below it"))))
+
+(def-test the-composed-prompt-REFERENCES-the-subtree-and-does-not-copy-it (:suite leticl)
+  "**A reference, not a transcription** — the rule flowy uses for a sparkline and leticl uses for a
+`{series:NAME}` tail, and here it has teeth: pasting the subtree into the prompt would hand the model a
+COPY that goes stale the moment anything edits `TODO.md` — including the operator, who is about to edit
+the prompt and may well tick a row first. The file is right there for the model to `read`.
+
+So the text names three things and nothing else: the file, the item's OWN WORDS (from the raw line, not
+from the parsed row — `strip-todo-markup` is the renderer's transformation and would hand back a
+spelling the file does not contain), and the line range, which is the handle a reader that can `read`
+needs so it does not have to guess between two same-named items."
+  (let* ((dir (%dash-temp-dir))
+         (file (merge-pathnames "TODO.md" dir)))
+    (with-open-file (s file :direction :output :if-exists :supersede :if-does-not-exist :create)
+      ;; real newlines, not `~%` — see the note in `a-subtree-is-read-from-the-raw-lines` for why the
+      ;; `~%`-at-end-of-line idiom silently deletes the next line's indentation
+      (write-string "# TODO
+
+## 1. Bugs
+- [ ] fix the parser
+  - [ ] the flattening
+  - [ ] the indent
+- [ ] a leaf
+" s))
+    (multiple-value-bind (text why) (leticl::repo-todo-implement-text (namestring dir) 4)
+      (is (null why) (format nil "no refusal (~a)" why))
+      (is (search "TODO.md" text) "**the FILE is named**, because the model has a workspace of files")
+      (is (search "fix the parser" text)
+          "**and the item's own words**, so a person reading the prompt knows what it is about")
+      (is (search "4–6" text)
+          "**and the line range**, which is the handle that cannot be ambiguous — the operator's own
+ spec: *\"name the subtree unambiguously enough that the model finds it\"*")
+      (is (search "subtree" text) "and it says `subtree` when there is one")
+      ;; **AND IT DOES NOT PASTE THE SUBTREE.** This is the assertion that keeps the rule true.
+      (is (not (search "the flattening" text))
+          "**the children's text is NOT copied in** — a transcript of a subtree goes stale the moment
+ anything edits the file, and the model can read the file")
+      (is (not (search "- [ ]" text))
+          "and neither is the markdown itself — the prompt is a sentence, not a fragment of the file"))
+    ;; a leaf says `line`, singular, and claims no subtree
+    (multiple-value-bind (text why) (leticl::repo-todo-implement-text (namestring dir) 7)
+      (is (null why) "a leaf composes too")
+      (is (search "line 7." text) "**`line 7.` and not a range** — one line is not a subtree")
+      (is (not (search "subtree" text)) "and it does not claim one")
+      (is (search "a leaf" text) "with the leaf's own words"))
+    ;; and a file with no TODO.md is refused by name rather than composing nonsense
+    (let ((empty (%dash-temp-dir)))
+      (multiple-value-bind (text why) (leticl::repo-todo-implement-text (namestring empty) 1)
+        (is (null text) "no file, no prompt")
+        (is (and why (search "no TODO.md" why)) "and the refusal names what is missing")))))
+
+(def-test composing-from-a-session-row-is-refused-because-the-board-is-the-models-own (:suite leticl)
+  "**The gesture is subtree-shaped and it is an INSTRUCTION, not a board write** — the operator: *\"it is
+literally like - take the todo subtree and implement it.\"*
+
+Nothing goes onto the session board, and this asserts the boundary rather than trusting it: a session
+row composes nothing, because the board is the MODEL's own decomposition. `todo_write` is how it breaks
+work down, and a board pre-filled with the project's intent would be the model being handed a plan
+instead of making one — its own first `todo_write` of the turn produces that row with better wording
+than this could copy."
+  (dash-reset-series)
+  (let ((leticl::*operator-todos* (list (list :id "t1" :content "mine" :detail "" :status "open")))
+        (leticl::*write-prefs* nil)
+        (h (%on-head)))
+    (setf (head-mode h) :todos
+          (head-picker-sel h) 1)              ; stop 0 is the add control; 1 is the operator's row
+    (is (equal '(:mine . "t1") (leticl::todo-stop-at h)) "the cursor is on a session row")
+    (is (leticl::%todo-implement h) "the key is taken, so it does not fall through to the composer")
+    (is (string-equal (head-status-note h)
+                      "that is a session row — only a TODO.md item becomes a prompt")
+        "**and it says why** — a key that appears to do nothing is the defect this pane keeps finding")
+    (is (equal "" (composer-buffer (head-composer h)))
+        "**and nothing was composed** — the board is not a source of prompts")))
