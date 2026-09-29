@@ -1168,7 +1168,21 @@ seated there."
   "RAW-LINE's own words, with the markdown bullet and checkbox taken off.
 
 **NOT `strip-todo-markup`** — that one is the RENDERER's and strips emphasis and code markers for the
-screen. This is naming a line back to the model, so the words should be the file's own."
+screen. This is naming a line back to the model, so the words should be the file's own.
+
+**ONE LINE, SO A WRAPPED ITEM'S LABEL IS ITS FIRST LINE AND ENDS MID-SENTENCE — deliberate, MEASURED on
+the operator's own `TODO.md`**, whose `T1 · the payload window` (line 440) wraps across 25 lines. The
+composed prompt then reads
+
+    Implement the TODO.md subtree \"**T1 · the payload window** (`keys.md` G13/G20, `wire.md` W2,\" — TODO.md lines 440–464.
+
+and the comma at the end is where the file's own line ended, not a truncation: the RANGE names the
+rest, which is the handle the model reads the file by. **JOINING THE WRAPPED LINES WAS THE ALTERNATIVE
+AND IT IS WORSE**, for the reason that gave this whole gesture its shape: an item's continuation lines
+are indistinguishable from a CHILD'S at this level — T1's prose runs to the end of its block — so
+joining would paste twenty-five lines of prose into the composer under the name of `words`, which is
+the transcription `repo-todo-implement-text` exists to refuse. A label that is a fragment plus an
+unambiguous range beats a label that is a copy."
   (let* ((t* (string-left-trim " \t" raw-line))
          ;; the bullet: `- [ ] `, `* [x] ` or a bare `[ ] `
          (t* (cond ((and (>= (length t*) 2)
