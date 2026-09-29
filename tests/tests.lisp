@@ -22800,3 +22800,211 @@ function's key by hand is a fixture that measures its own spelling."
             leticl::*repo-todo-path* (second saved)
             leticl::*repo-todo-stamp* (third saved)
             leticl::*repo-todo-generation* (fourth saved)))))
+;;; --------------------------------------- WHICH CHECKOUT the repo section reads ;;;
+;;;
+;;; **R58, the operator's ruling.** `<name>/<name>` is a deliberate pattern: the MAIN CHECKOUT lives
+;;; at `<name>/<name>` and plain `<name>` is a CONTAINER holding it, because a worktree-specific agent
+;;; gets handed a workspace that IS a checkout. So the repo section asks two questions and searches
+;;; for nothing — is the workspace itself a checkout, and failing that is its NAMESAKE one.
+;;;
+;;; **AND THE TRAP, which is why there is a test here rather than only a rule.** In a LINKED WORKTREE
+;;; `.git` is a FILE (a `gitdir:` pointer), not a directory, so any is-it-a-directory test answers
+;;; NOT-A-REPO for every worktree. The operator made exactly that mistake and handed out a table that
+;;; mislabelled one. The test below builds a REAL worktree with git and holds both halves still.
+
+(defun %fake-checkout (dir)
+  "Make DIR look like a checkout ROOT to `%checkout-root-p` without running git — a `.git` entry.
+
+**A FIXTURE AND NOT A REPO, and it is worth saying which: this proves the RULE (two questions, a
+namesake, a refusal that names where it looked). The worktree test beside it proves the TRAP against
+real git, which a fixture cannot: a fixture has no gitdir pointer to be a file."
+  (ensure-directories-exist dir)
+  (ensure-directories-exist (merge-pathnames ".git/" dir))
+  dir)
+
+(defun %write-todo-md (dir text)
+  (with-open-file (s (merge-pathnames "TODO.md" dir) :direction :output
+                                              :if-exists :supersede :if-does-not-exist :create)
+    (write-string text s))
+  dir)
+
+(def-test a-container-workspace-reads-its-namesake-checkout (:suite leticl)
+  "**THE CASE THE OPERATOR COULD SEE AND THE PANE COULD NOT.** `rano` is the container and
+`rano/rano` is the checkout, so the repo section has to read `rano/rano/TODO.md` — and the pane said
+`(no TODO.md in /home/dead/Projects/rano)` about a repo one level down, which reads as *there is no
+TODO.md* rather than *I looked in the wrong place*.
+
+**The fixture IS the naming convention**: `%dash-temp-dir` returns something like
+`/tmp/leticl-dashtest-9-1/`, whose namesake is `/tmp/leticl-dashtest-9-1/leticl-dashtest-9-1/` — the
+`<name>/<name>` shape exactly, built by the temp directory's own name rather than by an assertion
+about what the name should be.
+
+**And the outer file is written with DIFFERENT text on purpose**, so a rule that read the wrong one
+would be caught by content rather than by path."
+  (let* ((outer (%dash-temp-dir))
+         (name (leticl::%dir-basename (namestring outer)))
+         (inner (merge-pathnames (format nil "~a/" name) outer)))
+    (%write-todo-md outer (format nil "## OUTER~%- [ ] the container's own file~%"))
+    (%fake-checkout inner)
+    (%write-todo-md inner (format nil "## INNER~%- [ ] the checkout's file~%"))
+    (multiple-value-bind (path root tried) (leticl::repo-todo-path (namestring outer))
+      (is (string= (namestring (merge-pathnames "TODO.md" inner))
+                   (namestring path))
+          "**step 2: the NAMESAKE is the checkout**, so its file is the one read")
+      (is (string= (string-right-trim "/" (namestring inner))
+                   (string-right-trim "/" (namestring root)))
+          "and the root is reported, so the heading can say WHICH checkout")
+      (is (= 2 (length tried))
+          "**and BOTH directories are reported even on SUCCESS** — the list is where it looked, and the
+ refusal uses the same list; a value that exists only on the failure path is one every caller has to
+ remember to ask for, which is how the workspace-only sentence happened in the first place")
+      (is (string= (string-right-trim "/" (namestring outer)) (first tried))
+          "the container first, which is the order the rule examines them in"))
+    ;; **the pane reads the INNER file and not the outer one** — by content, not by path
+    (let ((rows (leticl::repo-todo-rows (namestring outer))))
+      (is (some (lambda (r) (search "INNER" (getf r :text))) rows)
+          "the checkout's heading is drawn")
+      (is (notany (lambda (r) (search "OUTER" (getf r :text))) rows)
+          "**and the container's own TODO.md is NOT** — the bug this fixes, asserted by content"))
+    (is (string= (format nil "~a/~a" name name)
+                 (leticl::%repo-checkout-label (namestring outer)))
+        "**and the heading names it `rano/rano`**, because with worktrees *the repo's TODO.md* stopped
+ being answer enough")
+    ;; a workspace that IS the checkout names itself and does not double up
+    (is (string= name (leticl::%repo-checkout-label (namestring inner)))
+        "a workspace that IS the checkout is named once, not `name/name/name`")))
+
+(def-test a-refusal-names-every-directory-it-looked-in (:suite leticl)
+  "**The operator's third step, and the reason the container case was visible at all: name where you
+looked.** The old sentence named the workspace and stopped — about a workspace whose repo is one level
+down — which is the same words as a genuinely missing file.
+
+**The namesake here EXISTS and is not a checkout**, which is the other half: a rule that named only
+the workspace would leave the reader unable to tell *no checkout anywhere* from *the namesake is not
+one*."
+  (let* ((outer (%dash-temp-dir))
+         (name (leticl::%dir-basename (namestring outer)))
+         (inner (merge-pathnames (format nil "~a/" name) outer)))
+    ;; the namesake exists (so it is worth naming) and is NOT a checkout
+    (ensure-directories-exist inner)
+    (multiple-value-bind (path root tried) (leticl::repo-todo-path (namestring outer))
+      (is (null path) "no checkout, and no TODO.md of its own to fall back to")
+      (is (null root) "and nothing to name")
+      (is (= 2 (length tried)) "**BOTH directories are reported**, not just the workspace")
+      (is (string= (string-right-trim "/" (namestring inner)) (second tried))
+          "the namesake last, which is the order they were examined in"))
+    (multiple-value-bind (text why) (leticl::repo-todo-implement-text (namestring outer) 1)
+      (is (null text) "so it composes nothing")
+      (is (and why (search (string-right-trim "/" (namestring inner)) why))
+          "**and the refusal NAMES THE NAMESAKE** — a sentence that stops at the workspace cannot be
+ acted on"))
+    ;; and with NO namesake there is one directory to name, which is the ordinary case
+    (let ((bare (%dash-temp-dir)))
+      (multiple-value-bind (path root tried) (leticl::repo-todo-path (namestring bare))
+        (declare (ignore path root))
+        (is (= 1 (length tried)) "a workspace with no namesake names only itself")))))
+
+(def-test a-todo-md-with-no-checkout-anywhere-is-still-read (:suite leticl)
+  "**The third step is a FALLBACK and not a refusal, and that is deliberate.** A workspace with a
+`TODO.md` and no git checkout around it is the shape of the suite's own fixture and of the operator's
+scratch workspaces (`/tmp/letibot-scratch-*/ws`), and reading it is what this pane did before any of
+this rule existed. It is a FIXED PATH AND NOT A SEARCH, so the determinism the rule is built on is
+untouched: the same file the space key has always written.
+
+Without this, adding the rule would have silently blanked every non-checkout workspace — a regression
+in the same commit as the fix, which is the kind of thing that is only visible later."
+  (let ((plain (%dash-temp-dir)))
+    (%write-todo-md plain (format nil "## Plain~%- [ ] no git here~%"))
+    (multiple-value-bind (path root tried) (leticl::repo-todo-path (namestring plain))
+      (declare (ignore tried))
+      (is (string= (namestring (merge-pathnames "TODO.md" plain)) (namestring path))
+          "its own file is read")
+      (is (string= (string-right-trim "/" (namestring plain))
+                   (string-right-trim "/" (namestring root)))
+          "and it is named as the source")
+      (is (some (lambda (r) (search "no git here" (getf r :text)))
+                (leticl::repo-todo-rows (namestring plain)))
+          "and the pane draws it"))
+    ;; but a workspace with NOTHING gets the refusal, so the fallback cannot hide a missing file
+    (let ((empty (%dash-temp-dir)))
+      (multiple-value-bind (path root tried) (leticl::repo-todo-path (namestring empty))
+        (declare (ignore root))
+        (is (null path) "an empty workspace still refuses")
+        (is (listp tried) "and says where it looked")))))
+
+(def-test a-linked-worktree-is-a-checkout-though-its-git-is-a-file (:suite leticl)
+  "**THE TRAP, HELD STILL AGAINST REAL GIT.** In a linked worktree `.git` is a FILE containing a
+`gitdir:` pointer, not a directory — so any IS-IT-A-DIRECTORY test answers NOT-A-REPO for every
+worktree, and the operator's table mislabelled `letibot-profiles` for exactly that reason.
+
+**The `test -d` NO is held still here WITH A CONTROL BESIDE IT**, because a trap recorded only as a
+description is a trap the next hand walks into again — and the control is what makes the NO mean
+something rather than being the command failing to answer at all.
+
+**A REAL REPOSITORY AND A REAL `git worktree add`, because a fixture cannot have this shape**: a
+fixture can create a `.git` DIRECTORY, which is the case that already worked. This is the only test
+here that runs git, and it runs it because that is the only way to get the file.
+
+It also holds the point of the whole rule for worktrees: **the worktree reads ITS OWN `TODO.md`** —
+the same tracked file as its branch has it — so two heads on two worktrees can show different repo
+sections and both be right."
+  (let* ((root (%dash-temp-dir))
+         (main (merge-pathnames "main/" root))
+         (wt (merge-pathnames "wt/" root))
+         (git (lambda (&rest args)
+                (string-trim '(#\space #\newline)
+                             (uiop:run-program
+                              (cons "git" (mapcar (lambda (a) (if (stringp a) a (namestring a))) args))
+                              :output :string)))))
+    (ensure-directories-exist main)
+    (funcall git "init" "-q" main)
+    (%write-todo-md main (format nil "## Shared~%- [ ] one file, two branches~%"))
+    (funcall git "-C" main "add" "TODO.md")
+    (funcall git "-C" main "-c" "user.email=t@example.com" "-c" "user.name=t"
+             "commit" "-q" "-m" "todo")
+    ;; **THE PATH GOES WITHOUT ITS TRAILING SLASH, AND THAT IS MEASURED, NOT TIDY.** `git worktree add
+    ;; -q /tmp/x/wt/` fails with `fatal: 'wt/' is not a valid branch name` — with a slash on the end git
+    ;; cannot derive a branch name from the last component. So one character has to be handled in two
+    ;; places: it stops git creating the worktree, and a directory test on the result is what mislabelled
+    ;; the operator's. (It does NOT fool `probe-file`, which is the correction below.)
+    (funcall git "-C" main "worktree" "add" "-q" (string-right-trim "/" (namestring wt)))
+    ;; **the shape of the trap, MEASURED rather than asserted from memory**
+    (is (probe-file (merge-pathnames ".git" wt)) "the worktree has a `.git`")
+    (let ((text (ignore-errors (uiop:read-file-string (merge-pathnames ".git" wt)))))
+      (is (and text (uiop:string-prefix-p "gitdir:" text))
+          "**and it is a FILE holding a `gitdir:` pointer** — reading it succeeds, which a directory
+ would not allow, and this is the file-not-directory fact the whole predicate turns on"))
+    ;; **AND THE TRAP ITSELF, MEASURED AS THE SHELL SEES IT — WITH ITS OWN CONTROL.** `test -d` is the
+    ;; directory test a script reaches for, and it says NO to this worktree's `.git`, because that name
+    ;; is a regular FILE. The pair matters: the second assertion is a real directory, so the NO above is
+    ;; about the `.git` NAME and not about the command being unable to say yes at all.
+    (is (plusp (nth-value 2 (uiop:run-program
+                             (list "test" "-d" (namestring (merge-pathnames ".git" wt)))
+                             :ignore-error-status t :output nil :error-output nil)))
+        "**`test -d` on the worktree's `.git` says NO** — a DIRECTORY test is the trap, and this is the
+ measurement of it rather than a description of it")
+    (is (zerop (nth-value 2 (uiop:run-program
+                             (list "test" "-d" (string-right-trim "/" (namestring wt)))
+                             :ignore-error-status t :output nil :error-output nil)))
+        "and the same test says YES to the worktree itself, so the NO above is about the NAME `.git`")
+    ;; **AND THE CORRECTION TO THE WARNING, MEASURED.** The description I was given named
+    ;; `(probe-file ".git/")` as the spelling that answers NIL. On this SBCL it does NOT — it returns the
+    ;; truename for a trailing-slashed path exactly as for the untrailed one. **This assertion was FIRST
+    ;; WRITTEN THE OTHER WAY ROUND and is what failed**, which is the measurement; it is why the predicate
+    ;; is built on `probe-file` and not on a directory test.
+    (is (probe-file (merge-pathnames ".git/" wt))
+        "**`probe-file` is not fooled by a trailing slash** — it resolves a regular file either way, so
+ the predicate is safe in both spellings and the trap is the directory test alone")
+    (is (leticl::%checkout-root-p (string-right-trim "/" (namestring wt)))
+        "so the predicate says YES to the worktree, which a directory test would have said no to")
+    ;; and the workspace that IS the worktree reads its own file
+    (multiple-value-bind (path root tried) (leticl::repo-todo-path (namestring wt))
+      (declare (ignore tried))
+      (is (string= (namestring (merge-pathnames "TODO.md" wt)) (namestring path))
+          "**the worktree's OWN `TODO.md` is what it reads** — the tracked file as this branch has it")
+      (is (string= (string-right-trim "/" (namestring wt))
+                   (string-right-trim "/" (namestring root)))
+          "and the heading would name the worktree, so two heads can be told apart"))
+    (is (some (lambda (r) (search "one file, two branches" (getf r :text)))
+              (leticl::repo-todo-rows (namestring wt)))
+        "and the pane draws it")))

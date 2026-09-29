@@ -173,6 +173,7 @@
    #:newest-payload-row-p #:newest-payload-item-id #:*payload-head*
    #:quit-card-lines #:secret-card-lines
    #:todos-lines #:repo-todo-lines #:repo-todo-rows #:repo-todo-rows-cached
+   #:repo-todo-path #:repo-todo-checkout
    ;; R44 editable: marking a shared TODO.md row is ONE LINE of the file
    #:repo-todo-toggle #:%todo-toggle
    ;; R57: a TODO.md subtree becomes a PROMPT — a reference, never a transcription

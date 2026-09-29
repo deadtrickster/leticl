@@ -974,17 +974,159 @@ the mark cannot be what tells a row from a heading."
       (flush)
       (nreverse out))))
 
+;;; ----------------------------------------------------- which checkout ;;;
+;;;
+;;; **THE REPO SECTION IS A SHARED FILE, AND WHICH FILE STOPPED BEING OBVIOUS THE MOMENT WORKTREES
+;;; ARRIVED.** The operator's ruling, in their words: *"since we are on git - I'm trying to automate
+;;; and set worktrees rules… indeed `<name>/<name>` is a deliberate pattern and then the idea is
+;;; basically this - the main workspace `<name>` displays todo from `<name>/<name>` and this is fine
+;;; because if i will have agents specific to worktrees i will have workspaces inside
+;;; `<name>/<worktree>`."*
+;;;
+;;; So `<name>/<name>` is the MAIN CHECKOUT and `<name>` is a CONTAINER that holds it, and an agent
+;;; seated in a worktree is handed a workspace that IS a checkout. Two questions, no search:
+;;;
+;;;   1. is the workspace ITSELF a checkout? -> its own `TODO.md`. Covers `leticl`, `stroppy`,
+;;;      `stroppy-pfn`, and every agent seated in a worktree;
+;;;   2. else is `<workspace>/<basename workspace>` a checkout? -> THAT one. Covers the container:
+;;;      `rano` -> `rano/rano`, `letibot` -> `letibot/letibot`;
+;;;   3. else the caller NAMES WHERE IT LOOKED — and reads the workspace's own `TODO.md` if there is
+;;;      one, which is what this pane did before the rule existed and what keeps a workspace that is
+;;;      not a checkout working rather than blank.
+;;;
+;;; **`basename` IS THE WHOLE OF THE DETERMINISM.** *"The single repo one level down"* is a search
+;;; that has to refuse an ambiguity; *the one NAMED AFTER ME* cannot be ambiguous, because the main
+;;; checkout is identifiable by NAME.
+;;;
+;;; **AND NOTHING HERE ENUMERATES WORKTREES, WHICH IS NOT FASTIDIOUSNESS.** MEASURED on this box:
+;;; letibot has 19 registered worktrees and AT LEAST FOUR whose directories are GONE (three under
+;;; `.claude/worktrees/agent-*`, one at `/tmp/claude-1000/wt2`), so a rule that walked
+;;; `git worktree list` would hand out paths that do not exist. This one copes with a layout it does
+;;; not know — main at `<name>/<name>`, agent worktrees under `<name>/.claude/worktrees/`, and at
+;;; least one worktree (`letibot-profiles`) that is a SIBLING of the container rather than inside it.
+;;; `<name>/<worktree>` is the intent; the disk is what the rule has to survive.
+;;;
+;;; **AND A WORKTREE AGENT READS ITS OWN BRANCH'S `TODO.md`** — the same tracked file as that branch
+;;; has it. Two heads on two worktrees can hold different repo sections and both be right, which is
+;;; exactly why the pane names WHICH checkout instead of saying "the repo's" and leaving it there.
+
+(defun %workspace-dir (workspace)
+  "WORKSPACE with trailing slashes trimmed, so one directory does not have two spellings."
+  (string-right-trim "/" (or workspace "")))
+
+(defun %dir-basename (dir)
+  "DIR's last path component, or NIL for a path that has none (the root)."
+  (let ((base (car (last (pathname-directory (uiop:ensure-directory-pathname dir))))))
+    (and (stringp base) base)))
+
+(defun %checkout-root-p (dir)
+  "T when DIR is the ROOT of a git checkout — a main checkout, a LINKED WORKTREE, or a submodule.
+
+**`probe-file` AND NOT A DIRECTORY TEST, MEASURED, AND THIS IS THE TRAP.** In a linked worktree
+`.git` IS A FILE:
+
+    /home/dead/Projects/letibot-profiles/.git
+      -> \"gitdir: /home/dead/Projects/letibot/letibot/.git/worktrees/letibot-profiles\"
+
+so any IS-IT-A-DIRECTORY test answers NOT-A-REPO for EVERY worktree — `test -d` in a shell, `isdir`
+in a script, `directoryp` in Lisp — and the operator's table mislabelled `letibot-profiles` for
+exactly that reason.
+
+**AND THE MEASURED CORRECTION TO THE WARNING, because the version I was given is narrower than the
+trap.** The operator described the trap as `probe-file` on the TRAILING-SLASHED path answering NIL.
+**On this SBCL it does NOT** — a trailing slash still resolves a regular file, and this docstring said
+otherwise until the test beside it failed by returning the truename. So the trap is the DIRECTORY TEST
+and not `probe-file`, which is the right side for this predicate to be wrong on: a bare probe of the
+untrailed path answers for a file and for a directory alike, so it cannot be fooled in either
+spelling. What must never appear here is `directoryp`, and the test records the `test -d` NO with a
+control beside it.
+
+**NOT `git rev-parse --show-toplevel` EITHER — not because it would be wrong, but because of where
+this runs.** It agrees with the test above on every checkout measured here, and what it would ADD is
+a fork on the pane's draw path. This tree has already priced that: `dash.lisp` and `dashwatch.lisp`
+both wrap their child processes in coreutils' `timeout` because `uiop:run-program`'s own `:timeout`
+was MEASURED doing nothing, and a `git` that hangs while the pane is drawing is a pane that freezes
+with nothing to recover from. It would also answer a DIFFERENT question by walking up —
+`rano/rano/src` resolves to `rano/rano` — where the rule asks whether the workspace *itself* is a
+checkout. A filesystem test asks exactly that and costs no process."
+  (and (plusp (length dir))
+       (probe-file (format nil "~a/.git" dir))))
+
+(defun %todo-path-for (dir)
+  (format nil "~a/TODO.md" dir))
+
+(defun repo-todo-path (workspace)
+  "The `TODO.md` this workspace's repo section reads: `(values PATH ROOT TRIED)`.
+
+PATH is NIL when there is nothing to read. ROOT is the DIRECTORY the file came from — the thing the
+pane NAMES, so a reader can tell one worktree's section from another's — and it is NIL only where
+PATH is. TRIED is every directory the rule examined, in order, and it comes back on EVERY outcome,
+because a refusal that cannot say where it looked is a refusal the operator cannot act on."
+  (let* ((ws (%workspace-dir workspace))
+         (inner (and (plusp (length ws))
+                     (let ((base (%dir-basename ws)))
+                       (and base (format nil "~a/~a" ws base))))))
+    (cond
+      ((zerop (length ws)) (values nil nil nil))
+      ((%checkout-root-p ws) (values (%todo-path-for ws) ws (list ws)))
+      ((and inner (%checkout-root-p inner))
+       (values (%todo-path-for inner) inner (list ws inner)))
+      ;; **3. NO CHECKOUT — READ THE WORKSPACE'S OWN FILE IF IT HAS ONE.** This is what the pane did
+      ;; before any of this existed, and dropping it would silently blank a workspace that is not a
+      ;; checkout: the suite's own fixture is a temp directory holding a `TODO.md` and nothing else,
+      ;; and the operator's scratch workspaces are the same shape. It is a FIXED PATH AND NOT A
+      ;; SEARCH, so the determinism the rule is built on is untouched — it is the same file the space
+      ;; key has always written.
+      ((probe-file (%todo-path-for ws)) (values (%todo-path-for ws) ws (list ws)))
+      ;; and otherwise say where we looked, NAMING THE NAMESAKE when there was one to name
+      (t (values nil nil (if (and inner (probe-file inner)) (list ws inner) (list ws)))))))
+
+(defun repo-todo-checkout (workspace)
+  "The directory the repo section is showing, or NIL when it is showing none."
+  (nth-value 1 (repo-todo-path workspace)))
+
+(defun %repo-checkout-label (workspace)
+  "WHICH checkout the repo section reads, short enough for a heading — or NIL.
+
+`(leticl)` when the workspace IS the checkout and `(rano/rano)` when it is a container, which are the
+two cases the rule has. The heading says this because with worktrees the answer stopped being
+obvious: two heads can hold different repo sections and both be right."
+  (let* ((ws (%workspace-dir workspace))
+         (root (and (plusp (length ws)) (repo-todo-checkout ws))))
+    (and root
+         (let ((rb (%dir-basename root)))
+           (cond ((null rb) root)
+                 ((string= root ws) rb)
+                 (t (format nil "~a/~a" (or (%dir-basename ws) "") rb)))))))
+
+(defun %repo-todo-missing-why (path root tried)
+  "The sentence for a repo section with nothing to read, naming EVERY directory examined.
+
+`(no TODO.md in …)` alone was the defect: the pane said it about `/home/dead/Projects/rano`, where
+the repo is one level down, so it read as *there is no TODO.md* rather than *I looked in the wrong
+place*. Naming where it looked is the operator's own third step, and it is the only reason this case
+was visible at all."
+  (cond
+    ((null tried) "this session has no workspace, so there is no TODO.md")
+    ((null path) (format nil "no TODO.md — looked in ~{~a~^ and ~})" tried))
+    (t (format nil "no TODO.md in ~a" root))))
+
 (defun repo-todo-rows (workspace)
   "The repo's TODO.md as rows, or one row saying why there are none."
-  (if (not (plusp (length (or workspace ""))))
-      (list (list :indent 4 :mark nil :text "(no workspace in the wiring)"
-                  :body nil :item nil))
-      (let ((path (format nil "~a/TODO.md" workspace)))
-        (if (probe-file path)
-            (read-todo-md (uiop:read-file-string path))
-            (list (list :indent 4 :mark nil
-                        :text (format nil "(no TODO.md in ~a)" workspace)
-                        :body nil :item nil))))))
+  (multiple-value-bind (path root tried) (repo-todo-path workspace)
+    (cond
+      ((null tried)
+       (list (list :indent 4 :mark nil :text "(no workspace in the wiring)"
+                   :body nil :item nil)))
+      ((and path (probe-file path))
+       (read-todo-md (uiop:read-file-string path)))
+      ;; **A REFUSAL THAT NAMES EVERY DIRECTORY IT LOOKED IN.** See `%repo-todo-missing-why`: the old
+      ;; sentence named the workspace and stopped, which read as *there is no TODO.md* about a repo
+      ;; sitting one level down.
+      (t
+       (list (list :indent 4 :mark nil
+                   :text (format nil "(~a)" (%repo-todo-missing-why path root tried))
+                   :body nil :item nil))))))
 
 ;;; ---------------------------------------------------------- the watcher ;;;
 ;;;
@@ -1025,8 +1167,7 @@ project's queue.")
 
 (defun repo-todo-rows-cached (workspace)
   "The repo's rows, re-read when the file changes (or the workspace does), OR WHEN THE CODE DOES."
-  (let* ((path (and (plusp (length (or workspace "")))
-                    (format nil "~a/TODO.md" workspace)))
+  (let* ((path (repo-todo-path workspace))
          (stamp (and path (probe-file path) (%todo-stamp path))))
     (unless (and (equal path *repo-todo-path*)
                  (equal stamp *repo-todo-stamp*)
@@ -1131,10 +1272,10 @@ the file, the item's own words, and the exact line range.
 how a reader that can `read` finds it without guessing which of two same-named items was meant. Naming
 the file as `TODO.md` and not an absolute path, because it is the workspace's own and the model is
 seated there."
-  (let* ((path (and workspace (plusp (length workspace)) (format nil "~a/TODO.md" workspace))))
+  (multiple-value-bind (path root tried) (repo-todo-path workspace)
     (cond
-      ((null path) (values nil "this session has no workspace, so there is no TODO.md"))
-      ((not (probe-file path)) (values nil (format nil "no TODO.md in ~a" workspace)))
+      ((or (null path) (not (probe-file path)))
+       (values nil (%repo-todo-missing-why path root tried)))
       (t (handler-case
              (let* ((text (uiop:read-file-string path))
                     (lines (uiop:split-string text :separator '(#\newline)))
@@ -1214,11 +1355,10 @@ mid-`git diff` sees one line move. It is not atomic — a crash between the read
 truncate — and that is accepted rather than hidden: a TODO.md is in git, `git checkout` is the
 recovery, and a temp-file-and-rename dance would be a second thing to get wrong for a file whose
 worst case is one lost edit."
-  (let ((path (and workspace (plusp (length workspace))
-                   (format nil "~a/TODO.md" workspace))))
+  (multiple-value-bind (path root tried) (repo-todo-path workspace)
     (cond
-      ((null path) (values nil "this session has no workspace, so there is no TODO.md"))
-      ((not (probe-file path)) (values nil (format nil "no TODO.md in ~a" workspace)))
+      ((or (null path) (not (probe-file path)))
+       (values nil (%repo-todo-missing-why path root tried)))
       (t (handler-case
              (let* ((text (uiop:read-file-string path)))
                (multiple-value-bind (new mark why) (%todo-md-toggle-line text line-no)
@@ -1395,7 +1535,7 @@ and the row it lands on is still a row."
           the daemon log, not the head's
         [x] a model item  — model
     <blank>
-      the repo's TODO.md — what the PROJECT intends, not the model's board:
+      the repo's TODO.md (rano/rano) — what the PROJECT intends, not the model's board:
           Dependency graph
         [x] T1 …
     <blank>
@@ -1413,7 +1553,8 @@ stops: the recorded index was the length before some pushes and after others."
   (declare (ignore cols))
   (let* ((s (head-session head))
          (todos (session-todos s))
-         (rows (repo-todo-rows-cached (getf (session-wiring s) :workspace)))
+         (ws (getf (session-wiring s) :workspace))
+         (rows (repo-todo-rows-cached ws))
          (stops (todos-stops head))
          (n (length stops))
          (sel (if (plusp n) (min (max 0 (head-picker-sel head)) (1- n)) 0))
@@ -1495,7 +1636,8 @@ stops: the recorded index was the length before some pushes and after others."
       ;; could tell them apart by the `— you` / `— model` marks alone. They are not a plan in two
       ;; places, and they are not synced: nothing here reaches the model's board, and nothing on that
       ;; board ticks this file.
-      (emit (list (cons "  the repo's TODO.md — what the PROJECT intends (space ticks it, i composes a prompt):"
+      (emit (list (cons (format nil "  the repo's TODO.md~@[ (~a)~] — what the PROJECT intends (space ticks it, i composes a prompt):"
+                                (%repo-checkout-label ws))
                         '(:dim t))))
       (if (null rows)
           (emit (list (cons "    no sections found." '(:dim t))))
