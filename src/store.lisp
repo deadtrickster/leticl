@@ -173,6 +173,25 @@ The attempt is cached: `%store-db` opens once and reuses the handle, and a failu
        (not *store-unavailable*)
        (not (null (%store-db)))))
 
+(defun %store-failed (e)
+  "Record E as this session's store failure, DROP THE HANDLE, and answer NIL.
+
+**THE HANDLE IS DROPPED AND THAT IS THE WHOLE POINT.** MEASURED on the live head: a statement that
+signalled left the connection in a state where every later prepare faulted with `Unhandled memory
+fault at #x0`, so ONE bad call disabled the store for the rest of the session — and because every
+caller swallows the failure, the head went on running with a store that silently refused every write.
+Reopening the handle fixed it immediately (also measured: a fresh connection wrote on the first
+attempt). So a failure costs one call: `%store-db` reopens on the next one, and a successful reopen
+clears `*store-unavailable*`, which is what keeps `store-available-p` honest.
+
+An `ignore-errors` around the close: this runs INSIDE a handler, and a close that signals must not
+replace the error being reported with its own."
+  (setf *store-unavailable* (format nil "~a" e))
+  (when *store-handle*
+    (ignore-errors (%sq-close *store-handle*))
+    (setf *store-handle* nil))
+  nil)
+
 (defun %store-db ()
   "The open handle, opening and creating the schema on first use. NIL when there is no store."
   (when *sqlite-library*
@@ -278,8 +297,25 @@ process — the failure mode being invisible until the NEXT write."
 **One index at a time, and spelled out at each call site.** The first cut bound a LIST over
 parameters 1..n and then bound the integer over parameter 2 by hand, which reads as though the two
 were independent when the second overwrote part of the first. A binding is positional; saying so at
-each site is how a reader checks it."
-  (%sq-bind-text stmt index (or value "") -1 +sqlite-transient+))
+each site is how a reader checks it.
+
+**AND A STRING FROM THE WIRE IS NOT ALWAYS `simple-string`, WHICH COST THE OPERATOR THEIR TODO.** The
+alien declaration takes a `c-string`, and sb-alien refuses anything else:
+
+    The value \"completed\" is not of type SIMPLE-STRING when binding STRING
+
+MEASURED, on the live head: a status that arrived from the daemon is `(VECTOR CHARACTER 20)`,
+**adjustable, with a fill pointer** — the JSON reader's own output shape — and every save carrying one
+THREW. That is the boundary, so this is where it is fixed, once: rows the head builds itself
+(`format nil`) are simple and always saved, while a status the MODEL moved arrives from the wire and
+therefore never did — silently, which is what made it look like a restart losing the operator's row
+rather than a write that never happened.
+
+`coerce` only when it is needed, so the common path copies nothing."
+  (%sq-bind-text stmt index
+                 (let ((s (or value "")))
+                   (if (typep s 'simple-string) s (coerce s 'simple-string)))
+                 -1 +sqlite-transient+))
 
 ;;; ------------------------------------------------------- the operator's rows ;;;
 
@@ -328,7 +364,7 @@ empty both have nothing to draw, and inventing a difference would be inventing a
                                      :status (or (%sq-column-text stmt 3) "open"))
                                out))
                 (nreverse out))))
-        (error (e) (setf *store-unavailable* (format nil "~a" e)) nil)))))
+        (error (e) (%store-failed e))))))
 
 (defvar *store-note* nil
   "A one-off sentence the store wants said — currently the orphan-row adoption.
@@ -354,7 +390,7 @@ unowned row — that would hand them to whichever head started first."
                 (if (= +sqlite-done+ (%sq-step stmt))
                     (%sq-changes db)
                     0))
-            (error (e) (setf *store-unavailable* (format nil "~a" e)) 0))))))
+            (error (e) (progn (%store-failed e) 0)))))))
 
 (defun store-save-todo (item &optional seq workspace)
   "Insert or replace ITEM for WORKSPACE. SEQ is its place in the list; defaults to the item's own id order.
@@ -381,7 +417,7 @@ keep a stale owner after a rename. NIL is stored as the empty string, which is t
             (%bind-text stmt 5 (or (getf item :status) "open"))
             (%bind-text stmt 6 (or workspace ""))
             (= +sqlite-done+ (%sq-step stmt)))
-        (error (e) (setf *store-unavailable* (format nil "~a" e)) nil)))))
+        (error (e) (%store-failed e))))))
 
 (defun store-todo-id-ceiling ()
   "The highest `tN` id anywhere in the table, whatever project it belongs to — or 0.
@@ -408,7 +444,7 @@ counter skip a range it never used."
                       (or (ignore-errors (parse-integer (%sq-column-text-str stmt 0) :junk-allowed t)) 0)
                       0))
                 0))
-        (error (e) (setf *store-unavailable* (format nil "~a" e)) 0)))))
+        (error (e) (progn (%store-failed e) 0))))))
 
 (defun store-delete-todo (id)
   "Remove the row ID. T when the statement ran."
@@ -418,7 +454,7 @@ counter skip a range it never used."
           (with-statement (stmt db "delete from operator_todo where id = ?")
             (%bind-text stmt 1 id)
             (= +sqlite-done+ (%sq-step stmt)))
-        (error (e) (setf *store-unavailable* (format nil "~a" e)) nil)))))
+        (error (e) (%store-failed e))))))
 
 (defun store-replace-todos (items workspace)
   "Rewrite this WORKSPACE's list: its rows deleted, ITEMS inserted in order. T when it ran.
@@ -437,7 +473,17 @@ emptying every other project's todos."
             (with-statement (stmt db "delete from operator_todo where workspace = ?")
               (%bind-text stmt 1 (or workspace ""))
               (%sq-step stmt))
-            (loop for item in items for i from 1
-                  do (store-save-todo item i workspace))
-            t)
-        (error (e) (setf *store-unavailable* (format nil "~a" e)) nil)))))
+            ;; **AND EVERY INSERT IS CHECKED, BECAUSE THIS FUNCTION IS A DELETE FIRST.** It ran as
+            ;; written even when the inserts failed: the rows came out, nothing went back, and it
+            ;; answered T. MEASURED — that is how a probe emptied this table and reported success.
+            ;; A wholesale rewrite that cannot report a failed rewrite is worse than no rewrite,
+            ;; because the caller has already lost the old rows by the time it asks.
+            (let ((lost nil))
+              (loop for item in items for i from 1
+                    unless (store-save-todo item i workspace)
+                      do (setf lost t))
+              (if lost
+                  (progn (setf *store-unavailable* "the list could not be written back")
+                         nil)
+                  t)))
+        (error (e) (%store-failed e))))))

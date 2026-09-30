@@ -833,9 +833,17 @@ because it could not be written — would lose the operator's words to a permiss
 strictly worse than a list that survives only this session."
   (when *write-prefs*
     (unless (store-replace-todos *operator-todos* (operator-todos-workspace))
-      ;; once per save is enough; the pane is where the operator reads it and a repeating notice
-      ;; would push everything else off the status line
-      nil))
+      ;; **SAID, WHICH THE DOCSTRING CLAIMED AND THE CODE DID NOT DO.** This branch was `(unless …
+      ;; nil)` — it evaluated a comment. The failure went into `*store-unavailable*`, which nothing on
+      ;; the screen reads, so a write that did not land looked exactly like one that did until the
+      ;; next restart put the old list back. MEASURED, and it is the operator's report: their row
+      ;; worked, the head restarted, and the row was gone while an older one reappeared.
+      ;;
+      ;; Once per save is enough — the pane is where they read it, and a repeating notice would push
+      ;; everything else off the status line.
+      (when *head*
+        (say *head* (format nil "todo not saved: ~a"
+                            (or *store-unavailable* "the store refused"))))))
   *operator-todos*)
 
 (defun load-operator-todos (&optional workspace)

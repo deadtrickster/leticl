@@ -23243,3 +23243,48 @@ halves are that the words are DRAWN (the older fix, kept) and that the mark is G
               "**and it does not go back to saying queued when the body lands**")
           (is (search "Q2 my queued message" (or (nth (at "Q2 my queued message" landed) landed) ""))
               "with the words drawn from the body now, the same words in the same place"))))))
+
+(def-test a-status-from-the-wire-is-saved-though-it-is-not-a-simple-string (:suite leticl)
+  "**THE DEFECT THAT LOST THE OPERATOR'S TODO, MEASURED ON THEIR OWN HEAD.**
+
+Their report: *\"my todo worked this time around but after restart it disappered\"*. What happened is
+that the model moved the row — the head folded the new status into memory and drew it — and the SAVE
+threw:
+
+    The value \"completed\" is not of type SIMPLE-STRING when binding STRING
+
+The alien declaration takes a `c-string`, and a status that arrived from the daemon is
+`(VECTOR CHARACTER 20)` — **adjustable, with a fill pointer**, the JSON reader's own shape. So rows the
+head builds itself (`format nil`) always saved, and a row the MODEL moved never did. Worse, the throw
+was swallowed: `save-operator-todos` recorded it in `*store-unavailable*`, which nothing on the screen
+reads, so a write that did not land looked exactly like one that did until the next restart put the old
+list back.
+
+**The fixture is the shape, not a copy of the value**: an adjustable, fill-pointered string is what the
+wire produces, and a literal in this file is SIMPLE and would pass on the broken code."
+  (let ((leticl::*store-path-override* (format nil "/tmp/leticl-wire-str-~a.db" (random 1000000))))
+    (unwind-protect
+         (progn
+           (leticl::store-close)
+           (dolist (suffix '("" "-wal" "-shm"))
+             (let ((f (concatenate 'string leticl::*store-path-override* suffix)))
+               (when (probe-file f) (ignore-errors (delete-file f)))))
+           ;; THE WIRE'S SHAPE: adjustable, with a fill pointer, not `simple-string`.
+           (let ((wire-status (make-array 9 :element-type 'character :adjustable t :fill-pointer 0))
+                 (wire-content (make-array 32 :element-type 'character :adjustable t :fill-pointer 0)))
+             (loop for c across "completed" do (vector-push-extend c wire-status))
+             (loop for c across "plain quoting" do (vector-push-extend c wire-content))
+             (is (not (typep wire-status 'simple-string))
+                 (format nil "**the fixture is NOT simple, so this cannot pass by accident**: ~a"
+                         (type-of wire-status)))
+             (is (leticl::store-save-todo
+                  (list :id "t5" :content wire-content :detail "" :status wire-status)
+                  1 "/home/dead/Projects/rano")
+                 "**a row whose fields came off the wire SAVES** — this is the whole fix")
+             (let ((back (leticl::store-load-todos "/home/dead/Projects/rano")))
+               (is (equal '("t5") (mapcar (lambda (i) (getf i :id)) back))
+                   "and it is there to be loaded, which is what a restart does")
+               (is (string= "completed" (getf (first back) :status))
+                   "with the status the model moved it to, not the one it had before"))))
+      (leticl::store-close))
+    (setf leticl::*store-path-override* nil)))
