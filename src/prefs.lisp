@@ -18,7 +18,7 @@
 (in-package #:leticl)
 
 (defparameter *prefs-keys*
-  '("diff" "thinking" "tools" "raw_calls" "verbosity")
+  '("diff" "thinking" "tools" "raw_calls" "verbosity" "todo_template")
   "The keys THIS build owns, in THIS head's own file. Anything else is somebody else's — a
 newer build's, or the operator's — and is preserved verbatim.
 
@@ -58,6 +58,12 @@ understood here.")
         :thinking "folded"   ; `open` or `folded`
         :tools "folded"
         :raw-calls nil       ; show the model's `<function=…>` markup under a call
+        ;; **A NEW PROJECT'S STARTER TODOS.** `nil` is off; `t` reads the default template file
+        ;; (`todo-template-path`); a STRING is a path to another file, which is what makes this one
+        ;; key rather than two. See `%seed-operator-todos` — the operator's ask: *"this default todo
+        ;; can be a way to help new sessions initialize, can we have a new session todo template with
+        ;; a config switch?"*, and it is the deliberate half of a bug they had just found.
+        :todo-template nil
         ;; **The seam on the run marker** (R37 amended). ` · ctrl-t opens it` / ` · /verbosity`
         ;; after the counts — the head talking about its own key. The operator wants it gone:
         ;; *"also make showing \" dot /verbosity\" a config and switch it off."* Default NIL, and
@@ -95,6 +101,7 @@ understood here.")
 (defun prefs-raw-calls (p)(getf p :raw-calls))
 (defun prefs-marker-seam (p) (getf p :marker-seam))
 (defun prefs-verbosity (p) (getf p :verbosity))
+(defun prefs-todo-template (p) (getf p :todo-template))
 (defun prefs-path (p)     (getf p :path))
 
 (defun %prefs-with-every-key (p)
@@ -128,6 +135,7 @@ the caller still holds, so the honest place to repair it is where the plist is a
 (defun (setf prefs-raw-calls) (v p)(setf (getf p :raw-calls) v))
 (defun (setf prefs-marker-seam) (v p) (setf (getf p :marker-seam) v))
 (defun (setf prefs-verbosity) (v p) (setf (getf p :verbosity) v))
+(defun (setf prefs-todo-template) (v p) (setf (getf p :todo-template) v))
 (defun (setf prefs-path) (v p)     (setf (getf p :path) v))
 
 ;;; ------------------------------------------- the bridge to a running head ;;;
@@ -378,10 +386,21 @@ NIL when neither variable is set — a head with nowhere to write."
 A cap because this is the one file here a person writes and never prunes, and an unbounded one would
 grow for the life of the project.")
 
+(defvar *operator-todos-path-override* nil
+  "A TEST's own legacy todo file. Bound, never set: the default is `operator-todos-path`.
+
+**Because this path is the OPERATOR's**, and a test that reaches the real one does damage rather than
+failing: `load-operator-todos` imports whatever is there into the test's database, so a suite that did
+not isolate this would read `~/.config/leticl/todos.sexp` and write its rows under a temp store — which
+is how this defvar came to exist. MEASURED: a test of the new-project template imported the operator's
+own two rows and then asserted about the wrong list. `*store-path-override*` is here for the same reason
+and says so in its own docstring; this is the same seam for the file beside it.")
+
 (defun operator-todos-path ()
   "The operator's todo file: beside the preferences, in the head's own config directory."
-  (let ((prefs (default-prefs-path)))
-    (and prefs (merge-pathnames "todos.sexp" (uiop:pathname-directory-pathname prefs)))))
+  (or *operator-todos-path-override*
+      (let ((prefs (default-prefs-path)))
+        (and prefs (merge-pathnames "todos.sexp" (uiop:pathname-directory-pathname prefs))))))
 
 (defun operator-todos->text (items)
   "ITEMS as one `prin1` form per item — the whole file's contents, ready to write.
@@ -851,6 +870,23 @@ than the bad line. Returns `(values prefs notes)`."
                                         value
                                         (mapcar #'verbosity-name +verbosity-ladder+))
                                 notes)))))
+              ((string= key "todo_template")
+               ;; **THREE ANSWERS, and the third is why this is not a boolean.** `false` is off;
+               ;; `true` is the default template file; a QUOTED STRING is a path to another one.
+               ;; Reading a bare path as a truthy string would turn `todo_template = "typo.md"` into
+               ;; "on, using the default", which is the wrong file silently.
+               (cond
+                 ((member value '("false" "off") :test #'string=)
+                  (setf (prefs-todo-template p) nil))
+                 ((member value '("true" "on") :test #'string=)
+                  (setf (prefs-todo-template p) t))
+                 ((and (>= (length value) 2)
+                       (char= (char value 0) #\")
+                       (char= (char value (1- (length value))) #\"))
+                  (setf (prefs-todo-template p) (subseq value 1 (1- (length value)))))
+                 (t (push (format nil "head.toml: todo_template = ~s is true, false, or a quoted path"
+                                  value)
+                          notes))))
               ((string= key "retired")
                ;; **A key that used to be ours, read as nothing and left where it is**
                ;; (R24). The retired set lives in the file every head shares now
@@ -889,7 +925,14 @@ Returns the path written, or NIL for a head with nowhere to write."
                      (cons "marker_seam" (if (prefs-marker-seam p) "true" "false"))
                      ;; **Quoted like letibot spells its own**, so the two heads' files read
                      ;; alike for a key they share a vocabulary for.
-                     (cons "verbosity" (format nil "\"~a\"" (prefs-verbosity p))))))
+                     (cons "verbosity" (format nil "\"~a\"" (prefs-verbosity p)))
+                     ;; `true`/`false` for the switch and a QUOTED path for a file, so what is
+                     ;; written is exactly what the parse arm above reads back.
+                     (cons "todo_template"
+                           (let ((v (prefs-todo-template p)))
+                             (cond ((null v) "false")
+                                   ((eq v t) "true")
+                                   (t (format nil "~s" v))))))))
     ;; **`retired` is deliberately absent** (R24): the set it names belongs to the file
     ;; every head shares, and `persist-retired` writes it there. A save of the four choices
     ;; must not drag a copy of it back into this file — that is how a set comes to have two

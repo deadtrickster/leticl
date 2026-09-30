@@ -284,6 +284,16 @@ replace the error being reported with its own."
                          ;; almost never the thing the caller wants.
                          (progn
                            (setf *store-handle* db *store-file* path *store-unavailable* nil)
+                           ;; **AND THE TABLE THAT RECORDS A SEEDING**, beside the one it seeds. A
+                           ;; row here says *this project has had its starter todos put in it*, and
+                           ;; it is a table rather than a column because the fact is about the
+                           ;; PROJECT and not about any row — deleting every starter todo afterwards
+                           ;; must not bring them back, which is exactly what an "is the list empty"
+                           ;; test would do.
+                           (%sq-exec db
+                                     "create table if not exists todo_seed (
+                                        workspace text primary key)"
+                                     (sb-sys:int-sap 0) (sb-sys:int-sap 0) err)
                            ;; **AND THE COLUMN FOR A DATABASE THAT PREDATES IT.**
                            ;;
                            ;; `create table if not exists` is a no-op on a database that already has
@@ -492,6 +502,32 @@ unowned row — that would hand them to whichever head started first."
                     (%store-set-user-version +todos-orphan-migration+)
                     moved)
                 (error (e) (progn (%store-failed e) 0)))))))))
+
+(defun store-todo-seeded-p (workspace)
+  "Has WORKSPACE already had its starter todos put in it? NIL when it has not, or when there is no store.
+
+**NIL for *no store* as well as for *not seeded*, and that is the safe direction here**: a head with no
+database has nowhere to record a seeding, so it must not seed — otherwise every start would add the
+starter rows again, which is the duplicate-every-session defect this feature was extracted from."
+  (sb-thread:with-recursive-lock (*store-lock*)
+    (let ((db (%store-db)))
+      (when (and db (plusp (length (or workspace ""))))
+        (handler-case
+            (with-statement (stmt db "select 1 from todo_seed where workspace = ?")
+              (%bind-text stmt 1 workspace)
+              (= +sqlite-row+ (%sq-step stmt)))
+          (error (e) (progn (%store-failed e) nil)))))))
+
+(defun store-mark-todo-seeded (workspace)
+  "Record that WORKSPACE has had its starter todos. T when it was recorded."
+  (sb-thread:with-recursive-lock (*store-lock*)
+    (let ((db (%store-db)))
+      (when (and db (plusp (length (or workspace ""))))
+        (handler-case
+            (with-statement (stmt db "insert or replace into todo_seed (workspace) values (?)")
+              (%bind-text stmt 1 workspace)
+              (= +sqlite-done+ (%sq-step stmt)))
+          (error (e) (progn (%store-failed e) nil)))))))
 
 (defun store-save-todo (item &optional seq workspace)
   "Insert or replace ITEM for WORKSPACE. SEQ is its place in the list; defaults to the item's own id order.

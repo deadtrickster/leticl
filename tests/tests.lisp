@@ -23434,3 +23434,94 @@ one person's finished note becomes everybody's."
                "it is visible only where *which project is this* has no answer"))
       (leticl::store-close))
     (setf leticl::*store-path-override* nil)))
+
+(def-test a-new-project-can-start-from-a-todo-template (:suite leticl)
+  "**The operator's ask: *\"this default todo can be a way to help new sessions initialize, can we have a
+new session todo template with a config switch?\"***
+
+It is the deliberate half of a bug: orphan rows were turning up in every new session, which was a blanket
+adoption (see `store-adopt-orphan-todos`), and the useful half of that accident is *a new project can
+start with a checklist*.
+
+**ONCE PER PROJECT is the assertion that matters.** Operator todos are per PROJECT, so a seed that ran
+per session or per head would duplicate the list for every session in the same project — which is the
+very duplicate-every-session defect this was extracted from. The record is a table, not an *is the list
+empty* test, so **deleting a starter todo must not bring it back**; that is the second half here.
+
+The template is a `TODO.md`, parsed by the reader the repo section already uses, so the format is the one
+the operator writes by hand — including an indented body and a box already ticked."
+  (let ((leticl::*store-path-override* (format nil "/tmp/leticl-seed-~a.db" (random 1000000)))
+        ;; **THE OPERATOR'S OWN LEGACY FILE MUST NOT BE IN REACH.** `load-operator-todos` imports
+        ;; whatever is at `operator-todos-path`, and that is the REAL one under their config directory:
+        ;; MEASURED, this test silently imported their two rows and then asserted about the wrong list.
+        ;; A path that is simply not there is the isolation — the import branch then cannot fire.
+        (leticl::*operator-todos-path-override* "/tmp/leticl-seed-test/no-such-todos.sexp")
+        (dir-pathname (make-pathname :directory '(:absolute "tmp" "leticl-seed-test")))
+        (leticl::*operator-todos* nil)
+        (leticl::*write-prefs* t)
+        (leticl::*prefs* nil))
+    (unwind-protect
+         (progn
+           (leticl::store-close)
+           (dolist (suffix '("" "-wal" "-shm"))
+             (let ((f (concatenate 'string leticl::*store-path-override* suffix)))
+               (when (probe-file f) (ignore-errors (delete-file f)))))
+           (ensure-directories-exist dir-pathname)
+           (let ((tpl (merge-pathnames "template.md" dir-pathname)))
+             (with-open-file (out tpl :direction :output
+                                      :if-does-not-exist :create :if-exists :supersede)
+               (format out "# Starter~%~%## First~%~%- [ ] read the brief~%    it is in the workspace~%~%- [x] find the entry point~%~%- [ ] run the tests~%"))
+             ;; **the switch points at a FILE**, which is what makes this one key rather than two
+             (setf leticl::*prefs* (leticl::make-prefs))
+             (setf (leticl::prefs-todo-template leticl::*prefs*) (namestring tpl))
+             ;; ---------- 1. FIRST LOAD: the project is seeded ----------
+             (let ((note (leticl::load-operator-todos "proj-a")))
+               (is (equal '("read the brief" "find the entry point" "run the tests")
+                          (mapcar (lambda (i) (getf i :content)) leticl::*operator-todos*))
+                   "**three rows from the template, in its order**")
+               (is (equal "it is in the workspace"
+                          (getf (first leticl::*operator-todos*) :detail))
+                   "**and the indented line under the first is its DETAIL** — the same body the TODO.md
+ reader keeps for the repo section")
+               (is (string= "completed" (getf (second leticl::*operator-todos*) :status))
+                   "**`[x]` in the template seeds a DONE row**, so a template can carry something already
+ settled")
+               (is (search "starter todo" note)
+                   (format nil "and the load SAYS it seeded: ~s" note)))
+             ;; ---------- 2. A SECOND LOAD DOES NOT SEED AGAIN ----------
+             (setf leticl::*operator-todos* nil)
+             ;; `load-operator-todos` answers a NOTE or NIL and sets the list — it does not return it,
+             ;; which is what the first cut of this assertion got wrong.
+             (leticl::load-operator-todos "proj-a")
+             (is (= 3 (length leticl::*operator-todos*))
+                 "**and there are still three, not six** — the seeding ran once, which is the whole
+ reason the record is a table")
+             (is (null (leticl::%seed-operator-todos "proj-a"))
+                 "and the seeder itself answers NIL the second time")
+             ;; ---------- 3. **DELETING THEM DOES NOT BRING THEM BACK** ----------
+             (dolist (item leticl::*operator-todos*)
+               (leticl::store-delete-todo (getf item :id)))
+             (setf leticl::*operator-todos* nil)
+             (leticl::load-operator-todos "proj-a")
+             (is (null leticl::*operator-todos*)
+                 "**an emptied project stays empty** — an *is the list empty* test would re-seed here,
+ which is why the record is a row of its own")
+             ;; ---------- 4. ANOTHER PROJECT GETS ITS OWN ----------
+             (setf leticl::*operator-todos* nil)
+             (leticl::load-operator-todos "proj-b")
+             (is (= 3 (length leticl::*operator-todos*))
+                 "a DIFFERENT project is seeded too, because the record is per workspace")
+             ;; ---------- 5. THE SWITCH OFF, AND A MISSING FILE ----------
+             (let ((leticl::*operator-todos* nil))
+               (setf (leticl::prefs-todo-template leticl::*prefs*) nil)
+               (is (null (leticl::%seed-operator-todos "proj-c")) "off means nothing happens")
+               (is (null leticl::*operator-todos*) "and nothing is added"))
+             (let ((leticl::*operator-todos* nil))
+               (setf (leticl::prefs-todo-template leticl::*prefs*)
+                     (namestring (merge-pathnames "not-there.md" dir-pathname)))
+               (is (search "is not there" (or (leticl::%seed-operator-todos "proj-d") ""))
+                   "**a switch that is ON and a file that is missing is SAID**, because from the
+ operator's side a feature that did not work and one that was never on look identical")))
+      (leticl::store-close))
+    (setf leticl::*store-path-override* nil
+          leticl::*prefs* nil))))

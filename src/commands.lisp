@@ -846,6 +846,79 @@ strictly worse than a list that survives only this session."
                             (or *store-unavailable* "the store refused"))))))
   *operator-todos*)
 
+(defun todo-template-path ()
+  "Where the starter todos come from: the `todo_template` setting, as a path.
+
+`t` means the default beside this head's own preferences; a STRING is the path the operator named; NIL
+means the switch is off and nothing is read. One function because the setting has three shapes and two
+callers (the seeding and the `/config` row) must not spell them differently."
+  (let ((v (prefs-todo-template (or *prefs* (make-prefs)))))
+    (cond ((null v) nil)
+          ((eq v t)
+           (let ((prefs (default-prefs-path)))
+             (and prefs (merge-pathnames "todo-template.md"
+                                         (uiop:pathname-directory-pathname prefs)))))
+          ((stringp v) (pathname v))
+          (t nil))))
+
+(defun %seed-operator-todos (workspace)
+  "Put the starter todos into WORKSPACE, once. Answers a note, or NIL when there is nothing to say.
+
+**THE OPERATOR'S ASK:** *\"this default todo can be a way to help new sessions initialize, can we have a
+new session todo template with a config switch?\"* — asked about orphan rows that were turning up in
+every new session, which was a BUG (a blanket adoption, see `store-adopt-orphan-todos`) whose useful half
+this is: a new project can start with a checklist.
+
+**ONCE PER PROJECT, not per session and not per head**, and that is forced rather than chosen: the
+operator's todos are per PROJECT, so a per-session seed would duplicate the list for every session in
+the same project, and a per-head seed would add another copy on every restart. `store-todo-seeded-p` is
+the record, and it is a table rather than an *is the list empty* test for the reason its own docstring
+gives: deleting a starter todo must not bring it back.
+
+**THE TEMPLATE IS A `TODO.md`**, parsed by the same reader the repo section uses — so a starter list is
+written in the format the operator already writes by hand, boxes and indented bodies included, and there
+is no second syntax to learn. A mark of `[x]` seeds a done row, which is how a template can carry
+something already settled.
+
+Refusals are NOTES rather than silences: a switch that is on and a template that is not there is
+something to say, because from the operator's side *the feature did not work* and *I never turned it on*
+look identical otherwise."
+  (let ((v (prefs-todo-template (or *prefs* (make-prefs)))))
+    (when (and v (plusp (length (or workspace ""))))
+      (cond
+        ;; already seeded: nothing, and no note — this is the common path on every later start
+        ((store-todo-seeded-p workspace) nil)
+        (t
+         (let ((path (todo-template-path)))
+           (cond
+             ((null path)
+              (format nil "todo_template is on but this head has no config directory to read it from"))
+             ((not (probe-file path))
+              (format nil "todo_template is on but ~a is not there" (namestring path)))
+             (t
+              (let* ((rows (ignore-errors (read-todo-md (uiop:read-file-string path))))
+                     (items (remove-if-not (lambda (r) (and (getf r :item) (getf r :text))) rows)))
+                (cond
+                  ((null items)
+                   (store-mark-todo-seeded workspace)
+                   (format nil "~a has no items in it, so nothing was added"
+                           (file-namestring path)))
+                  (t
+                   (loop for r in items
+                         for item = (list :id (operator-todo-next-id)
+                                          :content (getf r :text)
+                                          :detail (format nil "~{~a~^~%~}" (getf r :body))
+                                          :status (if (eq (getf r :mark) :done) "completed" "open"))
+                         do (setf *operator-todos* (append *operator-todos* (list item)))
+                            (when *write-prefs*
+                              (store-save-todo item (length *operator-todos*) workspace)))
+                   ;; **MARKED SEEDED EVEN IF A ROW FAILED TO WRITE**, because the alternative is
+                   ;; worse in the direction that matters: an unmarked project re-seeds on the next
+                   ;; start, and the operator gets the duplicates this feature exists to avoid. The
+                   ;; failure is visible as a short list, and the store says so itself.
+                   (store-mark-todo-seeded workspace)
+                   (format nil "~d starter todo~:p from ~a"
+                           (length items) (file-namestring path)))))))))))))
 (defun load-operator-todos (&optional workspace)
   "The operator's list FOR WORKSPACE from the STORE onto `*operator-todos*`, answering a note or NIL.
 
@@ -904,7 +977,15 @@ which is the same behaviour as before that store existed."
          ;; silent. Read and cleared here, because it is news once.
          (let ((note *store-note*))
            (setf *store-note* nil)
-           note)))))
+           ;; **AND THE STARTER TODOS, in this same place and for the same reason**: this is the one
+           ;; function where a head learns its list, so it is the one place a list can be STARTED.
+           ;; `%seed-operator-todos` refuses on its own when the project has been seeded before, when
+           ;; the switch is off, and when the workspace is not yet known — that last one matters,
+           ;; because a head loads before the socket exists and a project it cannot name is not a
+           ;; project it may put rows into.
+           (let ((seeded (%seed-operator-todos workspace)))
+             (cond (seeded (if note (format nil "~a; ~a" note seeded) seeded))
+                   (t note))))))))
 
 (defvar *todo-file-unreadable* nil
   "Set when the todo file existed and could not be read, so a save must not overwrite it.")

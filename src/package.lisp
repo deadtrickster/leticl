@@ -291,6 +291,9 @@
    #:store-load-todos #:store-save-todo #:store-delete-todo #:store-replace-todos #:*sqlite-library*
    ;; R57 amended: the operator's rows are PER PROJECT — the store keys them by workspace
    #:store-adopt-orphan-todos #:store-todo-id-ceiling #:*store-note* #:operator-todos-workspace
+   ;; the new-project starter todos (a TODO.md, behind a config switch)
+   #:todo-template-path #:prefs-todo-template #:store-todo-seeded-p #:store-mark-todo-seeded
+   #:*operator-todos-path-override*
    #:%todo-draft-open #:%todo-draft-key #:%todo-draft-field
    ;; R11's locator
    #:*diag* #:diagnostic-listing-lines #:open-diagnostic-listing #:%diagnostic-ask
