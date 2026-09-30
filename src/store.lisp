@@ -149,6 +149,33 @@ the hand-editing that a `create table` cannot survive. `~/.local/share` is where
                                                       (uiop:ensure-directory-pathname home))))
               (t nil)))))
 
+(defvar *store-lock* (sb-thread:make-mutex :name "leticl store")
+  "The ONE lock every store operation holds, and it is not optional.
+
+**MEASURED, as SBCL CORRUPTION WARNINGS flooding the operator's own window:**
+
+    CORRUPTION WARNING in SBCL pid 1672364 tid 1836575:
+      Memory fault at (nil) (pc=(nil), fp=0x7f035c8562c0, sp=0x7f035c856268)
+      The integrity of this image is possibly compromised.
+
+`pc=(nil)` is a call through a NULL FUNCTION POINTER, and sqlite reaches its methods through function
+pointers stored in the object it is working on — so this is a USE-AFTER-FREE: one thread was inside a
+statement while another had already closed the database out from under it.
+
+**Because this file had no lock at all, and the handle is one per PROCESS while the callers are not:**
+the loop thread saves on every add and delete, the reader thread folds a `todos_updated` on an
+incoming frame, and every `tui-eval` runs on its OWN thread. Three threads, one `sqlite3*`, and the
+reopen-on-failure path I added is a close — the exact thing that must never overlap a use.
+
+**A recursive lock, because the calls genuinely nest**: `store-load-todos` adopts orphans and
+`store-replace-todos` saves row by row, so a plain mutex would deadlock the head on the first such
+call. `with-recursive-lock` is the same thread re-entering, which is what nesting here is.
+
+**And the order is always paint-then-store, never the reverse.** An eval holds the paint lock and may
+take this one; the loop never takes this lock and then waits for paint. So there is no cycle. That is
+worth stating because a lock added here without that argument is how a head hangs instead of
+corrupting.")
+
 (defvar *store-handle* nil "The open database handle, or NIL. One per process.")
 (defvar *store-file* nil "The path `*store-handle*` was opened from, so a path change reopens.")
 (defvar *store-unavailable* nil
@@ -169,9 +196,10 @@ and the very next call signalled. A predicate a caller uses to decide whether to
 
 The attempt is cached: `%store-db` opens once and reuses the handle, and a failure sets
 `*store-unavailable*` for the session, so this is at most one `open` and then one comparison."
-  (and *sqlite-library*
+  (sb-thread:with-recursive-lock (*store-lock*)
+    (and *sqlite-library*
        (not *store-unavailable*)
-       (not (null (%store-db)))))
+       (not (null (%store-db))))))
 
 (defun %store-failed (e)
   "Record E as this session's store failure, DROP THE HANDLE, and answer NIL.
@@ -263,9 +291,10 @@ replace the error being reported with its own."
 
 (defun store-close ()
   "Close the handle, if open. For a test between cases, and for a switch between stores."
-  (when *store-handle*
+  (sb-thread:with-recursive-lock (*store-lock*)
+    (when *store-handle*
     (%sq-close *store-handle*)
-    (setf *store-handle* nil *store-file* nil)))
+    (setf *store-handle* nil *store-file* nil))))
 
 (defmacro with-statement ((var db sql) &body body)
   "VAR bound to a prepared SQL statement, finalized however BODY ends.
@@ -342,7 +371,8 @@ nothing behind for the next caller.
 **NIL for a store that is not there**, which the caller cannot distinguish from an empty list — and
 that is the honest answer rather than a guess: a head with no database and a head whose list is
 empty both have nothing to draw, and inventing a difference would be inventing a claim."
-  (let ((db (%store-db)))
+  (sb-thread:with-recursive-lock (*store-lock*)
+    (let ((db (%store-db)))
     (when db
       (handler-case
           (progn
@@ -364,7 +394,7 @@ empty both have nothing to draw, and inventing a difference would be inventing a
                                      :status (or (%sq-column-text stmt 3) "open"))
                                out))
                 (nreverse out))))
-        (error (e) (%store-failed e))))))
+        (error (e) (%store-failed e)))))))
 
 (defvar *store-note* nil
   "A one-off sentence the store wants said — currently the orphan-row adoption.
@@ -380,7 +410,8 @@ function to say one sentence would be the tail wagging the dog.")
 `store-load-todos` for why this is a one-time report rather than a silent assignment. NIL or an empty
 WORKSPACE adopts nothing: a head that does not yet know its project must not be the one to claim every
 unowned row — that would hand them to whichever head started first."
-  (if (or (null workspace) (zerop (length workspace)))
+  (sb-thread:with-recursive-lock (*store-lock*)
+    (if (or (null workspace) (zerop (length workspace)))
       0
       (let ((db (%store-db)))
         (when db
@@ -390,7 +421,7 @@ unowned row — that would hand them to whichever head started first."
                 (if (= +sqlite-done+ (%sq-step stmt))
                     (%sq-changes db)
                     0))
-            (error (e) (progn (%store-failed e) 0)))))))
+            (error (e) (progn (%store-failed e) 0))))))))
 
 (defun store-save-todo (item &optional seq workspace)
   "Insert or replace ITEM for WORKSPACE. SEQ is its place in the list; defaults to the item's own id order.
@@ -402,7 +433,8 @@ same item is an edit, and doing it as two statements would leave a window with n
 project keeps that project; the alternative — leaving the column alone on update — would let a row
 keep a stale owner after a rename. NIL is stored as the empty string, which is the orphan marker
 `store-adopt-orphan-todos` looks for."
-  (let ((db (%store-db)))
+  (sb-thread:with-recursive-lock (*store-lock*)
+    (let ((db (%store-db)))
     (when db
       (handler-case
           (with-statement (stmt db "insert or replace into operator_todo
@@ -417,7 +449,7 @@ keep a stale owner after a rename. NIL is stored as the empty string, which is t
             (%bind-text stmt 5 (or (getf item :status) "open"))
             (%bind-text stmt 6 (or workspace ""))
             (= +sqlite-done+ (%sq-step stmt)))
-        (error (e) (%store-failed e))))))
+        (error (e) (%store-failed e)))))))
 
 (defun store-todo-id-ceiling ()
   "The highest `tN` id anywhere in the table, whatever project it belongs to — or 0.
@@ -433,7 +465,8 @@ to look at them. `substr(id, 2)` drops the namespace letter and `cast(... as int
 into a number — and a row whose id is not that shape casts to 0, which is below every real id and so
 cannot raise the ceiling by accident. That is the safe direction: an unreadable id must not make the
 counter skip a range it never used."
-  (let ((db (%store-db)))
+  (sb-thread:with-recursive-lock (*store-lock*)
+    (let ((db (%store-db)))
     (when db
       (handler-case
           (with-statement (stmt db "select max(cast(substr(id, 2) as integer)) from operator_todo
@@ -444,17 +477,18 @@ counter skip a range it never used."
                       (or (ignore-errors (parse-integer (%sq-column-text-str stmt 0) :junk-allowed t)) 0)
                       0))
                 0))
-        (error (e) (progn (%store-failed e) 0))))))
+        (error (e) (progn (%store-failed e) 0)))))))
 
 (defun store-delete-todo (id)
   "Remove the row ID. T when the statement ran."
-  (let ((db (%store-db)))
+  (sb-thread:with-recursive-lock (*store-lock*)
+    (let ((db (%store-db)))
     (when db
       (handler-case
           (with-statement (stmt db "delete from operator_todo where id = ?")
             (%bind-text stmt 1 id)
             (= +sqlite-done+ (%sq-step stmt)))
-        (error (e) (%store-failed e))))))
+        (error (e) (%store-failed e)))))))
 
 (defun store-replace-todos (items workspace)
   "Rewrite this WORKSPACE's list: its rows deleted, ITEMS inserted in order. T when it ran.
@@ -466,7 +500,8 @@ window in which the list is not on disk at all.
 **It deletes only ITS OWN project's rows.** A `delete from operator_todo` with no key was the shape
 that made this file's list one list; keeping it here would mean a migration in one workspace silently
 emptying every other project's todos."
-  (let ((db (%store-db)))
+  (sb-thread:with-recursive-lock (*store-lock*)
+    (let ((db (%store-db)))
     (when db
       (handler-case
           (progn
@@ -486,4 +521,4 @@ emptying every other project's todos."
                   (progn (setf *store-unavailable* "the list could not be written back")
                          nil)
                   t)))
-        (error (e) (%store-failed e))))))
+        (error (e) (%store-failed e)))))))
