@@ -23382,3 +23382,55 @@ mode that hid only the file's rows or only the operator's would mean two things 
              (is (null leticl::*todos-hide-done*) "turning the mode back off")
              (is (= 5 (length (stops))) "so the hidden rows are stops again")))
       (ignore-errors (delete-file path)))))
+
+(def-test an-orphan-row-is-adopted-once-and-not-by-whoever-loads-next (:suite leticl)
+  "**The operator: *\"wtf why all new session get plain quoting and push leticl to github todos???\"***
+
+Two rows they had finished with turned up in every new session. The cause was a statement's SHAPE, not
+anybody's mistake with the data: `store-adopt-orphan-todos` ran
+
+    update operator_todo set workspace = ? where workspace = ''
+
+from `store-load-todos` on EVERY load, so every row with an empty workspace was claimed **permanently**
+by the first workspace that happened to load. Its own docstring said *\"it happens once\"* — the
+docstring was right and the code did the opposite. The intent was a MIGRATION (rows written before the
+`workspace` column existed have `''` and need a home), and a migration is identified by a VERSION.
+
+**The assertion that keeps it fixed is the SECOND load**: a row left ownerless after the migration must
+stay ownerless, because it belongs to no project — and showing it in whichever project asks next is how
+one person's finished note becomes everybody's."
+  (let ((leticl::*store-path-override* (format nil "/tmp/leticl-adopt-~a.db" (random 1000000))))
+    (unwind-protect
+         (progn
+           (leticl::store-close)
+           (dolist (suffix '("" "-wal" "-shm"))
+             (let ((f (concatenate 'string leticl::*store-path-override* suffix)))
+               (when (probe-file f) (ignore-errors (delete-file f)))))
+           ;; **A ROW THAT PREDATES THE COLUMN**: written with no workspace.
+           (is (leticl::store-save-todo (list :id "t1" :content "old row" :detail "" :status "open")
+                                        1 "")
+               "the pre-column row is in the table with an empty workspace")
+           ;; 1. the migration: the first project to load claims it, once
+           (is (equal '("t1") (mapcar (lambda (i) (getf i :id))
+                                      (leticl::store-load-todos "proj-a")))
+               "**the first loader adopts it**, which is the migration working")
+           (is (equal '("t1") (mapcar (lambda (i) (getf i :id))
+                                      (leticl::store-load-todos "proj-a")))
+               "and it stays with the project that claimed it")
+           (is (null (leticl::store-load-todos "proj-b"))
+               "and does NOT appear for another project")
+           ;; 2. **A NEW ORPHAN, after the migration.** This is the case that was broken: with a
+           ;; blanket update on every load, this row would be handed to proj-b — and then to every
+           ;; project that loaded after that.
+           (is (leticl::store-save-todo (list :id "t2" :content "a later orphan" :detail ""
+                                              :status "open")
+                                        2 "")
+               "a new ownerless row")
+           (is (null (leticl::store-load-todos "proj-b"))
+               "**and the NEXT project to load does not get it** — the migration ran once, and a row
+ left ownerless afterwards belongs to no project rather than to whoever asks next")
+           ;; ...and the honest home for it is a head that has not yet learned its project
+           (is (equal '("t2") (mapcar (lambda (i) (getf i :id)) (leticl::store-load-todos nil)))
+               "it is visible only where *which project is this* has no answer"))
+      (leticl::store-close))
+    (setf leticl::*store-path-override* nil)))

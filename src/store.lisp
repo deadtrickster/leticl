@@ -418,6 +418,38 @@ A `defvar` read and cleared by `load-operator-todos`, which is the caller that c
 the screen: this file has no opinion about the status line, and threading a head through a store
 function to say one sentence would be the tail wagging the dog.")
 
+(defun %store-user-version ()
+  "This database's migration version, or 0. **SQLite's own application number**, `pragma user_version`:
+no table of ours to create, it travels with the file, and it is exactly what a migration marker is."
+  (let ((db (%store-db)))
+    (when db
+      (handler-case
+          (with-statement (stmt db "pragma user_version")
+            (if (= +sqlite-row+ (%sq-step stmt))
+                (let ((sap (%sq-column-text-ptr stmt 0)))
+                  (if (and sap (not (sb-sys:sap= sap (sb-sys:int-sap 0))))
+                      (or (ignore-errors (parse-integer (%sq-column-text-str stmt 0)
+                                                        :junk-allowed t))
+                          0)
+                      0))
+                0))
+        (error (e) (progn (%store-failed e) 0))))))
+
+(defun %store-set-user-version (n)
+  "Record migration version N. T when it was recorded.
+
+The number is interpolated because a `pragma` takes no bound parameters — and it is an integer this
+file chooses, never anything a caller passes, so there is nothing to inject."
+  (let ((db (%store-db)))
+    (when db
+      (handler-case
+          (with-statement (stmt db (format nil "pragma user_version = ~d" n))
+            (= +sqlite-done+ (%sq-step stmt)))
+        (error (e) (progn (%store-failed e) nil))))))
+
+(defparameter +todos-orphan-migration+ 1
+  "The version at which the pre-workspace rows were adopted. See `store-adopt-orphan-todos`.")
+
 (defun store-adopt-orphan-todos (workspace)
   "Give every row with no workspace to WORKSPACE. Returns how many moved.
 
@@ -430,13 +462,36 @@ unowned row — that would hand them to whichever head started first."
       0
       (let ((db (%store-db)))
         (when db
-          (handler-case
-              (with-statement (stmt db "update operator_todo set workspace = ? where workspace = ''")
-                (%bind-text stmt 1 workspace)
-                (if (= +sqlite-done+ (%sq-step stmt))
-                    (%sq-changes db)
-                    0))
-            (error (e) (progn (%store-failed e) 0))))))))
+          ;; **ONCE, AND THIS IS A CORRECTION TO A BLANKET UPDATE THAT RAN ON EVERY LOAD.**
+          ;;
+          ;; MEASURED, and it is the operator's report: *"wtf why all new session get plain quoting and
+          ;; push leticl to github todos???"* — two rows they had finished with turned up in every new
+          ;; session. The cause is this statement's shape, not anybody's mistake with the data: it was
+          ;; `update operator_todo set workspace = ? where workspace = ''`, run from `store-load-todos`
+          ;; on EVERY load, so every row with an empty workspace was claimed **permanently** by the
+          ;; first workspace that happened to load. The docstring above says *"it happens once"* — the
+          ;; docstring was right and the code did the opposite.
+          ;;
+          ;; The intent was a MIGRATION: rows written before the column existed have `''`, and they
+          ;; need a home. A migration is identified by a version, and this is the first one — so
+          ;; `pragma user_version` is the guard, and a row left ownerless afterwards stays ownerless,
+          ;; which is the honest reading: it belongs to no project, so it shows in a head that does not
+          ;; know its project rather than in all of them.
+          (if (>= (%store-user-version) +todos-orphan-migration+)
+              0
+              (handler-case
+                  (let ((moved (with-statement (stmt db "update operator_todo set workspace = ? where workspace = ''")
+                                 (%bind-text stmt 1 workspace)
+                                 (if (= +sqlite-done+ (%sq-step stmt))
+                                     (%sq-changes db)
+                                     0))))
+                    ;; **THE VERSION IS SET WHETHER OR NOT ANYTHING MOVED**, or a database whose
+                    ;; first loader found no orphans would look unmigrated for ever and the next
+                    ;; workspace to ask would be handed the job — which is the same "whoever asks
+                    ;; first" rule in a slower costume.
+                    (%store-set-user-version +todos-orphan-migration+)
+                    moved)
+                (error (e) (progn (%store-failed e) 0)))))))))
 
 (defun store-save-todo (item &optional seq workspace)
   "Insert or replace ITEM for WORKSPACE. SEQ is its place in the list; defaults to the item's own id order.
