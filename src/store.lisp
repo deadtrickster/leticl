@@ -460,6 +460,26 @@ file chooses, never anything a caller passes, so there is nothing to inject."
 (defparameter +todos-orphan-migration+ 1
   "The version at which the pre-workspace rows were adopted. See `store-adopt-orphan-todos`.")
 
+(defparameter +todos-legacy-import-migration+ 2
+  "The version at which the old `todos.sexp` was imported. See `store-legacy-import-pending-p`.
+
+**A SECOND VERSION, and the reason is the same defect twice.** MEASURED on the operator's own head:
+`t5 \"plain quoting\"` and `t6 \"push leticl to github\"` were deleted from the table, the head was
+restarted, and BOTH CAME BACK under a different workspace. The source was `~/.config/leticl/todos.sexp`,
+still holding them, and the import branch of `load-operator-todos` re-created them because the table was
+empty. Its docstring says *\"AND IT IMPORTS THE OLD FILE ONCE\"* — and it ran whenever the table was
+empty for the project asking, which is not once. Exactly the shape `store-adopt-orphan-todos` had, found
+by exactly the same act: deleting the rows and watching them return.")
+
+(defun store-legacy-import-pending-p ()
+  "T when the one-time import of the old `todos.sexp` has NOT happened yet."
+  (< (%store-user-version) +todos-legacy-import-migration+))
+
+(defun store-mark-legacy-imported ()
+  "Record that the old `todos.sexp` has had its one chance. T when it recorded the version."
+  (when (< (%store-user-version) +todos-legacy-import-migration+)
+    (%store-set-user-version +todos-legacy-import-migration+)))
+
 (defun store-adopt-orphan-todos (workspace)
   "Give every row with no workspace to WORKSPACE. Returns how many moved.
 

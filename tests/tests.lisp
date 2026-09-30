@@ -23525,3 +23525,58 @@ the operator writes by hand — including an indented body and a box already tic
       (leticl::store-close))
     (setf leticl::*store-path-override* nil
           leticl::*prefs* nil))))
+
+(def-test the-old-todo-file-is-imported-once-and-an-emptied-project-stays-empty (:suite leticl)
+  "**The defect, MEASURED on the operator's own head:** `t5` and `t6` were deleted from the table, the
+head was restarted, and **both came back** — into a different project. The source was
+`~/.config/leticl/todos.sexp`, still holding them, and this branch re-created them because the table was
+empty for the project asking.
+
+The docstring has said *\"AND IT IMPORTS THE OLD FILE ONCE\"* since the import was written. It was not
+once: it fired whenever the table came up empty. `pragma user_version` is what makes it true, exactly as
+it does for the orphan adoption one version below — the same defect, found by the same act of deleting
+the rows and watching them return.
+
+**The second half is the one that matters to a person**: a project they have emptied must STAY empty,
+even with the legacy file sitting right there."
+  (let ((leticl::*store-path-override* (format nil "/tmp/leticl-legacy-~a.db" (random 1000000)))
+        (leticl::*operator-todos-path-override* (format nil "/tmp/leticl-legacy-~a.sexp"
+                                                        (random 1000000)))
+        (leticl::*operator-todos* nil)
+        (leticl::*write-prefs* t)
+        (leticl::*prefs* nil))
+    (unwind-protect
+         (progn
+           (leticl::store-close)
+           (dolist (suffix '("" "-wal" "-shm"))
+             (let ((f (concatenate 'string leticl::*store-path-override* suffix)))
+               (when (probe-file f) (ignore-errors (delete-file f)))))
+           ;; **THE LEGACY FILE, in the shape the real one has**: one printed item per line.
+           (with-open-file (s leticl::*operator-todos-path-override* :direction :output
+                                                               :if-exists :supersede
+                                                               :if-does-not-exist :create)
+             (format s "~s~%~s~%"
+                     (list :id "t5" :content "plain quoting" :detail "readable bytes" :status "open")
+                     (list :id "t6" :content "push leticl" :detail "create repo" :status "open")))
+           ;; ---------- 1. THE IMPORT HAPPENS, ONCE ----------
+           (let ((note (leticl::load-operator-todos "proj-a")))
+             (is (equal '("plain quoting" "push leticl")
+                        (mapcar (lambda (i) (getf i :content)) leticl::*operator-todos*))
+                 "the legacy file's rows are imported")
+             (is (search "moved 2 todo" note) (format nil "and the load says so: ~s" note)))
+           ;; ---------- 2. **THE EMPTYING, which is the whole point** ----------
+           (dolist (item leticl::*operator-todos*)
+             (leticl::store-delete-todo (getf item :id)))
+           (setf leticl::*operator-todos* nil)
+           (leticl::load-operator-todos "proj-a")
+           (is (null leticl::*operator-todos*)
+               "**an emptied project stays empty** — the file is still there and must not be re-read")
+           ;; ---------- 3. another project does not get them either ----------
+           (setf leticl::*operator-todos* nil)
+           (leticl::load-operator-todos "proj-b")
+           (is (null leticl::*operator-todos*)
+               "and a DIFFERENT empty project does not import them a second time"))
+      (leticl::store-close))
+    (setf leticl::*store-path-override* nil
+          leticl::*operator-todos-path-override* nil
+          leticl::*prefs* nil)))

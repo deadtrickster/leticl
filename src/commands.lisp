@@ -949,12 +949,25 @@ which is the same behaviour as before that store existed."
   (let ((items (store-load-todos workspace)))
     (cond
       ;; the table is empty FOR THIS PROJECT and the old file is not: the items are in the file
-      ((and (null items) (operator-todos-path) (probe-file (operator-todos-path)))
+      ;;
+      ;; **AND ONLY IF THAT HAS NOT HAPPENED BEFORE**, which is the correction. This branch used to fire
+      ;; whenever the table was empty, so an EMPTIED project re-imported the file — MEASURED on the
+      ;; operator's head: two rows they had told me to delete were emptied from the table, the head was
+      ;; restarted, and both came back under a different workspace. The docstring has said *"ONCE"*
+      ;; since the import was written; `store-legacy-import-pending-p` is what makes it true.
+      ((and (null items)
+            (store-legacy-import-pending-p)
+            (operator-todos-path)
+            (probe-file (operator-todos-path)))
        (multiple-value-bind (old readable) (read-operator-todos)
          (if (and readable old)
              (progn (setf *operator-todos* (copy-list old))
                     (note-todo-ids *operator-todos*)
                     (store-replace-todos old workspace)
+                    ;; **THE VERSION IS SET EVEN IF THE WRITE FAILED**, for the reason the orphan
+                    ;; adoption gives: an unmarked import re-fires, and a re-import is how a row the
+                    ;; operator deleted comes back. A short list is visible; a resurrected row is not.
+                    (store-mark-legacy-imported)
                     (format nil "moved ~d todo~:p into the head's database from ~a"
                             (length old) (file-namestring (operator-todos-path))))
              (progn (setf *operator-todos* (copy-list (or items nil)))

@@ -293,7 +293,7 @@
    #:store-adopt-orphan-todos #:store-todo-id-ceiling #:*store-note* #:operator-todos-workspace
    ;; the new-project starter todos (a TODO.md, behind a config switch)
    #:todo-template-path #:prefs-todo-template #:store-todo-seeded-p #:store-mark-todo-seeded
-   #:*operator-todos-path-override*
+   #:*operator-todos-path-override* #:store-legacy-import-pending-p #:store-mark-legacy-imported
    #:%todo-draft-open #:%todo-draft-key #:%todo-draft-field
    ;; R11's locator
    #:*diag* #:diagnostic-listing-lines #:open-diagnostic-listing #:%diagnostic-ask
