@@ -39,13 +39,28 @@
 
 ;;; ------------------------------------------------------------- the C ABI ;;;
 
-(defparameter *sqlite-library*
+(defvar *sqlite-library*
   (handler-case (progn (sb-alien:load-shared-object "libsqlite3.so.0") t)
     (error () nil))
   "Did `libsqlite3` load? NIL means the head runs without a store.
 
-A `defparameter` and not a `defconstant`: the file pusher skips constants, so a constant could never
-be moved on a running head — and this one is the switch a test uses to exercise the no-library path.
+**`defvar`, AND THE REASON IS THE INITIALIZER AND NOT THE VARIABLE.** Every other tunable in this file
+is a `defparameter`, and for a plain value that is the same thing; here it is not. `defparameter`
+ASSIGNS ON EVERY EVALUATION, so pushing this file into a live head ran `load-shared-object` again on
+EVERY PUSH — a dynamic-linker call on a process that already holds an open sqlite handle and compiled
+alien routines resolved into that library. `defvar` assigns only when unbound, so the library is
+loaded once for the life of the process, which is what a foreign library is: process-wide state, not
+a setting somebody tunes.
+
+**This is hardening, not a proven cause, and it is worth saying which.** The corruption warnings on
+the operator's heads (`Memory fault at (nil)`, `pc=(nil)`) came from a store that had NO LOCK while
+three threads used one connection — that is the defect, and `*store-lock*` is the fix. But repeating a
+`load-shared-object` on a live process was pointless at best, and the one thing in this file that
+touches the dynamic linker is not a thing to do per push while chasing a memory fault.
+
+It stays a VARIABLE and not a `defconstant` for the reason the constants below record — the file
+pusher skips constants — and a test can still set it, which is what the no-library path is exercised
+with.
 
 **The head must still work without it.** A head whose screen will not come up because a database
 library is missing is worse than one that cannot remember its todos: the conversation is the
