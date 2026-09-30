@@ -1,4 +1,7 @@
-vendor/
+# **vendor/ IS TRACKED** (2026-10-01). It was ignored, and that made the release
+# build impossible: freeze.lisp loads the system through ASDF, the system needs all
+# seven libraries, and a CI checkout had none of them. See vendor/SOURCES.txt.
+# Compiled output stays out, below.
 *.fasl
 *.core
 build/

@@ -1,0 +1,44 @@
+# Where the vendored Lisp libraries came from, and at which commit.
+#
+# **WHY THESE ARE IN THE REPOSITORY AND NOT FETCHED.** `freeze.lisp` loads the system
+# through ASDF, and the system needs these seven — so a build with no network, or a CI
+# runner with an empty home directory, must still be able to load them. Quicklisp would be
+# a second package manager to install and a mutable index to trust; cloning them at build
+# time would be a network dependency and a set of pins living in a script. They are small
+# (3.2 MB together, no compiled output) and they change rarely, so they are committed.
+#
+# **THEY ARE PLAIN DIRECTORIES HERE, NOT SUBMODULES**, and that is deliberate: a submodule
+# means `git submodule update --init` before anything can build, and a checkout that
+# silently lacks them is exactly the failure this file exists to prevent. Their own
+# `.git` directories are removed for the same reason git refuses to track a repository
+# inside a repository.
+#
+# To update one: clone it at the commit below, copy its files over the directory here,
+# and change the commit recorded above it.
+
+alexandria            https://gitlab.common-lisp.net/alexandria/alexandria.git
+                      f283e25efbe9f4323419a138b22ad2fc027f6641
+
+anaphora              https://github.com/spwhitton/anaphora.git
+                      bcf0f7485eec39415be1b2ec6ca31cf04a8ab5c5
+
+asdf-flv              https://github.com/didierverna/asdf-flv.git
+                      3f1de416f7f40a39c47f08335c710a884ece36b3
+
+fiveam                https://github.com/lispci/fiveam.git
+                      e43d6c8e7da5a80d5c33e8ca018fb1619c5b0293
+
+trivial-backtrace     https://github.com/gwkkwg/trivial-backtrace.git
+                      7f90b4a4144775cca0728791e4b92ac2557b07a1
+
+trivial-gray-streams  https://github.com/trivial-gray-streams/trivial-gray-streams.git
+                      257d73ec36958beb7d49eba5567d5409827197b7
+
+yason                 https://github.com/phmarek/yason.git
+                      0c84b29a32c284f6b4be6f8587ff89b5702a6fda
+
+## Licences
+
+Each library carries its own licence in its own directory, and they are all permissive
+(MIT, LLGPL or public domain). Nothing here is modified: the files are as upstream
+published them, which is why the exact commit is recorded rather than a description.
