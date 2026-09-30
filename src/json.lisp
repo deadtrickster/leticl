@@ -52,6 +52,24 @@ by convention (PLAN.md §7)."
                 (write-string "true" s)
                 (write-string "null" s))) ; nil and any other symbol: null
     (cons (if (%plist-p v) (%encode-object v s) (%encode-array v s)))
+    ;; **A VECTOR IS AN ARRAY, AND AN EMPTY ONE IS WHY THIS ARM EXISTS.**
+    ;;
+    ;; MEASURED, and it took two live heads and an un-restartable daemon to find: an empty LIST is
+    ;; NIL in Lisp, so a frame whose required array was empty had that key ELIDED by
+    ;; `%encode-object` — and the daemon refused it:
+    ;;
+    ;;     head connection ended: malformed frame (missing field `items`):
+    ;;       {"frame":"set_operator_todos","client_request_id":"leticl-1","expected_seq":117755}
+    ;;
+    ;; A dropped connection is a dropped HEAD, so clearing the operator's todo list killed the head
+    ;; that cleared it — and every head started afterwards died the same way on its HELLO, because an
+    ;; empty list pushes an empty list. That is an un-restartable workspace, from an elision.
+    ;;
+    ;; The elision itself is right (`%encode-object` says why absence beats null), but it cannot tell
+    ;; *there is no value here* from *the value is an empty collection* — both are NIL. A vector is
+    ;; not: `#()` is a real object, it encodes as `[]`, and a constructor that must always send an
+    ;; array can say so. After the `string` arm, because a string is a vector too.
+    (vector (%encode-array (coerce v 'list) s))
     (hash-table (yason:encode v s))
     (t (error "cannot encode ~s as json" v))))
 

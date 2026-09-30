@@ -14347,7 +14347,10 @@ to anything that does not look at the bytes that actually leave the process."
                  7 (list (list :id "t1" :content "done already" :status "completed")
                          (list :id "t2" :content "still to do" :status "open")
                          (list :id "t3" :content "being worked" :status "in_progress"))))
-         (items (getf frame :items))
+         ;; **AN ARRAY, which is what the wire carries** — `make-set-operator-todos` builds a VECTOR
+         ;; deliberately, so that an EMPTY list is still sent rather than elided (see
+         ;; `%encode`'s vector arm, and the un-restartable head it fixes).
+         (items (coerce (getf frame :items) 'list))
          (json (encode-frame frame)))
     (is (equal '("completed" "pending" "pending") (mapcar (lambda (i) (getf i :status)) items))
         "**the head's status reaches the wire** — only `completed` is completed")
@@ -23580,3 +23583,43 @@ even with the legacy file sitting right there."
     (setf leticl::*store-path-override* nil
           leticl::*operator-todos-path-override* nil
           leticl::*prefs* nil)))
+
+(def-test an-empty-todo-list-is-still-sent-or-the-head-dies (:suite leticl)
+  "**MEASURED on two live heads and an un-restartable workspace, and it is the worst defect this
+session found because it is self-inflicted and it READS as something else.**
+
+`open_todos`' frame has a REQUIRED `items` field on the daemon side. An empty Lisp list is NIL, and
+`%encode-object` elides every key whose value is NIL — so clearing the operator's todo list produced
+
+    {\"frame\":\"set_operator_todos\",\"client_request_id\":\"leticl-1\",\"expected_seq\":117755}
+
+with **no `items` at all**. The daemon's own log has the receipt:
+
+    head connection ended: malformed frame (missing field `items`): …
+
+A dropped connection is a dropped HEAD. So deleting your last todo killed the head that deleted it, and
+then **every head started afterwards died the same way**, because an empty list pushes an empty list on
+HELLO. The operator could not restart their window and had to go and get another agent to do it — and
+from the outside that looks exactly like the head crashing for no reason.
+
+**The elision itself is correct** (`%encode-object` argues it: absence is the spelling every serde field
+shape accepts). What it cannot do is tell *no value here* from *the value is an empty collection* — both
+are NIL. A vector is not, so the constructor uses one."
+  (let* ((empty (leticl::make-set-operator-todos 42 nil))
+         (one (leticl::make-set-operator-todos 42 (list (list :id "t1" :content "x" :status "open")))))
+    ;; ---------- the empty case, which is the bug ----------
+    (let ((json (encode-frame empty)))
+      (is (search "\"items\"" json)
+          (format nil "**the frame carries `items` even when there is nothing in it**: ~a" json))
+      (is (search "\"items\":[]" json)
+          (format nil "**and it is an EMPTY ARRAY**, the shape the daemon's required field takes: ~a"
+                  json)))
+    ;; ---------- and the non-empty case is unchanged ----------
+    (let ((json (encode-frame one)))
+      (is (search "\"items\":[{" json) (format nil "a populated list still encodes as an array: ~a" json))
+      (is (search "\"by\":\"operator\"" json) "with the author on every row"))
+    ;; ---------- the other keys are still elided, which is the behaviour that must not change ----------
+    (let ((json (encode-frame (leticl::make-withdraw-prompts 5))))
+      (is (not (search "items" json))
+          (format nil "**a frame with no such field is untouched** — this fix is not a blanket un-elision: ~a"
+                  json)))))

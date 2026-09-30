@@ -252,6 +252,11 @@ the operator's rows reach it, a reminder can only ever be about something the MO
   (list :frame "set_operator_todos"
         :client-request-id (next-request-id)
         :expected-seq expected-seq
+        ;; **A VECTOR, SO AN EMPTY LIST IS STILL SENT.** `items` is a REQUIRED field on the daemon
+        ;; side, and an empty Lisp list is NIL — which the encoder elides, producing a frame with no
+        ;; `items` at all and a dropped connection. MEASURED: clearing the operator's todos killed the
+        ;; head, and every later head died on its HELLO the same way, because an empty list pushes an
+        ;; empty list. An empty VECTOR is not NIL, so `[]` goes out and the daemon accepts it.
         ;; **THE ITEM'S OWN STATUS, and a hardcoded `"pending"` here was a bug that no test caught.**
         ;;
         ;; Two mappings stacked: `push-operator-todos` derives the wire status from the head's item,
@@ -267,12 +272,13 @@ the operator's rows reach it, a reminder can only ever be about something the MO
         ;; announced as done still counted as open, for ever, and the reminder asked again every idle
         ;; period. **ONE mapping**, here, from the head's own item shape to the wire's — which is what
         ;; `make-set-operator-todos`'s name already promised.
-        :items (mapcar (lambda (item)
-                         (list :content (or (getf item :content) "")
-                               :status (if (equal (getf item :status) "completed")
-                                           "completed" "pending")
-                               :by "operator"))
-                       items)))
+        :items (coerce (mapcar (lambda (item)
+                                 (list :content (or (getf item :content) "")
+                                       :status (if (equal (getf item :status) "completed")
+                                                   "completed" "pending")
+                                       :by "operator"))
+                               items)
+                       'vector)))
 
 (defun make-withdraw-prompts (expected-seq)
   "Take back what this head queued — the original leaves the daemon's queue so
