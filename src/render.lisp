@@ -1472,6 +1472,11 @@ scrolls the transcript by a row every keystroke.
           ;; **the new-todo card**, beside it and for the same reason: both are modal dialogs whose
           ;; field is the composer, and a card drawn above a field that is not its own is a picture
           ;; of a key that does not work.
+          ;; **THE API-KEY CARD**, in the same chain and for the same reason: a modal
+          ;; dialog whose field is the composer, so the composer drawing under a card
+          ;; that is not its own is a picture of a key that does not work.
+          ((and *key-draft* t)
+           (setf card-lines (key-card-lines head cols)))
           ((todo-draft-open-p)
            (setf card-lines (todo-card-lines head cols)))
           (*pick-open*

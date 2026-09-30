@@ -1613,6 +1613,10 @@ for the lists)."
       ;; **THE NEW-TODO CARD**, beside the operator-call composer and for the same reason: the
       ;; field it fills IS the composer, so anything it does not take must land there. It owns
       ;; enter, tab, esc and ctrl-c; everything else is typing.
+      ;; **THE API-KEY CARD**, beside the todo card and for the same reason: the field it
+      ;; fills IS the composer, so anything it does not take must land there. It is ABOVE
+      ;; every other arm that could type, because the text being entered is a credential.
+      ((and *key-draft* (%key-draft-key head key type)))
       ((and *todo-draft* (%todo-draft-key head key type)))
       ;; a picker's own keys; what it does not take is the composer's, so a name
       ;; can be typed under the card
