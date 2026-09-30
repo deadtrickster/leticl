@@ -25,6 +25,42 @@ name: Release
 # image does need `libsqlite3.so.0` at run time for the todo store, which the
 # installer checks and names.
 #
+# **THIS WORKFLOW CANNOT SUCCEED YET, AND `act` FOUND OUT WHY.** MEASURED with
+# `act workflow_dispatch -j build --matrix runs:ubuntu-latest`, which is the whole
+# reason that tool is worth having:
+#
+#   error: failed to load manifest for workspace member `daemon/crates/flowy`
+#     ... failed to load manifest for dependency `letibot-tools`
+#     ... failed to load manifest for dependency `letibot-code`
+#     ... failed to load manifest for dependency `rano`
+#     ... failed to read `/home/dead/Projects/rano/rano/Cargo.toml`
+#     ... No such file or directory (os error 2)
+#
+# **The cause is in letibot, not here**: three of its manifests take rano as an
+# ABSOLUTE PATH dependency,
+#
+#   rano = { path = "/home/dead/Projects/rano/rano" }        crates/code/Cargo.toml
+#   rano = { path = "/home/dead/Projects/rano/rano" }        crates/tui/Cargo.toml
+#   rano = { path = "/home/dead/Projects/rano/rano" }        crates/ui/Cargo.toml
+#
+# with the comment *"rano is an operator-local project, not a published dependency"*.
+# `harnessd` pulls `letibot-tools` -> `letibot-code` -> `rano`, so **the daemon
+# cannot be built anywhere but the author's box** — no runner, no second machine,
+# and no fresh clone anywhere. Nothing in this repository can fix that: making it
+# work by checking rano out at that exact absolute path would bake one operator's
+# home directory into CI and paper over the dependency instead of naming it.
+#
+# THE FIX IS LETIBOT'S, and there are two honest shapes: a git dependency on rano's
+# repository, or rano vendored the way this repository vendors its Lisp libraries
+# (see vendor/SOURCES.txt). Either makes the daemon buildable from a clone, which
+# is what a release needs. Until then this workflow is correct as written and
+# cannot pass.
+#
+# Everything ABOVE this note — checking out both repositories, the triple-vs-runner
+# check, the SBCL install, packaging and asserting five files — was exercised by
+# `act` in the same run and never reached: the daemon build is the first step that
+# touches the missing path. The steps before it succeeded, including
+# `Swatinem/rust-cache` and `dtolnay/rust-toolchain`.
 # Linux x86_64 and aarch64 build natively on GitHub's own runners. **macOS is NOT
 # covered yet**: the head would need `brew install sbcl` on the runner and the
 # image's Lisp-side paths are only exercised on Linux today. Named here rather
