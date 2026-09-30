@@ -22,12 +22,36 @@
 # Environment:
 #   LETICL_INSTALL_DIR   where everything goes       (default: ~/.local/bin)
 #   LETICL_VERSION       tag to install              (default: latest release)
+#   LETICL_NO_DAEMON     install the head only — no harnessd, no letibot
+#   LETICL_FORCE_DAEMON  install the daemon even though one is already there
+#
+# **THE DAEMON SWITCH, and why the default is careful.** `harnessd` is NOT
+# leticl's: it is letibot's, every leticl in every folder on a box talks to the
+# same one, and a second copy in a second directory is a second daemon nobody
+# asked for. So a `harnessd` that is already here or already on PATH is LEFT
+# ALONE and said out loud — and the way to insist is `LETICL_FORCE_DAEMON=1`, not
+# the absence of a switch.
 
 set -eu
 
 REPO="deadtrickster/leticl"
 INSTALL_DIR="${LETICL_INSTALL_DIR:-$HOME/.local/bin}"
 VERSION="${LETICL_VERSION:-}"
+
+# `--no-daemon` for the `sh -s -- --no-daemon` spelling, the environment for the
+# piped one. Both, because a one-liner that pipes into `sh` cannot take arguments
+# any other way — and an env var is what a script wrapping this will reach for.
+NO_DAEMON="${LETICL_NO_DAEMON:-}"
+FORCE_DAEMON="${LETICL_FORCE_DAEMON:-}"
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --no-daemon | --head-only) NO_DAEMON=1 ;;
+        --force-daemon)            FORCE_DAEMON=1 ;;
+        --install-dir)             shift; INSTALL_DIR="${1:-$INSTALL_DIR}" ;;
+        *) printf 'leticl: unknown argument %s\n' "$1" >&2; exit 2 ;;
+    esac
+    shift
+done
 
 say() { printf '%s\n' "$*"; }
 # Everything that is not an answer goes to stderr, so the functions below can be
@@ -83,10 +107,45 @@ main() {
     mkdir -p "$INSTALL_DIR" || die "cannot create $INSTALL_DIR"
     # cp+chmod rather than install(1): `install` is in GNU and BSD but not in
     # POSIX, and the difference is not worth a portability question here.
-    for f in leticl-head harnessd letibot leticl leticl-head-launch; do
+
+    # **THE HEAD, ALWAYS.** It is leticl's own, it is what makes this leticl, and
+    # there is no other copy of it to find.
+    for f in leticl-head leticl leticl-head-launch; do
         cp "$tmp/$f" "$INSTALL_DIR/$f" || die "cannot write $INSTALL_DIR/$f"
         chmod 755 "$INSTALL_DIR/$f"
     done
+
+    # **THE DAEMON, AND THE SWITCH.** Three answers, and the middle one is the
+    # default because it is the case that actually happens: a box that already has
+    # harnessd gets its head installed and its daemon left alone.
+    #
+    #   · `LETICL_NO_DAEMON` — do not install it, whatever is there;
+    #   · a `harnessd` already here or on PATH — KEPT, and said out loud with the
+    #     path it was found at;
+    #   · otherwise — installed, which is the first time.
+    existing=""
+    if [ -n "$FORCE_DAEMON" ]; then
+        existing=""
+    elif command -v harnessd >/dev/null 2>&1; then
+        existing=$(command -v harnessd)
+    elif [ -x "$INSTALL_DIR/harnessd" ]; then
+        existing="$INSTALL_DIR/harnessd"
+    fi
+
+    if [ -n "$NO_DAEMON" ]; then
+        say "harnessd      not installed (--no-daemon)${existing:+ — you have $existing}"
+        say "letibot       not installed (--no-daemon)"
+    elif [ -n "$existing" ]; then
+        say "harnessd      KEPT: $existing"
+        say "              (LETICL_FORCE_DAEMON=1 to replace it, LETICL_NO_DAEMON=1 to silence this)"
+    else
+        for f in harnessd letibot; do
+            cp "$tmp/$f" "$INSTALL_DIR/$f" || die "cannot write $INSTALL_DIR/$f"
+            chmod 755 "$INSTALL_DIR/$f"
+        done
+        say "harnessd      $INSTALL_DIR/harnessd"
+        say "letibot       $INSTALL_DIR/letibot"
+    fi
 
     # **THREE LINES REWRITTEN, because both scripts ship pointed at a CHECKOUT.**
     # Upstream `LETICL_HOME` is the author's project directory and the wrapper is
@@ -116,8 +175,7 @@ main() {
         warn "warning: $INSTALL_DIR/leticl-head answered nothing to --version"
         warn "         it is installed; run it to see what it says"
     fi
-    say "harnessd      $INSTALL_DIR/harnessd"
-    say "letibot       $INSTALL_DIR/letibot"
+    [ -n "$NO_DAEMON" ] || [ -z "$existing" ] || say "harnessd      $existing  (kept)"
 
     # ---------- and what it will be missing ----------
     if [ "$(uname -s)" = Linux ] && ! ldconfig -p 2>/dev/null | grep -q 'libsqlite3\.so\.0'; then
