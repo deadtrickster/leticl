@@ -187,7 +187,7 @@ Second value is the cursor's LINE: two lines per session, after a two-line heade
     ("ctrl-s" . "the session list: type a number or part of a name to switch")
     ("tab" . "complete the /command being typed; more tabs walk the matches")
     ("click" . "in the session list, picks the row under the pointer; enter still switches")
-    ("ctrl-p" . "the todos pane: the model's plan, and the repo's TODO.md — ↑↓ moves, enter or tab unfolds, space marks, i composes a prompt from a subtree, pgup/pgdn scrolls")
+    ("ctrl-p" . "the todos pane: the model's plan, and the repo's TODO.md — ↑↓ moves, enter or tab unfolds, space marks, i composes a prompt from a subtree, h hides the done ones, pgup/pgdn scrolls")
     ("/new [title]" . "start a session in this daemon and go there")
     ("/switch WHAT" . "go to a session by number, id or part of its name")
     ("ctrl-r" . "fold or unfold the model's thinking")
@@ -1535,6 +1535,39 @@ words and its detail read as a block rather than as two entries."
          (list (list (cons "      " nil)
                      (cons detail '(:dim t)))))))))
 
+(defvar *todos-hide-done* nil
+  "Hide the DONE rows in the todos pane. The operator's ask: *\"in todo panel i want a mode where done
+items hidden\"*.
+
+**A MODE AND NOT A FILTER, because the two sections answer it the same way and a reader should learn it
+once.** A done row is still a row: `todos-stops` still refuses to offer it to the cursor, and this
+hides it only from the DRAWING — so with the mode on the cursor walks what is on the screen and nothing
+else, which is the invariant this pane has broken twice before (see `todos-stops`: *\"arrows dont go
+here\"*, and a stop whose row was never drawn).
+
+**Both authors, both sections.** The operator's rows, the model's, and the file's — a done item is done
+whoever wrote it, and hiding only one half would make the mode mean two things.
+
+**It is a `defvar` like `*repo-todo-open*`, and like that flag it does NOT survive a restart.** It is
+where your eyes are, not a preference, and the pane is opened and closed many times a session. If it
+turns out to want remembering, it belongs in `head.toml` beside the diff view rather than in a
+long-lived special — say the word and it moves there."
+)
+
+(defun %todo-hidden-p (item)
+  "Is ITEM a row this pane is hiding? Only the DONE ones, and only in the mode — see `*todos-hide-done*`."
+  (and *todos-hide-done*
+       (string= (or (getf item :status) "") "completed")))
+
+(defun %todo-row-hidden-p (row)
+  "Is the FILE's ROW hidden? Its own vocabulary: the parser's mark, not a status string.
+
+The two predicates are separate rather than one taking a plist because the two lists genuinely say it
+differently — a session item carries `:status \"completed\"` and the parser hands back `:mark :done` —
+and a single predicate guessing which shape it was given is how a row stops being hidden the day one of
+them is renamed."
+  (and *todos-hide-done* (eq (getf row :mark) :done)))
+
 (defun todos-stops (head)
   "Every row of the todos pane the cursor may land on, in the order the pane draws them.
 
@@ -1573,10 +1606,18 @@ and the row it lands on is still a row."
   (let* ((s (head-session head))
          (rows (repo-todo-rows-cached (getf (session-wiring s) :workspace))))
     (append (list (list :add))
-            (loop for item in *operator-todos* collect (cons :mine (getf item :id)))
+            ;; **A HIDDEN ROW IS NOT A STOP**, which is the half that keeps the cursor honest: the
+            ;; pane draws no line for it, so a stop for it would be a cursor position with nothing
+            ;; under it — and every key that acts on the row would act on a row nobody can see.
+            (loop for item in *operator-todos*
+                  unless (%todo-hidden-p item)
+                    collect (cons :mine (getf item :id)))
+            ;; the index is the row's identity here and is NOT renumbered by the hiding: `:repo`
+            ;; stops are addresses into `repo-todo-rows-cached`, which the mode does not change.
             (loop for r in rows
                   for i from 0
-                  when (getf r :item) collect (cons :repo i)))))
+                  when (and (getf r :item) (not (%todo-row-hidden-p r)))
+                    collect (cons :repo i)))))
 
 (defun todos-lines (head cols)
   "The todos pane: the session's plan with its authors, the add control, and the repo's TODO.md.
@@ -1649,6 +1690,7 @@ stops: the recorded index was the length before some pushes and after others."
       (incf at)
       ;; the operator's items and the model's, one list with the author on every row
       (dolist (item *operator-todos*)
+        (unless (%todo-hidden-p item)
         (let ((here (this :mine (getf item :id)))
               (first t))
           (dolist (line (%todo-item-lines item "you" t here))
@@ -1658,7 +1700,7 @@ stops: the recorded index was the length before some pushes and after others."
             ;; an out-of-bounds read for every cursor position but the first.
             (emit line first)
             (setf first nil)))
-        (incf at))
+        (incf at)))
       ;; **THE MODEL'S ITEMS ADVANCE NOTHING**, because they are not stops: `todos-stops` skips
       ;; them for the reason its docstring gives (no key acts on one), and a walk that advanced
       ;; here would run `at` past the stop it is comparing against — which is how the pane came to
@@ -1677,12 +1719,24 @@ stops: the recorded index was the length before some pushes and after others."
       ;; that re-derives authorship from which list a row arrived in is the drift this feature exists
       ;; to prevent.
       (dolist (item todos)
-        (unless (string= (or (getf item :by) "") "operator")
+        (unless (or (string= (or (getf item :by) "") "operator")
+                    (%todo-hidden-p item))
           (dolist (line (%todo-item-lines item "model" nil))
             (emit line nil))))
       (when (and (null *operator-todos*) (null todos))
         (emit (list (cons "    none written yet. The model writes them with todo_write, and the row above adds one of yours."
                           '(:dim t)))))
+      ;; **AND WHEN THE MODE IS WHAT EMPTIED IT.** The distinction the pane keeps insisting on: a
+      ;; section with nothing in it and a section whose contents are HIDDEN are different facts, and a
+      ;; reader who cannot tell them apart concludes the key did nothing — which is the defect this
+      ;; pane has been fixed for three times.
+      (when (and *todos-hide-done*
+                 (or *operator-todos* todos)
+                 (every #'%todo-hidden-p
+                        (append *operator-todos*
+                                (remove-if (lambda (i) (string= (or (getf i :by) "") "operator"))
+                                           todos))))
+        (emit (list (cons "    everything here is done — h shows them." '(:dim t)))))
       (emit nil)
       ;; **letibot's sentence, and it is load-bearing rather than tidy**: two sections that look alike
       ;; and BEHAVE differently have to say which is which. One is what the project intends, the other
@@ -1703,20 +1757,34 @@ stops: the recorded index was the length before some pushes and after others."
                 ;; and no repo row ever matched: the pane drew no cursor mark on the file's items
                 ;; at all, which is the one thing this pane has always done.
                 for item-row = (and (getf r :item) t)
-                for here = (and item-row (this :repo i))
+                ;; **A HIDDEN ROW IS NOT DRAWN AND NOT A STOP**, so `at` does not advance for it:
+                ;; the same rule the headings below keep, one step further.
+                for hidden = (%todo-row-hidden-p r)
+                for here = (and item-row (not hidden) (this :repo i))
                 ;; **a row's stop is its FIRST line**, so the body of an unfolded item does not
                 ;; move the cursor's target — and the line is taken before the row draws, because
                 ;; the row renders to as many lines as its body needs.
                 for first-line = (length out)
-                do (dolist (line (%todo-row-lines r :here here
-                                                    :open (and here *repo-todo-open*)))
-                     (emit line nil))
-                   ;; **and the same here: an item row records its line whether or not the cursor
-                   ;; is on it.** `here` is the MARK; `item-row` is the STOP.
-                   (when item-row (vector-push-extend first-line stop-lines))
-                   (when item-row (incf at))))
+                unless hidden
+                  do (dolist (line (%todo-row-lines r :here here
+                                                      :open (and here *repo-todo-open*)))
+                       (emit line nil))
+                     ;; **and the same here: an item row records its line whether or not the cursor
+                     ;; is on it.** `here` is the MARK; `item-row` is the STOP.
+                     (when item-row (vector-push-extend first-line stop-lines))
+                     (when item-row (incf at))))
       (emit nil)
+      (when (and *todos-hide-done*
+                 (some (lambda (r) (getf r :item)) rows)
+                 (notany (lambda (r) (and (getf r :item) (not (%todo-row-hidden-p r)))) rows))
+        (emit (list (cons "    every item here is done — h shows them." '(:dim t)))))
       (emit (list (cons "  space ticks one line of that file, in place; it is not the board the model is reminded of."
+                        '(:dim t))))
+      ;; **THE KEY TEACHES ITSELF HERE AND NOT ONLY IN `/help`.** A mode nobody can find is a mode
+      ;; that does not exist, and this line says which STATE it is in as well as which key changes it.
+      (emit (list (cons (if *todos-hide-done*
+                            "  done items are hidden — h shows them again."
+                            "  h hides the done ones.")
                         '(:dim t)))))
     (values (nreverse out)
             (if (or (zerop (length stop-lines)) (zerop n)) 0 (aref stop-lines sel))

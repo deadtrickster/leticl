@@ -5275,9 +5275,17 @@ and Enter did nothing to the file's items."
                ;; **THIS ASSERTION CAUGHT A SENTENCE THE PANE HAD MADE FALSE.** It read *"this pane
                ;; never writes it"* until space began ticking a line in place — and a test holding the
                ;; old words is exactly what should fail when the words stop being true.
-               (is (string= "  space ticks one line of that file, in place; it is not the board the model is reminded of."
-                            (car (last text)))
-                   "and the closing line says what the pane DOES to that file, and which board it is not"))
+               (is (some (lambda (l)
+                           (string= "  space ticks one line of that file, in place; it is not the board the model is reminded of."
+                                    l))
+                         text)
+                   "and the closing line says what the pane DOES to that file, and which board it is not")
+               ;; **THE HINT LINE IS LAST NOW, AND IT HAS TO BE SOMEWHERE A READER LOOKS.** These two
+               ;; lines are the pane's own account of its two file-writing keys, and the one that
+               ;; follows them is the mode's state — which is the only thing that can say the mode is
+               ;; ON, since its whole effect is rows that are not there.
+               (is (string= "  h hides the done ones." (car (last text)))
+                   (format nil "the hint line closes the pane and names the key: ~s" (car (last text)))))
              ;; **the cursor's ring is `(:add :repo2 :repo3 :repo5 :repo6)`** — the add row, then
              ;; every repo row that IS an item. Headings are drawn and skipped, which is what
              ;; letibot does with its own `stops`.
@@ -23288,3 +23296,89 @@ wire produces, and a literal in this file is SIMPLE and would pass on the broken
                    "with the status the model moved it to, not the one it had before"))))
       (leticl::store-close))
     (setf leticl::*store-path-override* nil)))
+
+(def-test hiding-the-done-rows-keeps-the-cursor-in-step (:suite leticl)
+  "**The operator's ask: *\"in todo panel i want a mode where done items hidden\"*.**
+
+A mode that hides rows changes what the cursor can REACH, and those two must change together. This pane
+has been burned twice by exactly that split — `todos-stops`' own docstring records *\"arrows dont go
+here\"*, and a stop whose row is never drawn is a cursor position with nothing under it, where every key
+acts on a row nobody can see. So the assertions below are about the ROWS and the STOPS agreeing.
+
+**Both sections and both authors**, which is the other half: a done item is done whoever wrote it, and a
+mode that hid only the file's rows or only the operator's would mean two things at once."
+  (let* ((dir-pathname (make-pathname :directory '(:absolute "tmp" "leticl-hide-test")))
+         (dir "/tmp/leticl-hide-test")
+         (path (make-pathname :name "TODO" :type "md" :directory (pathname-directory dir-pathname)))
+         (leticl::*todos-hide-done* nil)
+         (leticl::*todo-draft* nil)
+         (leticl::*operator-todos* nil)
+         (leticl::*pane-scroll* 0)
+         (leticl::*pane-room* 40)
+         (leticl::*pane-lines* 0)
+         (h (%make-head)))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist dir-pathname)
+           (with-open-file (out path :direction :output
+                                     :if-does-not-exist :create :if-exists :supersede)
+             (format out "# TODO~%~%## Phase 0~%~%- [x] T1 done~%~%- [ ] T2 open~%"))
+           (setf (session-wiring (head-session h)) (list :workspace dir)
+                 (session-todos (head-session h))
+                 (list (list :content "model done" :status "completed" :by "model")
+                       (list :content "model open" :status "pending" :by "model"))
+                 leticl::*operator-todos*
+                 (list (list :id "t1" :content "mine done" :status "completed" :detail "")
+                       (list :id "t2" :content "mine open" :status "pending" :detail ""))
+                 (head-mode h) :todos
+                 (head-picker-sel h) 0)
+           (labels ((text () (lines-text (todos-lines h 210)))
+                    (stops () (leticl::todos-stops h))
+                    (press (k) (leticl::%handle-key h (list :type :char :ch k))))
+             ;; ---------- 1. MODE OFF: nothing is hidden ----------
+             (let ((t0 (text)))
+               (is (some (lambda (s) (search "T1 done" s)) t0) "the file's done row is drawn")
+               (is (some (lambda (s) (search "mine done" s)) t0) "the operator's done row is drawn")
+               (is (some (lambda (s) (search "model done" s)) t0) "and the model's")
+               (is (= 5 (length (stops)))
+                   (format nil "**five stops with nothing hidden** — the add control, the operator's
+ two rows, and the file's two: ~s" (stops))))
+             ;; ---------- 2. MODE ON ----------
+             (setf leticl::*todos-hide-done* t)
+             (let ((t1 (text)))
+               (is (notany (lambda (s) (search "T1 done" s)) t1)
+                   "**the file's done row is GONE**")
+               (is (notany (lambda (s) (search "mine done" s)) t1)
+                   "**the operator's done row is GONE** — both sections, or the mode means two things")
+               (is (notany (lambda (s) (search "model done" s)) t1)
+                   "**and the model's done row too** — done is done whoever wrote it")
+               (is (some (lambda (s) (search "T2 open" s)) t1) "the file's OPEN row stays")
+               (is (some (lambda (s) (search "mine open" s)) t1) "and the operator's open row stays")
+               (is (some (lambda (s) (search "model open" s)) t1) "and the model's open row stays")
+               (is (some (lambda (s) (search "Phase 0" s)) t1)
+                   "**the heading stays** — it is not an item, and it still carries its count")
+               (is (= 3 (length (stops)))
+                   (format nil "**and the done rows are not STOPS either** — the add control, the
+ operator's open row, and the file's open row: ~s" (stops))))
+             ;; **THE INVARIANT, and the reason this test exists.**
+             (multiple-value-bind (lines sel stop-lines) (todos-lines h 210)
+               (declare (ignore sel))
+               (is (= (length (stops)) (length stop-lines))
+                   "**`stop-lines` is parallel to the stops** — one drawn line each")
+               (loop for s in (stops)
+                     for i from 0
+                     do (let ((n (aref stop-lines i)))
+                          (is (and (integerp n) (< n (length lines)))
+                              (format nil "stop ~s records a line the pane has: ~s" s n)))))
+             ;; ---------- 3. THE KEY ----------
+             (setf leticl::*todos-hide-done* nil
+                   (head-picker-sel h) 4)   ; the last stop while nothing is hidden
+             (is (press #\h) "**`h` is claimed by the pane**, so it does not fall through as typing")
+             (is (not (null leticl::*todos-hide-done*)) "and it turned the mode on")
+             (is (= 3 (length (stops))) "the done rows are gone from the stops")
+             (is (< (head-picker-sel h) 3)
+                 "**and a cursor that was PAST the end of the shorter list is clamped to a real row**")
+             (is (press #\h) "and pressing it again is claimed too")
+             (is (null leticl::*todos-hide-done*) "turning the mode back off")
+             (is (= 5 (length (stops))) "so the hidden rows are stops again")))
+      (ignore-errors (delete-file path)))))

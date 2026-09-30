@@ -132,6 +132,7 @@
    #:scroll-pane-into-view #:*pane-scroll* #:*pane-lines* #:*pane-room*
    ;; the todos pane's unfold state (P42)
    #:*repo-todo-open* #:*repo-todo-cache* #:*repo-todo-stamp* #:repo-todo-stops
+   #:*todos-hide-done* #:%todo-toggle-hide-done
    ;; clicks (P27)
    #:click-row->sel #:click-header-lines
    ;; the config pane (P21), editable in place

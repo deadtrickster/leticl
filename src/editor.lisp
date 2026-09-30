@@ -1370,6 +1370,13 @@ one thing this head must not need."
                    ;; `jkJKgG`. Gated on `empty` like the others, so a half-typed prompt is not
                    ;; replaced by a key pressed to scroll.
                    ((and (eq mode :todos) empty (eql ch #\i)) (%todo-implement head) t)
+                   ;; **`h` HIDES THE DONE ONES** — the operator's ask (*"in todo panel i want a mode
+                   ;; where done items hidden"*). Free in this pane and gated on `empty` like `i`
+                   ;; beside it, so a half-typed prompt is not disturbed by a key pressed to read
+                   ;; the list. `h` for hide, and the state is drawn in the pane and confirmed in the
+                   ;; notice, because a mode whose whole effect is ABSENT ROWS has nothing else to
+                   ;; say it is on.
+                   ((and (eq mode :todos) empty (eql ch #\h)) (%todo-toggle-hide-done head) t)
                    ((not empty) nil)
                    ((eql ch #\q) (shut))
                    ((and (eql ch #\o) (eq mode :subagents)) (%subagent-switch head) t)
@@ -2513,6 +2520,37 @@ the folded tree — each the same list the pane draws from."
     ;; the job-output overlay is the same: a window of bytes, no selectable rows
     (:job-out (job-out-row-count head))
     (t 0)))
+
+(defun %todo-toggle-hide-done (head)
+  "Show or hide the DONE rows in the todos pane. T when a key was taken.
+
+**The operator's ask:** *\"in todo panel i want a mode where done items hidden\"*. It flips
+`*todos-hide-done*` and nothing else — `todos-stops` and `todos-lines` both read that flag, so the
+rows that disappear are the rows the cursor stops offering in the same frame.
+
+**AND THE CURSOR IS CLAMPED, which is the one thing this has to get right.** `head-picker-sel` is an
+INDEX INTO `todos-stops`, and hiding rows SHORTENS that list: a cursor left at 7 in a list that is now
+3 long draws no mark at all, so the pane would come back with nothing selected and every key acting on
+row 0. `%todos-move`'s own clamp is the shape — `(min (max 0 sel) (1- len))` — and it is repeated here
+rather than shared because this is not a movement: there is no step to add, and a helper taking a step
+of 0 would be one more thing to be wrong.
+
+**IT SAYS WHAT IT DID.** A mode is invisible by nature — the rows are simply gone — so the one thing
+the head must do is confirm the press, in the count the pane can honestly give. The pane draws its own
+line for the state as well (see `todos-lines`); this is the notice for the moment of the press, which
+is when the reader is looking for one."
+  (setf *todos-hide-done* (not *todos-hide-done*))
+  (let ((len (length (todos-stops head))))
+    (setf (head-picker-sel head)
+          (if (plusp len) (min (max 0 (head-picker-sel head)) (1- len)) 0)
+          ;; folding on a hide is not a nicety: `*repo-todo-open*` belongs to the row under the
+          ;; cursor, and the cursor has just landed on a different row.
+          *repo-todo-open* nil
+          (head-dirty head) t))
+  (say head (if *todos-hide-done*
+                "done items are hidden — h shows them again"
+                "done items are shown again"))
+  t)
 
 (defun %todos-move (head n)
   "Up (N = -1) or Down (N = 1) on the todos pane: the cursor walks `todos-stops` and wraps
