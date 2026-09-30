@@ -5658,10 +5658,11 @@ section. The two heads must teach the same keys the same way."
     ;; `/config` row (the operator's running binary predates it, so its screen
     ;; still shows 36 — the source is the reference here, the binary the evidence),
     ;; and R10 added `/notes`, which the reference teaches too (`app.rs:9793-9797`)
-    (is (= 40 (count-if (lambda (l) (plusp (length l))) text))
-        "40 non-blank rows at the capture's width: the reference's 36 plus /config and
+    (is (= 41 (count-if (lambda (l) (plusp (length l))) text))
+        "41 non-blank rows at the capture's width: the reference's 36 plus /config and
  /notes and, from R22, the `ctrl-n` row — which letibot lands too — and R24 part two's
- /run, the head's half of a door only the daemon names")
+ /run, the head's half of a door only the daemon names — and `/key`, which is this
+ head's own: the reference has no key card, because its keys come from opencode")
     (is (string= "  enter           send what you typed; while a turn runs it is queued as a follow-up"
                  (third text))
         "the first row, key sixteen wide after two")

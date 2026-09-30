@@ -207,6 +207,11 @@ Second value is the cursor's LINE: two lines per session, after a two-line heade
     ("/gate" . "what the gate decided, and rule on it afterwards: recent, todo, corpus, ok|grant|revoke ID")
     ("/flowy" . "the seat on the fabric: /flowy status · /flowy login [SEAT] [--token T] · /flowy logout")
     ("/models" . "which model answers: /models lists them with their auth; /models deepseek/deepseek-chat switches and sticks; /models local")
+    ;; **THE KEY ROW IS NEXT TO /models BECAUSE IT IS THE SAME QUESTION.** `/models` picks who
+    ;; answers and names the auth it found; this is where that auth is PUT when there is none.
+    ;; The row says *masked* and *never sent* because those are the two things a person wants to
+    ;; know before typing a credential into a terminal.
+    ("/key" . "NAME — paste a cloud provider's API key (deepseek | glm | grok) into providers.toml; the field is masked and the text is never sent to the model")
     ("/job" . "read a background job's output: /job lists them, /job ID prints it, --offset N resumes")
     ("/tools" . "the tools seated here — and any the prompt has never been told about, which the model cannot call")
     ("/default-model" . "what a NEW session starts on: /default-model PROVIDER/MODEL, or `local` to clear it. Not this conversation — that is /models")
