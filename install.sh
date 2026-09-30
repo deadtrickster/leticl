@@ -177,6 +177,55 @@ main() {
     fi
     [ -n "$NO_DAEMON" ] || [ -z "$existing" ] || say "harnessd      $existing  (kept)"
 
+    # ---------- where a cloud key goes ----------
+    # **A FRESH BOX HAS NO providers.toml, and that is the file the daemon's own
+    # refusal names.** MEASURED on an empty config directory:
+    #
+    #   harnessd: provider deepseek: no key for `deepseek`: set $DEEPSEEK_API_KEY,
+    #     pass --api-key, or put `key = "…"` under `[deepseek]` in
+    #     /tmp/fresh/config/letibot/providers.toml
+    #
+    # That message is good enough that nothing else is needed to ENTER a key —
+    # there is no interactive prompt in this tree (`/login` is `/flowy login`, a
+    # seat, not a provider). What was missing is the FILE: the refusal names a path
+    # that does not exist yet on a fresh box. So it is written once and never
+    # touched again — it holds a key, and a second copy of somebody's credential is
+    # worse than none.
+    #
+    # Mode 600, because a provider key in a world-readable file is a key somebody
+    # else can spend.
+    cfg="${XDG_CONFIG_HOME:-$HOME/.config}/letibot"
+    if [ -f "$cfg/providers.toml" ]; then
+        say "providers     $cfg/providers.toml  (left alone)"
+    else
+        mkdir -p "$cfg" 2>/dev/null || true
+        if ( umask 077; cat > "$cfg/providers.toml" <<'PROVIDERS'
+# letibot: the provider keys, and the prices they are metered against.
+#
+# WHERE A KEY COMES FROM, in this order (crates/provider/src/keys.rs):
+#   1. --api-key FLAG                        a one-off
+#   2. $DEEPSEEK_API_KEY / $ZHIPUAI_API_KEY / $XAI_API_KEY
+#   3. this file, under [deepseek] / [glm] / [grok]
+#   4. ~/.local/share/opencode/auth.json     `type: api` entries only
+#
+# A missing key is a refusal that names all four, rather than "unauthorized" from
+# the provider three seconds later — which names none of them.
+#
+# To use deepseek, uncomment and paste:
+#
+# [deepseek]
+# key = "sk-..."
+#
+# **NOTHING HERE IS NEEDED FOR A LOCAL MODEL.** The daemon's default is
+# 127.0.0.1:8080, which takes no key at all; this file matters only when the turns
+# go to a cloud provider.
+PROVIDERS
+        ) 2>/dev/null; then
+            chmod 600 "$cfg/providers.toml" 2>/dev/null || true
+            say "providers     $cfg/providers.toml  (written, no key in it yet)"
+        fi
+    fi
+
     # ---------- and what it will be missing ----------
     if [ "$(uname -s)" = Linux ] && ! ldconfig -p 2>/dev/null | grep -q 'libsqlite3\.so\.0'; then
         warn ""
@@ -195,6 +244,16 @@ main() {
     esac
     say ""
     say "Run 'leticl' in a project folder: it starts this folder's daemon and draws it."
+    # A key already in the file means no advice is needed; the absence of one is
+    # the only case where the three ways are worth printing.
+    if ! grep -qE '^key[[:space:]]*=' "$cfg/providers.toml" 2>/dev/null; then
+        say ""
+        say "It draws a LOCAL model by default (127.0.0.1:8080), which needs no key."
+        say "For a CLOUD provider the key goes in one of three places:"
+        say "  export DEEPSEEK_API_KEY=sk-...     then:  leticl --provider deepseek"
+        say "  $cfg/providers.toml — uncomment [deepseek] and paste it"
+        say "  a one-off:  harnessd --provider deepseek --api-key sk-..."
+    fi
 }
 
 main "$@"
