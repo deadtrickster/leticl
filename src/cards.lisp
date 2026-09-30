@@ -2943,7 +2943,26 @@ a terminal-native palette."
        ;; turn**, so their sentence sat under the reply already streaming above it. The row draws
        ;; it here instead, at the position the transcript gave it, which is above that reply.
        ;;
-       ;; It is the SAME renderer as the tail echo (`queued-lines`), handed the one text this row
+        ;; **AND IT NO LONGER WEARS THE `queued` MARK, WHICH IS THE SECOND HALF OF THE SAME REPORT.**
+        ;; This branch used to hand the text to `queued-lines`, so a row the daemon had already
+        ;; ANNOUNCED — appended to the transcript, by then in the model's own prompt, with its answer
+        ;; streaming below it — still said *queued*. MEASURED on the operator's screen, and it is
+        ;; their report verbatim: *"a message was queued to harnessd, delivered to model, reply
+        ;; started streaming above the queued message and then some tick goes off and queued message
+        ;; dequeued"* — *"pure ui desync"*, said twice.
+        ;;
+        ;; **The announcement IS the delivery.** The daemon appends the row at the step boundary and
+        ;; publishes `TranscriptAppended` in the same breath (`engine.rs:1040`), and the prompt
+        ;; reaches the model through that same append — so from this moment the message is in the
+        ;; conversation and `queued` is a claim about a queue it has left. What is still pending is
+        ;; the BODY, and the head does not need it to draw the row: it has the words (the binding)
+        ;; and the time (the item's own `:ts`).
+        ;;
+        ;; **AND THIS REMOVES THE JUMP RATHER THAN MOVING IT.** Drawing the operator's own block here
+        ;; makes the row's shape at announce the shape it keeps when the body lands, so the second
+        ;; transition — the one the old rendering made at `transcript_content` — is gone too.
+        ;; `%operator-block-lines` is the renderer the body path already uses, so the two agree by
+        ;; construction rather than by being kept in step.
        ;; is drawing: one pending message, two places it can sit, and one shape for both.
        ;;
        ;; `*payload-head*` because `item-lines` is handed an item and a preference list and nothing
@@ -2952,7 +2971,7 @@ a terminal-native palette."
        ;; the fallback is the old behaviour rather than a guess.
        (let ((bound (bound-prompt-for item)))
          (when (and bound *payload-head*)
-           (queued-lines *payload-head* cols (list bound)))))
+           (%operator-block-lines (%fold-cells bound) (%clock-time (item-ts item)) cols))))
       (t
        (step-in-lines
         (case (intern (string-upcase (getf body :type)) :keyword)

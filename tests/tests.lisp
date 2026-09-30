@@ -3562,7 +3562,13 @@ turn. Their words ended up under the reply that was already streaming above them
 **letibot had it right and its comment is the requirement**: *the row is drawn from the words the
 head already holds, at the position the transcript gave it — above the reply it caused — instead
 of being invisible until its body catches up while the reply streams above it.* Two halves, and
-this asserts both plus the retirement."
+this asserts both plus the retirement.
+
+**AND A THIRD: THAT ROW IS NOT `queued` ANY MORE.** The first fix drew it from the words but through
+the tail's own renderer, so it still wore the `queued` tag while the answer streamed below it — the
+operator's *\"delivered to model, reply started streaming above the queued message\"*, said twice. The
+announcement IS the delivery, so the row is drawn as the operator's own block from that moment. The
+tag is asserted ABSENT here, which is why this test no longer seeks the row by it."
   (let ((leticl::*bound-prompts* nil) (leticl::*queued-unconfirmed* nil)
         (leticl::*scroll-anchor* nil) (leticl::*hist-cache* nil)
         (leticl::*hist-generation* 0) (leticl::*hidden-run-open* nil)
@@ -3591,12 +3597,21 @@ this asserts both plus the retirement."
                                                           :test #'string=)))
           "**the announced row is bound to the oldest unbound queued prompt**")
       (let* ((rs (%rows h))
-             (row (position-if (lambda (s) (search "queued · and now" s)) rs))
+             ;; **FOUND BY ITS WORDS AND NOT BY THE `queued ·` TAG, AND THAT IS THE SECOND HALF OF
+             ;; THIS TEST NOW.** The tag used to be the handle here; it is gone, because a row the
+             ;; daemon has ANNOUNCED is in the transcript and its words are in the model's prompt —
+             ;; `queued` describes a queue it has left. Seeking the old prefix read NIL for the row
+             ;; and then compared NIL with a line number, which is the TYPE-ERROR the run showed
+             ;; rather than a wrong answer about the screen.
+             (row (position-if (lambda (s) (search "and now my second question" s)) rs))
              (turn (position-if (lambda (s) (search "still writing" s)) rs)))
         (is (and row turn) (format nil "their row and the reply are both up: ~s" rs))
         (is (< row turn)
             (format nil "**their message is now ABOVE the reply** — the row draws the words the
  head already held, at the position the transcript gave it: ~s" rs))
+        (is (not (search "queued ·" (or (and row (nth row rs)) "")))
+            (format nil "**and it does not say `queued`** while the daemon holds it and its answer is
+ streaming: ~s" rs))
         (is (= 1 (count-if (lambda (s) (search "and now my second question" s)) rs))
             (format nil "**and it is drawn ONCE** — the tail must not draw an echo a bound row is
  already drawing: ~s" rs)))
@@ -5570,7 +5585,9 @@ follow from the transcript's own order:
         (is (> msg reply)
             (format nil "**the echo is BELOW the streaming reply — pinned to the bottom**, which
  is where its row will land: ~s" queued))
-        (is (search "queued" (nth msg queued)) "and it says it is queued while that is true")
+        ;; **while that is TRUE** — before the announcement the daemon has not committed the row, so
+        ;; `queued` is the honest word; the reversal is what happens at the announcement, below.
+        (is (search "queued ·" (nth msg queued)) "and it says it is queued while that is true")
         (is (= 1 (count-if (lambda (r) (search "Q2 my queued message" r)) queued))
             "**drawn once** — the echo is the only copy until its row lands")
         ;; --- THE ROUND'S ANSWER COMMITS FIRST, which is the daemon's real order: the answer rows
@@ -5587,14 +5604,28 @@ follow from the transcript's own order:
               (format nil "**NOT ONE ROW CHANGES when the reply stops streaming and becomes a
  row** — 8 rows before, 8 after, the same 8. The reply used to stand on two of them, and the
  echo moved: ~s vs ~s" queued committed))
-          ;; --- and the announcement moves nothing either
+          ;; --- **AND THE ANNOUNCEMENT IS WHERE IT STOPS SAYING `queued`** — the reversal.
+          ;;
+          ;; This assertion used to read `(is (equal queued announced))` with the reason *"a row
+          ;; announced and bodiless still wears the `queued` mark, so the two frames are the same
+          ;; frame."* **That was the desync the operator kept reporting.** The daemon appends the row
+          ;; at the step boundary and publishes `TranscriptAppended` in the same breath, and the
+          ;; prompt reaches the MODEL through that append — so from the announcement onward `queued`
+          ;; is a claim about a queue the message has left, made while its answer streams below it.
           (ev (list :frame "event" :seq 5 :event "transcript_appended" :item-id "u2"
                     :kind "user" :ledger-head "" :ts 1))
-          (let ((announced (rows)))
-            (is (equal queued announced)
-                (format nil "**nor across the announcement** — a row announced and bodiless still
- wears the `queued` mark, so the two frames are the same frame: ~s vs ~s"
-                        queued announced))))
+          (let* ((announced (rows))
+                 (m (at "Q2 my queued message" announced))
+                 (row (and m (nth m announced))))
+            ;; `is` DESTRUCTURES its form, so a bare symbol is refused at compile time — the
+            ;; same trap this suite documents twice over.
+            (is (not (null m)) "the row is there, drawing the words this head is holding")
+            (is (= msg m)
+                (format nil "**and it has NOT moved** — the announcement does not shift a row, which
+ is the half of this test that was right: ~s" announced))
+            (is (not (search "queued ·" (or row "")))
+                (format nil "**and it no longer says it is queued** — its row is in the transcript and
+ its words are in the model's prompt, so the mark is a claim about a queue it has left: ~s" row))))
         ;; --- and the body landing changes only the tag
         (ev (list :frame "event" :seq 6 :event "transcript_content" :item-id "u2"
                   :item (list :type "user"
@@ -23139,3 +23170,76 @@ old answer still holds."
       ;; ...and the same for a turn that never had a call at all
       (is (null (turn-lines (turn-with "finished" nil) 100 prefs))
           "and neither does a finished turn with no calls at all"))))
+
+(def-test an-announced-prompt-is-not-called-queued-while-its-answer-streams (:suite leticl)
+  "**THE OPERATOR'S REPORT, VERBATIM, AND THEY SAID IT TWICE:**
+
+  > a message was queued to harnessd, delivered to model, reply started streaming above the
+  > queued message and then some tick goes off and queued message dequeued and rendered
+  > rightfully above the reply. pure ui desync
+
+**The three clauses are one sequence and the middle one was the lie.** `delivered to model` and
+`reply started streaming` are things that happen AFTER the daemon appends the row — the prompt reaches
+the model through that append and the answer is generated in the round after it. So by the time the
+reply is on screen the message is in the conversation, and the head was still drawing it as `queued`
+until the BODY arrived, which is the *\"some tick goes off\"* half. The mark outlived the fact.
+
+**The announcement is the delivery**, so this test is about a row that is announced and whose body has
+not arrived — the state the head is in for exactly the moment the operator was looking at. Its two
+halves are that the words are DRAWN (the older fix, kept) and that the mark is GONE (this one)."
+  (let ((leticl::*bound-prompts* nil) (leticl::*queued-unconfirmed* nil)
+        (leticl::*todo-draft* nil) (leticl::*operator-todos* nil)
+        (leticl::*scroll-anchor* nil) (leticl::*hist-cache* nil)
+        (leticl::*hist-generation* 0) (leticl::*hidden-run-open* nil)
+        (leticl::*stdout* (make-string-output-stream))
+        (h (%on-head :cols 100 :rows 30)))
+    (setf (head-connected h) t)
+    (setf (session-items (head-session h))
+          (make-array 2 :adjustable t :fill-pointer 2
+                      :initial-contents
+                      (list (list :item-id "u1" :kind "user" :ts 0
+                                  :item (list :type "user" :parts (list (list :text "Q1"))))
+                            (list :item-id "a1" :kind "assistant" :ts 0
+                                  :item (list :type "assistant" :text "A1")))))
+    (flet ((rows () (mapcar (lambda (l) (if (consp l) (format nil "~{~a~}" (mapcar #'car l)) ""))
+                            (leticl::%viewport-lines h 100 24)))
+           (at (needle rs) (position-if (lambda (r) (search needle r)) rs))
+           (ev (env) (leticl::%handle-frame h env)))
+      ;; a turn runs and its reply streams
+      (ev (list :frame "event" :seq 1 :event "turn_started" :turn-id "t2" :model "m"))
+      (ev (list :frame "event" :seq 2 :event "delta" :turn-id "t2" :target "text"
+                :text "R2 the reply being streamed now"))
+      ;; --- the operator sends mid-turn: the echo says `queued`, and it is TRUE then
+      (leticl::%prompt h "Q2 my queued message")
+      (let* ((before (rows))
+             (e (at "Q2 my queued message" before)))
+        (is (search "queued ·" (nth e before))
+            "**before the announcement the word is honest** — the daemon has not committed the row")
+        ;; --- **THE DAEMON APPENDS IT. THE MODEL HAS IT. THE ANSWER IS COMING.**
+        (ev (list :frame "event" :seq 3 :event "transcript_appended" :item-id "u2"
+                  :kind "user" :ledger-head "" :ts 4242))
+        ;; ...and the answer to it is now streaming, which is the moment the operator photographed
+        (ev (list :frame "event" :seq 4 :event "delta" :turn-id "t2" :target "text"
+                  :text " and the answer to Q2"))
+        (let* ((after (rows))
+               (row (nth (at "Q2 my queued message" after) after)))
+          (is (not (search "queued ·" (or row "")))
+              (format nil "**NOT QUEUED while its answer streams below it** — this is the whole fix; a
+ message the daemon has appended is in the conversation: ~s" row))
+          (is (search "Q2 my queued message" (or row ""))
+              "**and the words are still there** — the older fix, that an announced row draws what this
+ head is holding instead of drawing nothing")
+          ;; **the mark is not left with nothing to say it**: an operator row carries its clock, and the
+          ;; item's own `:ts` is what it has — no body needed
+          (is (search "▌ Q2 my queued message" (or row ""))
+              "**and it is drawn as the OPERATOR'S OWN ROW** — the blue bar and the message, which is
+ the shape it keeps when the body lands, so the body landing is not a second transition"))
+        ;; --- and the body landing changes the frame NO further, which is the second jump removed
+        (ev (list :frame "event" :seq 5 :event "transcript_content" :item-id "u2"
+                  :item (list :type "user"
+                              :parts (list (list :kind "text" :text "Q2 my queued message")))))
+        (let ((landed (rows)))
+          (is (not (search "queued ·" (or (nth (at "Q2 my queued message" landed) landed) "")))
+              "**and it does not go back to saying queued when the body lands**")
+          (is (search "Q2 my queued message" (or (nth (at "Q2 my queued message" landed) landed) ""))
+              "with the words drawn from the body now, the same words in the same place"))))))
