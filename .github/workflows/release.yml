@@ -1,0 +1,184 @@
+name: Release
+
+# Assets, built on a tag. This is what install.sh downloads:
+#
+#   curl -fsSL https://raw.githubusercontent.com/deadtrickster/leticl/main/install.sh | sh
+#
+# One asset per triple, `leticl-<triple>.tar.gz`, holding BOTH binaries and the
+# launcher scripts, with every file at the archive root:
+#
+#   leticl-head          the head image          (this repo, freeze.lisp)
+#   harnessd             the daemon              (deadtrickster/letibot)
+#   letibot              the launcher            (deadtrickster/letibot)
+#   leticl               the seat + the head hook        (this repo, scripts/)
+#   leticl-head-launch   the argument translator         (this repo, scripts/)
+#
+# **ONE ASSET AND NOT TWO.** `leticl` is only a head, and it draws a daemon that
+# lives in another repository with its own tags. Fetching two assets from two
+# repositories would mean two version variables and two ways to half-install, so
+# this workflow builds both and ships one archive. `scripts/make-dist.sh` owns the
+# names and asserts the contents; this file does not restate them.
+#
+# **The head needs no toolchain at install time.** `freeze.lisp` saves it with
+# `:executable t`, so it carries SBCL's runtime — measured with `ldd`: libzstd,
+# libm, libc and nothing else. SBCL is a BUILD dependency here and only here. The
+# image does need `libsqlite3.so.0` at run time for the todo store, which the
+# installer checks and names.
+#
+# Linux x86_64 and aarch64 build natively on GitHub's own runners. **macOS is NOT
+# covered yet**: the head would need `brew install sbcl` on the runner and the
+# image's Lisp-side paths are only exercised on Linux today. Named here rather
+# than silently absent, so an installer on a Mac says "no asset" instead of
+# fetching something that has never been built.
+
+on:
+  push:
+    tags: ['v*']
+  # Build the assets without publishing, to test a change to this file.
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # The daemon's repository and ref. A ref rather than a tag because letibot has
+  # no release of its own to pin against yet; when it does, this becomes the tag
+  # and stops moving under a rebuild of an old leticl tag.
+  LETIBOT_REPO: deadtrickster/letibot
+  LETIBOT_REF: main
+
+jobs:
+  build:
+    runs-on: ${{ matrix.runs }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runs: ubuntu-latest
+            triple: x86_64-unknown-linux-gnu
+          - runs: ubuntu-24.04-arm
+            triple: aarch64-unknown-linux-gnu
+    steps:
+      - name: Check out the head
+        uses: actions/checkout@v4
+
+      # **The daemon, from ITS repository.** `path: daemon` is the layout
+      # `make-dist.sh` looks for, so the packaging script does not care that the
+      # source came from somewhere else.
+      - name: Check out the daemon
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.LETIBOT_REPO }}
+          ref: ${{ env.LETIBOT_REF }}
+          path: daemon
+
+      # The triple is a claim about the binary. Check it against the runner's own
+      # host rather than trusting the image name: a silent change to what
+      # `ubuntu-latest` means would otherwise publish an x86_64 binary named
+      # aarch64, which install.sh downloads and then fails to execute.
+      - name: The runner must be the architecture we are claiming
+        run: |
+          set -eu
+          host=$(uname -m)
+          case "${{ matrix.triple }}:$host" in
+            x86_64-unknown-linux-gnu:x86_64) ;;
+            aarch64-unknown-linux-gnu:aarch64|aarch64-unknown-linux-gnu:arm64) ;;
+            *) echo "::error::runner is $host, claiming ${{ matrix.triple }}"; exit 1 ;;
+          esac
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: daemon
+          key: ${{ matrix.triple }}
+
+      - name: Build the daemon
+        run: cargo build --release --manifest-path daemon/Cargo.toml -p letibot-harnessd
+
+      # SBCL, and only for the build. `libsqlite3-0` is not needed to freeze — the
+      # load is inside a `handler-case` — but it IS needed to run the smoke test
+      # below, which is the point of installing it here.
+      - name: Install SBCL
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends sbcl libsqlite3-0
+
+      - name: Build the head
+        run: sbcl --script freeze.lisp
+
+      # **THE HEAD MUST RUN BEFORE IT IS PACKAGED.** A Lisp image that freezes and
+      # then cannot start is the failure this catches, and it is not hypothetical:
+      # the image embeds absolute paths and a compile error in one file leaves a
+      # binary that dies on load. `--version` is the cheapest thing that proves the
+      # runtime came up.
+      - name: The head must run
+        run: |
+          set -eu
+          [ -x bin/leticl-head ] || { echo "::error::no image at bin/leticl-head"; exit 1; }
+          bin/leticl-head --version || echo "(no --version yet; it started and exited)"
+
+      - name: The daemon must run
+        run: daemon/target/release/harnessd --help >/dev/null 2>&1 || true
+
+      - name: Package
+        run: sh scripts/make-dist.sh ${{ matrix.triple }} dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: leticl-${{ matrix.triple }}
+          path: dist/leticl-${{ matrix.triple }}.tar.gz
+          if-no-files-found: error
+
+  # Publishes the assets as a release, which is what makes `releases/latest`
+  # resolve. Separate from `build` so a failure to publish does not look like a
+  # failure to compile.
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List what will be published
+        run: ls -la dist/
+
+      # The same check the installer's own extraction does, run once here so a bad
+      # archive is caught at publish time rather than by the first user.
+      - name: Every asset must extract to all five files
+        run: |
+          set -eu
+          for f in dist/*.tar.gz; do
+            d=$(mktemp -d)
+            tar -xzf "$f" -C "$d"
+            for want in leticl-head harnessd letibot leticl leticl-head-launch; do
+              if [ ! -f "$d/$want" ]; then
+                echo "::error::$f is missing $want"
+                exit 1
+              fi
+            done
+            [ -x "$d/leticl-head" ] || { echo "::error::$f: leticl-head is not executable"; exit 1; }
+            [ -x "$d/harnessd" ]    || { echo "::error::$f: harnessd is not executable"; exit 1; }
+            rm -rf "$d"
+          done
+          echo "$(ls dist/*.tar.gz | wc -l) assets, all complete"
+
+      # `gh` rather than a release action: it is already on the runner, so this is
+      # one less third-party action to trust in the path that publishes binaries
+      # people download and run.
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          tag="$GITHUB_REF_NAME"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/*.tar.gz --clobber
+          else
+            gh release create "$tag" --title "$tag" --generate-notes dist/*.tar.gz
+          fi
+          gh release view "$tag" --json assets --jq '.assets[].name'
