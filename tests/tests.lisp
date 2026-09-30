@@ -23623,3 +23623,67 @@ are NIL. A vector is not, so the constructor uses one."
       (is (not (search "items" json))
           (format nil "**a frame with no such field is untouched** — this fix is not a blanket un-elision: ~a"
                   json)))))
+(def-test the-api-key-card-writes-one-line-and-never-the-transcript (:suite leticl)
+  "**The operator: *\"I think we need a ui to enter api keys for cloud models\"*.**
+
+**WHERE THE KEY GOES.** `providers.toml` is letibot's file — the daemon reads it — and it holds
+prices, model profiles and possibly OTHER providers' keys, so the edit is LINE-SURGICAL for the
+reason `save-prefs` is: a parse-and-re-render would drop every comment and reorder everything, and
+turn a one-line change into a diff the operator did not ask for in a file they own.
+
+**WHERE THE KEY MUST NOT GO.** Not into the composer as an argument — argv is the transcript, and
+the transcript is sent to the model. That is the whole reason this is a card with a masked field
+rather than `/key deepseek sk-…`.
+
+The three file shapes below are the three the file can be in, and the first is what a fresh box has."
+  (let ((dir (merge-pathnames (format nil "leticl-keytest-~a/" (random 1000000))
+                              (uiop:temporary-directory))))
+    (unwind-protect
+         (let ((path (merge-pathnames "providers.toml" dir)))
+           (ensure-directories-exist dir)
+
+           ;; ---------- 1. NO FILE AT ALL ----------
+           (multiple-value-bind (ok why) (leticl::%provider-key-write path "deepseek" "sk-one")
+             ;; `is` DESTRUCTURES its form, so a bare symbol is refused at compile time.
+             (is (not (null ok)) (format nil "a missing file is created: ~a" why))
+             (let ((text (uiop:read-file-string path)))
+               (is (search "[deepseek]" text) "with the section header")
+               (is (search "key = \"sk-one\"" text) "and the key under it")))
+
+           ;; ---------- 2. SECTION WITH A KEY: replaced, comments and other providers kept ----------
+           (with-open-file (s path :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "# my prices
+[deepseek]
+key = \"sk-old\"
+url = \"https://x\"
+
+[glm]
+key = \"glm-key\"
+" s))
+           (is (leticl::%provider-key-write path "deepseek" "sk-new") "the second write lands")
+           (let ((text (uiop:read-file-string path)))
+             (is (search "sk-new" text) "the new key is there")
+             (is (not (search "sk-old" text)) "**and the old one is GONE, not left beside it**")
+             (is (search "url = \"https://x\"" text) "the other line in that section survives")
+             (is (search "# my prices" text) "**and so does the comment** — a re-render would have eaten it")
+             (is (search "glm-key" text) "**and ANOTHER provider's key is untouched**")
+             (is (search "[deepseek]" text) "the header is still there, once"))
+
+           ;; ---------- 3. SECTION WITHOUT A KEY: inserted INSIDE it ----------
+           (with-open-file (s path :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "[glm]
+url = \"https://glm\"
+
+[grok]
+key = \"x\"
+" s))
+           (is (leticl::%provider-key-write path "glm" "glm-new") "a key-less section takes one")
+           (let* ((text (uiop:read-file-string path))
+                  (glm (search "[glm]" text))
+                  (key (search "glm-new" text))
+                  (grok (search "[grok]" text)))
+             (is (and glm key grok (< glm key grok))
+                 (format nil "**and INSIDE its own section**, between [glm] and [grok] — a naive
+ append would have filed it under [grok]: ~a" text))))
+
+      (ignore-errors (uiop:delete-directory-tree dir :validate t :if-does-not-exist :ignore)))))
