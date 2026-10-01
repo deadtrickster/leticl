@@ -474,8 +474,36 @@ turn as `(:total :cache :processed :time-ms)` and had no reader."
                           (round (/ (* (float (getf usage :predicted-tokens)) 1000.0)
                                     (getf timings :predicted-ms)))))
             parts))
-    (when (and timings (numberp (getf timings :wall-ms)) (plusp (getf timings :wall-ms)))
-      (push (cons :elapsed (duration (getf timings :wall-ms))) parts))
+    ;; **AND THE DURATION IS THE TURN'S WHILE A TURN RUNS — the one field of the trio that moves.**
+    ;;
+    ;; The operator: *"its responding timer resets not at the turn end but on jobs and tool
+    ;; calls."* MEASURED on their own head, side by side in one frame:
+    ;;
+    ;;     composer edge   Responding · 151s      <- *turn-started-ms*, monotonic over 4 samples
+    ;;     status bar      ... 184 tok/s · 12.0s  <- the LAST ROUND's wall-ms, replaced per round
+    ;;
+    ;; `last_timings` is why the trio is on that basis and it is right for two of the three: a
+    ;; RATE from the round that just ended is information (*"the rate comes and goes"*, the
+    ;; complaint that put it there), and so is an output count. A DURATION from that round,
+    ;; sitting beside the word *Responding*, is a claim about the wrong span — it reads as *this
+    ;; turn has been running 4.5s* when the turn has been running for two and a half minutes.
+    ;; So one field moves and the other two stay, and the two timers on the screen now agree.
+    ;;
+    ;; **A DELIBERATE DIVERGENCE FROM LETIBOT** (R59's sibling — see the parity row): the
+    ;; reference shows the last round's duration here, and its comment calls that parity. Ours
+    ;; now differs on purpose, by the operator's ruling, and it is recorded so a census does not
+    ;; file it as drift and reverse it.
+    ;;
+    ;; The guard is `turn-busy-p` and not the state's name, for the reason that function's own
+    ;; docstring measures: the daemon writes `"finished"` for the whole of a tool call, so a
+    ;; name-gated duration would snap back to the last round exactly while a command ran.
+    (let ((elapsed-ms (if (and (turn-busy-p turn) *turn-started-ms*)
+                          (- (internal-real-time-ms) *turn-started-ms*)
+                          (and timings
+                               (numberp (getf timings :wall-ms))
+                               (plusp (getf timings :wall-ms))
+                               (getf timings :wall-ms)))))
+      (when elapsed-ms (push (cons :elapsed (duration elapsed-ms)) parts)))
     (when (and usage (numberp (getf usage :predicted-tokens))
                (plusp (getf usage :predicted-tokens)))
       (push (cons :out (format nil "~a out" (thousands (getf usage :predicted-tokens)))) parts))

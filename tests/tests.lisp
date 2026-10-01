@@ -23688,3 +23688,79 @@ key = \"x\"
  append would have filed it under [grok]: ~a" text))))
 
       (ignore-errors (uiop:delete-directory-tree dir :validate t :if-does-not-exist :ignore)))))
+(def-test the-two-timers-agree-while-a-turn-runs (:suite leticl)
+  "**The operator: *\"its responding timer resets not at the turn end but on jobs and tool calls.\"***
+
+They were right, and the probe found which timer: their head had TWO on the screen agreeing on nothing.
+
+    composer edge   Responding · 151s      <- *turn-started-ms*, monotonic over four samples
+    status bar      ... 184 tok/s · 12.0s  <- the LAST ROUND's wall-ms, replaced on every round
+
+The probe ruled the composer edge out first: `:began-ms` arrived positive and IDENTICAL across
+rounds, `:snapshot` was NIL, and `*turn-started-ms*` did not move on any event except
+`turn_started` and `turn_finished` — so neither branch of the session's `or` was firing and the
+status bar was the defect.
+
+**THE ASSERTION IS EQUALITY, not either value**, which is the better claim because it is the
+disagreement the operator actually saw. Both timers derive from `*turn-started-ms*` while a turn
+runs, so a test that computes one from the other is testing the property rather than restating the
+implementation — and it stays true if the shared source changes.
+
+**And the other two numbers must NOT move.** A rate from the round that just ended is information
+(the operator's own earlier complaint was *\"the rate comes and goes\"*); a duration from it is a
+claim about the wrong span. So this asserts the trio is split deliberately: `:elapsed` from the
+turn, `:rate` and `:out` still from the last round."
+  (let* ((h (%make-head))
+         (s (leticl::head-session h))
+         ;; **A BUSY TURN WHOSE STATE NAME SAYS `finished`**, which is the exec case the daemon
+         ;; produces for the whole of a tool call — and the case a name-gated duration would get
+         ;; wrong. A running `bash` call is what makes it busy.
+         (round-timings (list :prompt-ms 0.0d0 :predicted-ms 3791.0d0 :wall-ms 4474))
+         (usage (list :prompt-tokens 755400 :cached-tokens 755400 :predicted-tokens 2220)))
+    (setf (leticl::session-turn s)
+          (list :turn-id "t" :text "" :reasoning "" :raw-calls "" :tokens 0
+                :state (list :state "finished" :timings round-timings :usage usage)
+                :calls (list (list :call-id "c" :name "bash"
+                                   :state (list :state "running")))))
+    (flet ((elapsed-seg ()
+             (cdr (assoc :elapsed (leticl::%usage-numbers s)))))
+      ;; ---------- 1. THE FAIL-FIRST CASE: a stale round's duration, a long turn ----------
+      (let* (;; **`now` IS TAKEN ONCE AND THE WIRE VALUE IS BUILT FROM IT**, so the expected string
+             ;; is exactly 151000 ms and the equality below cannot straddle a second boundary — a
+             ;; test that reads the clock twice and compares the two readings is flaky at the edge
+             ;; for a reason that has nothing to do with what it is testing.
+             (now (leticl::internal-real-time-ms))
+             (leticl::*turn-started-ms* (- now 151000))
+             (seg (elapsed-seg)))
+        (is (equal "4.5s" (duration 4474)) "the fixture: the round's own duration formats as 4.5s")
+        (is (not (equal (duration 4474) seg))
+            (format nil "**the status bar does NOT show the last round's duration** while a turn
+ runs — that sentence, beside the word Responding, claims the turn began 4.5s ago: ~s" seg))
+        ;; **AND IT SHOWS THE TURN'S**, computed the same way the composer edge computes it.
+        (is (equal (duration 151000) seg)
+            (format nil "**and it EQUALS the composer edge's duration** — the two timers on the
+ screen now derive from one source: ~s" seg)))
+      ;; ---------- 2. IDLE: the last round's duration is what there is to show ----------
+      (setf (leticl::session-turn s)
+            (list :turn-id "t" :text "" :reasoning "" :raw-calls "" :tokens 0
+                  :state (list :state "finished" :timings round-timings :usage usage)
+                  :calls (list (list :call-id "c" :name "bash" :state (list :state "finished")))))
+      (let* ((leticl::*turn-started-ms* nil)
+             (seg (elapsed-seg)))
+        (is (equal "4.5s" seg)
+            (format nil "**idle, the last turn's duration is the only one there is** and it is
+ kept — which is what `last_timings` is for: ~s" seg)))
+      ;; ---------- 3. THE OTHER TWO STAY ON THE ROUND'S BASIS ----------
+      (setf (leticl::session-turn s)
+            (list :turn-id "t" :text "" :reasoning "" :raw-calls "" :tokens 0
+                  :state (list :state "finished" :timings round-timings :usage usage)
+                  :calls (list (list :call-id "c" :name "bash" :state (list :state "running")))))
+      (let* ((leticl::*turn-started-ms* (- (leticl::internal-real-time-ms) 151000))
+             (parts (leticl::%usage-numbers s)))
+        (is (equal "586 tok/s" (cdr (assoc :rate parts)))
+            (format nil "**the RATE is still the last round's** — 2220 predicted tokens over
+ 3791 ms, which is information about what just happened, not a claim about this turn: ~s"
+                    (cdr (assoc :rate parts))))
+        (is (equal "2220 out" (cdr (assoc :out parts)))
+            (format nil "and so is the output count — `thousands` leaves a four-digit number
+ alone, so it reads as itself: ~s" (cdr (assoc :out parts))))))))
