@@ -67,11 +67,27 @@ env:
   #
   # A TAG and not `main`, and letibot's own choice makes the reason concrete: it tagged a
   # VERIFIED commit rather than the head of `main`, deliberately — the commit its green matrix
-  # actually built. So `v0.1.1` is not necessarily `main`, and pinning the tag is pinning the
-  # thing that was tested. A rebuild of leticl v0.1.1 a year from now gets the daemon that was
-  # tested with it, not whatever letibot's branch has become.
+  # actually built. So the pin is the thing that was tested.
+  #
+  # **AND THE LAUNCHER NEEDS A SECOND REF, WHICH IS NOT A DUPLICATION BUT A MEASUREMENT.**
+  # `LETIBOT_REF` names a TAG because release ASSETS hang off tags — `releases/download/<tag>/`
+  # is the only form that resolves. But `v0.1.1` was cut at 11:23 and the launcher gained its
+  # `LETIBOT_HEAD` hook at `ba97dbf`, 14:09 — so the tag's launcher is 901 lines with zero
+  # matches for that name, and an install composed from it would ship a launcher that ignores
+  # the head we point it at. MEASURED, by fetching both:
+  #
+  #   raw.githubusercontent.com/.../v0.1.1/scripts/letibot    901 lines, 0 × LETIBOT_HEAD
+  #   raw.githubusercontent.com/.../ba97dbf/scripts/letibot  1123 lines, has it
+  #
+  # So the asset comes from the tag and the SCRIPT comes from the commit that has the hook. A
+  # commit id is at least as immutable as a tag — more, since a tag can be moved — so pinning
+  # one is not a weaker promise, it is the same one.
+  #
+  # **WHEN letibot CUTS A TAG CONTAINING `ba97dbf`, BOTH COLLAPSE TO IT** and this second variable
+  # goes away. That is the instruction, same shape as the one this comment replaced.
   LETIBOT_REPO: deadtrickster/letibot
   LETIBOT_REF: v0.1.1
+  LETIBOT_LAUNCHER_REF: ba97dbf
   # **rano IS PINNED BY TAG, in the manifests that need it** — `native/hl/Cargo.toml`
   # and letibot's three. Not an env var here, because a dependency's version belongs
   # where the dependency is declared; this comment exists so a reader looking for
@@ -119,17 +135,41 @@ jobs:
             -o daemon.tar.gz "${base}/letibot-${{ matrix.triple }}.tar.gz"
           mkdir -p daemon-dist && tar -xzf daemon.tar.gz -C daemon-dist
           # The launcher is a SCRIPT IN THE REPOSITORY and is not in the asset, so it comes from
-          # the same tag as everything else. It is not optional: nothing starts the daemon without
-          # it. **ONE `curl` AND NOT A FALLBACK CHAIN** — the first cut tried to build this URL by
-          # trimming the release URL's last component, which strips nothing here (`v0.1.1` and the
-          # repo path carry no hyphen, so `${base%-*}` is a no-op), so that attempt was guaranteed
-          # to fail and the chain existed only to hide a URL that was never right.
+          # `LETIBOT_LAUNCHER_REF` — a COMMIT, not the asset tag, because the tag predates the
+          # `LETIBOT_HEAD` hook this whole install depends on. See the env block for the two
+          # measurements. **ONE `curl` AND NOT A FALLBACK CHAIN** — the first cut built this URL by
+          # trimming the release URL's last component, and `${base%-*}` strips nothing here —
+          # `v0.1.1` and the repo path carry no hyphen — so that attempt was guaranteed to 404 and
+          # existed only to hide a URL that was never right. Measured: it did 404, on every run.
           curl -q -fsSL --proto '=https' --proto-redir '=https' \
             -o daemon-dist/letibot \
-            "https://raw.githubusercontent.com/${{ env.LETIBOT_REPO }}/${ver}/scripts/letibot"
+            "https://raw.githubusercontent.com/${{ env.LETIBOT_REPO }}/${{ env.LETIBOT_LAUNCHER_REF }}/scripts/letibot"
           chmod 755 daemon-dist/letibot
           echo "--- what we fetched ---"
           ls -la daemon-dist
+
+      # **THE LAUNCHER MUST ACTUALLY READ `LETIBOT_HEAD`, and this step is why the whole install
+      # is worth anything.** The archive ships `leticl-head-launch` and `leticl` exports
+      # `LETIBOT_HEAD` pointing at it — so a launcher that does not read that name execs
+      # `letibot-tui` instead: either absent (the install dies at first use) or, if we shipped it,
+      # the RUST TUI under the name `leticl` with no error. Both are worse than a failed build.
+      #
+      # MEASURED, and this is not hypothetical: letibot's `v0.1.1` launcher is 901 lines and does
+      # NOT contain the name; the hook landed later, at `ba97dbf`. A pin to the tag alone shipped
+      # the wrong launcher, and nothing in any pipeline would have said so — the same shape as
+      # `--version` passing on a head whose shim cannot load. Grep the name, and fail by name.
+      - name: The launcher must read LETIBOT_HEAD
+        run: |
+          set -eu
+          if ! grep -q 'LETIBOT_HEAD' daemon-dist/letibot; then
+            echo "::error::the launcher at ${{ env.LETIBOT_LAUNCHER_REF }} does not read LETIBOT_HEAD"
+            echo "::error::an install composed with it would exec letibot-tui, not leticl's head"
+            echo "--- what it does read ---"
+            grep -oE '\$\{?LETIBOT_[A-Z_]+' daemon-dist/letibot | sort -u
+            exit 1
+          fi
+          echo "the launcher reads LETIBOT_HEAD:"
+          grep -n 'LETIBOT_HEAD' daemon-dist/letibot | head -3
 
       # The triple is a claim about the binary. Check it against the runner's own
       # host rather than trusting the image name: a silent change to what
