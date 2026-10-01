@@ -118,13 +118,15 @@ jobs:
           curl -q -fsSL --proto '=https' --proto-redir '=https' \
             -o daemon.tar.gz "${base}/letibot-${{ matrix.triple }}.tar.gz"
           mkdir -p daemon-dist && tar -xzf daemon.tar.gz -C daemon-dist
-          # The launcher is a SCRIPT IN THE REPOSITORY and is not in the asset, so it comes from the
-          # same tag as everything else. It is not optional: nothing starts the daemon without it.
+          # The launcher is a SCRIPT IN THE REPOSITORY and is not in the asset, so it comes from
+          # the same tag as everything else. It is not optional: nothing starts the daemon without
+          # it. **ONE `curl` AND NOT A FALLBACK CHAIN** — the first cut tried to build this URL by
+          # trimming the release URL's last component, which strips nothing here (`v0.1.1` and the
+          # repo path carry no hyphen, so `${base%-*}` is a no-op), so that attempt was guaranteed
+          # to fail and the chain existed only to hide a URL that was never right.
           curl -q -fsSL --proto '=https' --proto-redir '=https' \
-            -o daemon-dist/letibot "${base%-*}/raw/${ver}/scripts/letibot" \
-            || curl -q -fsSL --proto '=https' --proto-redir '=https' \
-                 -o daemon-dist/letibot \
-                 "https://raw.githubusercontent.com/${{ env.LETIBOT_REPO }}/${ver}/scripts/letibot"
+            -o daemon-dist/letibot \
+            "https://raw.githubusercontent.com/${{ env.LETIBOT_REPO }}/${ver}/scripts/letibot"
           chmod 755 daemon-dist/letibot
           echo "--- what we fetched ---"
           ls -la daemon-dist
@@ -149,8 +151,17 @@ jobs:
       # `libleticl_hl.so`, so a fresh install ran uncoloured and said nothing about it. The
       # manifest now pins rano's published tag, the same one letibot's three manifests use.
       #
-      # A separate `--target-dir`, because this is a different workspace from `daemon/` — sharing
-      # one would have cargo resolving two lockfiles into one directory.
+      # **RUST IS HERE FOR THIS AND NOTHING ELSE.** The daemon is fetched, so this step is the only
+      # one that compiles anything — and when the daemon build was removed, this one's toolchain went
+      # with it. MEASURED by the second `act` run: *"cargo: command not found"*, exit 127, on a
+      # workflow whose very next step asserts the shim loads. A toolchain belongs to the step that
+      # needs it, and deleting a build is not deleting the language.
+      #
+      # A separate `--target-dir`, because this is its own workspace with its own lockfile.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
       - name: Build the highlighting shim
         run: cargo build --release --manifest-path native/hl/Cargo.toml --target-dir hl-target
 
@@ -201,7 +212,7 @@ jobs:
           # image is a frozen SBCL and SBCL's RUNTIME owns `--help` and `--version`: they are parsed
           # before any Lisp runs, so `--version` prints `SBCL 2.6.0.debian` and `--help` prints a page
           # about `--core`. Measured on a clean box. `-h` reaches the head's own argument list.
-          bin/leticl-head -h >/dev/null || { echo "::error::the head did not answer -h"; exit 1; }"
+          bin/leticl-head -h >/dev/null || { echo "::error::the head did not answer -h"; exit 1; }
 
       # **THE LIBRARIES HARNESSD LINKS MUST BE BESIDE IT.** `libllama.so.0`, `libggml.so.0`,
       # `libggml-cpu.so.0` and `libggml-base.so.0` come from the same asset, and harnessd carries an
