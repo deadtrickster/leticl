@@ -259,16 +259,64 @@ jobs:
       # `$ORIGIN` rpath so it finds them as siblings. This is also the class of failure letibot found
       # on arm64 the same day — a binary that compiles and cannot execute because one library in
       # `DT_NEEDED` was not there — so it is CHECKED rather than assumed.
+      #
+      # **AND THE `ldd` HALF OF THIS CHECK CAN ONLY PASS, WHICH IS THE DEFECT — FOUND ON A CLEAN BOX
+      # AND NOT HERE.** The first version ran `ldd harnessd | grep 'not found'`, which on a GitHub
+      # runner resolves EVERYTHING, including the libraries that come from the HOST rather than from
+      # the archive: `libstdc++.so.6`, `libgomp.so.1` (needed by `libggml-cpu`), `libsqlite3.so.0`.
+      # A runner has all three, so the step was green by construction — and the first person to
+      # install on a minimal box got
+      #
+      #   harnessd: error while loading shared libraries: libgomp.so.1: cannot open shared object file
+      #
+      # with the daemon exiting 1 while every step here had passed. **An assertion that cannot fail
+      # is not an assertion**, and the fix is to ask the question the user's box asks: which of these
+      # does the ARCHIVE provide, and which must the host?
       - name: The daemon and its libraries are all present
         run: |
           set -eu
+          # From the archive — these must be here, and nothing else supplies them.
           for want in harnessd letibot libllama.so.0 libggml.so.0 libggml-cpu.so.0 libggml-base.so.0; do
             [ -f "daemon-dist/$want" ] || { echo "::error::the letibot asset has no $want"; exit 1; }
           done
           echo "all six present"
-          # ldd resolves them: a missing one prints "not found" and this fails.
-          ldd daemon-dist/harnessd | grep -q 'not found' && { echo "::error::harnessd has an unresolved library:"; ldd daemon-dist/harnessd; exit 1; } || true
-          ldd daemon-dist/harnessd | head -20
+          # **THE HOST'S OWN, NAMED.** These are NOT in the asset and must not be: they belong to the
+          # system, and shipping a copy would be a libc-compatibility claim nobody measured. The
+          # runner has them, so the check that matters is not *do they resolve* but *is the set of
+          # things-only-the-host-can-supply exactly the set we tell the user to install*.
+          #
+          # `libgomp.so.1` is found by `libggml-cpu`, `libstdc++.so.6` by `libllama`, and
+          # `libsqlite3.so.0` by `harnessd` itself. letibot's installer names the same three, and the
+          # third was ITS correction to MY report — I had found two by hand and it read the tree.
+          HOST_LIBS="libstdc++.so.6 libgomp.so.1 libsqlite3.so.0"
+          # Everything `harnessd` and the four libraries need, transitively, as `ldd` sees it.
+          needed=$(ldd daemon-dist/harnessd daemon-dist/libllama.so.0 daemon-dist/libggml.so.0 \
+                       daemon-dist/libggml-cpu.so.0 daemon-dist/libggml-base.so.0 2>/dev/null \
+                   | sed -n 's/.*=> \(\/[^ ]*\).*/\1/p;s/^[[:space:]]*\(\/[^ ]*\) .*/\1/p' \
+                   | sort -u)
+          missing=0
+          for lib in $HOST_LIBS; do
+            if ! printf '%s\n' "$needed" | grep -q "/$lib$"; then
+              echo "::error::the archive no longer needs $lib — remove it from HOST_LIBS and from"
+              echo "::error::install.sh's refusal, or the pair has drifted apart"
+              missing=1
+            fi
+          done
+          # **AND NOTHING ELSE MAY BE UNRESOLVED**, which is the check that would have caught the bug:
+          # a library neither in the archive nor in the host's named set is one the user was never told
+          # to install.
+          for path in $needed; do
+            base=$(basename "$path")
+            case " $HOST_LIBS " in *" $base "*) continue ;; esac
+            if [ ! -f "daemon-dist/$base" ]; then
+              echo "::error::harnessd needs $base, which is neither in the archive nor in HOST_LIBS"
+              echo "::error::an install on a minimal box would fail at first run; add it to the list"
+              echo "::error::install.sh names, or ship it"
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] || exit 1
+          echo "all ten resolve: six from the archive, three named as the host's own"
 
       - name: Package
         env:

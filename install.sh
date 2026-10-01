@@ -271,12 +271,46 @@ PROVIDERS
         fi
     fi
 
-    # ---------- and what it will be missing ----------
-    if [ "$(uname -s)" = Linux ] && ! ldconfig -p 2>/dev/null | grep -q 'libsqlite3\.so\.0'; then
-        warn ""
-        warn "no libsqlite3.so.0: the head will run, but it cannot remember your todos"
-        warn "  Debian/Ubuntu:  sudo apt-get install libsqlite3-0"
-        warn "  Fedora/RHEL:    sudo dnf install sqlite-libs"
+    # ---------- the libraries that come from the HOST, named ----------
+    # **THREE, AND THEY ARE THE ONES `harnessd` CANNOT START WITHOUT.** The archive ships the four
+    # llama/ggml libraries, but those in turn need the system's C++ and OpenMP runtimes, and
+    # `harnessd` needs sqlite. MEASURED on a clean debian:stable-slim, which is why this exists:
+    #
+    #   harnessd: error while loading shared libraries: libgomp.so.1: cannot open shared object file
+    #   -- and the daemon exits 1, after a launcher that had checked everything it knew how to check.
+    #
+    # The rule is *name them, not ship them*: they belong to the system, and a copy in the archive
+    # would be a libc-compatibility claim nobody measured.
+    #
+    # **THE THIRD ONE IS NOT MINE.** I found `libgomp.so.1` and `libstdc++.so.6` by hand; letibot's
+    # installer read the tree and found `libsqlite3.so.0` too, and its commit says naming two *"would
+    # have left the same defect in place for anyone whose box"* lacked the third. Both installers
+    # name the same three now, and the workflow asserts the two lists agree.
+    #
+    # Which needs which, so a reader can tell a real failure from a stale list:
+    #   libgomp.so.1      libggml-cpu.so.0     (OpenMP)
+    #   libstdc++.so.6    libllama.so.0        (C++)
+    #   libsqlite3.so.0   harnessd             (the session store)
+    if [ "$(uname -s)" = Linux ]; then
+        missing=""
+        for lib in libstdc++.so.6 libgomp.so.1 libsqlite3.so.0; do
+            # `ldconfig -p` is the loader's own answer; absent means not installed, whichever distro.
+            ldconfig -p 2>/dev/null | grep -q "$lib" || missing="$missing $lib"
+        done
+        if [ -n "$missing" ]; then
+            warn ""
+            warn "**THE DAEMON CANNOT START WITHOUT THESE, and they are not installed:**$missing"
+            warn ""
+            warn "They belong to the system rather than to this archive, so they are named and not"
+            warn "shipped. Install them and run leticl again:"
+            warn "  Debian/Ubuntu:  sudo apt-get install libstdc++6 libgomp1 libsqlite3-0"
+            warn "  Fedora/RHEL:    sudo dnf install libstdc++ libgomp sqlite-libs"
+            warn "  Arch:           sudo pacman -S gcc-libs gcc-libs sqlite"
+            warn ""
+            warn "The HEAD runs without them; it is the daemon that needs them, so you would see a"
+            warn "working screen with nothing behind it. That distinction is why this is a warning"
+            warn "rather than a refusal — but the install is not finished without them."
+        fi
     fi
 
     case ":$PATH:" in
