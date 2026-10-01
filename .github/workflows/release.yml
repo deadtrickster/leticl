@@ -276,10 +276,13 @@ jobs:
         run: |
           set -eu
           # From the archive — these must be here, and nothing else supplies them.
-          for want in harnessd letibot libllama.so.0 libggml.so.0 libggml-cpu.so.0 libggml-base.so.0; do
+          # `letibot-askpass` is REQUIRED, not incidental: harnessd execs it as SUDO_ASKPASS, so a
+          # session reaching a `sudo` command cannot ask the operator without it. It was missing
+          # from this archive until a clean-box run said so in the launcher's own words.
+          for want in harnessd letibot letibot-askpass libllama.so.0 libggml.so.0 libggml-cpu.so.0 libggml-base.so.0; do
             [ -f "daemon-dist/$want" ] || { echo "::error::the letibot asset has no $want"; exit 1; }
           done
-          echo "all six present"
+          echo "all seven present"
           # **THE HOST'S OWN, NAMED.** These are NOT in the asset and must not be: they belong to the
           # system, and shipping a copy would be a libc-compatibility claim nobody measured. The
           # runner has them, so the check that matters is not *do they resolve* but *is the set of
@@ -386,13 +389,13 @@ jobs:
 
       # The same check the installer's own extraction does, run once here so a bad
       # archive is caught at publish time rather than by the first user.
-      - name: Every asset must extract to all ten files
+      - name: Every asset must extract to all eleven files
         run: |
           set -eu
           for f in dist/*.tar.gz; do
             d=$(mktemp -d)
             tar -xzf "$f" -C "$d"
-            for want in leticl-head harnessd letibot libleticl_hl.so \
+            for want in leticl-head harnessd letibot letibot-askpass libleticl_hl.so \
                         libllama.so.0 libggml.so.0 libggml-cpu.so.0 libggml-base.so.0 \
                         leticl leticl-head-launch; do
               if [ ! -f "$d/$want" ]; then

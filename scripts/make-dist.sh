@@ -84,6 +84,22 @@ for lib in libllama.so.0 libggml.so.0 libggml-cpu.so.0 libggml-base.so.0; do
         exit 1
     }
 done
+# **AND `letibot-askpass`, WHICH IS IN THE SAME ASSET AND WAS MISSING FROM THIS ARCHIVE.**
+# MEASURED on a clean box, by the launcher itself:
+#
+#   letibot: sudo will have no way to ask for a password: letibot-askpass is not beside
+#            /root/.local/bin/harnessd
+#
+# `harnessd` execs it as its SUDO_ASKPASS, so a session that reaches a `sudo` command has no way
+# to ask the operator and fails at that point rather than at install. It sits beside `harnessd` in
+# letibot's asset; it must sit beside it here too, which is why it is a REQUIRED file rather than
+# an optional copy.
+askpass="$daemon_libs/letibot-askpass"
+[ -f "$askpass" ] || {
+    echo "make-dist: $daemon_libs has no letibot-askpass — harnessd execs it for a sudo prompt" >&2
+    echo "  and a session that reaches one would have no way to ask" >&2
+    exit 1
+}
 
 # **THE HIGHLIGHTING SHIM.** Built from `native/hl`, which until 2026-10-01 took rano by
 # ABSOLUTE PATH and so could not be built on a runner at all — which is why no archive ever
@@ -130,6 +146,7 @@ cp "$head_bin"   "$stage/leticl-head"
 cp "$daemon_bin" "$stage/harnessd"
 cp "$launcher"   "$stage/letibot"
 cp "$shim"       "$stage/libleticl_hl.so"
+cp "$askpass"    "$stage/letibot-askpass"
 for lib in libllama.so.0 libggml.so.0 libggml-cpu.so.0 libggml-base.so.0; do
     cp "$daemon_libs/$lib" "$stage/$lib"
 done
@@ -141,7 +158,7 @@ chmod 755 "$stage/leticl-head" "$stage/harnessd" "$stage/letibot" \
 # COPYFILE_DISABLE stops macOS tar writing AppleDouble `._` entries, which would
 # otherwise land in the archive and be extracted by the installer.
 COPYFILE_DISABLE=1 tar -czf "$outdir/$name" -C "$stage" \
-    leticl-head harnessd letibot \
+    leticl-head harnessd letibot letibot-askpass \
     libleticl_hl.so libllama.so.0 libggml.so.0 libggml-cpu.so.0 libggml-base.so.0 \
     leticl leticl-head-launch
 
@@ -150,7 +167,7 @@ COPYFILE_DISABLE=1 tar -czf "$outdir/$name" -C "$stage" \
 # an install that half-works, which looks like the operator's mistake rather than
 # a broken asset.
 listing=$(tar -tzf "$outdir/$name")
-for want in leticl-head harnessd letibot libleticl_hl.so \
+for want in leticl-head harnessd letibot letibot-askpass libleticl_hl.so \
             libllama.so.0 libggml.so.0 libggml-cpu.so.0 libggml-base.so.0 \
             leticl leticl-head-launch; do
     if [ "$(printf '%s\n' "$listing" | grep -c "^$want\$")" -ne 1 ]; then
