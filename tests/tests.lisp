@@ -23808,3 +23808,43 @@ start time this process never measured."
       (setf leticl::*turn-started-ms* (- (leticl::internal-real-time-ms) 151000))
       (is (equal "2m31s" (duration (leticl::%turn-elapsed-ms)))
           "a start in the past is still measured — the guard is a sign, not a refusal to measure"))))
+
+(def-test the-shim-is-looked-for-beside-the-running-image (:suite leticl)
+  "**The install case, and it was MISSING until 2026-10-01.**
+
+`hl-so-path` looked in `$LETICL_HL_SO`, then at paths RELATIVE TO THE CWD, then at an absolute path into
+the author's rano tree. None of those is where an installer puts the shim — beside the image — so on
+every install `libleticl_hl.so` was present and never found, and the head ran uncoloured **and said
+nothing about it**. MEASURED on a clean debian:stable-slim: all six files extracted, the shim answering
+`hl_detect` correctly when asked directly, and the head drawing colourless.
+
+The fix reads `sb-ext:*runtime-pathname*`, which answers *where am I installed* rather than *where was
+I started from*. **And the first verification of it was WRONG for the reason this whole day has been
+about**: the head showed the old answer because the new definition had not been pushed to it. A
+`--file src/highlight.lisp` and the same call returned the installed path. A test that binds the
+runtime pathname is how the next reader gets that answer without a live head."
+  (let* ((dir (merge-pathnames (format nil "leticl-hltest-~a/" (random 1000000))
+                               (uiop:temporary-directory)))
+         (shim (merge-pathnames "libleticl_hl.so" dir)))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist shim)
+           (with-open-file (s shim :direction :output :if-exists :supersede
+                                   :if-does-not-exist :create)
+             (write-string "not a real shim; only its EXISTENCE is under test" s))
+           ;; **THE IMAGE'S OWN PATH IS THE INPUT**, so this binds what an installed head would see.
+           ;; **THE IMAGE'S PATH IS PASSED IN, NOT BOUND.** `sb-ext:*runtime-pathname*` is a global
+           ;; LEXICAL variable and `let`-binding it is a compile-time error — MEASURED, and it is why
+           ;; the sibling lookup was extracted into its own function: a test cannot pretend to be an
+           ;; image installed somewhere, but it can hand this one the path such an image would have.
+           (is (string= (namestring shim)
+                        (leticl::%shim-beside (merge-pathnames "leticl-head" dir)))
+               (format nil "**the sibling is found**, so an install needs no configuration: ~s"
+                       (leticl::%shim-beside (merge-pathnames "leticl-head" dir))))
+           ;; and the negative: no shim beside it, no answer — a lookup that invented a path would
+           ;; make `hl-available-p` try to dlopen nothing and report it as loaded
+           (is (null (leticl::%shim-beside (merge-pathnames "other-dir/leticl-head" dir)))
+               "**and with no shim beside the image it answers NIL**, rather than naming a file
+ that is not there"))
+      (ignore-errors (uiop:delete-file-if-exists shim))
+      (ignore-errors (uiop:delete-directory-tree dir :validate t :if-does-not-exist :ignore)))))

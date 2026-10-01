@@ -54,18 +54,29 @@ head ran uncoloured without saying anything — the silent-degradation shape, fr
 knew only how to find a developer's build.
 
 `sb-ext:*runtime-pathname*` is the image's own path, which is exactly what is needed: it answers
-*where am I installed* rather than *where was I started from*."
+*where am I installed* rather than *where was I started from*. **It is a global LEXICAL variable and
+cannot be `let`-bound** — MEASURED, by trying, and the compiler's own words are that it *names a
+global lexical variable, and cannot be used in LET* — which is why the sibling lookup is its own
+function taking the path. A test cannot fake the running image's pathname, so it passes one to `%shim-beside` instead."
   (or (uiop:getenv "LETICL_HL_SO")
-      (let ((beside (ignore-errors
-                      (merge-pathnames "libleticl_hl.so"
-                                       (uiop:pathname-directory-pathname
-                                        sb-ext:*runtime-pathname*)))))
-        (and beside (uiop:file-exists-p beside) (namestring beside)))
+      (%shim-beside sb-ext:*runtime-pathname*)
       (first (remove-if-not (lambda (p) (uiop:file-exists-p (merge-pathnames p)))
                             '("native/libleticl-hl.so"
                               "native/hl/target/release/libleticl_hl.so"
                               "hl-target/release/libleticl_hl.so"
                               "/home/dead/Projects/rano/rano/target/release/libleticl_hl.so")))))
+
+(defun %shim-beside (image-path)
+  "The shim sitting next to IMAGE-PATH as a namestring, or NIL.
+
+**Its own function so it can be tested.** `sb-ext:*runtime-pathname*` is a global lexical and cannot
+be bound, so a test cannot pretend to be an image installed somewhere — but it CAN hand this function
+the path such an image would have. That is the difference between an assertion and a hope: the install
+case was broken for months precisely because nothing could exercise it."
+  (let ((p (ignore-errors
+            (merge-pathnames "libleticl_hl.so"
+                             (uiop:pathname-directory-pathname image-path)))))
+    (and p (uiop:file-exists-p p) (namestring p))))
 
 (defun hl-available-p ()
   "T when the shim is loaded (loading it once, on first ask). NIL = uncoloured."
