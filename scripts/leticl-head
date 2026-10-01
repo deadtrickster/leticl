@@ -16,6 +16,12 @@
 # It refuses an argument it does not know rather than guessing: a launcher that
 # grows a flag this file has never seen must fail loudly here, not be silently
 # attached without it.
+#
+# **AND IT ANSWERS THE TWO QUESTIONS A PERSON ASKS BEFORE ANY OF THAT.**
+# `--help` and `--version` are handled above the launcher's arguments, because the
+# person typing them is not the launcher — they are somebody who just installed
+# this and wants to know what it is. Both used to fall through to the refusal
+# above, which answers a question about the head with a sentence about a launcher.
 
 set -euo pipefail
 
@@ -31,6 +37,20 @@ fi
 args=()
 while [ $# -gt 0 ]; do
   case "$1" in
+    # **THE FIRST THING A NEW PERSON TYPES, AND IT WAS REFUSED BY NAME.** `leticl-head --help`
+    # fell to the arm below and printed *"unknown argument from the launcher: --help"* — a
+    # sentence about a launcher the reader has never heard of, in answer to a question about the
+    # head they just installed. MEASURED on the shipped script. The image has its own `-h`, so
+    # this hands the question to the thing that can answer it.
+    -h|--help)     exec "$IMAGE" -h ;;
+    # **AND `--version` IS SBCL'S, WHETHER WE LIKE IT OR NOT.** The image is a frozen SBCL and
+    # its runtime parses `--version` before any Lisp runs, so the honest answer is *the head has
+    # no version of its own* followed by the runtime that is actually there. Printing one number
+    # and calling it leticl's would be inventing a fact; printing nothing would look like a
+    # failure to install.
+    --version)     printf 'leticl-head: the head has no version of its own (the code lives in git).\n'
+                   printf 'its runtime is: '
+                   exec "$IMAGE" --version ;;
     --socket)      export LETIBOT_SOCKET="$2"; shift 2 ;;
     --identity)    shift 2 ;;
     --resume)      args+=(--session "$2"); shift 2 ;;
