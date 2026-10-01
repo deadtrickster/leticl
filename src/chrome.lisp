@@ -407,6 +407,27 @@ when it has no usage of its own.
       (append (list :prompt-tokens tokens)
               (when (numberp cached) (list :cached-tokens cached))))))
 
+(defun %turn-elapsed-ms ()
+  "How long the running turn has been going, or **NIL when that cannot be measured honestly.**
+
+The one place this is computed, so the composer edge and the status bar cannot disagree — which is
+what the operator saw when they did: 151s beside 4.5s in one frame.
+
+**AND IT REFUSES A NEGATIVE, which is a MEASURED case and not a guard for tidiness.** The start time
+comes off the wire as a Unix stamp (`wire-stamp->started-ms`, progress.lisp) and is converted with
+this head's `unix-now-ms`, whose offset is established ONCE from `get-universal-time` and then
+advanced by the internal counter. That is correct only while the wall clock holds still: if it MOVES
+under a running head the offset is stale by exactly that much, and the converted start lands in the
+future. MEASURED on the operator's own head — `:started 42711437` against `:internal-now 14891669`, a
+start 27 819 768 ms ahead — and the screen showed `-27819768ms` beside the word *Responding*.
+
+NIL here means *this head cannot say*, and both callers already have the sentence for it: the composer
+edge writes *started before this head attached*, which is the honest reading of a start time this
+process never measured. A negative duration is worse than no duration — a measurement's costume on a
+number that cannot be a measurement."
+  (let ((ms (and *turn-started-ms* (- (internal-real-time-ms) *turn-started-ms*))))
+    (and ms (not (minusp ms)) ms)))
+
 (defun %usage-numbers (s)
   "The four telemetry numbers the header shows, each present only when measured:
 context size, cache fraction, decode rate, elapsed — plus output tokens.
@@ -489,16 +510,18 @@ turn as `(:total :cache :processed :time-ms)` and had no reader."
     ;; turn has been running 4.5s* when the turn has been running for two and a half minutes.
     ;; So one field moves and the other two stay, and the two timers on the screen now agree.
     ;;
-    ;; **A DELIBERATE DIVERGENCE FROM LETIBOT** (R59's sibling — see the parity row): the
-    ;; reference shows the last round's duration here, and its comment calls that parity. Ours
-    ;; now differs on purpose, by the operator's ruling, and it is recorded so a census does not
-    ;; file it as drift and reverse it.
+    ;; **BOTH HEADS, BY THE OPERATOR'S RULING (*"yes, letibot too"*), AND BOTH NOW DIFFER FROM THE
+    ;; REFERENCE — which is the thing a reader will trip over.** The reference shows the last
+    ;; round's duration here, and letibot's comment calls that parity with `app.rs:1229`'s
+    ;; `last_timings`. After this change NEITHER head matches it, so somebody diffing against the
+    ;; reference finds two heads disagreeing with it in the same way — and that is a ruling, not a
+    ;; shared defect. Recorded as such in the parity row.
     ;;
-    ;; The guard is `turn-busy-p` and not the state's name, for the reason that function's own
-    ;; docstring measures: the daemon writes `"finished"` for the whole of a tool call, so a
-    ;; name-gated duration would snap back to the last round exactly while a command ran.
-    (let ((elapsed-ms (if (and (turn-busy-p turn) *turn-started-ms*)
-                          (- (internal-real-time-ms) *turn-started-ms*)
+    ;; The guard is `%turn-elapsed-ms`, which is the same thing the composer edge reads, so the two
+    ;; timers cannot drift apart again — and it REFUSES A NEGATIVE, measured: see its docstring.
+    (let ((elapsed-ms (or (%turn-elapsed-ms)
+                          ;; **IDLE: THE LAST TURN'S DURATION IS THE ONLY ONE THERE IS**, and it is
+                          ;; kept past the end of the turn — which is what `last_timings` is for.
                           (and timings
                                (numberp (getf timings :wall-ms))
                                (plusp (getf timings :wall-ms))
@@ -1036,12 +1059,18 @@ reference's `turn_status` (app.rs:7501-7566).
                  (< (or (getf pp :processed) 0) (getf pp :total)))
             ;; prefilling: the bar says everything the words would have
             (format nil "~a ~a" spin (prefill-line pp (max 1 (- cols 6))))
-            (let ((since (if *turn-started-ms*
-                             (format nil "~a" (duration (- (internal-real-time-ms) *turn-started-ms*)))
+            (let ((since (let ((elapsed (%turn-elapsed-ms)))
+                             ;; **THE SAME HELPER THE STATUS BAR READS**, so the two timers are one
+                             ;; computation in two places rather than two that happen to agree — and
+                             ;; so a start time that cannot be measured honestly (a wall clock that
+                             ;; moved under this head, measured) says so here too instead of drawing
+                             ;; a negative.
+                             (if elapsed
+                             (format nil "~a" (duration elapsed))
                              ;; **a turn that came out of a snapshot measured nothing**, and this
                              ;; sentence is the case that never grows — so there is nothing here for
                              ;; the layout to hold still.
-                             "started before this head attached"))
+                             "started before this head attached")))
                   (tokens (getf turn :tokens)))
               (concatenate
                'string

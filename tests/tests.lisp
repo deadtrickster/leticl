@@ -23764,3 +23764,47 @@ turn, `:rate` and `:out` still from the last round."
         (is (equal "2220 out" (cdr (assoc :out parts)))
             (format nil "and so is the output count — `thousands` leaves a four-digit number
  alone, so it reads as itself: ~s" (cdr (assoc :out parts))))))))
+
+(def-test a-start-time-in-the-future-says-so-instead-of-a-negative-duration (:suite leticl)
+  "**FOUND WHILE MEASURING THE OTHER ONE, and it was live on the operator's screen.**
+
+The wire's start is a Unix stamp converted through this head's `unix-now-ms`, whose offset is
+established ONCE from `get-universal-time` and then advanced by the internal counter. That is correct
+only while the wall clock holds still. If it moves under a running head, the offset is stale by exactly
+that much and the converted start lands in the FUTURE:
+
+    :started 42711437   :internal-now 14891669   :diff +27819768
+
+Seven and three-quarter hours ahead, so the elapsed is negative and the composer edge drew
+`-27819768ms` beside the word *Responding* — and once the duration moved to the turn's basis, so did
+the status bar. **A negative duration is worse than no duration**: it is a measurement's costume on a
+number that cannot be a measurement.
+
+The fix is `%turn-elapsed-ms`, which is now the ONE computation both timers read — so they agree by
+construction rather than by coincidence — and which answers NIL rather than a negative. Both callers
+already had the sentence for NIL: *started before this head attached*, which is the honest reading of a
+start time this process never measured."
+  (flet ((timings () (list :prompt-ms 0.0d0 :predicted-ms 1000.0d0 :wall-ms 4474))
+         (usage () (list :prompt-tokens 100 :cached-tokens 100 :predicted-tokens 2220)))
+    (let ((h (%make-head))
+          (s nil))
+      (setf s (leticl::head-session h)
+            (leticl::session-turn s)
+            (list :turn-id "t" :text "" :reasoning "" :raw-calls "" :tokens 0
+                  :state (list :state "finished" :timings (timings) :usage (usage))
+                  :calls (list (list :call-id "c" :name "bash"
+                                     :state (list :state "running")))))
+      ;; ---------- 1. THE BUG: a start in the future ----------
+      (let ((leticl::*turn-started-ms* (+ (leticl::internal-real-time-ms) 27819768)))
+        (is (null (leticl::%turn-elapsed-ms))
+            "**the helper refuses a start that has not happened yet** rather than measuring it")
+        (let ((seg (cdr (assoc :elapsed (leticl::%usage-numbers s)))))
+          (is (not (and seg (search "-" seg)))
+              (format nil "**and the status bar draws no negative duration**: ~s" seg))
+          ;; it falls back to the last round's, which is what there is to show
+          (is (equal "4.5s" seg)
+              (format nil "it falls back to the last round's duration, which IS measurable: ~s" seg))))
+      ;; ---------- 2. and a normal start still measures ----------
+      (setf leticl::*turn-started-ms* (- (leticl::internal-real-time-ms) 151000))
+      (is (equal "2m31s" (duration (leticl::%turn-elapsed-ms)))
+          "a start in the past is still measured — the guard is a sign, not a refusal to measure"))))
