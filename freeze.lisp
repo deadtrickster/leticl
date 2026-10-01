@@ -37,6 +37,14 @@
   (write-line "       leticl --replay FILE.jsonl [--no-tty] [--cols N] [--rows N]" stream)
   (write-line "                                render a recorded log — no daemon, no socket" stream)
   (write-line "       leticl -h|help           this message" stream)
+  ;; **AND THE FLAG A PERSON ACTUALLY TYPES, SAID OUT LOUD.** `--help` and `--version` are
+  ;; SBCL RUNTIME options: the frozen image's runtime parses them before any Lisp runs, so
+  ;; `leticl-head --help` prints SBCL's own page and never reaches this function. That cannot
+  ;; be intercepted from Lisp, and a reader who typed it and got a page about `--core` deserves
+  ;; to be told which flag they wanted rather than left to guess. MEASURED: `-h` reaches here
+  ;; and exits 0; `--help` prints `Usage: sbcl [runtime-options] …`.
+  (write-line "                                (--help and --version are SBCL's, not ours — use -h)"
+              stream)
   (write-line "" stream)
   (write-line "       the head attaches to the daemon named by $LETIBOT_SOCKET; ~/bin/leticl" stream)
   (write-line "       sets it from the current directory and resolves --continue to the newest" stream)

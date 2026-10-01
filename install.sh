@@ -104,7 +104,13 @@ main() {
     # rano's tree-sitter highlighter behind a C ABI; without it the head runs and simply has no
     # colour, silently — see `hl-so-path`. It is in the archive now because `native/hl/Cargo.toml`
     # pins rano's published tag instead of a path on one machine.
-    for want in leticl-head harnessd letibot libleticl_hl.so leticl leticl-head-launch; do
+    # **TEN FILES, AND THE EIGHT THAT ARE NOT SCRIPTS ARE THE INTERESTING ONES.** `harnessd` links
+    # four llama libraries and carries an `$ORIGIN` rpath, so it finds them as siblings; an archive
+    # that shipped the binary without them would install cleanly and die at first run. The shim is
+    # rano's highlighter. Named here rather than discovered at first use.
+    for want in leticl-head harnessd letibot \
+                libleticl_hl.so libllama.so.0 libggml.so.0 libggml-cpu.so.0 libggml-base.so.0 \
+                leticl leticl-head-launch; do
         [ -f "$tmp/$want" ] || die "$name has no $want in it — the asset is broken, not your machine"
     done
 
@@ -124,6 +130,13 @@ main() {
     # merely untidy rather than wrong, but this says what the file IS.
     cp "$tmp/libleticl_hl.so" "$INSTALL_DIR/libleticl_hl.so" || die "cannot write $INSTALL_DIR/libleticl_hl.so"
     chmod 644 "$INSTALL_DIR/libleticl_hl.so"
+    # **AND THE FOUR LIBRARIES HARNESSD LINKS**, beside it, for the `$ORIGIN` rpath. Without these
+    # the daemon installs and cannot start, which is the worst shape a failure can take — the
+    # operator's own rule, and letibot measured the same class on arm64 the same day.
+    for lib in libllama.so.0 libggml.so.0 libggml-cpu.so.0 libggml-base.so.0; do
+        cp "$tmp/$lib" "$INSTALL_DIR/$lib" || die "cannot write $INSTALL_DIR/$lib"
+        chmod 644 "$INSTALL_DIR/$lib"
+    done
 
     # **THE DAEMON, AND THE SWITCH.** Three answers, and the middle one is the
     # default because it is the case that actually happens: a box that already has
@@ -194,13 +207,17 @@ main() {
     chmod 755 "$INSTALL_DIR/leticl" "$INSTALL_DIR/leticl-head-launch" "$INSTALL_DIR/letibot"
 
     # ---------- say what was installed, by running it ----------
-    # A binary that cannot run is a failure this script would otherwise report as
-    # success, so the version is asked for rather than assumed.
-    got=$("$INSTALL_DIR/leticl-head" --version 2>/dev/null || true)
+    # **`-h`, NOT `--help` AND NOT `--version`, AND THAT IS MEASURED.** The head is a frozen
+    # SBCL image, and SBCL's RUNTIME parses `--help` and `--version` before any Lisp runs — so
+    # `leticl-head --version` prints `SBCL 2.6.0.debian` and never reaches the head's own
+    # argument list. `-h` does reach it: the head prints its own usage and exits 0. So this asks
+    # with the flag that gets an answer from the thing being tested. (A user typing `--help` gets
+    # the runtime's page; the head's own usage names the right flag, see `usage`.)
+    got=$("$INSTALL_DIR/leticl-head" -h 2>/dev/null | head -1 || true)
     if [ -n "$got" ]; then
-        say "leticl-head   $got"
+        say "leticl-head   runs ($got ...)"
     else
-        warn "warning: $INSTALL_DIR/leticl-head answered nothing to --version"
+        warn "warning: $INSTALL_DIR/leticl-head answered nothing to -h"
         warn "         it is installed; run it to see what it says"
     fi
     [ -n "$NO_DAEMON" ] || [ -z "$existing" ] || say "harnessd      $existing  (kept)"

@@ -25,42 +25,26 @@ name: Release
 # image does need `libsqlite3.so.0` at run time for the todo store, which the
 # installer checks and names.
 #
-# **THIS WORKFLOW CANNOT SUCCEED YET, AND `act` FOUND OUT WHY.** MEASURED with
-# `act workflow_dispatch -j build --matrix runs:ubuntu-latest`, which is the whole
-# reason that tool is worth having:
+# **WHAT `act` FOUND, AND WHAT I GOT WRONG READING IT BACK.** The first run of this
+# workflow failed with a dependency error, and the note that stood here claimed the cause
+# was letibot's: *"three of its manifests take rano as an ABSOLUTE PATH dependency …
+# harnessd cannot be built anywhere but the author's box."*
 #
-#   error: failed to load manifest for workspace member `daemon/crates/flowy`
-#     ... failed to load manifest for dependency `letibot-tools`
-#     ... failed to load manifest for dependency `letibot-code`
-#     ... failed to load manifest for dependency `rano`
-#     ... failed to read `/home/dead/Projects/rano/rano/Cargo.toml`
-#     ... No such file or directory (os error 2)
+# **That was false, and it was false when I wrote it.** letibot's three manifests take rano
+# by GIT TAG, and did at the time:
 #
-# **The cause is in letibot, not here**: three of its manifests take rano as an
-# ABSOLUTE PATH dependency,
+#   crates/ui/Cargo.toml:52   rano = { git = "https://github.com/deadtrickster/rano", tag = "v0.2.1" }
 #
-#   rano = { path = "/home/dead/Projects/rano/rano" }        crates/code/Cargo.toml
-#   rano = { path = "/home/dead/Projects/rano/rano" }        crates/tui/Cargo.toml
-#   rano = { path = "/home/dead/Projects/rano/rano" }        crates/ui/Cargo.toml
+# What I read were the COMMENTS above those lines, three of which still said *"the absolute
+# path is deliberate: rano is an operator-local project"* — prose describing a decision the
+# lines no longer made. The same decay R53 §7.1 measured between these two trees, this time
+# inside one of them, and it is why the paragraph is kept here in corrected form rather than
+# deleted: **a comment about a dependency is a claim with a lifetime, and when the line
+# changes the comment is what lies.** A reader checking that dependency reads the prose.
 #
-# with the comment *"rano is an operator-local project, not a published dependency"*.
-# `harnessd` pulls `letibot-tools` -> `letibot-code` -> `rano`, so **the daemon
-# cannot be built anywhere but the author's box** — no runner, no second machine,
-# and no fresh clone anywhere. Nothing in this repository can fix that: making it
-# work by checking rano out at that exact absolute path would bake one operator's
-# home directory into CI and paper over the dependency instead of naming it.
-#
-# THE FIX IS LETIBOT'S, and there are two honest shapes: a git dependency on rano's
-# repository, or rano vendored the way this repository vendors its Lisp libraries
-# (see vendor/SOURCES.txt). Either makes the daemon buildable from a clone, which
-# is what a release needs. Until then this workflow is correct as written and
-# cannot pass.
-#
-# Everything ABOVE this note — checking out both repositories, the triple-vs-runner
-# check, the SBCL install, packaging and asserting five files — was exercised by
-# `act` in the same run and never reached: the daemon build is the first step that
-# touches the missing path. The steps before it succeeded, including
-# `Swatinem/rust-cache` and `dtolnay/rust-toolchain`.
+# The absolute path that DID exist was in this repository — `native/hl/Cargo.toml`, the
+# highlighting shim, now pinned to the same `v0.2.1`. That is why no archive ever carried
+# `libleticl_hl.so` and every fresh install ran uncoloured without saying so.
 # Linux x86_64 and aarch64 build natively on GitHub's own runners. **macOS is NOT
 # covered yet**: the head would need `brew install sbcl` on the runner and the
 # image's Lisp-side paths are only exercised on Linux today. Named here rather
@@ -75,12 +59,19 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  # The daemon's repository and ref. A ref rather than a tag because letibot has
-  # no release of its own to pin against yet; **when it does, this becomes the tag**
-  # and stops moving under a rebuild of an old leticl tag. That is a standing
-  # instruction to whoever is here next, not a note about today.
+  # **THE DAEMON'S REPOSITORY AND TAG, and this was `main` until letibot had a release.**
+  # The comment here used to instruct: *"A ref rather than a tag because letibot has no release
+  # of its own to pin against yet; when it does, this becomes the tag and stops moving under a
+  # rebuild of an old leticl tag."* That is this change — the condition was met, so the
+  # instruction fired rather than being remembered.
+  #
+  # A TAG and not `main`, and letibot's own choice makes the reason concrete: it tagged a
+  # VERIFIED commit rather than the head of `main`, deliberately — the commit its green matrix
+  # actually built. So `v0.1.1` is not necessarily `main`, and pinning the tag is pinning the
+  # thing that was tested. A rebuild of leticl v0.1.1 a year from now gets the daemon that was
+  # tested with it, not whatever letibot's branch has become.
   LETIBOT_REPO: deadtrickster/letibot
-  LETIBOT_REF: main
+  LETIBOT_REF: v0.1.1
   # **rano IS PINNED BY TAG, in the manifests that need it** — `native/hl/Cargo.toml`
   # and letibot's three. Not an env var here, because a dependency's version belongs
   # where the dependency is declared; this comment exists so a reader looking for
@@ -101,15 +92,42 @@ jobs:
       - name: Check out the head
         uses: actions/checkout@v4
 
-      # **The daemon, from ITS repository.** `path: daemon` is the layout
-      # `make-dist.sh` looks for, so the packaging script does not care that the
-      # source came from somewhere else.
-      - name: Check out the daemon
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ env.LETIBOT_REPO }}
-          ref: ${{ env.LETIBOT_REF }}
-          path: daemon
+      # **THE DAEMON IS FETCHED, NOT BUILT, AND THAT IS A CHANGE OF DESIGN.**
+      #
+      # The first cut checked letibot out and ran `cargo build`, which cannot work: `letibot-tokencore`'s
+      # build script needs `llama.h` and `libllama.so` from a llama.cpp checkout, defaulting to the
+      # author's own path. MEASURED on the first `act` run:
+      #
+      #   thread 'main' panicked at crates/tokencore/build.rs:27:5:
+      #   llama.h not found at /home/dead/Projects/llama.cpp/include/llama.h.
+      #
+      # letibot's own release workflow clones and builds llama.cpp with cmake to get past that. There is
+      # no reason for this repository to repeat it: letibot PUBLISHES the result, and its asset is the
+      # runtime — `harnessd`, `letibot-tui`, `letibot-askpass`, and the four llama libraries harnessd
+      # links. Taking the published artifact at the pinned tag is better than rebuilding it here on
+      # three counts: no toolchain beyond curl, the exact binaries and libraries that were TESTED, and
+      # no second build of a fork of a fork.
+      #
+      # **THE ASSET'S NAME IS `letibot-<triple>`, not `harnessd-<triple>`** — the first cut asked for a
+      # name letibot does not publish, which would have 404'd on a tag that exists.
+      - name: Fetch the daemon and its libraries
+        run: |
+          set -eu
+          ver="${{ env.LETIBOT_REF }}"
+          base="https://github.com/${{ env.LETIBOT_REPO }}/releases/download/${ver}"
+          curl -q -fsSL --proto '=https' --proto-redir '=https' \
+            -o daemon.tar.gz "${base}/letibot-${{ matrix.triple }}.tar.gz"
+          mkdir -p daemon-dist && tar -xzf daemon.tar.gz -C daemon-dist
+          # The launcher is a SCRIPT IN THE REPOSITORY and is not in the asset, so it comes from the
+          # same tag as everything else. It is not optional: nothing starts the daemon without it.
+          curl -q -fsSL --proto '=https' --proto-redir '=https' \
+            -o daemon-dist/letibot "${base%-*}/raw/${ver}/scripts/letibot" \
+            || curl -q -fsSL --proto '=https' --proto-redir '=https' \
+                 -o daemon-dist/letibot \
+                 "https://raw.githubusercontent.com/${{ env.LETIBOT_REPO }}/${ver}/scripts/letibot"
+          chmod 755 daemon-dist/letibot
+          echo "--- what we fetched ---"
+          ls -la daemon-dist
 
       # The triple is a claim about the binary. Check it against the runner's own
       # host rather than trusting the image name: a silent change to what
@@ -125,14 +143,6 @@ jobs:
             *) echo "::error::runner is $host, claiming ${{ matrix.triple }}"; exit 1 ;;
           esac
 
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: daemon
-          key: ${{ matrix.triple }}
-
-      - name: Build the daemon
-        run: cargo build --release --manifest-path daemon/Cargo.toml -p letibot-harnessd
       # **THE HIGHLIGHTING SHIM, AND IT COULD NOT BE BUILT HERE UNTIL 2026-10-01.**
       # `native/hl/Cargo.toml` took rano by ABSOLUTE PATH, so this crate built on exactly one
       # machine — and the consequence reached the user: no archive ever contained
@@ -187,12 +197,33 @@ jobs:
         run: |
           set -eu
           [ -x bin/leticl-head ] || { echo "::error::no image at bin/leticl-head"; exit 1; }
-          bin/leticl-head --version || echo "(no --version yet; it started and exited)"
+          # **`-h` AND NOT `--version`, and install.sh learned the same thing the same way.** The
+          # image is a frozen SBCL and SBCL's RUNTIME owns `--help` and `--version`: they are parsed
+          # before any Lisp runs, so `--version` prints `SBCL 2.6.0.debian` and `--help` prints a page
+          # about `--core`. Measured on a clean box. `-h` reaches the head's own argument list.
+          bin/leticl-head -h >/dev/null || { echo "::error::the head did not answer -h"; exit 1; }"
 
-      - name: The daemon must run
-        run: daemon/target/release/harnessd --help >/dev/null 2>&1 || true
+      # **THE LIBRARIES HARNESSD LINKS MUST BE BESIDE IT.** `libllama.so.0`, `libggml.so.0`,
+      # `libggml-cpu.so.0` and `libggml-base.so.0` come from the same asset, and harnessd carries an
+      # `$ORIGIN` rpath so it finds them as siblings. This is also the class of failure letibot found
+      # on arm64 the same day — a binary that compiles and cannot execute because one library in
+      # `DT_NEEDED` was not there — so it is CHECKED rather than assumed.
+      - name: The daemon and its libraries are all present
+        run: |
+          set -eu
+          for want in harnessd letibot libllama.so.0 libggml.so.0 libggml-cpu.so.0 libggml-base.so.0; do
+            [ -f "daemon-dist/$want" ] || { echo "::error::the letibot asset has no $want"; exit 1; }
+          done
+          echo "all six present"
+          # ldd resolves them: a missing one prints "not found" and this fails.
+          ldd daemon-dist/harnessd | grep -q 'not found' && { echo "::error::harnessd has an unresolved library:"; ldd daemon-dist/harnessd; exit 1; } || true
+          ldd daemon-dist/harnessd | head -20
 
       - name: Package
+        env:
+          # `make-dist.sh` looks under `daemon/` for a source build; this tells it the fetched
+          # layout instead, so the packaging script does not need to know which route was taken.
+          LETIBOT_DIST: ${{ github.workspace }}/daemon-dist
         run: sh scripts/make-dist.sh ${{ matrix.triple }} dist
 
       - uses: actions/upload-artifact@v4
@@ -223,13 +254,15 @@ jobs:
 
       # The same check the installer's own extraction does, run once here so a bad
       # archive is caught at publish time rather than by the first user.
-      - name: Every asset must extract to all five files
+      - name: Every asset must extract to all ten files
         run: |
           set -eu
           for f in dist/*.tar.gz; do
             d=$(mktemp -d)
             tar -xzf "$f" -C "$d"
-            for want in leticl-head harnessd letibot leticl leticl-head-launch; do
+            for want in leticl-head harnessd letibot libleticl_hl.so \
+                        libllama.so.0 libggml.so.0 libggml-cpu.so.0 libggml-base.so.0 \
+                        leticl leticl-head-launch; do
               if [ ! -f "$d/$want" ]; then
                 echo "::error::$f is missing $want"
                 exit 1
