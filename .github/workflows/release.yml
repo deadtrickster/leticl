@@ -299,7 +299,26 @@ jobs:
           # it named the thing, and the thing was not a defect. Kept as its own list rather
           # than folded into HOST_LIBS because the ERROR MESSAGE differs: one says *install
           # this*, the other says *this is the platform*.
-          PLATFORM_LIBS="libc.so.6 libgcc_s.so.1 ld-linux-x86-64.so.2 ld-linux-aarch64.so.1"
+          # **`libm.so.6` IS IN THIS LIST BECAUSE THE LOOP WAS WALKED BY HAND FIRST.** The
+          # first version named libc, libgcc_s and the two loaders, and four of the five binaries
+          # link glibc's math library as well. Checking the set against the real archive before
+          # spending a runner is what caught it — the same lesson as the loop itself.
+          PLATFORM_LIBS="libc.so.6 libm.so.6 libgcc_s.so.1 ld-linux-x86-64.so.2 ld-linux-aarch64.so.1"
+          #
+          # **AND THE BASELINE BEING PRESENT IS NOT THE SAME AS ITS VERSION BEING ACCEPTABLE —
+          # NAMED HERE BECAUSE THAT IS THE SAME CAN-ONLY-PASS SHAPE THIS STEP EXISTS TO REMOVE.**
+          # These come from the runner's glibc and the archive contains no libc, so a binary built
+          # on `ubuntu-latest` already carries a glibc version requirement; on an older distro the
+          # failure is
+          #
+          #   version `GLIBC_2.38' not found (required by harnessd)
+          #
+          # which is a DIFFERENT sentence from a missing file and is NOT caught by anything here or
+          # by letibot's installer. On musl the loader is `ld-musl-<arch>.so.1`, so a box with no
+          # glibc loader at all fails with neither symptom — and that too is *the wrong platform*
+          # rather than *a package you are missing*. A check on the maximum required GLIBC symbol
+          # version, compared against what the target distro ships, is the thing that would close
+          # it; it is not written, and this comment is the record rather than the claim.
           # Everything `harnessd` and the four libraries need, transitively, as `ldd` sees it.
           needed=$(ldd daemon-dist/harnessd daemon-dist/libllama.so.0 daemon-dist/libggml.so.0 \
                        daemon-dist/libggml-cpu.so.0 daemon-dist/libggml-base.so.0 2>/dev/null \
@@ -327,7 +346,10 @@ jobs:
             fi
           done
           [ "$missing" -eq 0 ] || exit 1
-          echo "all resolve: six from the archive, three named as the host's own, the rest the platform"
+          # The count is spelled out because the previous version was WRONG: it said *"all ten
+          # resolve: six from the archive, three named as the host's own"*, and six plus three is
+          # nine. A later reader trusts a sentence like that, so it is arithmetic now.
+          echo "11 libraries: 4 from the archive, 3 named as the host's own, 4 the platform's baseline"
 
       - name: Package
         env:
