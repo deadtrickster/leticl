@@ -8,7 +8,29 @@ description = "C ABI over rano's tree-sitter highlighter, for the leticl head (s
 crate-type = ["cdylib"]
 
 [dependencies]
-# Operator-local, not published — the same absolute-path convention letibot's
-# crates/ui uses. rano's lib target exposes `syntax` (the highlighter) without
-# the editor, so this builds the tree-sitter engine + grammars, not the TUI.
-rano = { path = "/home/dead/Projects/rano/rano" }
+# **A GIT TAG, AND IT USED TO BE AN ABSOLUTE PATH — which made this crate unbuildable
+# anywhere but one machine.** It read
+#
+#     rano = { path = "/home/dead/Projects/rano/rano" }
+#
+# with a comment claiming that was *"the same absolute-path convention letibot's crates/ui
+# uses"*. Both halves were wrong by 2026-10-01: letibot's three manifests take rano as a git
+# tag already, and this path was the ONLY remaining one across both trees. It is the reason
+# the release workflow could not build the shim, and therefore the reason `libleticl_hl.so`
+# was never in an archive and the head has always run uncoloured on a fresh box.
+#
+# **Pinned to a TAG and not a branch**, for the reason this repository's own
+# `.github/workflows/release.yml` states about `LETIBOT_REF`: a ref moves under a rebuild of
+# an old tag, so a rebuild of leticl v0.1.0 would silently take whatever rano's default branch
+# had become. rano publishes tags; `v0.2.1` is the one letibot pins too, so the two
+# repositories' view of rano cannot drift apart.
+#
+# **AND THE COMMENT ABOVE THE LINE WAS THE TRAP.** This file said one thing in prose and
+# another in code, and a reader checking the dependency read the prose. The same decay was
+# measured in letibot's three manifests on the same day — three comments describing a
+# decision their lines no longer made. A comment about a dependency is a claim with a
+# lifetime; when the line changes, the comment is what lies.
+#
+# rano's lib target exposes `syntax` (the highlighter) without the editor, so this builds the
+# tree-sitter engine + grammars, not the TUI.
+rano = { git = "https://github.com/deadtrickster/rano", tag = "v0.2.1" }

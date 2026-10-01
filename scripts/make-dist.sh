@@ -60,6 +60,24 @@ done
     exit 1
 }
 
+# **THE HIGHLIGHTING SHIM.** Built from `native/hl`, which until 2026-10-01 took rano by
+# ABSOLUTE PATH and so could not be built on a runner at all — which is why no archive ever
+# carried this file and a fresh install ran uncoloured without saying so. Two layouts: the
+# workflow's own `--target-dir hl-target`, and a plain local build.
+shim=""
+for candidate in "$repo/hl-target/release/libleticl_hl.so" \
+                 "$repo/native/hl/target/release/libleticl_hl.so"; do
+    if [ -f "$candidate" ]; then
+        shim="$candidate"
+        break
+    fi
+done
+[ -n "$shim" ] || {
+    echo "make-dist: no shim: build it with" >&2
+    echo "  cargo build --release --manifest-path native/hl/Cargo.toml --target-dir hl-target" >&2
+    exit 1
+}
+
 # The launcher, from letibot — the same checkout. Without it nothing can start
 # the daemon, so an asset missing it is an install that does not work.
 launcher="$repo/daemon/scripts/letibot"
@@ -76,6 +94,7 @@ trap 'rm -rf "$stage"' EXIT INT TERM
 cp "$head_bin"   "$stage/leticl-head"
 cp "$daemon_bin" "$stage/harnessd"
 cp "$launcher"   "$stage/letibot"
+cp "$shim"       "$stage/libleticl_hl.so"
 cp "$repo/scripts/leticl"      "$stage/leticl"
 cp "$repo/scripts/leticl-head" "$stage/leticl-head-launch"
 chmod 755 "$stage/leticl-head" "$stage/harnessd" "$stage/letibot" \
@@ -84,14 +103,14 @@ chmod 755 "$stage/leticl-head" "$stage/harnessd" "$stage/letibot" \
 # COPYFILE_DISABLE stops macOS tar writing AppleDouble `._` entries, which would
 # otherwise land in the archive and be extracted by the installer.
 COPYFILE_DISABLE=1 tar -czf "$outdir/$name" -C "$stage" \
-    leticl-head harnessd letibot leticl leticl-head-launch
+    leticl-head harnessd letibot libleticl_hl.so leticl leticl-head-launch
 
 # **PROVE THE ARCHIVE IS WHAT THE INSTALLER EXPECTS BEFORE PUBLISHING IT.** Every
 # name here is one install.sh looks for by name; a release that is missing one is
 # an install that half-works, which looks like the operator's mistake rather than
 # a broken asset.
 listing=$(tar -tzf "$outdir/$name")
-for want in leticl-head harnessd letibot leticl leticl-head-launch; do
+for want in leticl-head harnessd letibot libleticl_hl.so leticl leticl-head-launch; do
     if [ "$(printf '%s\n' "$listing" | grep -c "^$want\$")" -ne 1 ]; then
         echo "make-dist: $name must hold exactly one top-level $want: $listing" >&2
         exit 1

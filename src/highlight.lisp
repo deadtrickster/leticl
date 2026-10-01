@@ -36,11 +36,35 @@
 (defvar *hl-attempted* nil)
 
 (defun hl-so-path ()
-  "Where the shim lives: $LETICL_HL_SO, else the build outputs, in order."
+  "Where the shim lives, in the order a head should look for it.
+
+  1. **`$LETICL_HL_SO`** — an explicit override, always first;
+  2. **beside the running image** — the INSTALL case, and it was missing. `install.sh` puts
+     `libleticl_hl.so` in the same directory as `leticl-head`, so the two are siblings and the
+     head can find its own shim without being told where it is;
+  3. the two build paths, relative to the CHECKOUT, then rano's own build tree — the
+     developer's case, where the shim is a build product and the head runs from the repo.
+
+**WHY 2 EXISTS, MEASURED.** The first cut had only (1) and (3), and (3)'s paths are relative to
+whatever directory the head happens to run IN — a person runs `leticl` in their project folder,
+not in leticl's checkout, so `native/hl/target/release/…` never resolved for them. The third
+candidate was an absolute path into the author's rano tree, which is the crate that could not
+build off this box at all. So on every install the shim was present and never found, and the
+head ran uncoloured without saying anything — the silent-degradation shape, from a lookup that
+knew only how to find a developer's build.
+
+`sb-ext:*runtime-pathname*` is the image's own path, which is exactly what is needed: it answers
+*where am I installed* rather than *where was I started from*."
   (or (uiop:getenv "LETICL_HL_SO")
+      (let ((beside (ignore-errors
+                      (merge-pathnames "libleticl_hl.so"
+                                       (uiop:pathname-directory-pathname
+                                        sb-ext:*runtime-pathname*)))))
+        (and beside (uiop:file-exists-p beside) (namestring beside)))
       (first (remove-if-not (lambda (p) (uiop:file-exists-p (merge-pathnames p)))
                             '("native/libleticl-hl.so"
                               "native/hl/target/release/libleticl_hl.so"
+                              "hl-target/release/libleticl_hl.so"
                               "/home/dead/Projects/rano/rano/target/release/libleticl_hl.so")))))
 
 (defun hl-available-p ()

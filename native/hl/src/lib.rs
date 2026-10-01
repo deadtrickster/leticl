@@ -66,6 +66,18 @@ fn lang_from_id(id: u32) -> Option<Lang> {
         25 => Lang::Scheme,
         26 => Lang::Sql,
         27 => Lang::Clojure,
+        // **RANO'S INLINE MARKDOWN, ADDED AFTER THIS CRATE WAS WRITTEN — and the build
+        // against rano's PUBLISHED TAG is what found it.** The tag's `Lang` has a
+        // `MarkdownInline` variant (tree-sitter-md's standalone inline grammar) and neither
+        // match below covered it, so `cargo build` failed with a non-exhaustive-pattern error
+        // the moment the dependency stopped being a local path. The shim had only ever been
+        // compiled against an older rano on one machine, which is what a path dependency
+        // hides: the upstream had moved and nothing said so.
+        //
+        // rano's own docstring for it: *"Never detected from a path: a consumer pairs it with
+        // a Lang::Markdown Stream and feeds it included ranges."* So it takes an id for the
+        // Lisp side to name, and `lang_for` never returns it for a path — see there.
+        28 => Lang::MarkdownInline,
         _ => return None,
     })
 }
@@ -99,6 +111,7 @@ fn id_from_lang(lang: Lang) -> u32 {
         Lang::Scheme => 25,
         Lang::Sql => 26,
         Lang::Clojure => 27,
+        Lang::MarkdownInline => 28,
     }
 }
 

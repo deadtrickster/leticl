@@ -76,10 +76,15 @@ on:
 env:
   CARGO_TERM_COLOR: always
   # The daemon's repository and ref. A ref rather than a tag because letibot has
-  # no release of its own to pin against yet; when it does, this becomes the tag
-  # and stops moving under a rebuild of an old leticl tag.
+  # no release of its own to pin against yet; **when it does, this becomes the tag**
+  # and stops moving under a rebuild of an old leticl tag. That is a standing
+  # instruction to whoever is here next, not a note about today.
   LETIBOT_REPO: deadtrickster/letibot
   LETIBOT_REF: main
+  # **rano IS PINNED BY TAG, in the manifests that need it** — `native/hl/Cargo.toml`
+  # and letibot's three. Not an env var here, because a dependency's version belongs
+  # where the dependency is declared; this comment exists so a reader looking for
+  # "which rano" finds the answer instead of wondering.
 
 jobs:
   build:
@@ -128,6 +133,39 @@ jobs:
 
       - name: Build the daemon
         run: cargo build --release --manifest-path daemon/Cargo.toml -p letibot-harnessd
+      # **THE HIGHLIGHTING SHIM, AND IT COULD NOT BE BUILT HERE UNTIL 2026-10-01.**
+      # `native/hl/Cargo.toml` took rano by ABSOLUTE PATH, so this crate built on exactly one
+      # machine — and the consequence reached the user: no archive ever contained
+      # `libleticl_hl.so`, so a fresh install ran uncoloured and said nothing about it. The
+      # manifest now pins rano's published tag, the same one letibot's three manifests use.
+      #
+      # A separate `--target-dir`, because this is a different workspace from `daemon/` — sharing
+      # one would have cargo resolving two lockfiles into one directory.
+      - name: Build the highlighting shim
+        run: cargo build --release --manifest-path native/hl/Cargo.toml --target-dir hl-target
+
+      # **THE SHIM MUST LOAD, and `--version` does not prove that.** The head answers it without
+      # ever touching the shim (`hl-available-p` is lazy), so a broken `.so` would pass every
+      # check above and fail on the first file a person opens. This asks the shim directly.
+      - name: The shim must load
+        run: |
+          set -eu
+          so=hl-target/release/libleticl_hl.so
+          [ -f "$so" ] || { echo "::error::no shim at $so"; exit 1; }
+          file "$so" | grep -q 'shared object' || { echo "::error::$so is not a shared object"; exit 1; }
+          # `hl_detect` with a path that has no language must answer 0, and it is `catch_unwind`-ed
+          # internally, so a load failure is a process failure rather than a wrong number.
+          python3 - "$so" <<'PY'
+          import ctypes, sys
+          lib = ctypes.CDLL(sys.argv[1])
+          lib.hl_detect.restype = ctypes.c_uint32
+          lib.hl_detect.argtypes = [ctypes.c_char_p]
+          rust = lib.hl_detect(b"src/main.rs")
+          none = lib.hl_detect(b"no-such-extension.zzz")
+          print("hl_detect(main.rs) =", rust, " hl_detect(.zzz) =", none)
+          assert rust != 0, "the shim did not recognise Rust"
+          assert none == 0, "the shim invented a language for an unknown extension"
+          PY
 
       # SBCL, and only for the build. `libsqlite3-0` is not needed to freeze — the
       # load is inside a `handler-case` — but it IS needed to run the smoke test

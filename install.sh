@@ -100,7 +100,11 @@ main() {
        check the release exists: https://github.com/$REPO/releases"
 
     tar -xzf "$tmp/$name" -C "$tmp" 2>/dev/null || die "$name is not a readable archive"
-    for want in leticl-head harnessd letibot leticl leticl-head-launch; do
+    # **SIX FILES, AND THE SHIM IS THE ONE THAT WAS MISSING FOR MONTHS.** `libleticl_hl.so` is
+    # rano's tree-sitter highlighter behind a C ABI; without it the head runs and simply has no
+    # colour, silently — see `hl-so-path`. It is in the archive now because `native/hl/Cargo.toml`
+    # pins rano's published tag instead of a path on one machine.
+    for want in leticl-head harnessd letibot libleticl_hl.so leticl leticl-head-launch; do
         [ -f "$tmp/$want" ] || die "$name has no $want in it — the asset is broken, not your machine"
     done
 
@@ -114,6 +118,12 @@ main() {
         cp "$tmp/$f" "$INSTALL_DIR/$f" || die "cannot write $INSTALL_DIR/$f"
         chmod 755 "$INSTALL_DIR/$f"
     done
+
+    # **THE SHIM, beside the image, and 0644 rather than 0755.** It is dlopen'd, not exec'd, and
+    # the copy loop below chmods everything it touches to 0755 — which for a shared library is
+    # merely untidy rather than wrong, but this says what the file IS.
+    cp "$tmp/libleticl_hl.so" "$INSTALL_DIR/libleticl_hl.so" || die "cannot write $INSTALL_DIR/libleticl_hl.so"
+    chmod 644 "$INSTALL_DIR/libleticl_hl.so"
 
     # **THE DAEMON, AND THE SWITCH.** Three answers, and the middle one is the
     # default because it is the case that actually happens: a box that already has
@@ -163,7 +173,25 @@ main() {
         -e "s|^IMAGE=.*|IMAGE=\"$INSTALL_DIR/leticl-head\"|" \
         "$INSTALL_DIR/leticl-head-launch" > "$INSTALL_DIR/.launch.new" \
         && mv "$INSTALL_DIR/.launch.new" "$INSTALL_DIR/leticl-head-launch"
-    chmod 755 "$INSTALL_DIR/leticl" "$INSTALL_DIR/leticl-head-launch"
+    # **THE FOURTH REWRITE, AND IT IS THE ONE THAT MADE THE ONELINER FAIL AT FIRST USE.**
+    # `scripts/letibot:39` defaults its binary directory to
+    #
+    #     BIN="${LETIBOT_BIN:-/home/dead/Projects/letibot/letibot/target/release}"
+    #
+    # — the author's build tree. MEASURED on a clean debian:stable-slim with all six files
+    # installed and on PATH: `leticl` printed *"no harnessd at
+    # /home/dead/Projects/letibot/letibot/target/release — run: cargo build --release"* with the
+    # binary sitting one directory away, and did not start. Setting LETIBOT_BIN to the install
+    # directory fixed it entirely, and the next thing it said was the correct *"nothing serving on
+    # 127.0.0.1:8080. Start the model first"*.
+    #
+    # So the install is COMPLETE only with this line, and the first cut of this script swept only
+    # the files this repository owns — the third script's assumption went unexamined because it
+    # was somebody else's file.
+    sed "s|^BIN=.*|BIN=\"${LETIBOT_BIN:-$INSTALL_DIR}\"|" \
+        "$INSTALL_DIR/letibot" > "$INSTALL_DIR/.letibot.new" \
+        && mv "$INSTALL_DIR/.letibot.new" "$INSTALL_DIR/letibot"
+    chmod 755 "$INSTALL_DIR/leticl" "$INSTALL_DIR/leticl-head-launch" "$INSTALL_DIR/letibot"
 
     # ---------- say what was installed, by running it ----------
     # A binary that cannot run is a failure this script would otherwise report as
