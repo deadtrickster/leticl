@@ -289,6 +289,17 @@ jobs:
           # `libsqlite3.so.0` by `harnessd` itself. letibot's installer names the same three, and the
           # third was ITS correction to MY report — I had found two by hand and it read the tree.
           HOST_LIBS="libstdc++.so.6 libgomp.so.1 libsqlite3.so.0"
+          # **AND A THIRD CATEGORY, WHICH THE FIRST CUT OF THIS CHECK MISSED AND THEN
+          # REPORTED BY NAME: the platform's own.** `libc.so.6`, `libgcc_s.so.1` and the
+          # loader are on EVERY Linux binary and on every Linux box; there is no package to
+          # install and no version to warn about. The first version of this loop called them
+          # "neither in the archive nor in HOST_LIBS" and failed the release on the arm64 leg
+          # with `harnessd needs libc.so.6` — which is true of every executable ever built,
+          # and is exactly the shape of a check that has not been thought through: it fired,
+          # it named the thing, and the thing was not a defect. Kept as its own list rather
+          # than folded into HOST_LIBS because the ERROR MESSAGE differs: one says *install
+          # this*, the other says *this is the platform*.
+          PLATFORM_LIBS="libc.so.6 libgcc_s.so.1 ld-linux-x86-64.so.2 ld-linux-aarch64.so.1"
           # Everything `harnessd` and the four libraries need, transitively, as `ldd` sees it.
           needed=$(ldd daemon-dist/harnessd daemon-dist/libllama.so.0 daemon-dist/libggml.so.0 \
                        daemon-dist/libggml-cpu.so.0 daemon-dist/libggml-base.so.0 2>/dev/null \
@@ -307,7 +318,7 @@ jobs:
           # to install.
           for path in $needed; do
             base=$(basename "$path")
-            case " $HOST_LIBS " in *" $base "*) continue ;; esac
+            case " $HOST_LIBS $PLATFORM_LIBS " in *" $base "*) continue ;; esac
             if [ ! -f "daemon-dist/$base" ]; then
               echo "::error::harnessd needs $base, which is neither in the archive nor in HOST_LIBS"
               echo "::error::an install on a minimal box would fail at first run; add it to the list"
@@ -316,7 +327,7 @@ jobs:
             fi
           done
           [ "$missing" -eq 0 ] || exit 1
-          echo "all ten resolve: six from the archive, three named as the host's own"
+          echo "all resolve: six from the archive, three named as the host's own, the rest the platform"
 
       - name: Package
         env:
