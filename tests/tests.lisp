@@ -24197,3 +24197,53 @@ decoded as a wheel DOWN."
     (loop for mod in '(4 8 16 12 20 24 28) do
       (is (eq :wheel-up (getf (k (+ 64 mod)) :kind))
           (format nil "wheel-up with modifier ~D is still a wheel UP, never its opposite" mod)))))
+
+(def-test the-working-out-is-drawn-while-it-runs-at-every-rung-that-draws-it-settled (:suite leticl)
+  "**The row was in the right PLACE and arrived at the wrong MOMENT, which on a screen is the same
+thing as the wrong place.**
+
+`reading-hides-p` hides `:reasoning` at the reading rung and NOWHERE ELSE (`(and (reading-p) …)`), so
+at `:terse` the settled row is drawn — a one-line fold, `▸ Thought · 23 lines · ctrl-r`. But the delta
+filter kept the reasoning only at `(verbosity-at-least :normal)`, so at terse the LIVE turn had none:
+
+    while it ran      nothing above the answer
+    when it settled   a fold, inserted ABOVE the answer the reader had already read
+
+The operator, 2026-10-02: *\"it took 23 thinking lines before you replied … it appeared like 'Still
+failing…' and then [23 thinking lines] added before it\"* — and then, confirming it was the order and
+not the content, *\"i dont like wrong order\"*.
+
+**The two rungs are different and this keeps them so.** At `:reading` the body type is in
+`+reading-hides+`, so a delta no rung would draw is DISCARDED and the snapshot stays small — that is
+what the `:terse` gate was reaching for and it is one rung too high. At `:terse` the same row IS drawn
+on settle, so it must be drawn while it runs: one fold header, in the position it will keep."
+  (labels ((turn-at (rung)
+             (let* ((leticl::*verbosity* rung) (h (%make-head)) (s (head-session h)))
+               (apply-event s (list :seq 1 :event "turn_started" :turn-id "t1" :model "m"))
+               (apply-event s (list :seq 2 :event "delta" :target "reasoning" :text "step one\n"))
+               (apply-event s (list :seq 3 :event "delta" :target "text" :text "the answer"))
+               h)))
+    ;; --- **the rung the defect was at**: the working is kept, so the fold can be drawn live
+    (let* ((h (turn-at :terse))
+           (s (head-session h))
+           (work (or (getf (session-turn s) :reasoning) "")))
+      (is (search "step one" work)
+          (format nil "**at TERSE the working-out is KEPT** — it was dropped, and the settled row \
+drew it anyway one moment later: ~s" work))
+      (let ((text (segs-of (turn-lines (session-turn s) 100 (head-prefs h)))))
+        (is (search "Thinking" text)
+            (format nil "**and the fold is already on the screen while the model thinks**, so nothing \
+arrives above the answer when the turn settles: ~s" text))
+        (is (search "ctrl-r" text) "and it advertises the chord that opens it")
+        (is (search "the answer" text) "with the answer still drawn under it")))
+    ;; --- and the rung that hides it still hides it, in both states
+    (let* ((h (turn-at :reading))
+           (s (head-session h))
+           (work (or (getf (session-turn s) :reasoning) "")))
+      (is (equal "" work)
+          (format nil "at READING the working is discarded — nothing there will ever draw it: ~s" work))
+      ;; and the answer IS drawn — the rung hides the working, never the turn
+      (let ((text (segs-of (turn-lines (session-turn s) 100 (head-prefs h)))))
+        (is (not (search "Thinking" text))
+            (format nil "**nothing of the working is drawn at READING**, so no fold can arrive late either: ~s" text))
+        (is (search "the answer" text) "and the answer itself is never hidden")))))

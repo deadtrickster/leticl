@@ -2223,9 +2223,20 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
            ;; event.rs:52) — "tool_call" must become :tool-call to match.
            (case (and (getf env :target) (%key-from-wire (getf env :target)))
              ((:text) (appendf-text turn :text (getf env :text)))
-             ;; at terse the working-out is not kept and not drawn: filtered,
-             ;; which the ack counts, rather than rendered
-             ((:reasoning) (if (verbosity-at-least :normal)
+             ;; **AT `:terse` THE WORKING-OUT IS KEPT AND DRAWN — AS THE FOLD.** This said
+             ;; `:normal`, and its comment said terse neither keeps nor draws it, so at terse the
+             ;; live turn had no reasoning and the SETTLED row drew one line anyway
+             ;; (`▸ Thought · 23 lines · ctrl-r`, because `reading-hides-p` needs `(reading-p)` and
+             ;; terse is above reading). **So the fold was INSERTED ABOVE THE ANSWER the reader had
+             ;; already read.** The operator, 2026-10-02: *"it took 23 thinking lines before you
+             ;; replied … it appeared like 'Still failing…' and then [23 thinking lines] added
+             ;; before it."* Right row, wrong moment.
+             ;;
+             ;; The two rungs this gate has to keep apart: at `:reading` the body type is in
+             ;; `+reading-hides+`, so a delta nobody will draw is discarded and the snapshot stays
+             ;; small; at terse the same row IS drawn on settle, so the only consistent thing is to
+             ;; have it drawn while it runs too — one fold header, in the position it will keep.
+             ((:reasoning) (if (verbosity-at-least :terse)
                                (appendf-text turn :reasoning (getf env :text))
                                (return-from apply-event :quiet)))
              ((:tool-call) (appendf-text turn :raw-calls (getf env :text)))))
