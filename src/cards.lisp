@@ -3799,53 +3799,42 @@ already drawn only when non-empty, so the two cannot both draw the same bytes."
       ;; visible AS running, or a ten-minute tool-heavy turn draws nothing at all and the
       ;; reader cannot tell working from wedged. That is the rung's own stated risk.
       (flet ((emit (lines) (setf out (append out lines))))
-        ;; **AT THE READING RUNG THE LIVE WORK IS ITS OWN MARKER, DRAWN FROM THE FIRST DELTA.**
+        ;; **THE READING RUNG DRAWS NOTHING FOR ITS WORKING, AND THAT IS CORRECT — THE COUNTS
+        ;; COME FROM `live-here` INSTEAD.**
         ;;
-        ;; This was inside `(unless (reading-p) …)`, so at reading a live turn drew NOTHING for its
-        ;; working — while the SETTLED state does not hide that working at all: `reading-hides-p`
-        ;; makes it join a RUN, and the run is drawn as `[N tool calls, M thinking lines]` attached
-        ;; to the prose row before it. So the reader met the answer FIRST and the count of the
-        ;; thinking that produced it AFTERWARDS, inserted above it on the prompt's own row.
+        ;; This was briefly a running `[N thinking lines]` line, to stop the count arriving above an
+        ;; answer already read. It did arrive on time, and it was WRONG in two ways the operator's own
+        ;; screen showed inside one turn: the live turn is drawn in the TAIL, so before the answer has
+        ;; text the marker's only neighbours are the chrome — *"right after my prompt - the running [N
+        ;; thinking lines] appeared glued to 'Responding' status line - very ugly"* — and it DUPLICATED
+        ;; the count, because `live-here` already glues live work onto the newest visible row. Two
+        ;; markers, two numbers: `[195 thinking lines]` and `[240 thinking lines]`, for one stretch of
+        ;; work. This file's own rule is that a run's rendering lives in one place; the second renderer
+        ;; was mine and it is gone.
         ;;
-        ;; The operator, twice, and the second time with the mechanism in it: *"it took 23 thinking
-        ;; lines before you replied … it appeared like 'Still failing…' and then [23 thinking lines]
-        ;; added before it"*, and then *"when you think after my prompt you first show me response
-        ;; and then collapsed thinking stats - those [71 thinking lines] you cite."*  Right count,
-        ;; right row, wrong moment.
-        ;;
-        ;; **The marker is not re-invented here.** `%hidden-run-counts` takes the counts of a run's
-        ;; items AND a `live` plist added in — `(:calls N :thinking M)` for the work still in flight
-        ;; — so an empty run plus the live counts is exactly the marker the settled rows will make,
-        ;; through the same room ladder and the same `+hidden-run-count-rungs+`. The file's rule is
-        ;; that opening a run is not a second rendering, and this is the same rule read forwards: a
-        ;; run that has not been committed yet is not a second rendering either.
-        (if (reading-p)
-            (let ((work (or (getf turn :reasoning) ""))
-                  (calls (getf turn :calls)))
-              (when (or (plusp (length work)) calls)
-                (emit (list (hidden-run-marker
-                             nil cols t
-                             (list :calls (length calls)
-                                   :thinking (reasoning-line-count work cols)))))))
-          (progn
-            (alet (getf turn :reasoning)
-            (when (plusp (length it))
-              (emit (step-in-lines
-                     (if (getf prefs :show-reasoning)
-                         (reasoning-lines it cols prefs :running t)
-                         (list (reasoning-header it cols nil t)
-                               (let ((last (or (car (last (remove-if (lambda (l) (zerop (length (string-trim " " l))))
+        ;; What actually removes the late arrival is upstream, in `apply-event`: the reasoning deltas
+        ;; are KEPT at every rung, so `%hidden-run-live-work` has counts to hand `live-here` from the
+        ;; first delta instead of only once the turn settles and the item lands. The rung hides the
+        ;; TEXT of the working, which it always did.
+        (unless (reading-p)
+          (alet (getf turn :reasoning)
+          (when (plusp (length it))
+            (emit (step-in-lines
+                   (if (getf prefs :show-reasoning)
+                       (reasoning-lines it cols prefs :running t)
+                       (list (reasoning-header it cols nil t)
+                             (let ((last (or (car (last (remove-if (lambda (l) (zerop (length (string-trim " " l))))
                                                                     (uiop:split-string it :separator '(#\newline)))))
-                                               "")))
-                                 (list (cons "┃ " '(:dim t))
-                                       (cons (truncate-to-width last (max 4 (- cols ind 2)))
-                                             '(:dim t :italic t))))))
-                     ind))
-              (emit (list nil))))
-            (let ((calls (reverse (getf turn :calls))))
-              (when calls
-                (emit (step-in-lines (mappend (lambda (c) (call-lines c (- cols ind) prefs)) calls) ind))
-                (emit (list nil))))))
+                                             "")))
+                               (list (cons "┃ " '(:dim t))
+                                     (cons (truncate-to-width last (max 4 (- cols ind 2)))
+                                           '(:dim t :italic t))))))
+                   ind))
+            (emit (list nil))))
+          (let ((calls (reverse (getf turn :calls))))
+            (when calls
+              (emit (step-in-lines (mappend (lambda (c) (call-lines c (- cols ind) prefs)) calls) ind))
+              (emit (list nil)))))
         (alet (getf turn :text)
           (when (plusp (length it))
             (emit (markdown-lines it :width cols :limit +body-lines-budget+))
