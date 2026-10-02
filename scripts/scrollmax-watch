@@ -1,0 +1,26 @@
+#!/bin/sh
+# scrollmax-watch — sample the renderer's own `n` from OUTSIDE, ~5x a second.
+#
+# `*scroll-max*` is `n - want`, stashed by `%viewport-lines` so a key handler can
+# ask whether the reader is at the top without re-deriving it. So it IS the
+# transcript's line count, and watching it across a turn end answers the one
+# question that is left: **does `n` fall at a settle?** If it does, the reader at
+# the bottom is pinned to `end = n` with no anchor, and the pin drags the view up
+# by the difference and back down when the content returns: *"like quick scroll
+# up-down."*
+#
+# No hook in the renderer, no variable in the head: this only READS a defvar the
+# head already maintains, from another process. That is deliberate — the last
+# instrumentation installed into a live head cost the operator an evening.
+#
+# Leaves a log at /tmp/scrollmax.log: one line per sample, `<ms> <value>`.
+LOG=/tmp/scrollmax.log
+: > "$LOG"
+i=0
+while [ "$i" -lt 600 ]; do
+  v=$(scripts/tui-eval --pid 2882193 'leticl::*scroll-max*' 2>/dev/null \
+      | grep '"value"' | sed 's/.*: *//; s/[",]//g')
+  printf '%s %s\n' "$i" "$v" >> "$LOG"
+  i=$((i + 1))
+  sleep 0.15
+done

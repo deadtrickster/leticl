@@ -7,9 +7,42 @@
 
 (defun connect-unix (path)
   "A UTF-8 character stream on a unix socket. Unbuffered output: frames are
-written whole and flushed per frame (wire.rs:88)."
+written whole and flushed per frame (wire.rs:88).
+
+**AND A CONNECT THAT FAILS IS A `no-daemon`, NOT A BACKTRACE.** There are two ways to arrive at
+nothing to attach to, and only one of them went through the condition. `run` signals `no-daemon`
+when no socket path can be found ANYWHERE — no `--session`, no discovered daemon, no
+`LETIBOT_SOCKET` — and that path prints the sentence it was written for. But a path that IS named
+and does not exist never reaches it: it lands here, where `socket-connect` signalled a raw
+`socket-error` out of a twelve-frame backtrace.
+
+Measured on the operator's own shell history, 2026-10-02: `bin/leticl-head --session
+s-1789639478142928813` run SIXTEEN times between 13:54 and 19:57, and every one of them was
+
+    leticl: Socket error in \"connect\": 2 (No such file or directory)
+    Backtrace for: #<SB-THREAD:THREAD ...>
+    0: ((LAMBDA (CONDITION LETICL/CLI::HOOK) :IN LETICL/CLI::MAIN) …
+    7: (LETICL:CONNECT-UNIX \"/run/user/1000/letibot/fcf91a545af4.sock\")
+    ... twelve frames
+
+The workspace's derived socket name, the file not there, and the condition that exists for exactly
+this moment one call away and unreached. **A refusal is a message for the operator, and a debugger
+dump is the shape of a crash** — that is `no-daemon`'s own documentation, and sixteen crashes is
+what it cost to have it reachable from only one of the two paths.
+
+**BOTH ERRNOs, because they mean the same thing to a reader.** ENOENT (2) is a socket path with no
+file behind it; ECONNREFUSED (111) is a stale socket file whose daemon has died. Both are nothing
+listening here, which is what the condition says, and both arrived as this same backtrace.
+
+The two callers are both fine with the condition: `run` is where it should have been signalled, and
+the reconnect arm already wraps `connect-unix` in `(error (e) …)` and reports `reconnect: <the
+sentence>` rather than dying."
   (let ((sock (make-instance 'sb-bsd-sockets:local-socket :type :stream)))
-    (sb-bsd-sockets:socket-connect sock (namestring path))
+    (handler-case
+        (sb-bsd-sockets:socket-connect sock (namestring path))
+      (sb-bsd-sockets:socket-error ()
+        (ignore-errors (sb-bsd-sockets:socket-close sock))
+        (error 'no-daemon :socket (namestring path))))
     (sb-bsd-sockets:socket-make-stream sock
                                        :input t :output t
                                        :element-type 'character
