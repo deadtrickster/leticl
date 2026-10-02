@@ -2223,22 +2223,19 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
            ;; event.rs:52) — "tool_call" must become :tool-call to match.
            (case (and (getf env :target) (%key-from-wire (getf env :target)))
              ((:text) (appendf-text turn :text (getf env :text)))
-             ;; **AT `:terse` THE WORKING-OUT IS KEPT AND DRAWN — AS THE FOLD.** This said
-             ;; `:normal`, and its comment said terse neither keeps nor draws it, so at terse the
-             ;; live turn had no reasoning and the SETTLED row drew one line anyway
-             ;; (`▸ Thought · 23 lines · ctrl-r`, because `reading-hides-p` needs `(reading-p)` and
-             ;; terse is above reading). **So the fold was INSERTED ABOVE THE ANSWER the reader had
-             ;; already read.** The operator, 2026-10-02: *"it took 23 thinking lines before you
-             ;; replied … it appeared like 'Still failing…' and then [23 thinking lines] added
-             ;; before it."* Right row, wrong moment.
+             ;; **KEPT AT EVERY RUNG, BECAUSE EVERY RUNG DRAWS IT — at the lowest one as a COUNT.**
+             ;; This was gated on `:terse` (and on `:normal` before that), on the argument that a
+             ;; delta nobody draws is a snapshot nobody needs. But nobody-draws was never true:
+             ;; `reading-hides-p` hides reasoning as an ITEM and the run it joins is drawn anyway —
+             ;; `[71 thinking lines]` — and the count is in SCREEN lines, so it cannot be computed
+             ;; from a string that was thrown away. Gating it here is what made the marker arrive
+             ;; only once the turn settled: the reader got the answer first and the count of the
+             ;; thinking that produced it afterwards, above it. The operator: *"when you think after
+             ;; my prompt you first show me response and then collapsed thinking stats."*
              ;;
-             ;; The two rungs this gate has to keep apart: at `:reading` the body type is in
-             ;; `+reading-hides+`, so a delta nobody will draw is discarded and the snapshot stays
-             ;; small; at terse the same row IS drawn on settle, so the only consistent thing is to
-             ;; have it drawn while it runs too — one fold header, in the position it will keep.
-             ((:reasoning) (if (verbosity-at-least :terse)
-                               (appendf-text turn :reasoning (getf env :text))
-                               (return-from apply-event :quiet)))
+             ;; `:reading` still hides the TEXT — `+reading-hides+` is unchanged, and `turn-lines`
+             ;; draws one marker line for the live turn rather than the working out.
+             ((:reasoning) (appendf-text turn :reasoning (getf env :text)))
              ((:tool-call) (appendf-text turn :raw-calls (getf env :text)))))
          ;; a delta for a turn we never saw TurnStarted for: quiet, not a crash
          (if turn :dirty :quiet)))
