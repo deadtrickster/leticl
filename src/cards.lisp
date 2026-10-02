@@ -2824,7 +2824,11 @@ something copies them."
      ;; `/models` answered in 0.28 s — the failure it prevents is a person concluding the model is
      ;; GONE and killing a turn that is merely waiting. So the remedy is the thing the reader
      ;; would otherwise do wrong: wait, and how long to wait before deciding otherwise.
-     ("model_slow_first_byte" . "nothing to fix — the provider is slow, not gone. The turn is still running; ctrl-o backgrounds it if you would rather not wait"))
+     ("model_slow_first_byte" . "nothing to fix — the provider is slow, not gone. The turn is still running; ctrl-o backgrounds it if you would rather not wait")
+     ;; **AND THE FOLD SAYS WHICH HALF IT IS ON.** The row above the composer carries the moving
+     ;; figure; this is the sentence for a reader who wants the counts — how much is being read and
+     ;; how much has come back — rather than a bar.
+     ("compact_half" . "nothing to fix — the conversation is being summarised. The bar above the composer is that fold; the session is not stuck"))
   "What the reader can DO about a note, per code — R29 rule one, on the note.
 
 **A note that states a fact and not the act is a dead end on the screen.** The operator,

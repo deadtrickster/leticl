@@ -1004,7 +1004,12 @@ answered in the same place or not at all.")
     ;; is SLOW, which is housekeeping rather than a fault — and without this entry the fail-safe
     ;; here drew it RED, which is the direction that turns *wait a moment* into an alarm. That is
     ;; R19 itself, and the exact direction this list exists to prevent.
-    "model_slow_first_byte")
+    "model_slow_first_byte"
+    ;; **AND THE COMPACTION'S OWN TWO LINES** (letibot `f273300`). `compact_half` is `Class::Routine`
+    ;; in its table: a fold that is running is housekeeping, and *"a silent wait is what a reader calls
+    ;; a failure"*. Without this entry the fail-safe here drew it RED — an alarm for the minutes the
+    ;; operator is already waiting through, at the moment the session is largest and the model slowest.
+    "compact_half")
   "The warning codes whose fact is ROUTINE — drawn faint with a middot, not red with a bang.
 
 **R19 part 2, and this list is now letibot's rather than mine.** Both heads render these
@@ -1749,6 +1754,64 @@ noun goes."
 (defun reset-filling ()
   "Forget a counted operation. For a session change, and for a dead socket."
   (setf *filling* nil))
+
+;;; -------------------------------------------------------- the compaction ;;;
+;;;
+;;; **THE FOLD'S OWN FIGURE, AND IT IS NOT `PromptProgress`.** (letibot `f273300`, protocol 27.)
+;;; The overrun compaction summarises a SCRATCH transcript through a `NullSink`, so until this
+;;; event landed nothing of it reached a head at all: minutes of a still screen, at the moment the
+;;; session is largest and the model slowest. The operator asked *"leticl compacts but why no
+;;; progress bar?"* and then sharpened it — *"even more so for this overruns when we compact in
+;;; turns."*
+;;;
+;;; **AND THE REASON THE EVENT IS ITS OWN IS A DEFECT WORTH NOT REPEATING HERE.** Forwarding the
+;;; scratch turn's raw `PromptProgress` put the SCRATCH prompt's token count into `turn.progress`,
+;;; which is the SESSION's — so the operator watched `69k` sit over a 240k conversation that had
+;;; not changed. *The number was never wrong; its label was.* So this is a defvar of its own and
+;;; nothing here writes `*turn-progress*`.
+
+(defvar *compaction* nil
+  "The fold in flight, or NIL: a plist
+`(:half H :halves N :prompt P :processed X :written W :unit U :at-ms M)`.
+
+A defvar, not a session slot, for the reason all live state is: a struct layout change is a
+restart. Bound by `with-replay-globals`, because a replay must answer the same bytes twice.")
+
+(defun compaction-active-p ()
+  "Is a fold running that the head should draw?
+
+Ephemeral, like `Filling`: a progress frame from four minutes ago is a lie about now, so this is
+cleared by the fold's own end — the `compacted` warning, or a turn finishing — rather than by a
+timer in here."
+  (and *compaction* t))
+
+(defun note-compaction-progress (env)
+  "Fold one `compaction_progress` tick. Returns `:dirty`.
+
+**THE BAR IS DRIVEN FROM `written`, AND THAT IS THE WHOLE TRAP THIS EVENT CARRIES.** `processed`
+is how much of the half's prompt the server has READ, and on a messages transport — which is what
+the operator's deepseek sessions use — the server reports no prefill at all, so it arrives as
+`0`. That is *this transport does not count that*, NOT *nothing has happened*: a bar filling from
+`processed` would sit at zero for the whole fold and look exactly like the hang this event exists
+to remove.
+
+`unit` is kept as it arrives and never assumed — `tokens` where the transport reports the server's
+own count, `chars` where it reports only text. The two do not count the same thing, so one name
+for both would be a lie about one."
+  (let ((half (or (getf env :half) 0))
+        (halves (or (getf env :halves) 0)))
+    (setf *compaction* (when (and (integerp half) (plusp half))
+                         (list :half half :halves (max 1 (or halves 1))
+                               :prompt (or (getf env :prompt-tokens) 0)
+                               :processed (or (getf env :processed) 0)
+                               :written (or (getf env :written) 0)
+                               :unit (getf env :unit)
+                               :at-ms (and (plusp *now-ms*) *now-ms*))))
+    :dirty))
+
+(defun reset-compaction ()
+  "Forget the fold. For its own end, a session change, and a dead socket."
+  (setf *compaction* nil))
 
 ;;; ------------------------------------------------------------- the carry ;;;
 ;;;
@@ -2503,6 +2566,10 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
        ;; a shape `protocol.rs` produces and the line falls back to the head's
        ;; unnamed form rather than printing `NIL` where a noun goes.
        (note-filling env))
+      ((:compaction-progress)
+       ;; **THE FOLD'S OWN COUNT, AND ITS OWN NAME.** See `note-compaction-progress` for why this
+       ;; is not folded into anything the SESSION's turn already holds.
+       (note-compaction-progress env))
       ((:job-output)
        ;; **THE DASHBOARD'S FEED READS EVERY WINDOW, asked for or not.** This line is BEFORE the
        ;; overlay's `cond` on purpose: the overlay keeps a window only for the job it is showing
