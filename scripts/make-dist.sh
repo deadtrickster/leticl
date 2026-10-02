@@ -128,6 +128,22 @@ launcher="${LETIBOT_DIST:+$LETIBOT_DIST/letibot}"
     exit 1
 }
 
+# **THE FILE LIST IS install.sh'S, READ FROM IT RATHER THAN COPIED.** This was a fourth list --
+# `install.sh`, this script, and the workflow twice -- and when `letibot-askpass` was added the
+# installer learned it and the packaging did not, so `v0.1.3` shipped TEN files while `install.sh`
+# required ELEVEN, and the oneliner refused on a real install.
+#
+# One declaration, read by everything that needs the names, and a refusal if it is absent -- because
+# an absent line would make this script package whatever its `cp` lines happen to have produced and
+# the assertion below would check nothing at all.
+archive_files=$(sed -n 's/^ARCHIVE_FILES="\(.*\)"$/\1/p' "$repo/install.sh" | head -1)
+[ -n "$archive_files" ] || {
+    echo "make-dist: install.sh has no ARCHIVE_FILES line" >&2
+    echo "  it is the single source for the file list; without it this script cannot know what" >&2
+    echo "  the archive must contain" >&2
+    exit 1
+}
+
 mkdir -p "$outdir"
 name="leticl-$triple.tar.gz"
 
@@ -157,19 +173,14 @@ chmod 755 "$stage/leticl-head" "$stage/harnessd" "$stage/letibot" \
 
 # COPYFILE_DISABLE stops macOS tar writing AppleDouble `._` entries, which would
 # otherwise land in the archive and be extracted by the installer.
-COPYFILE_DISABLE=1 tar -czf "$outdir/$name" -C "$stage" \
-    leticl-head harnessd letibot letibot-askpass \
-    libleticl_hl.so libllama.so.0 libggml.so.0 libggml-cpu.so.0 libggml-base.so.0 \
-    leticl leticl-head-launch
+COPYFILE_DISABLE=1 tar -czf "$outdir/$name" -C "$stage" $archive_files
 
 # **PROVE THE ARCHIVE IS WHAT THE INSTALLER EXPECTS BEFORE PUBLISHING IT.** Every
 # name here is one install.sh looks for by name; a release that is missing one is
 # an install that half-works, which looks like the operator's mistake rather than
 # a broken asset.
 listing=$(tar -tzf "$outdir/$name")
-for want in leticl-head harnessd letibot letibot-askpass libleticl_hl.so \
-            libllama.so.0 libggml.so.0 libggml-cpu.so.0 libggml-base.so.0 \
-            leticl leticl-head-launch; do
+for want in $archive_files; do
     if [ "$(printf '%s\n' "$listing" | grep -c "^$want\$")" -ne 1 ]; then
         echo "make-dist: $name must hold exactly one top-level $want: $listing" >&2
         exit 1

@@ -63,6 +63,24 @@ need() { command -v "$1" >/dev/null 2>&1; }
 # The platform, as the release assets name it. `scripts/make-dist.sh` builds the
 # names from the same case arm and the workflow asserts the archive's contents, so
 # a mismatch fails in CI rather than silently degrading to a build from source.
+# **THE FILES THIS ARCHIVE MUST CONTAIN, DECLARED ONCE.**
+#
+# **AND IT IS A DECLARATION RATHER THAN A LOOP HEADER BECAUSE THE WORKFLOW READS IT.** The names
+# used to live in three places — this file's `for want in`, the packaging step's own list, and the
+# publish step's assertion — and when `letibot-askpass` was added, all three needed editing.
+# MEASURED: the installer learned it, the packaging step did not, and `v0.1.3` was published with
+# ten files while this file required eleven. The oneliner refused on a real install with *"has no
+# letibot-askpass in it — the asset is broken, not your machine"* — the refusal working perfectly,
+# on my own asset.
+#
+# That is the same drift `HOST_LIBS` was made un-driftable for one layer out: a list in the
+# workflow and a list here will separate, and **the one the user runs is not the one CI checks.**
+# So the workflow reads THIS line out of the TAGGED install.sh (see `.github/workflows/release.yml`)
+# and refuses if it is absent, rather than keeping its own copy.
+#
+# A line of space-separated names on one line, because the reader is `sed`.
+ARCHIVE_FILES="leticl-head harnessd letibot letibot-askpass libleticl_hl.so libllama.so.0 libggml.so.0 libggml-cpu.so.0 libggml-base.so.0 leticl leticl-head-launch"
+
 triple() {
     case "$(uname -s)/$(uname -m)" in
         Linux/x86_64)                printf 'x86_64-unknown-linux-gnu' ;;
@@ -114,9 +132,9 @@ main() {
     # without it a session that reaches a `sudo` command cannot ask the operator for anything —
     # a failure at first USE rather than at install, which is the shape this whole exercise exists
     # to find.
-    for want in leticl-head harnessd letibot letibot-askpass \
-                libleticl_hl.so libllama.so.0 libggml.so.0 libggml-cpu.so.0 libggml-base.so.0 \
-                leticl leticl-head-launch; do
+    # **FROM THE DECLARATION ABOVE, so there is one list.** `$ARCHIVE_FILES` is unquoted on
+    # purpose: it is a space-separated list and the word splitting is the iteration.
+    for want in $ARCHIVE_FILES; do
         [ -f "$tmp/$want" ] || die "$name has no $want in it — the asset is broken, not your machine"
     done
 

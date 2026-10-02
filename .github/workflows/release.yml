@@ -114,6 +114,55 @@ jobs:
       - name: Check out the head
         uses: actions/checkout@v4
 
+      # **THE ARCHIVE'S FILE LIST, READ OUT OF THE TAGGED `install.sh` ITSELF.**
+      #
+      # The names used to live in THREE places — this file twice and `install.sh` once — and when
+      # `letibot-askpass` was added they all needed editing. MEASURED: the installer learned it,
+      # the packaging step did not, and **`v0.1.3` shipped ten files while `install.sh` required
+      # eleven**. The oneliner refused on a real install, correctly, on my own asset.
+      #
+      # That is the drift `HOST_LIBS` was made un-driftable for one layer out: a list in the
+      # workflow and a list here will separate, and the one the user runs is not the one CI checks.
+      # So there is now ONE list, it is a declaration in `install.sh` rather than a loop header,
+      # and this step reads it with `sed` and REFUSES IF THE LINE IS ABSENT — an absent line would
+      # otherwise check nothing and pass.
+      #
+      # `install.sh` here is the TAGGED one: `actions/checkout` on a tag push checks out the tag, so
+      # the list CI verifies against is the list the person will run.
+      - name: The archive's file list, from install.sh
+        id: archive
+        run: |
+          set -eu
+          files=$(sed -n 's/^ARCHIVE_FILES="\(.*\)"$/\1/p' install.sh | head -1)
+          [ -n "$files" ] || {
+            echo "::error::install.sh at this ref has no ARCHIVE_FILES line"
+            echo "::error::without it this workflow would check NOTHING and pass"
+            exit 1
+          }
+          echo "install.sh requires these $(( $(echo "$files" | wc -w) )) files:"
+          for f in $files; do echo "  $f"; done
+          echo "files=$files" >> "$GITHUB_OUTPUT"
+
+      # **THE SUBSET THAT COMES FROM LETIBOT'S ASSET, DERIVED RATHER THAN RESTATED.** Everything
+      # `install.sh` wants except the four this repository builds, so adding a file to one list
+      # cannot leave the other behind.
+      - name: Which of those come from letibot
+        id: fromletibot
+        env:
+          FILES: ${{ steps.archive.outputs.files }}
+        run: |
+          set -eu
+          out=""
+          for f in $FILES; do
+            case "$f" in
+              leticl-head|leticl|leticl-head-launch|libleticl_hl.so) continue ;;
+            esac
+            out="$out $f"
+          done
+          out="${out# }"
+          echo "from letibot's asset: $out"
+          echo "files=$out" >> "$GITHUB_OUTPUT"
+
       # **THE DAEMON IS FETCHED, NOT BUILT, AND THAT IS A CHANGE OF DESIGN.**
       #
       # The first cut checked letibot out and ran `cargo build`, which cannot work: `letibot-tokencore`'s
@@ -289,7 +338,9 @@ jobs:
           # `letibot-askpass` is REQUIRED, not incidental: harnessd execs it as SUDO_ASKPASS, so a
           # session reaching a `sudo` command cannot ask the operator without it. It was missing
           # from this archive until a clean-box run said so in the launcher's own words.
-          for want in harnessd letibot letibot-askpass libllama.so.0 libggml.so.0 libggml-cpu.so.0 libggml-base.so.0; do
+          # **FROM THE DERIVED SUBSET, not from a list written here.** A letibot asset that stops
+          # shipping one of these fails THIS BUILD rather than a user's install.
+          for want in ${{ steps.fromletibot.outputs.files }}; do
             [ -f "daemon-dist/$want" ] || { echo "::error::the letibot asset has no $want"; exit 1; }
           done
           echo "all seven present"
@@ -405,9 +456,9 @@ jobs:
           for f in dist/*.tar.gz; do
             d=$(mktemp -d)
             tar -xzf "$f" -C "$d"
-            for want in leticl-head harnessd letibot letibot-askpass libleticl_hl.so \
-                        libllama.so.0 libggml.so.0 libggml-cpu.so.0 libggml-base.so.0 \
-                        leticl leticl-head-launch; do
+            # **THE SAME SINGLE LIST**, so what is published is checked against what `install.sh`
+            # will require of it without this step knowing the names at all.
+            for want in ${{ steps.archive.outputs.files }}; do
               if [ ! -f "$d/$want" ]; then
                 echo "::error::$f is missing $want"
                 exit 1
