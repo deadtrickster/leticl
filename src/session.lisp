@@ -1930,17 +1930,39 @@ history would be fetching rows it may never show.
 
 Bound by `with-replay-globals`, because a replay must answer the same bytes twice.")
 
-(defvar *rows-above-gone* nil
+(defvar *rows-above-unserved* nil
   "T once the daemon has answered `body: null` for a row above this head's oldest.
 
-**Not a failure, and not retried.** `null` is the daemon saying it does not hold that
-ordinal either — trimmed from ITS view, which is bounded by the same `ViewBounds` — so
-the rows above this head are not reachable by any head, and asking again for each of
-them would be a request per scroll to be told the same thing. One answer is enough to
-make the seam true, which is what the flag is for.
+**Not a failure, and not retried** — but the old name and the old sentence said the rows
+were GONE, and **nothing is gone.** Measured against the operator's own store on
+2026-10-02: session `s-1789639478142928813` is a chain of 27 transcripts (`#t0` … `#t26`),
+`transcript_item` is append-only by trigger, and the current link holds 145 rows while the
+links behind it hold 28198, 22802, 145017 and up to 913523 of them. Every row the reader
+was scrolling to is on disk.
 
-A `defvar` and not a session slot: it is about THIS head's window, not about the
-session, and a snapshot must not clear it — the head that discovered the rows are gone
+What `null` means is narrower, and the daemon wrote the distinction down for the caller:
+`SessionView::row_body_at` returns `None` *\"when the ordinal is outside what this view
+holds: trimmed by `ViewBounds`, or past the end of the session. **That distinction is the
+caller's to make**\"*. leticl IS that caller, and it did not make it — it turned an answer
+about a bounded window into an assertion about the world.
+
+**The two tiers also number rows differently, which is the mechanism.** `items_dropped`
+counts rows trimmed out of the DAEMON'S VIEW, which accumulates across a session's whole
+link chain; `FetchRow`'s store tier resolves the same number against
+`current_transcript_id` and `seq`, and `seq` is *\"0-based, dense\"* **per link**. So the
+ordinal the seam advertises names nothing in the current transcript, the store tier
+answers `null` honestly — `row_body`'s own comment says *\"the ordinal is relative to the
+CURRENT transcript\"* — and what comes back looks like absence.
+
+So the flag still does the job it was introduced for, which is to stop a head asking once
+per scroll for ever; it just no longer claims the rows do not exist. **Saying where they
+ARE needs a fact no head is sent**: there is no fork event in the session stream, the
+parent id is in `ForkReport` and on no wire, and the daemon's own module note for the
+`transcript` tool says *\"everything a compaction folded into a summary is in the links
+behind it\"* — reachable by that tool and by no head.
+
+A `defvar` and not a session slot: it is about THIS head's window, not about the session,
+and a snapshot must not clear it — the head that discovered the rows are out of reach
 still has that fact after a resync.")
 
 (defun rows-above (session)
@@ -1963,9 +1985,10 @@ ordinal 0 IS the session's first row ever. The same arithmetic `view.rs:736` sta
     everything held, and the transcript is oldest-first. `items_dropped` is decremented
     with it, because that count and the items must keep summing to the session's length
     or `rows-above` starts naming the wrong row;
-  · `body` is NIL — the daemon does not hold it either. The rows above are gone, and
-    `*rows-above-gone*` makes the seam say so instead of offering a fetch that will
-    keep failing;
+  · `body` is NIL — the daemon will not serve it, and `*rows-above-unserved*` makes the
+    seam say that instead of offering a fetch that will keep failing. **It is not a
+    statement that the rows are gone**: see that flag, and the note above about the two
+    ordinal spaces, for what `null` does and does not mean;
   · and a row that arrives while NOTHING is pending is ignored, because it is the answer
     to a question this head is no longer asking (a fetch another head's scroll started,
     or one from before a resync).
@@ -1979,10 +2002,10 @@ frame exists to make sayable."
       ((null want) :quiet)
       ;; a redelivery, or an answer about a row this head has already caught up past
       ((or (/= want row) (null (rows-above session)))
-       (when (null body) (setf *rows-above-gone* t))
+       (when (null body) (setf *rows-above-unserved* t))
        :dirty)
       ((null body)
-       (setf *rows-above-gone* t)
+       (setf *rows-above-unserved* t)
        :dirty)
       (t
        (prepend-item session
@@ -2002,8 +2025,13 @@ long session has no way to tell *\"this is where it begins\"* from *\"this is wh
 head stops\"*. Three states, because there are three facts:
 
   · **asking** — a request is in flight for a named ordinal;
-  · **gone** — the daemon answered `null`: these rows are not in the session any more,
-    and the seam stops offering a fetch rather than promising one that cannot happen;
+  · **unserved** — the daemon answered `null`, and the seam stops offering a fetch rather
+    than promising one that cannot happen. **The word is `unserved` and not `gone`,
+    which is what this said until 2026-10-02**: `null` means the ordinal is outside what
+    the daemon's view holds and its store tier can resolve, and the operator's own store
+    says the rows are all still there in the links behind. A seam that told a reader their
+    conversation had been destroyed when it had been neither destroyed nor reachable was
+    wrong twice, and the second is the one that costs them a scrollback they still had;
   · **here** — rows above exist and this head will load the next one as the reader
     reaches this line.
 
@@ -2016,8 +2044,8 @@ instrument, not part of the conversation."
                     (*row-fetch*
                      (format nil "… ~d row~:p above · asking the daemon for row ~d…"
                              n (getf *row-fetch* :row)))
-                    (*rows-above-gone*
-                     (format nil "… ~d row~:p above · the daemon does not hold them any more"
+                    (*rows-above-unserved*
+                     (format nil "… ~d row~:p above · the daemon does not serve these for this transcript"
                              n))
                     (t (format nil "… ~d row~:p above · scroll to this line to load the next"
                                n)))))

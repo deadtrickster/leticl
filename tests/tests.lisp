@@ -10453,7 +10453,7 @@ conversation.
 
 Three refusals, and each is a fact rather than a guard: nothing above, a request
 already in flight, and the daemon having already said those rows are gone."
-  (let* ((leticl::*row-fetch* nil) (leticl::*rows-above-gone* nil)
+  (let* ((leticl::*row-fetch* nil) (leticl::*rows-above-unserved* nil)
          (h (%session-with-a-window :dropped 5))
          (wire (%wire h)))
     (is (fetch-row-above h) "the ask goes out")
@@ -10469,11 +10469,11 @@ already in flight, and the daemon having already said those rows are gone."
     (is (null (fetch-row-above h)) "a second ask is refused")
     (is (null (%sent wire)) "and nothing further goes on the wire")
     ;; the daemon says they are gone: the seam stops offering, and so does the head
-    (setf leticl::*row-fetch* nil leticl::*rows-above-gone* t)
+    (setf leticl::*row-fetch* nil leticl::*rows-above-unserved* t)
     (is (null (fetch-row-above h))
         "and a head that has been told the rows are gone does not ask again")
     ;; nothing above at all
-    (let* ((leticl::*rows-above-gone* nil)
+    (let* ((leticl::*rows-above-unserved* nil)
            (h2 (%session-with-a-window :dropped 0))
            (wire2 (%wire h2)))
       (is (null (fetch-row-above h2)) "a full transcript asks for nothing")
@@ -10487,7 +10487,7 @@ calling the function.
 BEFORE the increment means *the reader was already at the top and has asked to go
 further*. It is a key handler and not the renderer that sends, because a render with a
 side effect on the socket is a render that behaves differently on a second paint."
-  (let* ((leticl::*row-fetch* nil) (leticl::*rows-above-gone* nil)
+  (let* ((leticl::*row-fetch* nil) (leticl::*rows-above-unserved* nil)
          (leticl::*scroll-max* 40)
          (h (%session-with-a-window :dropped 5))
          (wire (%wire h)))
@@ -10515,7 +10515,7 @@ END, so a row discovered on the older side goes in FRONT of every row held.
 count and the items must keep summing to the session's length, or `rows-above` starts
 naming the wrong row — the next scroll would ask for a row it has already got."
   (let* ((leticl::*row-fetch* (list :row 4 :at 0))
-         (leticl::*rows-above-gone* nil)
+         (leticl::*rows-above-unserved* nil)
          (h (%session-with-a-window :dropped 5 :rows 3))
          (s (head-session h)))
     (is (eq :dirty (note-row-fetched s 4 "the body of row four" 994))
@@ -10542,12 +10542,13 @@ Measured against a real daemon: an ordinal past the end answers
 NOT a row of nothing. The head marks the rows above unreachable rather than asking
 again for each of them, which is one request per scroll to be told the same thing."
   (let* ((leticl::*row-fetch* (list :row 4 :at 0))
-         (leticl::*rows-above-gone* nil)
+         (leticl::*rows-above-unserved* nil)
          (h (%session-with-a-window :dropped 5 :rows 3))
          (s (head-session h)))
     (is (eq :dirty (note-row-fetched s 4 nil 0)) "the answer is a visible change")
     (is (null leticl::*row-fetch*) "the request is over")
-    (is (not (null leticl::*rows-above-gone*)) "and the rows above are known to be gone")
+    (is (not (null leticl::*rows-above-unserved*))
+        "and the rows above are known to be OUT OF REACH — not gone; see the flag's docstring")
     (is (= 3 (length (session-items s))) "NOTHING is prepended: a missing row is not a row")
     (is (= 5 (session-items-dropped s)) "and the count does not move either")
     (is (null (fetch-row-above h)) "so the head does not ask again")
@@ -10565,13 +10566,15 @@ Scroll to the top of a long session and the transcript ends as cleanly as a sess
 whose first row that is — and the operator has no way to tell the two apart.
 
 Three states, because there are three facts: rows above that this head will load,
-a request in flight, and rows the daemon does not hold either. The last is the one that
-matters most — it stops promising a fetch that cannot happen."
+a request in flight, and rows the daemon will not serve. The last is the one that
+matters most — it stops promising a fetch that cannot happen. **It is not a claim
+that the rows are gone**, which is what this seam said until 2026-10-02 and what
+the operator's store disproves."
   ;; nothing above: no seam at all, because a head holding everything has nothing to say
   (let ((h (%session-with-a-window :dropped 0)))
     (is (null (rows-above-line (head-session h) 80))
         "a head holding the whole conversation draws no seam"))
-  (let* ((leticl::*row-fetch* nil) (leticl::*rows-above-gone* nil)
+  (let* ((leticl::*row-fetch* nil) (leticl::*rows-above-unserved* nil)
          (h (%session-with-a-window :dropped 5))
          (text (segs-of (rows-above-line (head-session h) 80))))
     (is (search "5 rows above" text) "the count, from the snapshot's own number: ~s" text)
@@ -10582,16 +10585,25 @@ matters most — it stops promising a fetch that cannot happen."
     (setf leticl::*row-fetch* (list :row 4 :at 0))
     (is (search "asking the daemon for row 4" (segs-of (rows-above-line (head-session h) 80)))
         "a request in flight names the row it is waiting for")
-    ;; gone
-    (setf leticl::*row-fetch* nil leticl::*rows-above-gone* t)
+    ;; unserved
+    (setf leticl::*row-fetch* nil leticl::*rows-above-unserved* t)
     (let ((text (segs-of (rows-above-line (head-session h) 80))))
-      (is (search "does not hold them any more" text) "and gone rows say so: ~s" text)
+      (is (search "does not serve these for this transcript" text)
+          "and a refused row says what the refusal was: ~s" text)
       (is (not (search "scroll to this line" text))
-          "and stop offering a fetch that cannot happen"))))
+          "and stops offering a fetch that cannot happen")
+      ;; **THE SENTENCE THAT HAD TO GO.** It said `the daemon does not hold them any more`,
+      ;; which is a claim about the WORLD, made out of an answer about a window. Measured
+      ;; against the operator's own store 2026-10-02: 27 links, `transcript_item`
+      ;; append-only by trigger, every row still on disk.
+      (is (not (search "any more" text))
+          (format nil "**nothing is ever gone, so the seam must not say so: ~s**" text))
+      (is (not (search "gone" text))
+          (format nil "and must not use the word at all: ~s" text)))))
 
 (def-test the-seam-is-drawn-at-the-top-of-the-viewport (:suite leticl)
   "And it reaches the glass: the first line of the transcript, above the oldest row."
-  (let* ((leticl::*row-fetch* nil) (leticl::*rows-above-gone* nil)
+  (let* ((leticl::*row-fetch* nil) (leticl::*rows-above-unserved* nil)
          (h (%session-with-a-window :dropped 5 :rows 3)))
     ;; scrolled all the way up, so the top of the transcript is on screen
     (setf (head-scroll h) 1000)
@@ -10927,18 +10939,18 @@ head's current stream is ignored, and one with no stream (a fixture) is about th
     (is (not (head-connected h)) "the current stream's goodbye is")))
 
 (def-test a-switch-leaves-the-old-transcripts-rows-above-facts-behind (:suite leticl)
-  "`*rows-above-gone*` is the daemon saying THAT transcript's top is out of reach; carried across a
+  "`*rows-above-unserved*` is the daemon saying THAT transcript's top is out of reach; carried across a
 `/switch` it stopped the new session from ever asking for its own rows. A fetch in flight and the
 echo bindings (row ids of the old session) go with it."
   (let* ((h (%make-head))
-         (leticl::*rows-above-gone* t)
+         (leticl::*rows-above-unserved* t)
          (leticl::*row-fetch* (list :row "r1" :at 0))
          (leticl::*bound-prompts* (list (cons "u1" "old prompt"))))
     (setf (session-session-id (head-session h)) "s-old")
     (leticl::%handle-frame h (list :frame "hello" :session-id "s-new" :head-id "h1"
                                    :protocol-version leticl::+protocol-version+
                                    :snapshot (list :session-id "s-new" :seq 1 :items nil)))
-    (is (null leticl::*rows-above-gone*) "the new session may ask for its rows")
+    (is (null leticl::*rows-above-unserved*) "the new session may ask for its rows")
     (is (null leticl::*row-fetch*) "no fetch from the old one is pending")
     (is (null leticl::*bound-prompts*) "no old row id draws a prompt here")))
 

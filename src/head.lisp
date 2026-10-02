@@ -678,12 +678,12 @@ and a `hello` with a snapshot). Returns T when the queue moved."
                ;; the third leg of the echo: a row id from the old session must not draw a
                ;; prompt in the new one
                *bound-prompts* nil
-               ;; **the rows-above facts are the OLD transcript's.** `*rows-above-gone*` is the
-               ;; daemon saying THAT transcript's top is out of reach; carried across a switch it
-               ;; stopped the new session from ever asking for its own rows. A fetch in flight is
-               ;; an answer that will name a row this head no longer holds.
+               ;; **the rows-above facts are the OLD transcript's.** `*rows-above-unserved*` is
+               ;; the daemon saying THAT transcript's top is out of reach; carried across a switch
+               ;; it stopped the new session from ever asking for its own rows. A fetch in flight
+               ;; is an answer that will name a row this head no longer holds.
                *row-fetch* nil
-               *rows-above-gone* nil
+               *rows-above-unserved* nil
                (head-picker-sel head) 0)
          ;; and the overlays, for the reason the job ROWS are cleared: a window
          ;; belongs to the session that produced it, so a `j12` carried across a
@@ -1222,7 +1222,7 @@ those rows are wanted.
 
 Three refusals, and each is a fact rather than a guard: nothing above (`rows-above`), a
 request already in flight (a transcript has one top), and the daemon having already
-said these rows are gone (`*rows-above-gone*`) — the last is what keeps a head from
+refused these rows (`*rows-above-unserved*`) — the last is what keeps a head from
 asking once per scroll for ever.
 
 Nothing is said on the status line: the seam itself changes from `scroll to this line
@@ -1230,7 +1230,7 @@ to load the next` to `asking the daemon for row N`, which is where the reader is
 already looking and is the same place the answer will land."
   (let* ((session (head-session head))
          (row (rows-above session)))
-    (when (and row (null *row-fetch*) (not *rows-above-gone*))
+    (when (and row (null *row-fetch*) (not *rows-above-unserved*))
       (setf *row-fetch* (list :row row :at 0))
       (%send head (make-fetch-row (session-session-id session) row))
       (setf (head-dirty head) t)
