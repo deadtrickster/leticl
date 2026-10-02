@@ -383,7 +383,19 @@ the `│ ` rail and the header stay faint; the code inside them does not."
                      nil)))
     (if styled
         styled
-        (mapcar (lambda (l) (list (cons l nil))) raw-lines))))
+        ;; **A FENCE WITH NO GRAMMAR IS STILL INDENTED CODE.** When `lang-for-fence` answers 0 the
+        ;; body was handed straight through, so after `highlight-lines` grew its tab arm a ```go
+        ;; block was indented and a ```text or bare fence was not — the two paths disagreeing about
+        ;; what a fence body IS, which is the same split that let the bug exist at all: the diff
+        ;; path had the tab arm and the fence path never did.
+        ;;
+        ;; MEASURED before this: `(highlight-fence (list "x" "\ty") "nosuchlang")` gave
+        ;; `(("x")) (("\ty"))` — the tab verbatim.
+        ;;
+        ;; The docstring above already insists the body is drawn PLAIN rather than dim. **Plain
+        ;; means uncoloured, not unindented**, and the same 4-stop is used so an unhighlightable
+        ;; fence is indented exactly like a highlighted one.
+        (mapcar (lambda (l) (list (cons (%expand-tabs-chars l 4) nil))) raw-lines))))
 
 ;;; --------------------------------------------------------------- lexer ;;;
 ;;;

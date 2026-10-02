@@ -996,7 +996,15 @@ answered in the same place or not at all.")
     ;; asked for that worked … the opposite of a fault*. Without the entry this head's
     ;; fail-safe drew it RED — an alarm for the door working as designed, which is R19 itself
     ;; and exactly the direction the guard exists for.
-    "operator_call_ran")
+    "operator_call_ran"
+    ;; **AGAIN FROM THE OTHER TREE, AND THE SAME GUARD CAUGHT IT.** letibot's `e54b48a` — *a
+    ;; provider that is slow says so, instead of looking like one that is gone* — added
+    ;; `model_slow_first_byte`, because DeepSeek was measured at 12.4 s to first byte on a
+    ;; streaming completion while `GET /models` answered in 0.28 s. The fact is that the provider
+    ;; is SLOW, which is housekeeping rather than a fault — and without this entry the fail-safe
+    ;; here drew it RED, which is the direction that turns *wait a moment* into an alarm. That is
+    ;; R19 itself, and the exact direction this list exists to prevent.
+    "model_slow_first_byte")
   "The warning codes whose fact is ROUTINE — drawn faint with a middot, not red with a bang.
 
 **R19 part 2, and this list is now letibot's rather than mine.** Both heads render these

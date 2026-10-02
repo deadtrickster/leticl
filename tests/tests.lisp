@@ -23848,3 +23848,99 @@ runtime pathname is how the next reader gets that answer without a live head."
  that is not there"))
       (ignore-errors (uiop:delete-file-if-exists shim))
       (ignore-errors (uiop:delete-directory-tree dir :validate t :if-does-not-exist :ignore)))))
+
+(def-test consecutive-tabs-land-on-successive-stops (:suite leticl)
+  "**A run of tabs came out SHORT, and it is a pre-existing defect — not a consequence of the fence
+fix.** At stop 4, two tabs before a character produced SEVEN spaces instead of eight:
+
+    i=0  tab -> (1+ (floor 0 4))*4 - 0 = 4
+    i=1  tab -> (1+ (floor 1 4))*4 - 1 = 3     <- measured from the SOURCE index
+
+The stop was computed from the source index rather than the output column. **The source index stops
+tracking the column the moment the first tab widens the output**, so every tab after the first in a
+run is short by whatever the ones before it added.
+
+**The old docstring justified the source index by the class grid** — one entry per character, so a
+stop measured in columns would slide the classes off the text — and that argument does not apply
+where this is called: `classed-segments` calls it only in its `(null classes)` branch, where there is
+no grid to slide, and the branch that HAS classes walks the text itself. So nothing depended on the
+wrong basis, and **the justification was protecting the defect**.
+
+THIS IS THE ASSERTION THAT DID NOT EXIST, and it is the one that would have caught it."
+  (flet ((expand (s) (leticl::%expand-tabs-chars s 4)))
+    (is (string= "    z" (expand (format nil "~cz" #\tab)))
+        "one tab at column 0 reaches stop 1")
+    (is (string= "        z" (expand (format nil "~c~cz" #\tab #\tab)))
+        (format nil "**TWO tabs reach EIGHT, not seven** — each measured from where the last one
+ landed: ~s" (expand (format nil "~c~cz" #\tab #\tab))))
+    (is (string= "            z" (expand (format nil "~c~c~cz" #\tab #\tab #\tab)))
+        "and three reach twelve, which is the same rule twice more")
+    ;; mid-line: a tab advances TO the stop, it does not add four
+    (is (string= "ab  cd" (expand (format nil "ab~ccd" #\tab)))
+        (format nil "**a tab mid-line advances TO the next stop**, so two characters plus one tab
+ is two spaces and not four: ~s" (expand (format nil "ab~ccd" #\tab))))
+    (is (string= "abcd    e" (expand (format nil "abcd~ce" #\tab)))
+        "and from column 4 it goes to 8")
+    ;; **AND THE NO-TAB PATH MUST NOT ALLOCATE.** `(eq s (expand s))` is the guard, and it is what
+    ;; makes the common case free: every line of every fence without a tab returns the caller's own
+    ;; string rather than a copy of it.
+    (let ((s "no tabs here at all"))
+      (is (eq s (expand s))
+          "**a tab-free string comes back IDENTICAL**, so the no-tab path allocates nothing"))))
+
+(def-test a-fence-body-keeps-its-tab-indentation (:suite leticl)
+  "**The operator's screenshot: a Go fence with every line flush left.** `func`, `if`, `return` and
+the closing braces all at one column.
+
+**THE FENCE PATH NEVER EXPANDED TABS AND THE DIFF PATH ALWAYS HAD.** `classed-segments` has an
+explicit tab arm and `%expand-tabs-chars` carries the reasoning for it; `highlight-lines` walked the
+source and wrote every non-newline character into its segment buffer verbatim, so a tab reached the
+cell grid as a tab. Go is where it shows, because gofmt indents with tabs and nothing else does.
+
+MEASURED in the live image before the fix: a Go fence whose middle line is tab-indented came back
+with a segment holding ONE TAB and then the word RETURN, so every line drew flush left.
+
+**Two renderers of one fact, one of them complete** — the split that has produced most of the
+defects on this feature.
+
+`flat` takes the piece of each segment, which is where the text lives: a fence is a list of LINES,
+each line a list of (TEXT . STYLE)."
+  (flet ((flat (lines)
+           (mapcar (lambda (line)
+                     (apply #'concatenate 'string (mapcar #'car line)))
+                   lines)))
+    ;; ---------- a language the shim knows, or does not ----------
+    ;; Id 1 is Rust and the shim may not be loaded in the test process; what is under test is the
+    ;; TAB, so this asserts the indentation on WHICHEVER branch ran rather than on the classes.
+    (let ((flat (flat (leticl::highlight-lines (format nil "func f() {~%~creturn~%}" #\tab) 1))))
+      (is (notany (lambda (l) (find #\tab l)) flat)
+          (format nil "**no tab survives into the cell grid**: ~s" flat))
+      (is (some (lambda (l) (string= "    return" l)) flat)
+          (format nil "**and the indented line is indented by FOUR**, at the first stop: ~s" flat)))
+    ;; ---------- A FENCE WHOSE LANGUAGE THE SHIM DOES NOT KNOW ----------
+    ;; **THE SECOND HALF, AND THE ONE A TEST WOULD HAVE MISSED.** `highlight-fence` maps raw lines
+    ;; straight to segments when `lang-for-fence` answers 0, so this path kept its tabs after the
+    ;; first was fixed — the two disagreeing about what a fence body is.
+    (let ((seg (leticl::highlight-fence (list "x" (format nil "~cy" #\tab)) "nosuchlang")))
+      (is (= 2 (length seg)) "both lines survive")
+      (is (string= "x" (car (car (car seg)))) "the first is untouched")
+      (is (string= "    y" (car (car (second seg))))
+          (format nil "**an unhighlightable fence is indented too** — plain means uncoloured, not
+ unindented: ~s" (second seg))))))
+
+(def-test a-run-of-tabs-in-a-fence-is-a-run-of-stops (:suite leticl)
+  "The two fixes meeting: a fence whose indentation is two stops deep, on the path the screenshot
+came from.
+
+Measured in the live image after the fix: one, two and three tabs give 4, 8 and 12 spaces. The
+one-tab case alone would have made the two-tab case SEVEN, which is the pre-existing defect — so
+this is the test that would have caught it through the fence rather than through the helper."
+  (flet ((flat (lines) (mapcar (lambda (line) (apply #'concatenate 'string (mapcar #'car line))) lines)))
+    (let ((seg (leticl::highlight-fence (list (format nil "~cfunc f() {" #\tab)
+                                              (format nil "~c~creturn" #\tab #\tab))
+                                        "nosuchlang")))
+      (is (string= "    func f() {" (car (car (car seg))))
+          (format nil "a fence line indented one stop: ~s" (flat seg)))
+      (is (string= "        return" (car (car (second seg))))
+          (format nil "**and two stops deep, which the one-tab fix alone would have made seven**:
+ ~s" (flat seg))))))

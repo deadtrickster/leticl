@@ -268,24 +268,38 @@ foreground keeps the syntax colour on top, the way the reference's
           (t (append rs base-style)))))
 
 (defun %expand-tabs-chars (s stop)
-  "Tabs in S to the next CHARACTER stop.
+  "Tabs in S to the next stop, counted over what has been WRITTEN.
 
-`sidediff.rs:398-402` counts the stop in characters, not display columns, and
-this path must agree with it: the class grid has one entry per character, so a
-stop measured in columns would slide the classes off the text it describes the
-first time a panel holds a CJK glyph. `diff.lisp`'s `expand-tabs` measures
-columns, which is the right answer for the unified view, where nothing is
-indexing the line."
+**A PRE-EXISTING DEFECT, FOUND ONLY BECAUSE THE FENCE PATH STARTED USING THIS, and the old
+docstring was protecting it rather than describing it.** The stop was computed from the SOURCE
+index `i`, so at stop 4 `\"\t\tz\"` produced SEVEN spaces and not eight:
+
+    i=0  tab -> (1+ (floor 0 4))*4 - 0 = 4
+    i=1  tab -> (1+ (floor 1 4))*4 - 1 = 3     <- measured from the SOURCE index
+
+The source index stops tracking the column the moment the first tab widens the output, so every
+tab after the first in a run is short by whatever the ones before it added. MEASURED in the live
+image before the fix.
+
+The docstring used to justify the source index by the class grid — one entry per character, so
+a stop measured in columns would slide the classes off the text — and that argument does not
+apply HERE: `classed-segments` calls this function only in its `(null classes)` branch, where
+there is no grid to slide, and the branch that HAS classes walks the text itself and already
+tracks its own position. So nothing was relying on the wrong basis; the justification was
+protecting a defect.
+
+Characters, not display columns: `diff.lisp`'s `expand-tabs` measures columns, which is the right
+answer for the unified view where nothing indexes the line."
   (if (null (position #\tab s))
       s
-      (let ((out (make-string-output-stream)))
-        (loop for i from 0 below (length s)
-              for ch = (char s i)
+      (let ((out (make-string-output-stream))
+            (col 0))
+        (loop for ch across s
               do (if (char= ch #\tab)
-                     (write-string (make-string (- (* (1+ (floor i stop)) stop) i)
-                                                :initial-element #\space)
-                                   out)
-                     (write-char ch out)))
+                     (let ((next (* (1+ (floor col stop)) stop)))
+                       (write-string (make-string (- next col) :initial-element #\space) out)
+                       (setf col next))
+                     (progn (write-char ch out) (incf col))))
         (get-output-stream-string out))))
 
 (defun class-rows (lines lang-id)
@@ -363,15 +377,42 @@ which is what a missing shim and a `Palette::None` terminal both read."
 (defun highlight-lines (source lang-id)
   "SOURCE to a list of lines; each line is a list of (cons TEXT STYLE) segments
 with syntax colour. A missing shim, unknown language, or failed parse gives one
-plain segment per line — the same thing a Palette::None terminal reads."
+plain segment per line — the same thing a Palette::None terminal reads.
+
+Tabs are expanded to the next 4-character stop, in BOTH branches: a fence with no grammar is
+still indented code.
+
+**THE FENCE PATH NEVER EXPANDED TABS, and the diff path always had.** MEASURED in the live image
+before the fix — tabs reached the cell grid verbatim, so a `go` block lost its indentation and
+every `func`, `if` and `return` sat flush left:
+    a Go fence whose middle line is tab-indented came back with a segment holding ONE TAB
+    and then the word RETURN — the tab reaching the cell grid verbatim, so every line drew
+    flush left.
+    => line2 (a TAB segment, then a magenta return segment)
+
+**The diff path already had this arm and this one never grew it** — `classed-segments` has an
+explicit tab branch and `%expand-tabs-chars` carries the reasoning. Two renderers of the same
+fact, one of them complete, which is the split that has produced most of the defects on this
+feature.
+
+**`col` IS PER LINE, not derived from `i`.** `i` indexes the whole multi-line SOURCE, so using it
+for the stop would make a line's indent depend on how far down the block that line sits. It
+resets in `flush-line`, the only place a line ends.
+
+The stop is 4 — `classed-segments`' default, and letibot's `sidediff.rs:80 const TAB_STOP:
+usize = 4`, so the two heads agree on where a tab lands."
   (let ((grid (class-grid source lang-id)))
     (if (null grid)
-        (mapcar (lambda (line) (list (cons line nil)))
+        ;; **A FENCE WITH NO GRAMMAR IS STILL INDENTED CODE.** This branch used to hand `line`
+        ;; straight through, so a ```text or bare fence kept its tabs after the branch above was
+        ;; fixed and the two disagreed about what a fence body is.
+        (mapcar (lambda (line) (list (cons (%expand-tabs-chars line 4) nil)))
                 (uiop:split-string source :separator '(#\newline)))
         (let ((lines nil)
               (segs nil)
               (buf (make-string-output-stream))
-              (role nil))
+              (role nil)
+              (col 0))
           (labels ((flush-seg ()
                     (let ((text (get-output-stream-string buf)))
                       (when (plusp (length text))
@@ -380,7 +421,9 @@ plain segment per line — the same thing a Palette::None terminal reads."
                    (flush-line ()
                      (flush-seg)
                      (push (nreverse segs) lines)
-                     (setf segs nil)))
+                     (setf segs nil)
+                     ;; **THE ONLY PLACE A LINE ENDS**, so the only place the column resets.
+                     (setf col 0)))
             (loop for i from 0 below (length source)
                   for ch = (char source i)
                   for r = (aref grid i)
@@ -390,6 +433,12 @@ plain segment per line — the same thing a Palette::None terminal reads."
                            (unless (and role (eql role r))
                              (flush-seg)
                              (setf role r))
-                           (write-char ch buf))))
+                           (if (char= ch #\Tab)
+                               (let ((stop (* (1+ (floor col 4)) 4)))
+                                 (write-string
+                                  (make-string (- stop col) :initial-element #\space)
+                                  buf)
+                                 (setf col stop))
+                               (progn (write-char ch buf) (incf col))))))
             (flush-line)
             (nreverse lines))))))

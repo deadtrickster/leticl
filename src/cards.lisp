@@ -2818,7 +2818,13 @@ something copies them."
      ;; of it, and that is on the row — so the honest remedy points at the row. R29's rule is
      ;; that the ENTRY exists and names the reason; `nothing to do — …` satisfies it, and
      ;; inventing a verb here to look useful would be the failure that test is written against.
-     ("operator_call_ran" . "nothing to do — the call you asked for ran; the row under this note holds what it returned"))
+     ("operator_call_ran" . "nothing to do — the call you asked for ran; the row under this note holds what it returned")
+     ;; **AND A SLOW PROVIDER NAMES AN ACT, WHICH IS THE POINT OF THE CODE.** letibot's
+     ;; `e54b48a` landed it because DeepSeek was measured at 12.4 s to first byte while its
+     ;; `/models` answered in 0.28 s — the failure it prevents is a person concluding the model is
+     ;; GONE and killing a turn that is merely waiting. So the remedy is the thing the reader
+     ;; would otherwise do wrong: wait, and how long to wait before deciding otherwise.
+     ("model_slow_first_byte" . "nothing to fix — the provider is slow, not gone. The turn is still running; ctrl-o backgrounds it if you would rather not wait"))
   "What the reader can DO about a note, per code — R29 rule one, on the note.
 
 **A note that states a fact and not the act is a dead end on the screen.** The operator,
