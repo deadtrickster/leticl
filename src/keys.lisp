@@ -126,13 +126,57 @@ terminator is kept as content — a paste may contain anything."
 
 (defun mouse-event (button x y kind)
   "SGR mouse encoding: button 0-2 press, 32+ motion, 64/65 wheel (term.rs's
-?1002 motion + ?1006 SGR pair)."
-  (cond ((>= button 64)
-         (list :type :mouse :x x :y y :kind (if (= button 64) :wheel-up :wheel-down)))
-        ((>= button 32)
-         (list :type :mouse :x x :y y :button (- button 32) :kind :motion))
-        (t
-         (list :type :mouse :x x :y y :button button :kind kind))))
+?1002 motion + ?1006 SGR pair).
+
+**THE MODIFIERS LIVE IN THE SAME BYTE, AND THIS DID NOT MASK THEM — so SHIFT INVERTED the wheel.**
+SGR packs shift +4, meta +8, ctrl +16, motion +32 and wheel +64 into one number, and the old
+classification was a `(>= button 64)` test answered by `(if (= button 64) :wheel-up :wheel-down)`:
+
+    wheel up             64      :wheel-up     correct
+    wheel down           65      :wheel-down   correct
+    SHIFT + wheel up     68      :wheel-down   WRONG — the operator's jerk
+    shift + wheel down   69      :wheel-down   right by accident
+    ctrl  + wheel up     80      :wheel-down   wrong
+    shift + drag motion  32+b+4  button (b+4)  a button id nobody has
+
+The operator: *\"when shift holds the scrollback jerks and selection is reset\"*. Every modified
+wheel-UP was reported as a wheel-DOWN, so the view ran away from the reader in the one gesture where
+they were holding still — and **the selection loss followed from it**, because the runaway scroll
+repainted, and a repaint is what clears a terminal's own selection. Fixing the inversion is what
+makes both complaints go away.
+
+**THE SHAPE OUTLIVES THE ARITHMETIC.** That old form was a catch-all mapping everything which is not
+exactly 64 to the OPPOSITE of 64: an unrecognised code did not become *unknown*, it became a
+confident wrong answer in the other direction. That is the collapse `ToolOutcome`'s closed vocabulary
+exists to prevent one layer up — *a tool runtime that collapses no answer into success with an empty
+payload makes that failure invisible* — and here it was visible only because the operator could feel
+it.
+
+**AND letibot DOES NOT HAVE THIS BUG, which is the lesson rather than a contrast.** `term.rs:993`
+matches 64 and 65 exactly, so 68 and 69 match neither and decode to `None`. That is not better by
+design; it is better by being narrow — it refuses what it does not recognise instead of guessing.
+
+**The modifiers are masked and NOT KEPT.** `(logandc2 button 28)` clears 4, 8 and 16, and that is
+the whole fix — a `:mods` field would be carried, read by nothing, and is exactly the shape letibot
+DELETED rather than wired when `Preset::echo_reasoning` had been *declared once, set false three
+times, and read nowhere*. If shift+wheel is ever given its own meaning, the byte is still there to
+decode; a field with no reader is not a placeholder, it is a claim."
+  (let* ((rest (logandc2 button 28))        ; shift 4, meta 8, ctrl 16 — who is holding what
+         (motion (logand rest 32))
+         (code (logandc2 rest 32)))         ; and now what the button IS
+    (cond
+      ;; **EXACTLY 64 AND 65.** 66 and 67 are wheel-left and wheel-right on terminals that send
+      ;; them, and no arm in this tree acts on those. Naming them `:wheel-other` matches nothing,
+      ;; which is the honest outcome for a gesture this head does not implement — and is the
+      ;; opposite of the old catch-all, which answered them with a direction.
+      ((= code 64) (list :type :mouse :x x :y y :kind :wheel-up))
+      ((= code 65) (list :type :mouse :x x :y y :kind :wheel-down))
+      ((>= code 64) (list :type :mouse :x x :y y :kind :wheel-other))
+      ;; `(plusp motion)` AND NOT `motion`: `(logand rest 32)` returns 0 for a plain press, and
+      ;; **0 is TRUE in Common Lisp**, so a bare `motion` test sent every button press down the
+      ;; motion arm. The bit is a number here, not a boolean, and only NIL is false.
+      ((plusp motion) (list :type :mouse :x x :y y :button code :kind :motion))
+      (t (list :type :mouse :x x :y y :button code :kind kind)))))
 
 (defun read-key (stream)
   "One key event from a raw terminal stream; :eof when the input closed."

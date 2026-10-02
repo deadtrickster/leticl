@@ -24100,3 +24100,88 @@ TWICE, in the transcript card and in the settled row, so a fix to one would have
         (is (not (search "-b" text))
             "**an `edit` row with no excerpt draws no diff either** — the guard keys on the
  EXCERPT, not on the name in either direction")))))
+
+(def-test a-modified-wheel-is-the-wheel-it-is-not-its-opposite (:suite leticl)
+  "**The operator: shift held makes the scrollback jerk and the selection reset — and the cause was
+one byte that was never masked.**
+
+SGR packs the modifiers into the same number as the button — shift +4, meta +8, ctrl +16, motion
++32, wheel +64 — and `mouse-event` classified with `(>= button 64)` and then answered
+`(if (= button 64) :wheel-up :wheel-down)`. So **SHIFT INVERTED THE WHEEL**:
+
+    wheel up             64      :wheel-up     correct
+    wheel down           65      :wheel-down   correct
+    SHIFT + wheel up     68      :wheel-down   WRONG
+    shift + wheel down   69      :wheel-down   right by accident
+    ctrl  + wheel up     80      :wheel-down   wrong
+    shift + drag motion  32+b+4  button (b+4)  a button id nobody has
+
+Every modified wheel-UP was reported as a wheel-DOWN, so the view ran away from the reader in the one
+gesture where they were holding still — and **the selection loss followed from it**, because the
+runaway scroll repainted, and a repaint is what clears a terminal's own selection. The two complaints
+are one defect, and the inversion is the whole of it.
+
+**THE SHAPE OUTLIVES THE ARITHMETIC.** The old form was a catch-all mapping everything which is not
+exactly 64 to the OPPOSITE of 64: an unrecognised code did not become unknown, it became a confident
+wrong answer in the other direction. That is the collapse `ToolOutcome`'s closed vocabulary exists to
+prevent one layer up, and here it was visible only because the operator could feel it.
+
+**And letibot is better here by being NARROW rather than by design** — `term.rs:993` matches 64 and
+65 exactly, so 68 and 69 match neither and decode to `None`. So this refuses what it does not
+recognise instead of guessing.
+
+The modifiers are masked and not carried: a `:mods` field read by nothing is the shape letibot
+DELETED rather than wired when `Preset::echo_reasoning` was declared once, set false three times, and
+read nowhere."
+  (flet ((ev (button) (leticl::mouse-event button 5 7 :press)))
+    ;; ---------- the four that were already right, which must stay right ----------
+    (is (eq :wheel-up (getf (ev 64) :kind)) "wheel up is wheel up")
+    (is (eq :wheel-down (getf (ev 65) :kind)) "wheel down is wheel down")
+    (is (eq :press (getf (ev 0) :kind)) "a bare button press keeps its kind")
+    (is (= 0 (getf (ev 0) :button)) "and its button number")
+    ;; ---------- **THE INVERSION**: a modifier must not touch the direction ----------
+    (is (eq :wheel-up (getf (ev 68) :kind))
+        (format nil "**SHIFT + wheel up is a wheel UP** — this was :wheel-down, and it is the whole of
+ the jerk the operator felt: ~s" (ev 68)))
+    (is (eq :wheel-down (getf (ev 69) :kind)) "shift + wheel down is still wheel down")
+    (is (eq :wheel-up (getf (ev 80) :kind)) "ctrl + wheel up is a wheel UP")
+    (is (eq :wheel-up (getf (ev 72) :kind)) "meta + wheel up is a wheel UP")
+    (is (eq :wheel-up (getf (ev 84) :kind)) "and shift+ctrl at once, 84, is still a wheel UP")
+    (is (eq :wheel-down (getf (ev 85) :kind)) "and a modified wheel DOWN is still a wheel DOWN")
+    ;; ---------- and the motion branch's corrupted button ----------
+    ;; `panes.lisp:183` promises shift+drag selects text, so this is the documented selection
+    ;; gesture whose button id was `b+4` — a button nobody has.
+    (is (= 0 (getf (ev 32) :button)) "a bare drag is button 0")
+    (is (= 0 (getf (ev 36) :button))
+        (format nil "**shift + drag is STILL button 0**, not button 4: ~s" (ev 36)))
+    (is (eq :motion (getf (ev 36) :kind)) "and it is still a motion")
+    (is (= 2 (getf (ev 38) :button)) "a shifted drag on button 2 is still button 2")
+    ;; ---------- an unknown wheel is NAMED, not answered ----------
+    (is (eq :wheel-other (getf (ev 66) :kind))
+        (format nil "**wheel-left is not wheel-down** — a code this head does not implement is named
+ rather than answered with the opposite direction: ~s" (ev 66)))
+    ;; ---------- and nothing inert is carried ----------
+    (is (null (getf (ev 68) :mods))
+        "the modifiers are masked, not carried — a field no arm reads is not a placeholder")))
+
+(def-test the-shifted-wheel-as-the-terminal-actually-sends-it (:suite leticl)
+  "**The operator's literal case, through the escape sequence rather than the decoder:** `key-from`
+is the whole path from the bytes a terminal sends to the event the editor acts on, so this is the one
+that says the jerk is gone rather than that the arithmetic is right.
+
+SGR packs the modifiers into the button byte, so `ESC[<68;5;3M` IS shift+wheel-up — and it was
+decoded as a wheel DOWN."
+  (labels ((k (n) (key-from (format nil "~C[<~D;5;3M" +esc+ n))))
+    (is (eq :wheel-up (getf (k 64) :kind)) "64, the bare wheel up")
+    (is (eq :wheel-down (getf (k 65) :kind)) "65, the bare wheel down")
+    ;; **THE OPERATOR'S GESTURE.**
+    (is (eq :wheel-up (getf (k 68) :kind))
+        (format nil "**shift+wheel-up scrolls UP** — ESC[<68;5;3M was decoded as a wheel DOWN, and
+ that is the jerk: ~s" (k 68)))
+    (is (eq :wheel-down (getf (k 69) :kind)) "shift+wheel-down scrolls down")
+    (is (eq :wheel-up (getf (k 80) :kind)) "ctrl+wheel-up scrolls up")
+    (is (eq :wheel-up (getf (k 72) :kind)) "meta+wheel-up scrolls up")
+    ;; no modifier may ever be able to REVERSE a direction again
+    (loop for mod in '(4 8 16 12 20 24 28) do
+      (is (eq :wheel-up (getf (k (+ 64 mod)) :kind))
+          (format nil "wheel-up with modifier ~D is still a wheel UP, never its opposite" mod)))))
