@@ -184,6 +184,21 @@ main() {
         existing="$INSTALL_DIR/harnessd"
     fi
 
+    # **`launcher_here` IS THE FACT THE PATCH STEP BELOW NEEDS, and it is set where the decision
+    # is made rather than re-derived there.** MEASURED: with `LETICL_NO_DAEMON=1` this branch
+    # correctly skipped the copy, and then the fourth rewrite `sed`-ed `$INSTALL_DIR/letibot`
+    # unconditionally — `sed: can't read <dir>/letibot: No such file or directory`, `chmod: cannot
+    # access`, **exit 1** — after the head and its libraries had already landed. A person reading
+    # that cannot tell whether their install is usable.
+    #
+    # **And it is the path that exists to protect them that broke**: `--no-daemon` is what somebody
+    # runs when they already have a daemon, which is the case this script's own header argues for
+    # at length — one `harnessd` per box, not one per install.
+    #
+    # A flag rather than a test `[ -f "$INSTALL_DIR/letibot" ]` at the patch site, because the two
+    # can disagree in the direction that matters: a `letibot` left by an EARLIER install would make
+    # the patch run against a file this run did not put there, which is the same drift one step on.
+    launcher_here=""
     if [ -n "$NO_DAEMON" ]; then
         say "harnessd      not installed (--no-daemon)${existing:+ — you have $existing}"
         say "letibot       not installed (--no-daemon)"
@@ -195,6 +210,7 @@ main() {
             cp "$tmp/$f" "$INSTALL_DIR/$f" || die "cannot write $INSTALL_DIR/$f"
             chmod 755 "$INSTALL_DIR/$f"
         done
+        launcher_here="1"
         say "harnessd      $INSTALL_DIR/harnessd"
         say "letibot       $INSTALL_DIR/letibot"
     fi
@@ -230,10 +246,19 @@ main() {
     # So the install is COMPLETE only with this line, and the first cut of this script swept only
     # the files this repository owns — the third script's assumption went unexamined because it
     # was somebody else's file.
-    sed "s|^BIN=.*|BIN=\"${LETIBOT_BIN:-$INSTALL_DIR}\"|" \
-        "$INSTALL_DIR/letibot" > "$INSTALL_DIR/.letibot.new" \
-        && mv "$INSTALL_DIR/.letibot.new" "$INSTALL_DIR/letibot"
-    chmod 755 "$INSTALL_DIR/leticl" "$INSTALL_DIR/leticl-head-launch" "$INSTALL_DIR/letibot"
+    #
+    # **AND IT IS GUARDED, because there is only a `letibot` to rewrite when one was installed.**
+    # The two rewrites ABOVE run unconditionally and must: `leticl` and `leticl-head-launch` are
+    # this repository's own and always land, and the `LETIBOT_HEAD` line in the first of them is
+    # what points an EXISTING launcher at this head — the line that makes a `--no-daemon` install
+    # work at all.
+    if [ -n "$launcher_here" ]; then
+        sed "s|^BIN=.*|BIN=\"${LETIBOT_BIN:-$INSTALL_DIR}\"|" \
+            "$INSTALL_DIR/letibot" > "$INSTALL_DIR/.letibot.new" \
+            && mv "$INSTALL_DIR/.letibot.new" "$INSTALL_DIR/letibot"
+    fi
+    chmod 755 "$INSTALL_DIR/leticl" "$INSTALL_DIR/leticl-head-launch"
+    [ -n "$launcher_here" ] && chmod 755 "$INSTALL_DIR/letibot" || true
 
     # ---------- say what was installed, by running it ----------
     # **`-h`, NOT `--help` AND NOT `--version`, AND THAT IS MEASURED.** The head is a frozen
