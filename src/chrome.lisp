@@ -1718,6 +1718,12 @@ and it is true across the whole turn because it counts a call that has not finis
   (let ((turn (session-turn (head-session head))))
     (or (and turn (turn-busy-p turn))
         (filling-active-p)
+        ;; **THE FOLD IS LIVE BY DEFINITION** -- `written` moves continuously, so a frame drawn
+        ;; once and never rebuilt is a screenshot of a bar. Named separately from `turn-busy-p`
+        ;; because a COMPACTION DURING A TURN is exactly the case the operator sharpened: *"even
+        ;; more so for this overruns when we compact in turns"* -- and the turn's own busy state
+        ;; would otherwise be the only thing asking for frames while the fold is what is running.
+        (compaction-active-p)
         (and *carry-last-done* *carry-moved-at*)
         ;; **A DASHBOARD IS LIVE BY DEFINITION, and this is why the numbers moved only when a key
         ;; was pressed.** The panels draw from series the collector samples on a clock — the very
@@ -1745,6 +1751,8 @@ number but a frame that had dropped to the idle rate in the middle of a turn."
   (let ((turn (session-turn (head-session head))))
     (or (and turn (turn-busy-p turn))
         (filling-active-p)
+        ;; and in TENTHS, because the spinner and the count are read at a glance
+        (compaction-active-p)
         (and *carry-last-done* *carry-moved-at*))))
 
 (defparameter +live-frame-coarse-ms+ 1000
@@ -2038,6 +2046,62 @@ and here it is carried in the GLYPH, so it survives a terminal with no colour at
                        cols)
                       '(:dim t))))))
 
+(defun compaction-progress-line (c cols &optional (now *now-ms*))
+  "The fold's own line, or NIL. **The one place `CompactionProgress` is drawn.**
+
+**THE BAR IS DRIVEN FROM `processed` ONLY WHEN THE TRANSPORT REPORTS IT, and the reason is the
+whole of this event.** On a messages transport — which is what the operator's deepseek sessions
+use — the server reports no prefill, so `processed` arrives as `0`. That is *this transport does
+not count that*, NOT *nothing has happened*: a bar filling from it would sit at zero for the whole
+fold and look exactly like the hang this event exists to remove. `%compaction-figure` decides
+which number is drawn and the row NAMES it — `read` or `written` — so a reader is never looking
+at a figure whose meaning they have to infer.
+
+**AND THERE IS NO BAR IN THE SECOND CASE, because there is no denominator.** `prompt_tokens` is
+the half's PROMPT — its input — and `written` is what the half has PRODUCED; a fraction of one
+over the other would be two scales divided. So the messages case gets the spinner and the count,
+which is exactly what `⠼ Responding · 724ms` is: a spinner beside a moving figure, and no claim
+about how far through anything is.
+
+`unit` is the daemon's and is printed BESIDE the figure rather than implied: `tokens` where the
+transport reports the server's own count, `chars` where it reports only text. *The two transports
+do not count the same thing and one name for both would be a lie about one.*"
+  (cond
+    ((null c) nil)
+    (t
+     (let* ((half (or (getf c :half) 1))
+            (halves (or (getf c :halves) 1))
+            (prompt (or (getf c :prompt) 0))
+            (processed (or (getf c :processed) 0))
+            (written (or (getf c :written) 0))
+            (unit (or (getf c :unit) "tokens"))
+            (readable (and (plusp processed) (plusp prompt)))
+            (where (if (> halves 1)
+                       (format nil "half ~d of ~d" half halves)
+                       "the conversation")))
+       (list nil
+             (if readable
+                 ;; the transport counts prefill: a real bar, and it says READ
+                 (%carry-row processed prompt
+                             (format nil "~va" +cat-slot+ (cat-frame (or now 0)))
+                             cols (format nil "~a read" unit))
+                 ;; no prefill: a spinner and the produced count — no denominator exists
+                 (list (cons (truncate-to-width
+                              (format nil "~a compacting ~a · ~a ~a written"
+                                      (string (spinner (or now 0))) where
+                                      (thousands written) unit)
+                              cols)
+                             '(:bold t))))
+             (list (cons (truncate-to-width
+                          (format nil "  summarising ~a~@[ — ~a~]"
+                                  where
+                                  (if readable
+                                      (format nil "~a of ~a ~a read"
+                                              (thousands processed) (thousands prompt) unit)
+                                      nil))
+                          cols)
+                         '(:dim t))))))))
+
 (defun carry-line (head cols)
   "The line for a bulk announcement the DAEMON has not reported, or NIL.
 
@@ -2072,6 +2136,13 @@ head that says both is worse than the bar it replaced."
   (multiple-value-bind (total done) (%carry-counts (head-session head))
     (let ((outstanding (- total done)))
       (cond
+        ;; **THE FOLD'S OWN LINE, and it comes FIRST.** A compaction is the most specific thing
+        ;; that can be running: it holds the session while it works, and the two lines below
+        ;; measure OTHER operations -- a bulk announcement's rows, the session's prefill. Drawing
+        ;; one of those during a fold is the 69k-over-a-240k-conversation shape: a true number
+        ;; under a label about something else.
+        ((compaction-active-p)
+         (compaction-progress-line *compaction* cols (and (plusp *now-ms*) *now-ms*)))
         ;; **the daemon is counting this one**: its line, its numbers, its name.
         ;;
         ;; **DRAWN HERE, and it is a fix rather than a phrasing.** This branch used to

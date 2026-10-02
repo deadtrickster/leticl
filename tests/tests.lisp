@@ -23944,3 +23944,89 @@ this is the test that would have caught it through the fence rather than through
       (is (string= "        return" (car (car (second seg))))
           (format nil "**and two stops deep, which the one-tab fix alone would have made seven**:
  ~s" (flat seg))))))
+
+(def-test the-fold-draws-its-own-figure-and-says-which-number-it-is (:suite leticl)
+  "**The operator: *\"leticl compacts but why no progress bar?\"* and then sharpened:
+*\"even more so for this overruns when we compact in turns.\"***
+
+They were right on both counts. The overrun compaction summarises a SCRATCH transcript through a
+`NullSink`, so until letibot `f273300` (protocol 27) nothing of it reached a head at all — minutes
+of a still screen, at the moment the session is largest and the model slowest.
+
+**AND THE FIELD MOST LIKELY TO BE RENDERED WRONG IS `processed`.** On a messages transport — which
+is what these sessions use — the server reports no prefill, so it arrives as `0`. That is *this
+transport does not count that*, NOT *nothing has happened*, and a bar filling from it would sit at
+zero for the whole fold and look exactly like the hang this event exists to remove.
+
+**So there is NO BAR in that case, and that is a decision rather than an omission**: `prompt_tokens`
+is the half's PROMPT — its input — and `written` is what it has PRODUCED. A fraction of one over the
+other is two scales divided, so the messages case gets a spinner and a count, which claims nothing
+about how far through anything is.
+
+The row NAMES its figure — `read` or `written` — so a reader never infers which number they are
+looking at. And `unit` is printed rather than implied, because the two transports do not count the
+same thing."
+  (flet ((flat (rows) (mapcar (lambda (l) (apply #'concatenate 'string (mapcar #'car l))) rows)))
+    ;; ---------- 1. the messages transport: processed 0, so NO bar ----------
+    (let* ((leticl::*compaction* (list :half 1 :halves 2 :prompt 348000 :processed 0
+                                       :written 14200 :unit "tokens" :at-ms 1000))
+           (rows (leticl::compaction-progress-line leticl::*compaction* 100 2000))
+           (text (flat rows)))
+      (is (= 3 (length rows))
+          "**the blank, the row and the sentence** — `filling-progress-line`'s own shape, so the
+ two counted operations on this screen cannot drift apart")
+      (is (notany (lambda (l) (find #\█ l)) text)
+          (format nil "**NO BAR, because there is no denominator** — a bar here would sit at zero
+ and look like the hang: ~s" text))
+      (is (some (lambda (l) (search "compacting" l)) text)
+          (format nil "the operation is named: ~s" text))
+      (is (some (lambda (l) (search "half 1 of 2" l)) text)
+          (format nil "**and WHICH HALF**, because a two-half plan is two waits: ~s" text))
+      (is (some (lambda (l) (search "14.2k" l)) text)
+          (format nil "**the produced count is there, shortened the way the header shortens**: ~s"
+                  text))
+      (is (some (lambda (l) (search "tokens" l)) text)
+          "**and the UNIT, printed rather than implied** — the two transports count different things"))
+    ;; ---------- 2. a transport that DOES report prefill: a bar, labelled read ----------
+    (let* ((leticl::*compaction* (list :half 1 :halves 2 :prompt 348000 :processed 120000
+                                       :written 0 :unit "tokens" :at-ms 1000))
+           (text (flat (leticl::compaction-progress-line leticl::*compaction* 100 2000))))
+      (is (some (lambda (l) (find #\█ l)) text)
+          (format nil "**when the transport counts prefill there IS a bar**: ~s" text))
+      (is (some (lambda (l) (search "read" l)) text)
+          (format nil "and it says READ, which is the number it drew: ~s" text)))
+    ;; ---------- 3. one half: the cloud fold, and no half counting ----------
+    (let* ((leticl::*compaction* (list :half 1 :halves 1 :prompt 100 :processed 0
+                                       :written 5 :unit "chars" :at-ms 1000))
+           (text (flat (leticl::compaction-progress-line leticl::*compaction* 100 2000))))
+      (is (notany (lambda (l) (search "half" l)) text)
+          (format nil "**a ONE-half fold does not count halves** — 'half 1 of 1' is noise: ~s" text))
+      (is (some (lambda (l) (search "chars" l)) text)
+          "and the other unit is carried through"))
+    (is (null (leticl::compaction-progress-line nil 100 2000))
+        "no fold, no line")))
+
+(def-test the-fold-does-not-borrow-the-session-s-progress (:suite leticl)
+  "**The defect this event exists to end, asserted so the head cannot repeat it.**
+
+The overrun compaction summarises a SCRATCH transcript. Forwarding its raw `PromptProgress` put the
+SCRATCH prompt's token count into `turn.progress` — which is the SESSION's turn — and the operator
+watched `69k` sit over a 240k conversation that had not changed. letibot's own words: *the number
+was never wrong; its label was.*
+
+So `CompactionProgress` is a defvar of its own, nothing in its fold writes what the session's turn
+holds, and the two can carry wildly different figures without either lying."
+  (let ((leticl::*compaction* nil)
+        (leticl::*now-ms* 1000))
+    (is (null leticl::*compaction*) "no fold to begin with")
+    (leticl::note-compaction-progress
+     (list :half 1 :halves 2 :prompt-tokens 69000 :processed 0 :written 12 :unit "chars"))
+    (is (equal 69000 (getf leticl::*compaction* :prompt))
+        "the fold's own prompt is kept on the fold")
+    (is (leticl::compaction-active-p) "and the fold is live")
+    ;; **the session's own progress is untouched** — nothing here writes it
+    (is (null leticl::*filling*) "**and it did NOT become the session's `filling` figure** — that is
+ the confusion that put 69k over a 240k conversation")
+    (leticl::reset-compaction)
+    (is (null leticl::*compaction*) "the fold's end clears it")
+    (is (not (leticl::compaction-active-p)) "and the line goes with it")))
