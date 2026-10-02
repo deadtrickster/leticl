@@ -84,16 +84,25 @@ env:
   # this second variable goes away."* `v0.1.2` is that tag — `ba97dbf` is an ancestor of it —
   # and it was re-measured rather than assumed before collapsing:
   #
-  #   github.com/.../releases/download/v0.1.2/letibot-x86_64-unknown-linux-gnu.tar.gz
-  #       8 entries, including `letibot` as a Bourne-Again shell script, mode 755
-  #   raw.githubusercontent.com/.../v0.1.2/scripts/letibot
-  #       1181 lines, 2 × LETIBOT_HEAD, `cmp`-identical to the copy inside that archive
+  #   github.com/.../releases/download/v0.2.0/letibot-x86_64-unknown-linux-gnu.tar.gz
+  #       9 entries — `harnessd`, `letibot-tui`, `letibot`, `letibot-askpass` and the four llama
+  #       libraries — with `letibot` a Bourne-Again shell script, mode 755
+  #   raw.githubusercontent.com/.../v0.2.0/scripts/letibot
+  #       the same launcher, and `cmp`-identical to the copy inside that archive at v0.1.2
+  #
+  # **AND v0.2.0 IS THE TAG THAT CARRIES PROTOCOL 27**, which is why the pin moved rather than
+  # sitting on v0.1.2: letibot's own commit is titled *"0.2.0, because a protocol bump is not a
+  # patch"*, and a `PROTOCOL_VERSION` change is the one thing in these two trees that can make a
+  # correct head and a correct daemon refuse each other. `f273300` (27) precedes the version
+  # commit, so this tag speaks what this head speaks — and the ORDER is the constraint: letibot
+  # tagged, this pin follows, this repository tags third. Reversed, a 27 head would have shipped
+  # against a 26 daemon, which is what any tag cut an hour earlier would have done.
   #
   # Kept as an explicit `curl` rather than read out of the archive the step above already
   # unpacked: the fetch fails by name with `-f` if the file moves, where relying on it would
   # fall through to the check below. Both are keyed on the one tag.
   LETIBOT_REPO: deadtrickster/letibot
-  LETIBOT_REF: v0.1.2
+  LETIBOT_REF: v0.2.0
   # **rano IS PINNED BY TAG, in the manifests that need it** — `native/hl/Cargo.toml`
   # and letibot's three. Not an env var here, because a dependency's version belongs
   # where the dependency is declared; this comment exists so a reader looking for
