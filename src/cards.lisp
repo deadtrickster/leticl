@@ -2279,10 +2279,27 @@ header, also printed `· 1 line` — a count for a fold with nothing to fold."
         (decision-lines)
         ;; a file edit draws its DIFF, not the tool's prose: folded keeps the
         ;; first hunk's opening rows, open shows it whole
-        (when (and edit (member (car (cdr (assoc (string-downcase (or name "")) *verb-map*
-                                                 :test #'string=)))
-                                '(:edit :write))
-                   (not bad))
+        ;; **THE EXCERPT'S PRESENCE IS THE SIGNAL, NOT THE TOOL'S NAME.**
+        ;;
+        ;; This read `(member <verb-kind> '(:edit :write))` and the guard was wrong by exactly one
+        ;; caller: a `bash` command that edits a file. The operator: *"why im not show normal diff
+        ;; card"*, and then *"right and i want diff card for python edits you all love so much"*.
+        ;;
+        ;; **letibot already attaches the diff for that case and says so in words** —
+        ;; `bash.rs` builds a `FileEdit` when the command changed exactly one file, with the note
+        ;; *"this command changed `<path>` — the diff beside it was detected afterwards, not made
+        ;; by `edit`"*. So the daemon sent an excerpt, the row under the note promised a diff
+        ;; *beside* it, and this line threw it away because the tool was called `bash`.
+        ;;
+        ;; **And that is R35's own sentence, one layer up.** `%write-targets`' docstring has it:
+        ;; *a write made through the `write`/`edit` tool and a write made by a script the gate read
+        ;; out of a heredoc body are the SAME FACT — this action writes this file — and a card that
+        ;; drew them from two code paths would drift into two shapes for one fact.* The two code
+        ;; paths were here, and the drift was that one of them drew nothing at all.
+        ;;
+        ;; `bad` is kept, and it is a different question from the tool's name: a call that failed
+        ;; has its own row above saying so, and the run that carries this excerpt succeeded.
+        (when (and edit (not bad))
           (let* ((rows (edit-lines edit (- w 2) :folded nil
                                    :split (string= (or (getf prefs :diff) "unified") "split")))
                  (keep (if open (length rows) (min 8 (length rows))))
@@ -3462,7 +3479,10 @@ three colours, none of them the reference's."
       ;; the diff REPLACES the body rather than following it. Two columns
       ;; narrower than we had it: the card indents its body by two, and `ind` was
       ;; in effect being subtracted twice.
-      (when (and edit (member (%verb-kind (getf call :name)) '(:edit :write)))
+      ;; **AND THE SAME FIX HERE, because the card and the settled row are two renderers of one
+      ;; fact** — the second place this same guard was written, and the reason the drift would
+      ;; have survived a fix to only one of them. See `%tool-result-lines` for the measurement.
+      (when edit
         (setf body (edit-lines edit (- cols 2))))
       ;; the approval this call was gated by, in the dim register: a fact about
       ;; the call, not a stray note. It was on the settled row and NOT here, so

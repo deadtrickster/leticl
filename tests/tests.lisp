@@ -24030,3 +24030,73 @@ holds, and the two can carry wildly different figures without either lying."
     (leticl::reset-compaction)
     (is (null leticl::*compaction*) "the fold's end clears it")
     (is (not (leticl::compaction-active-p)) "and the line goes with it")))
+
+(def-test a-bash-command-that-edits-a-file-draws-its-diff (:suite leticl)
+  "**The operator: *\"why im not show normal diff card\"*, then *\"right and i want diff card for python
+edits you all love so much\"*.**
+
+The daemon ALREADY sends it. `bash.rs` builds a `FileEdit` when the command changed exactly one
+file, with the note *\"this command changed `<path>` — the diff beside it was detected afterwards,
+not made by `edit`\"*. So the row promised a diff **beside** it, the excerpt arrived, and this head
+threw it away — because it chose what to draw from the TOOL'S NAME:
+
+    (when (and edit (member (%verb-kind (getf call :name)) '(:edit :write))) …)
+
+`bash` is not `:edit` or `:write`, so a `python3 - <<'PY'` heredoc that rewrites a source file got a
+one-line note and no diff, while the same edit through the `edit` tool drew the full card.
+
+**AND THAT IS R35'S OWN SENTENCE, ONE LAYER UP.** `%write-targets`' docstring says it: a write made
+through the `write`/`edit` tool and a write made by a script the gate read out of a heredoc body are
+the SAME FACT — *this action writes this file* — and a card that drew them from two code paths would
+drift into two shapes for one fact. The two code paths were here; the drift was that one of them drew
+nothing at all.
+
+**The presence of the excerpt is the signal.** The daemon attaches one exactly when there is a diff
+to show, whoever produced it, which is why the guard is now `(when edit …)` — and it was written
+TWICE, in the transcript card and in the settled row, so a fix to one would have left the other."
+  ;; **THE BINDINGS ARE THE CALLER'S, and the first cut of this helper bound them itself** — so
+  ;; `%adopt-call-facts` populated a dynamic binding that was discarded when the helper returned,
+  ;; and every assertion failed on a row with no facts at all. A helper that binds the state it
+  ;; fills cannot hand that state back.
+  (flet ((facts-for (name)
+           (note-call-started "call_b")
+           (note-call-finished "call_b"
+                               :edit (list :path "src/protocol.lisp" :created nil
+                                           :before-start 10 :after-start 10
+                                           :before-lines 20 :after-lines 20 :truncated nil
+                                           :before (format nil "a~%b~%c")
+                                           :after (format nil "a~%B~%c")))
+           (leticl::%adopt-call-facts "s1#t9.1" "call_b")
+           (list :item-id "s1#t9.1" :kind "tool_result"
+                 :item (list :type "tool_result" :call-id "call_b"
+                             :name name :outcome (list :outcome "ok")
+                             :payload "wrote"))))
+    ;; ---------- the case that was broken: a bash command that edits ----------
+    (let* ((*call-facts* nil) (*item-facts* nil) (*call-started-ms* nil)
+           (item (facts-for "bash"))
+           (text (segs-of (item-lines item 80 (list :show-tools t :tools-open t)))))
+      (is (search "src/protocol.lisp" text)
+          (format nil "**a `bash` row carrying an excerpt NAMES the file**: ~s" text))
+      (is (search "-b" text)
+          (format nil "**and draws the removed line** — this is the diff card the operator asked
+ for: ~s" text))
+      (is (search "+B" text) "and the added one"))
+    ;; ---------- and the tool it was written for still works ----------
+    (let* ((*call-facts* nil) (*item-facts* nil) (*call-started-ms* nil)
+           (item (facts-for "edit"))
+           (text (segs-of (item-lines item 80 (list :show-tools t :tools-open t)))))
+      (is (search "-b" text) "an `edit` row still draws its diff — the fix widened the guard, it did not move it"))
+    ;; ---------- and a row with NO excerpt draws no diff, whatever its name ----------
+    (let* ((*call-facts* nil) (*item-facts* nil) (*call-started-ms* nil))
+      (note-call-started "call_c")
+      (note-call-finished "call_c")
+      (leticl::%adopt-call-facts "s1#t9.2" "call_c")
+      (let ((text (segs-of (item-lines
+                            (list :item-id "s1#t9.2" :kind "tool_result"
+                                  :item (list :type "tool_result" :call-id "call_c"
+                                              :name "edit" :outcome (list :outcome "ok")
+                                              :payload "edited"))
+                            80 (list :show-tools t :tools-open t)))))
+        (is (not (search "-b" text))
+            "**an `edit` row with no excerpt draws no diff either** — the guard keys on the
+ EXCERPT, not on the name in either direction")))))
