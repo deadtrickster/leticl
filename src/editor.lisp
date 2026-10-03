@@ -940,6 +940,16 @@ Esc was a second thing to remember per pane."
          ;; **THE WINDOW BODY IS `%row-window` NOW**, with the order of its clauses and the reason
          ;; for each in its own docstring. The arm above keeps nothing of it.
         ((#\l) (setf (head-full-repaint head) t (head-dirty head) t) t)
+        ;; **THE VIEW IS HELD** — the operator's ruling — and the chord is `ctrl-p` for *pause*.
+        ;; **NOT `ctrl-f`, which was the operator's first pick and is TAKEN**: the composer's emacs
+        ;; motions bind it (*ctrl-f goes right*, and the reference's decoder binds it too —
+        ;; `the-emacs-motions-the-reference-decodes-are-bound` says so and failed the moment this was
+        ;; `#\f`). `ctrl-p` is free because the todos pane gave it up when that moved to `ctrl-t`, and
+        ;; *pause* is the better mnemonic anyway. The reader is the only party who knows a selection
+        ;; exists (Shift makes the TERMINAL select and keeps the events from this head), so the reader
+        ;; is who holds the screen; see `*frozen*` for the measurement and for why *write nothing* is
+        ;; the whole of the contract.
+        ((#\p) (%toggle-freeze head))
         ;; `o` on the subagents pane switches INTO the row under the cursor
         ;; (app.rs:3696-3707); anywhere else it promotes the running command,
         ;; which is what this chord has always meant here.

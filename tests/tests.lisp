@@ -3220,6 +3220,10 @@ path the operator cannot reach."
   "A chord bound to a feature that does not exist is worse than no chord, which is
 why these landed AFTER the features."
   (let ((*pane-scroll* 0) (*repo-todo-open* nil)
+        ;; **BOUND, because a chord below FREEZES the view and the freeze is a GLOBAL.** A test that
+        ;; held the screen and then failed an assertion would leave every later test in this image
+        ;; painting into a held view — the same leak the file's other `let`s exist for.
+        (leticl::*frozen* nil) (leticl::*frozen-frame* nil) (leticl::*frozen-items* 0)
         (h (%make-head)))
     ;; **`ctrl-r` flips the thinking fold, which persists (S5) — and it is the ONE fold a chord
     ;; still owns.**
@@ -3239,21 +3243,22 @@ why these landed AFTER the features."
       (leticl::%command h "t")
       (is (eq before (getf (head-prefs h) :show-tools))
           "**and `/t` does not flip it either** — the verb opens a window on ONE row, not the wall"))
-    ;; ctrl-g/q open their panes through the one command path, and ctrl-p is UNBOUND
-    (%press h (list :type :ctrl :ch #\p))
-    (is (eq :normal (head-mode h)) "ctrl-p opens nothing — the chord was removed, not moved")
-    (setf (head-mode h) :normal)
+    ;; ctrl-g and ctrl-j open their panes through the one command path
     (%press h (list :type :ctrl :ch #\g))
     (is (eq :subagents (head-mode h)) "ctrl-g opens the subagents pane")
     (setf (head-mode h) :normal)
     (%press h (list :type :ctrl :ch #\j))
     (is (eq :jobs (head-mode h)) "ctrl-j opens the jobs pane")
     (setf (head-mode h) :normal)
-    ;; **AND `ctrl-q` DID NOT MOVE WITH IT.** The operator's ruling freed LF for `ctrl-j` and the
-    ;; jobs pane went there; `ctrl-q` is unbound now, so a test that kept pressing it would be
-    ;; asserting a chord the map no longer has.
-    (%press h (list :type :ctrl :ch #\q))
-    (is (not (eq :jobs (head-mode h))) "ctrl-q no longer opens it — the pane moved")
+    ;; **AND `ctrl-p` HOLDS THE VIEW** — the operator's second ruling, and the chord the todos pane
+    ;; gave up when it moved to `ctrl-t`. It was asserted here as *opens nothing* for one round; that
+    ;; stopped being true the moment the freeze landed, and the assertion moves with the truth rather
+    ;; than the message staying a comfortable lie.
+    (%press h (list :type :ctrl :ch #\p))
+    (is (not (null leticl::*frozen*)) "ctrl-p holds the view — *pause*, and the pane's old key")
+    (is (eq :normal (head-mode h)) "and it opens nothing: holding the screen is not a mode")
+    (%press h (list :type :ctrl :ch #\p))
+    (is (null leticl::*frozen*) "and the same chrome releases it")
     (setf (head-mode h) :normal)
     (%press h (list :type :ctrl :ch #\s))
     (is (eq :picker (head-mode h)) "ctrl-s opens the session list")
@@ -4866,6 +4871,72 @@ The reference always puts one gap after the committed rows."
       (is (search "hi" (segs-of (butlast lines))) "and the row is above it"))))
 
 ;;; ------------------------------------------------- the wheel (2026-09-20) ;;;
+
+(def-test holding-the-view-writes-nothing-until-it-is-released (:suite leticl)
+  "**The operator's ruling, measured at the byte level because that is the level the defect is at:**
+*\"leticl resets selection if screen wasnt scrolled too. so both should not do it if anything selected.
+whether it means stopping render and showing me 'new content' marker - likely.\"*
+
+Shift makes the TERMINAL do the selection and keeps the events from the head, so there is nothing for
+the head to test — the READER is the only party who knows a selection exists, which is why this is a
+chord and not a heuristic. And *any write into a selected cell clears it*: measured with
+`tmux pipe-pane`, leticl erased nothing at all in a twenty-two minute turn and still lost the
+selection, so there is no gentler paint to fall back on. **Write nothing** is the whole contract.
+
+So the assertion is not about a flag; it is about bytes. The loop's own line is run with the head
+frozen, and the stream it would have written to must be EMPTY — and the same line after the release
+must not be."
+  (let* ((leticl::*frozen* nil)
+         (leticl::*frozen-frame* nil)
+         (leticl::*frozen-items* 0)
+         (leticl::*now-ms* 1000000)
+         (h (%on-head :cols 80 :rows 24)))
+    (flet ((screen () (leticl::%render h) (%screen-text h)))
+      (is (null leticl::*frozen*) "the view follows until it is held")
+      ;; --- the chord, through the real key handler
+      (%press h (list :type :ctrl :ch #\p))
+      (is (not (null leticl::*frozen*)) "`ctrl-p` holds the view — *pause*, and not `ctrl-f`, which the
+composer's emacs motions own")
+      (is (not (null leticl::*frozen-frame*)) "and it owes exactly ONE frame — the one that says so")
+      ;; --- THAT one frame, spent the only way a frame is ever spent. It writes into the test's own
+      ;; fd 1 like the suite's other frame tests; `%render` alone does NOT spend the debt, which is the
+      ;; distinction the first version of this test got wrong.
+      (leticl::%render-and-paint h)
+      (is (null leticl::*frozen-frame*) "the paint pays the debt")
+      (is (search "the view is held" (screen))
+          (format nil "**and the frame it owed says so on the glass**: ~s" (screen)))
+      ;; --- THE CONTRACT. The byte-level boundary is `paint-wanted-p`, because the loop's only paint
+      ;; call is gated on it — `%render-and-paint` acquires fd 1 itself, so a test cannot capture the
+      ;; bytes by binding a stream; what CAN be asserted is that the loop would not paint at all.
+      (setf (head-dirty h) t)
+      (is (null (leticl::paint-wanted-p h))
+          "**a held view writes NOTHING while the world moves on** — not a spinner, not a clock, not a
+ counter that ticks: the loop asks this predicate, and it says no")
+      (is (head-dirty h) "and the pending frame is deliberately NOT cleared, so the release paints it all")
+      (is (search "(paint-wanted-p head)" (source-of "head"))
+          "**and that predicate is the loop's only gate on painting**, so a NIL here is not one byte:
+ the events keep arriving and the head keeps folding them, it simply stops drawing — which is the one
+ thing about this that needs no protocol")
+      ;; --- a row arriving is FOLDED, and the frame is still not wanted
+      (let ((before (length (session-items (head-session h)))))
+        (leticl::apply-event (head-session h) (list :event "transcript_appended" :item-id "f1"
+                                                    :kind "assistant" :ts 0))
+        (leticl::apply-event (head-session h) (list :event "transcript_content" :item-id "f1"
+                                                    :item (list :type "assistant" :text "arrived unseen")))
+        (is (> (length (session-items (head-session h))) before)
+            "**the fold happened** — the row is in the session, which is what *the head keeps working*
+ means"))
+      (is (null (leticl::paint-wanted-p h))
+          "**and the paint did not** — a row that arrived while the view was held changes nothing here")
+      ;; --- and the release: one frame, and it says what happened
+      (%press h (list :type :ctrl :ch #\p))
+      (is (null leticl::*frozen*) "`ctrl-p` again follows the stream")
+      (is (not (null (leticl::paint-wanted-p h))) "and it wants a frame at once")
+      (is (search "1 row arrived while it was held" (head-status-note h))
+          (format nil "**and the release says what arrived** — counted ONCE, at the one moment a count
+ is allowed to be said: ~s" (head-status-note h)))
+      (is (not (search "the view is held" (screen))) "with the marker gone from the tail")
+      (is (search "arrived unseen" (screen)) "and the row it held back on the screen at last"))))
 
 (def-test a-sequence-already-in-the-buffer-decodes-after-the-deadline (:suite leticl)
   "The operator: *\"scrolling codes go straight to prompt input\"*. Under a burst of

@@ -1902,6 +1902,26 @@ loaded and a value derived from the old one is still live. A cache with a genera
 A `defvar`, so a push does not reset the counter (which would invalidate every cache on every push
 rather than only the caches that must be).")
 
+(defun paint-wanted-p (head)
+  "Does anything want a frame THIS pass? — the one place the freeze is enforced.
+
+**Three reasons, and a held view outranks two of them.** A frame is wanted when an event set
+`head-dirty`, or when the clock says something on the screen is a function of time (`live-frame-due-p`,
+R13), or when a view that is HELD owes exactly one frame — the one that draws the marker saying so
+(`*frozen-frame*`, spent by the paint itself).
+
+**While `*frozen*` the first two do not count**, and that is the whole of the contract: one written
+cell is one lost selection, so a frozen head writes NOTHING — not a spinner, not a clock, not a
+counter that ticks. The events keep arriving and the head keeps folding them; it simply stops
+drawing, which is the one thing about this that needs no protocol.
+
+The loop's else-branch sleeps on a NIL from here, **including while frozen with a frame waiting**: a
+head that skipped the paint and also skipped the sleep would spin a core for as long as the reader
+holds the screen. And because `head-dirty` is NOT cleared by a frame that was never drawn, the
+release paints the whole accumulated state in one pass — which is what *follows again* means."
+  (or *frozen-frame*
+      (and (not *frozen*) (or (head-dirty head) (live-frame-due-p head)))))
+
 (defun run-loop (head)
   (loop while (head-running head)
         do (let ((rendered 0)
@@ -2016,8 +2036,11 @@ rather than only the caches that must be).")
              ;; 30 ms sleep was ~430x the cost of the work it guarded, and because a paint
              ;; CLEARS `head-dirty` the next pass slept again — capping the head at one
              ;; wheel event per 30 ms whatever rate the trackpad sent at.
-             (if (or (head-dirty head) (live-frame-due-p head))
+             (if (paint-wanted-p head)
                  (%render-and-paint head)
+                 ;; **AND THE SLEEP IS TAKEN WHENEVER NOTHING WANTS A FRAME — including while the
+                 ;; view is HELD with a frame waiting.** A frozen head that skipped the paint and
+                 ;; skipped the sleep would spin a core for as long as the reader holds the screen.
                  (sleep *idle-poll-ms*))
              ;; 2b. answer every screen request with the frame just painted
              (%answer-screen-requests head)

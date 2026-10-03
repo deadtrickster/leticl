@@ -1161,6 +1161,11 @@ A `defvar`, so a push can introduce it, and because it is a rendering hint rathe
                 ;; They settled it themselves: *"the queued messages must be still coalesced and
                 ;; still pinned to the bottom."*
                 (queued-lines head cols)
+                ;; **AND LAST OF ALL, THE ROW THAT SAYS THE VIEW IS HELD.** It is drawn in the frame the
+                ;; freeze owes and then never again, because nothing after it writes — see `*frozen*`.
+                ;; Last, because it is about the SCREEN rather than about the conversation: it belongs
+                ;; against the chrome, under every row that claims to be content.
+                (frozen-lines head cols)
                 ;; **AND THE ECHO CARRIES THE AIR A LANDED ROW HAS AFTER IT.** `hist` is followed by
                 ;; one blank row (`gap`, below — *"air above the chrome"*), and a row that LANDS is
                 ;; part of `hist`, so a committed row brings that blank with it. The echo in the
@@ -1958,6 +1963,12 @@ thread, which is a dead head. `--tree` takes the same lock per file."
                        (setf (head-full-repaint head) nil))
                 (paint-diff (head-prev-screen head) (head-screen head) out))
             (replace (screen-cells (head-prev-screen head)) (screen-cells (head-screen head)))
+            ;; **the frame a HELD view owed has been written, so the debt is paid.** Cleared here,
+            ;; after the bytes are out rather than before they were composed: a paint that failed
+            ;; (the guard below catches it) has not drawn the marker, and `head-dirty` is set by the
+            ;; failure so the next pass tries again — spending the debt on a frame nobody saw would
+            ;; leave the reader with a held view and no row saying so.
+            (setf *frozen-frame* nil)
             (setf (head-last-rows head) (screen-rows-ansi (head-screen head))
                   (head-last-cols head) (head-cols head)
                   (head-last-rows-n head) (head-rows head))

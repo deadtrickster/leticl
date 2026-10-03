@@ -189,6 +189,84 @@ going to draw."
 ;;; for ever in exchange for being noticed once. The alarm line below carries
 ;;; the rest.
 
+(defvar *frozen* nil
+  "Is the VIEW held — the reader's selection safe — until `ctrl-p` releases it?
+
+**`ctrl-p` and not `ctrl-f`:** the operator's first pick was `ctrl-f` and it is taken — the
+composer's emacs motions bind it, and `the-emacs-motions-the-reference-decodes-are-bound` caught it
+the moment this was `#\f`. `ctrl-p` is free because the todos pane gave it up when that moved to
+`ctrl-t`, and *pause* is the better mnemonic for a chord that stops the screen moving.
+
+**The operator's own diagnosis, and it is exact:** *\"leticl resets selection if screen wasnt scrolled
+    too. so both should not do it if anything selected. whether it means stopping render and showing me
+'new content' marker - likely.\"* MEASURED on both heads with `tmux pipe-pane`: leticl erased NOTHING
+(0 x `ESC[2J`, 0 x `ESC[K` in a twenty-two minute turn) and still lost the selection — **any write into
+a selected cell clears it**, so erasing is not the trigger and there is no gentler way to paint.
+
+**And the head CANNOT detect the selection.** With mouse reporting on, holding Shift tells the
+TERMINAL to do its own selection and not to forward the events — which is why Shift is the gesture —
+so the head never sees the press, the drag or the release, and there is no query. *Do not repaint
+while something is selected* is therefore not implementable as written: there is nothing to test. The
+reader is the only party who knows a selection exists, so the reader is who holds the view.
+
+**What the freeze owes the screen is NOTHING.** One written cell is one lost selection, so while this
+is true the head writes nothing at all — not a spinner, not a clock, not a counter that ticks — which
+is why `paint-wanted-p` is the one place that reads it and why the clock's frames are silenced with
+the events'. A frozen head that still animated is a frozen head that does not work.
+
+The one exception is the frame the freeze itself owes (`*frozen-frame*`): the row saying the view is
+held cannot appear without a write, and it is drawn ONCE, at the moment of freezing.")
+
+(defvar *frozen-items* 0
+  "How many rows the session held when the view was frozen — the other half of what the release says.
+
+**Not a live count.** A number that moves is an animation, and an animation is writes; the count of
+what arrived is computed ONCE, when the reader takes the view back, and is said then.  A `defvar` and
+not a head slot, for the reason every counter here is one: a struct change is a restart.")
+
+(defvar *frozen-frame* nil
+  "Does a held view owe exactly one frame — the one that draws the marker saying so?
+
+**A one-shot, and it exists because *write nothing* and *say that the view is held* cannot both be
+true without it.** The marker cannot be drawn without a write, and it cannot be drawn while nothing
+writes, so the freeze owes ONE frame and `%render-and-paint` is what spends it. `paint-wanted-p`
+reads this FIRST, before the freeze silences everything else.")
+
+(defun frozen-lines (head cols)
+  "The row that says the view is HELD — identical in every frame, which is the whole point.
+
+It is drawn ONCE (the freeze's owed frame) and then never again, because nothing after it writes: the
+row is the same row in every frame the reader would have got, so there is nothing to redraw. It names
+the chord that releases the view, for R29's reason — a state with no way out of it is a state the
+reader is in whether they meant to be or not.
+
+**No count.** The number of rows that arrived is what the RELEASE says, and only then: a live count
+here would be an animation, and an animation is writes. `cols` truncates, so a narrow frame cuts the
+sentence rather than wrapping it into the transcript's last row."
+  (declare (ignore head))
+  (when *frozen*
+    (list (list (cons (truncate-to-width "⏸ the view is held — ctrl-p follows again" cols)
+                      '(:dim t)))
+          ;; and its own air, like every other tail part
+          nil)))
+
+(defun %toggle-freeze (head)
+  "The ONE writer of `*frozen*`, and the only place the release's sentence is composed.
+
+Freezing takes the row count with it and owes one frame (see `*frozen-frame*`). Releasing says what
+happened while the view was held — *N rows arrived* — because the reader who looked away for a minute
+wants to know how far the conversation moved, and that is a number that can be computed at the one
+moment it is allowed to be said."
+  (if *frozen*
+      (let ((arrived (max 0 (- (length (session-items (head-session head))) *frozen-items*))))
+        (setf *frozen* nil)
+        (say head (format nil "the view follows again — ~d row~:p arrived while it was held" arrived))
+        (setf (head-dirty head) t))
+      (setf *frozen* t
+            *frozen-items* (length (session-items (head-session head)))
+            *frozen-frame* t))
+  t)
+
 (defvar *lf-note-said* nil
   "Has the head already explained that LF is `ctrl-j` now — said ONCE, and for a reason.
 
