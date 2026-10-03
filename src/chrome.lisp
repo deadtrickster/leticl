@@ -432,12 +432,16 @@ columns not spent on the session's name."
           (t ws))))
 
 (defun %session-position (s)
-  "`1/71` — which of the daemon's sessions this is, of how many. The reference's
+  "`1/71` — which of the daemon's CONVERSATIONS this is, of how many. The reference's
 rule, from `header_line`: shown for one session too, because \"1/1\" is a fact —
 this daemon holds one session and you are in it — where two absences are not.
-Subagents are children of a session, not sessions a picker lists, so they are not
-counted; the picker filters them the same way."
-  (let* ((all (picker-sessions s))
+
+**A SUB-SESSION IS LISTED AND NOT COUNTED**, and the two are one rule rather than two: the picker draws
+a child under its parent with NO NUMBER, and this counts the numbered rows. The reason a child is
+unnumbered is the one the old filter was reaching for — a session with twenty subagents must not turn
+the header into `1/21` — and the reason it is listed at all is that a child is a session the operator
+can attach to and be answered by: *\"subagent session is more like you driving others via tmux.\"*"
+  (let* ((all (remove-if (lambda (b) (getf b :parent-session-id)) (picker-sessions s)))
          (at (position (session-session-id s) all
                        :key (lambda (b) (getf b :session-id)) :test #'equal)))
     (format nil "~d/~d" (if at (1+ at) 0) (max 1 (length all)))))
@@ -1026,7 +1030,7 @@ is worse than no hint at all."
                  ;; `BINDINGS` rather than typed.
                  ((eq (head-mode head) :dash) (format nil "~a · esc closes" (dash-bindings)))
                  ((eq (head-mode head) :config) "arrows move · enter changes a row marked ✎ · esc closes")
-                 ((eq (head-mode head) :subagents) "subagents this session spawned · esc closes")
+                 ((eq (head-mode head) :subagents) "subagents this session spawned · enter attaches to the one under the cursor — its own conversation, live · esc closes")
                  ;; **THE JOBS PANE NAMES `d` ONLY WHEN THERE IS SOMETHING TO OPEN**, and the
                  ;; count comes from the panels rather than from a guess: a hint that offers a key
                  ;; which does nothing on this job is worse than a shorter hint.

@@ -1125,19 +1125,21 @@ two sides in circles."
      ;; `config-change` says what each kind of row does on Enter.
      (config-change head))
     (:subagents
-     ;; the pane's enter is the one it advertises: read that subagent's
-     ;; scrollback without moving this session there. It is `peek`, the command
-     ;; that existed as a frame nobody sent. A subagent still `opening` has
-     ;; nothing to read and the daemon would refuse the peek by name, so saying
-     ;; it here keeps the operator in the pane they were using rather than
-     ;; bouncing them through a rejection (app.rs:3678-3689).
-     (let ((row (nth (head-picker-sel head) (subagent-rows head))))
-       (cond ((null row) nil)
-             ((equal (getf row :state) "opening")
-              (say head "that subagent is still opening — nothing to read yet"))
-             (t (awhen (getf row :session-id)
-                  (%send head (make-peek it))
-                  (say head (format nil "peeking ~a…" it)))))))
+     ;; **ENTER ATTACHES TO IT.** This read *"read that subagent's scrollback without moving this
+     ;; session there"*, and the operator's correction says the opposite is true of the relationship:
+     ;; *"why readonly? subagent session is more like you driving others via tmux. I already can post
+     ;; to subagent, and agent can talk back and forth too"* — and then, looking at the pane this arm
+     ;; produced: *"look at what the subagent convo rendering - it looks nothing like the normal
+     ;; convo"*. It looks like nothing else in this head because it IS nothing else: a peek draws PLAIN
+     ;; STRINGS through `subagent-out-lines`, while an ATTACH draws the child's conversation with the
+     ;; renderer every other session uses — markdown, the air rule, tool cards, the rung, live.
+     ;;
+     ;; A child is a session with a hub of its own, so attaching is ordinary rather than special, and
+     ;; `%subagent-switch` already does it — with the refusals a still-opening child needs, which is why
+     ;; this is the same function `o` calls rather than a second spelling of it. `/peek` stays the
+     ;; read-without-leaving: a real convenience, and letibot's judgement whether it still earns its
+     ;; place now that the picker lists children.
+     (%subagent-switch head))
     (:peek
      ;; The pane's hint bar says *"enter re-reads"* and it did not: `:peek` was
      ;; not in this case at all. A running subagent has new output, which is the
