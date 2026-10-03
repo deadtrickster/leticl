@@ -2758,20 +2758,28 @@ that has neither."
                          (short-id (subseq fact 0 (or (position #\space fact) (length fact))))
                          (%notice-agent-task text)
                          fact)
-                 fact)))
+                 ;; **THE NOUN IS HERE, AND NOWHERE ELSE.** A job's fact is the daemon's sentence;
+                 ;; naming it is this function's business, because a CALLER that prefixed its own
+                 ;; noun produced `Job 1 job and 1 subagent finished ended (…)` on the operator's
+                 ;; screen for a coalesced row — the branch below.
+                 (format nil "Job ~a" fact))))
           ;; **SEVERAL NOTICES IN ONE ROW, AND THEY ARE NOT ALL JOBS.** The daemon coalesces notices
           ;; that arrive together, so this branch sees a mixed row: measured on the operator's screen,
           ;; `2 jobs ended (j66, s-…-sub-…)` — a subagent called a job by a line that counted the two
           ;; openings in a row that had one of each. The count is of the OPENINGS, which are the
           ;; daemon's own words, so the sentence cannot be wrong about what settled.
+          ;; **COMPLETE SENTENCES, BECAUSE NOTHING IS PREPENDED TO THEM ANY MORE.** The measured defect
+          ;; was `Job 1 job and 1 subagent finished ended (…)`: one caller added a noun while another
+          ;; added `ended` to a phrase that had already said `finished`. One writer, one sentence.
           (t (multiple-value-bind (j k) (%notice-counts text)
-               (format nil "~a ended (~{~a~^, ~})"
-                       (cond ((and (plusp j) (plusp k))
-                              (format nil "~d job~:p and ~d subagent~:p finished" j k))
-                             ((plusp k) (format nil "~d subagent~:p finished" k))
-                             (t (format nil "~d job~:p" j)))
-                       (mapcar (lambda (f) (subseq f 0 (or (position #\space f) (length f))))
-                               one)))))))
+               (let ((ids (format nil "(~{~a~^, ~})"
+                                  (mapcar (lambda (f) (subseq f 0 (or (position #\space f)
+                                                                      (length f))))
+                                          one))))
+                 (cond ((and (plusp j) (plusp k))
+                        (format nil "~d job~:p and ~d subagent~:p finished ~a" j k ids))
+                       ((plusp k) (format nil "~d subagent~:p finished ~a" k ids))
+                       (t (format nil "~d job~:p ended ~a" j ids)))))))))
 
 (defun %job-notice-rows (text)
   "The daemon's notice as rows a reader can OPEN — R41's own vocabulary, verbatim.
@@ -2835,18 +2843,18 @@ unknown speaker can name itself in the same place."
                      ;; NEWEST openable row, so a seam elsewhere would name a key that does
                      ;; nothing. Silence is the honest seam; a lie is not.
                      (facts-segs (%truncate-segs
-                                  (list (cons (format nil "~a~a"
-                                                      ;; **THE NOUN COMES FROM THE KIND.** The task's
-                                                      ;; own name and ask are inside
-                                                      ;; `%job-notice-facts` — so a task's line already
-                                                      ;; begins `Agent <id> · <task>` and a job's begins
-                                                      ;; with the daemon's fact, named `Job` here.
-                                                      (if (eq :task (%notice-kind text)) "" "Job ")
-                                                      (or (%job-notice-facts text)
-                                                          (if (eq :task (%notice-kind text))
-                                                              "a subagent finished"
-                                                              "a job settled")))
-                                              nil))
+                                  (list (cons
+                                         ;; **NO NOUN IS ADDED HERE**, and that is the fix:
+                                         ;; `%job-notice-facts` answers a COMPLETE sentence — `Job j83 …`
+                                         ;; for one settlement, `Agent … · <task> · …` for a subagent, and
+                                         ;; `1 job and 1 subagent finished (…)` for several — because two
+                                         ;; writers produced `Job 1 job and 1 subagent finished ended (…)`
+                                         ;; on the operator's screen.
+                                         (or (%job-notice-facts text)
+                                             (if (eq :task (%notice-kind text))
+                                                 "a subagent finished"
+                                                 "a job settled"))
+                                         nil))
                                   room)))
                 (list (if named
                           (append facts-segs (list (cons seam +role-faint+)))

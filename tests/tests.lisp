@@ -15741,6 +15741,8 @@ the name of one of them."
       (is (= 1 (length (item-lines item 200 nil))) "the coalesced row is still ONE line")
       (is (search "1 job and 1 subagent finished" text)
           (format nil "**the mixed row counts both kinds**: ~s" text))
+      (is (search "session · 1 job and 1 subagent finished (" text)
+          (format nil "**and the sentence is COMPLETE and ALONE** — no noun prepended and no second verb.\n This line read `Job 1 job and 1 subagent finished ended (…)` on the operator's screen, and a\n SUBSTRING assertion could not see it: the broken line contains the healthy words. ~s" text))
       (is (not (search "2 jobs ended" text))
           "and does not call a subagent a job, which is what it did on the glass")
       (is (search "j66" text) "with the ids — what a reader scanning for one of them wants")))
