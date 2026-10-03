@@ -1821,10 +1821,20 @@ five times in two days.
 **A CHILD IS A SESSION**, and the door that returns rows already exists: `SessionEvent::Subagent`'s
 `subagent_id` is documented as *the subagent's own session id*, and `Attach`/`Resync` with
 `since_seq = 0` answers with a `Snapshot` — rows, which this head draws with its real renderer,
-markdown and air rule and rung and all. So the fix is a **`Peeked` that carries a snapshot**, not a
-fold built here: **do not fold these events into a scratch session.** That would fold what the
-protocol says must not be folded, and it would be the sixth copy. This function, with the copy in
-letibot, goes the day `Peeked` carries rows.
+markdown and air rule and rung and all.
+
+**AND THE REASON A HEAD DOES NOT SIMPLY ATTACH TO ONE IS FIVE LINES THAT HIDE IT.** The operator, on
+being read a plan that made a child something to *view*: *\"why readonly? subagent session is more like
+you driving others via tmux. I already can post to subagent, and agent can talk back and forth too.\"*
+A child is attachable, promptable and answers — this session's own relationship with the head it is
+spoken through, one level down — and both heads filter sub-sessions out of the picker
+(`head.lisp:1053`, `session.lisp:382`, `panes.lisp:77` here; two sites in letibot), with
+`chrome.lisp:363` stating the belief out loud: *a subagent is not a session a picker lists*. That
+belief is the bug, and **this function is its downstream scaffolding — it is deleted rather than
+taught**, together with `Peek`'s special verb if letibot judges it no longer earns its place.
+
+**Do not fold these events into a scratch session** — that would fold what the protocol says must not
+be folded, and it would be the sixth copy of a session that was hidden by five lines.
 
 **AND THE CHILD'S TASK IS THE FIRST THING IN IT, in full.** The operator, reading the pane:
 *\"the first prompt is truncated too early\"* and *\"I want to be able to easily see it in full\"*.
