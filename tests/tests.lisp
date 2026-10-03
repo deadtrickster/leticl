@@ -15666,6 +15666,54 @@ really buries a conversation.")
                                 :parts (list (list :kind "text" :text text))))))
     (values item (first (item-lines item 120 nil)))))
 
+(defparameter +task-notice+
+  "[task] a subagent you started has finished:
+  - `s-1791017230755743833-sub-1791063330816` done: /home/dead/Projects/leticl/src/panes.lisp has 3417 lines.
+This is the completion arriving on its own — you do not need to wait for it, and calling `task_result` to block would only hold you for a result you already have. Read what it said with `task_result` (task=\"…\"), then carry on with what you were doing."
+  "A subagent-completion notice as the daemon writes it — the same shape as a job's, with the same
+closing paragraph addressed to the model, which is why it was drawn in full until the vocabulary knew
+the word `[task]`.")
+
+(def-test an-agent-settlement-is-one-line-too-and-names-the-agent (:suite leticl)
+  "**The operator, on the agent half:** *\"too much, for example i dont want to see that message to you
+'This is the completion…' I also dont care about 'sabagent you started…' it must be something like Job
+<id> <command summary or wrap> finished <result result summary or wrap> same for agents.\"*
+
+MEASURED, and it was one word: `[job]` was the only opening this head knew, so an agent's completion —
+the same `speaker: agent` row, the same facts line, the same closing paragraph ADDRESSED TO THE MODEL —
+was drawn as full prose while a job's was a one-liner. `+notice-prefixes+` is a list now.
+
+Two claims: the row is one line with the model-facing paragraph gone, and it NAMES the agent and what
+it was asked — the task being the one field the notice does not carry."
+  (multiple-value-bind (item line) (%settlement-row "u9" +task-notice+)
+    (declare (ignore line))
+    (let* ((leticl::*payload-head* nil)
+           (rows (item-lines item 200 nil))
+           (text (segs-of rows)))
+      (is (= 1 (length rows))
+          (format nil "**ONE row for an agent settlement**, as for a job: ~s" rows))
+      (is (search "Agent " text) "naming it as an agent rather than as a job: ~s" text)
+      (is (search "done:" text) "with the daemon's own word for what it answered")
+      (is (not (search "This is the completion arriving" text))
+          "**and the paragraph addressed to the MODEL is not drawn** — the whole of *i dont want to see\n that message to you*")
+      (is (not (search "a subagent you started" text))
+          "nor the daemon's past-tense framing of the model's own act")))
+  ;; **AND THE TASK ITSELF**, when the head can see the child that answered: the notice carries only
+  ;; what it said, so what it was ASKED is looked up on the subagent row — the same string the
+  ;; subagents pane draws as its title.
+  (let* ((head (%make-head))
+         (item (list :item-id "u10" :kind "user" :ts 0
+                     :item (list :type "user" :speaker "agent"
+                                 :parts (list (list :kind "text" :text +task-notice+)))))
+         (leticl::*payload-head* head))
+    (setf (session-subagents (head-session head))
+          (list (list :subagent-id "s-1791017230755743833-sub-1791063330816"
+                      :session-id "s-1791017230755743833-sub-1791063330816"
+                      :state "done" :role "coder"
+                      :prompt "Report one fact and nothing else: the number of lines in panes.lisp")))
+    (is (search "Report one fact and nothing else" (segs-of (item-lines item 200 nil)))
+        "**and the agent's own task is on the line** — looked up, because the notice does not carry it")))
+
 (def-test a-job-settlement-is-one-line-and-it-opens (:suite leticl)
   "**The operator, looking at two of their own screens: *\"we have to do something with this huge job
 blobs - make them one liners for conversation and Ctrl-t'able otherwise\"*** — and *\"something like

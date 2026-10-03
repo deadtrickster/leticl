@@ -2635,18 +2635,55 @@ next row's wrap cannot depend on which register the operator chose."
                         (cons (if (and (= i 0) (plusp (length stamp))) stamp "")
                               +operator-block-style+)))))
 
-(defparameter +job-notice-prefix+ "[job] "
-  "The daemon's own opening for a job-settlement notice (`harness.rs:661`, `completion_notice`).
+(defparameter +notice-prefixes+ (list "[job] " "[task] ")
+  "The daemon's own openings for a completion notice: a settled job, and a finished subagent.
 
 **The prefix is the daemon's, not this head's invention** — the same discipline as keying a note's
 remedy on its CODE: a settlement arrives as a `User` row with `speaker: agent` and nothing else to
-identify it, so the text is what says what it is, and this is the one word in it that is the
-daemon's own voice rather than a job's.")
+identify it, so the text is what says what it is, and this is the one word in it that is the daemon's
+own voice rather than a job's.
+
+**`[task]` is why this is a list rather than a constant.** `[job]` was the only one handled, so an
+agent's completion — the same shape, the same `speaker: agent`, the same closing paragraph addressed to
+the model — was drawn as full prose while the job's was a one-liner. The operator found it: *\"too much,
+for example i dont want to see that message to you 'This is the completion…' I also dont care about
+'sabagent you started…' it must be something like Job <id> <command summary or wrap> finished <result
+result summary or wrap> same for agents.\"*")
+
+(defun %notice-kind (text)
+  "`:job`, `:task`, or NIL — which of the daemon's notices TEXT is, by its own opening."
+  (cond ((and (stringp text) (uiop:string-prefix-p "[job] " text)) :job)
+        ((and (stringp text) (uiop:string-prefix-p "[task] " text)) :task)
+        (t nil)))
 
 (defun %job-notice-p (text)
-  "Is TEXT the daemon's job-completion notice? — R41's own message, in its own voice."
+  "Is TEXT one of the daemon's completion notices? — R41's own message, in its own voice."
   (and (stringp text)
-       (uiop:string-prefix-p +job-notice-prefix+ text)))
+       (some (lambda (p) (uiop:string-prefix-p p text)) +notice-prefixes+)))
+
+(defun %notice-agent-task (text)
+  "The subagent's own task, for a `[task]` notice — the first line the daemon titled it with.
+
+**Looked up rather than parsed out of the notice**, because the notice does not carry it: the fact line
+is `<id> done: <what it answered>`, and what it was ASKED lives on the subagent row (`:prompt`, which is
+`derive_title(prompt)` — the task's first line — the same string the subagents pane draws as its title,
+so the two surfaces cannot disagree). `*payload-head*` is the head the row is being drawn for, bound in
+`%viewport-lines` where rows are drawn; a render with no head bound answers NIL and the field is simply
+absent rather than wrong."
+  (let* ((facts (multiple-value-bind (o f r) (%job-notice-parts text)
+                  (declare (ignore o r)) f))
+         ;; **THE ID IS ON THE FACT LINE, not in the opening sentence.** The opening reads `a subagent
+         ;; you started has finished:`, whose second word is `subagent` — measured, and the first
+         ;; version of this took exactly that. The fact line is `\`s-…\` done: …`, so the id is its
+         ;; first token with the daemon's backticks off.
+         (first-fact (first facts))
+         (id (and first-fact (subseq first-fact 0 (or (position #\space first-fact)
+                                                      (length first-fact)))))
+         (row (and id *payload-head*
+                   (find (remove #\` id)
+                         (ignore-errors (subagent-rows *payload-head*))
+                         :key (lambda (r) (getf r :session-id)) :test #'string=))))
+    (and row (getf row :prompt))))
 
 (defun %job-notice-parts (text)
   "TEXT split into `(values OPENING FACTS REST)`.
@@ -2693,9 +2730,20 @@ that has neither."
                                      (remove #\` (string-trim " " f))))
                       facts)))
     (cond ((null one) nil)
-          ;; **ONE JOB NAMES ITSELF**; several are COUNTED and their ids listed. Sized to what it
-          ;; describes — the same adaptivity R37's marker has, and the same reason.
-          ((= 1 (length one)) (first one))
+          ;; **AN AGENT'S NOTICE NAMES THE AGENT AND WHAT IT WAS ASKED.** A job's one-liner is the
+          ;; daemon's own fact and needs nothing added; a subagent's reads `<id> done: <answer>`, and
+          ;; the operator's shape for it is `Agent <id> · <task> · <result>` — the task being the one
+          ;; field the notice does not carry, which is why it is looked up (see `%notice-agent-task`)
+          ;; rather than parsed. The daemon's `done:` is kept verbatim: it is their word for it, and a
+          ;; second spelling here is another thing that can drift.
+          ((= 1 (length one))
+           (let ((fact (first one)))
+             (if (eq :task (%notice-kind text))
+                 (format nil "Agent ~a · ~@[~a · ~]~a"
+                         (short-id (subseq fact 0 (or (position #\space fact) (length fact))))
+                         (%notice-agent-task text)
+                         fact)
+                 fact)))
           (t (format nil "~d jobs ended (~{~a~^, ~})"
                      (length one)
                      ;; **the IDS**, which is what a reader scanning for one of them wants — the
@@ -2766,8 +2814,16 @@ unknown speaker can name itself in the same place."
                      ;; nothing. Silence is the honest seam; a lie is not.
                      (facts-segs (%truncate-segs
                                   (list (cons (format nil "~a~a"
-                                                      +job-notice-prefix+
-                                                      (or (%job-notice-facts text) "a job settled"))
+                                                      ;; **THE NOUN COMES FROM THE KIND.** The task's
+                                                      ;; own name and ask are inside
+                                                      ;; `%job-notice-facts` — so a task's line already
+                                                      ;; begins `Agent <id> · <task>` and a job's begins
+                                                      ;; with the daemon's fact, named `Job` here.
+                                                      (if (eq :task (%notice-kind text)) "" "Job ")
+                                                      (or (%job-notice-facts text)
+                                                          (if (eq :task (%notice-kind text))
+                                                              "a subagent finished"
+                                                              "a job settled")))
                                               nil))
                                   room)))
                 (list (if named
