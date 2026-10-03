@@ -904,8 +904,12 @@ Esc was a second thing to remember per pane."
                  (%command head verb))
              t))
       (case (getf key :ch)
-        ((#\r) (%flip-fold head :show-reasoning) t)   ; fold the thinking
-        ((#\t)
+        ((#\r) (%flip-fold head :show-reasoning) t)   ; the reasoning fold
+        ((#\t) (pane :todos "todos"))                 ; the todos pane (was ctrl-p)
+         ;; **THE COMMENTS BELOW ARE THE RECORD OF THE ARM AS IT WAS**, and they are kept because
+         ;; they are WHY the per-row window moved off a chord and onto a verb: the seam under a long
+         ;; row names a key that acts on THAT row, and a chord that also unfolded the conversation
+         ;; made the seam a lie. The window is `%row-window` now and its only door is `/t`.
          ;; **ONE ROW, NOT A SWITCH — R10's ruling on the overload, and R40 converges this head
          ;; onto letibot's split.**
          ;;
@@ -933,14 +937,8 @@ Esc was a second thing to remember per pane."
          ;; open ARE the run — a hidden tool result draws no per-row seam at all. So the chord
          ;; closes an open run first, else opens the newest run; only when nothing is hidden does
          ;; it fall through to the payload window it has always opened.
-         (cond
-           (*hidden-run-open* (%set-hidden-run-open nil))
-           ((reading-p)
-            (let ((id (newest-hidden-run-id (head-session head))))
-              (when id (%set-hidden-run-open id))))
-           ((payload-view-open-p) (payload-view-close))
-           (t (payload-view-seed (head-session head))))
-         t)
+         ;; **THE WINDOW BODY IS `%row-window` NOW**, with the order of its clauses and the reason
+         ;; for each in its own docstring. The arm above keeps nothing of it.
         ((#\l) (setf (head-full-repaint head) t (head-dirty head) t) t)
         ;; `o` on the subagents pane switches INTO the row under the cursor
         ;; (app.rs:3696-3707); anywhere else it promotes the running command,

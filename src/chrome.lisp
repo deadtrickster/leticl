@@ -979,21 +979,22 @@ is worse than no hint at all."
                  ;; failing on the bar instead of on a note. Both facts have to fit, so
                  ;; something gives up its space and the measurement says what:
                  ;;
-                 ;;   · **`/t unfolds rows` goes THIRD, and it is the one new item that had to
+                 ;;   · **`/t row window` goes THIRD, and it is the one new item that had to
                  ;;     fit.** R22's ruling puts `ctrl-n` second and that stands untouched: it
-                 ;;     is at column 18, where it was. `/t` — the only home left for the
-                 ;;     conversation-wide unfold, and the key every folded row's seam now
-                 ;;     names — takes the third slot at column 33, inside the first forty
-                 ;;     columns where a reader looking for a verb will see it;
-                 ;;   · `ctrl-p`/`ctrl-g`/`ctrl-r` each move right by one item, which is what
-                 ;;     paying for `/t` costs; `ctrl-t` keeps its place and changes its word.
+                 ;;     is at column 18, where it was. `/t` — the per-row window's only door,
+                 ;;     and the key every folded row's seam now names — takes the third slot at
+                 ;;     column 33, inside the first forty columns where a reader looking for a
+                 ;;     verb will see it;
+                 ;;   · and the two REBINDINGS take their items' slots in place: `ctrl-t` is
+                 ;;     the todos pane where `ctrl-p` was, `ctrl-j` is the jobs pane where
+                 ;;     `ctrl-q` was, and `ctrl-r` says *reasoning* where it said *thinking*.
                  ;;
                  ;; **The arithmetic, measured rather than asserted**, because R22's own note
                  ;; here is that this bar's placement is a measurement and not a taste:
                  ;;
-                 ;;     this bar                164 characters, 10 items
-                 ;;     at 80 columns           ctrl-s @0 · ctrl-n @18 · /t @33 · ctrl-p @51 ·
-                 ;;                             ctrl-g @66 · and ctrl-r @85 falls off the edge
+                 ;;     this bar                147 characters, 9 items
+                 ;;     at 80 columns           ctrl-s @0 · ctrl-n @18 · /t @33 · ctrl-t @49 ·
+                 ;;                             ctrl-g @64 · and ctrl-r @83 falls off the edge
                  ;;     at the operator's 210   every item on screen
                  ;;
                  ;; So at 210 nothing is lost, at 80 something is — and what falls off is
@@ -1001,7 +1002,7 @@ is worse than no hint at all."
                  ;; at (1,642 times in the operator's own session) rather than only here. `/t`
                  ;; has no other affordance on a 40-column screen, which is why it takes the
                  ;; slot ahead of it.
-                 (t "ctrl-s sessions · ctrl-n notes · /t unfolds rows · ctrl-p todos · ctrl-g subagents · ctrl-r thinking · ctrl-t window · ctrl-q jobs · tab completes /commands · /help"))))
+                 (t "ctrl-s sessions · ctrl-n notes · /t row window · ctrl-t todos · ctrl-g subagents · ctrl-r reasoning · ctrl-j jobs · tab completes /commands · /help"))))
     (if armed
         (list armed (cons (format nil " · ~a" tail) '(:dim t)))
         (list (cons tail '(:dim t))))))

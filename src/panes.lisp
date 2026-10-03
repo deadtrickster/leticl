@@ -187,11 +187,11 @@ Second value is the cursor's LINE: two lines per session, after a two-line heade
     ("ctrl-s" . "the session list: type a number or part of a name to switch")
     ("tab" . "complete the /command being typed; more tabs walk the matches")
     ("click" . "in the session list, picks the row under the pointer; enter still switches")
-    ("ctrl-p" . "the todos pane: the model's plan, and the repo's TODO.md — ↑↓ moves, enter or tab unfolds, space marks, i composes a prompt from a subtree, h hides the done ones, pgup/pgdn scrolls")
+    ("ctrl-t" . "the todos pane: the model's plan, and the repo's TODO.md — ↑↓ moves, enter or tab unfolds, space marks, i composes a prompt from a subtree, h hides the done ones, pgup/pgdn scrolls")
     ("/new [title]" . "start a session in this daemon and go there")
     ("/switch WHAT" . "go to a session by number, id or part of its name")
-    ("ctrl-r" . "fold or unfold the model's thinking")
-    ("/t" . "unfold every long row: tool output, and a queued echo. ctrl-t opens ONE row's window instead")
+    ("ctrl-r" . "fold or unfold the model's reasoning")
+    ("/t" . "open a window on ONE row: the newest long result, or the run at the reading rung — the same verb folds it back")
     ("/notes" . "the disclosures this head has shown; /notes dismiss [N|all] retires one or every one, /notes restore brings them back")
     ("ctrl-n" . "retire every note this head holds — the same as /notes dismiss all. /notes still lists them and /status still counts them")
     ("ctrl-x" . "show the raw <function=…> text of tool calls, as the model wrote it")
@@ -480,7 +480,7 @@ row's label."
          (dir (daemon-config-dir)))
     (append
      (loop for key in *head-setting-rows*
-           for label in '("diff view" "verbosity" "thinking" "tool output" "raw tool calls"
+           for label in '("diff view" "verbosity" "reasoning" "tool output" "raw tool calls"
                           "marker seam")
            collect (list :section "head — this window"
                          :key label
@@ -528,7 +528,7 @@ row's label."
     ▸ ✎ diff view        split
            from /home/dead/.config/leticl/head.toml
       ✎ verbosity        reading
-      ✎ thinking         folded
+      ✎ reasoning        folded
       ✎ tool output      open
       ✎ raw tool calls   hidden
     <blank>

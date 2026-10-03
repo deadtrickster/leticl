@@ -1349,6 +1349,33 @@ one line long, and leaves the fold with no view rather than inventing one."
    (let ((id (newest-payload-item-id session)))
      (and id (cons id 0)))))
 
+(defun %row-window (head)
+  "**THE PER-ROW WINDOW, AND ITS ONLY DOOR IS `/t`.** Moved here from the `ctrl-t` arm when the
+chord was rebound to the todos pane; the logic is unchanged, and it is one function because a
+window is one thing.
+
+The ORDER is the whole of it, and each clause has a reason:
+
+  · an OPEN run closes first, so the same verb folds back what it opened;
+  · at the `:reading` rung it acts on the RUN MARKER rather than on a long row, because at that rung
+    the long rows it would otherwise open ARE the run — a hidden tool result draws no per-row seam
+    at all — and the marker's own seam says `ctrl-t opens it`;
+  · an open payload window closes next;
+  · and only then does it seed one on the newest long result (`payload-view-seed`), which is the row
+    a reader is looking at.
+
+**What it does NOT do is unfold the conversation.** That is the `tools` row in `/config`, and it is
+where the operator always wanted it: *\"what surprised them was that ctrl-t triggered the wall AT
+ALL.\"* A verb that opens ONE row's window and a verb that opens every row are different acts, and
+the wall has a setting rather than a key."
+  (cond
+    (*hidden-run-open* (%set-hidden-run-open nil))
+    ((reading-p)
+     (let ((id (newest-hidden-run-id (head-session head))))
+       (when id (%set-hidden-run-open id))))
+    ((payload-view-open-p) (payload-view-close))
+    (t (payload-view-seed (head-session head)))))
+
 (defparameter +call-origin-cols+ 32
   "How many columns of an actor's identity a row will carry.
 
@@ -1634,8 +1661,8 @@ lines]` is one rung's word beside another's, and the operator's ladder is about 
 about the clauses in it.")
 
 (defparameter +hidden-run-seam-rungs+
-  (vector (cons " · ctrl-t opens it" " · /verbosity")
-          (cons " · ctrl-t" " · /verbosity")
+  (vector (cons " · /t opens it" " · /verbosity")
+          (cons " · /t" " · /verbosity")
           (cons "" ""))
   "The seam, most-spelled first: the whole chord, the chord alone, nothing.
 
@@ -2416,11 +2443,15 @@ header, also printed `· 1 line` — a count for a fold with nothing to fold."
                                          ;; window's own
                                          (window "↓ pages down · esc closes")
                                          ;; **the chord, on the row it acts on**, and the verb
-                                         ;; everywhere else (R40). `ctrl-t` opens the window on
-                                         ;; the newest long result; `/t` unfolds every tool row,
-                                         ;; after which this row's own window can be paged.
-                                         ((newest-payload-row-p item) "ctrl-t opens it")
-                                         (t "/t unfolds it")))
+                                         ;; everywhere else. **The newest long row names the verb
+                                         ;; that acts on it; every other row names the setting that
+                                         ;; unfolds the wall** — `/t` opens ONE row's window now, and
+                                         ;; the conversation-wide unfold is `/config`'s `tools` row.
+                                         ((newest-payload-row-p item) "/t opens it")
+                                         ;; **the WALL's home, not a key** — every other long row is
+                                         ;; unfolded by the `tools` row in `/config` (the setting
+                                         ;; `/t` used to toggle), so that is what the seam names.
+                                         (t "/config unfolds it")))
                                faint))))
             ;; The end of the payload, SAID — so "no more" cannot be confused with
             ;; "the arrow stopped working", which is the other half of a seam's job.

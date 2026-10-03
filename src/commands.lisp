@@ -47,10 +47,12 @@
     ;; would complete to `/think` — a different fold — which is how an alias becomes a trap the
     ;; moment something points at it. `/tools` is the daemon's listing verb and is not this
     ;; head's to describe.
-    ;; **`/t` is the ONLY spelling of the conversation-wide unfold** (R40): `ctrl-t` opens a
-    ;; window on one row, `/t` unfolds every tool row and a queued echo. The row used to say
-    ;; *ctrl-t is the same fold*, which stopped being true when the chord was narrowed.
-    ("t" . "unfold every long row: tool output, and a queued echo (ctrl-t opens one row's window)")
+    ;; **`/t` IS THE PER-ROW WINDOW, AND THE ONLY DOOR TO ONE.** It was `ctrl-t`'s job until the
+    ;; chord was rebound to the todos pane; the logic is `%row-window`, unchanged. The
+    ;; conversation-wide unfold — every long row at once, the wall — is the `tools` row in
+    ;; `/config` and has no verb: the operator's own report is that a per-row seam cannot honestly
+    ;; name a key that opens every row.
+    ("t" . "open a window on ONE row: the newest long result, or the run at the reading rung — the same verb folds it back")
     ("think" . "fold or unfold the model's reasoning")
     ;; **R38: it is a PICKER, and the row must say so.** This said *"cycle the event-stream detail"*
     ;; — true until R38 and false after it, and it is the row a reader reads while typing `/v`. A
@@ -292,18 +294,14 @@ on ClientFrame::Slash)."
        (%notes head verb rest))
       ((member verb '("think" "r") :test #'string=)
        (%flip-fold head :show-reasoning))
-      ;; **`/t` IS THE *UNFOLD THE LONG ROWS* VERB, and that is now more than tool output.**
-      ;; It folds the tool rows AND opens a queued echo (R33) — one key for one idea: the echo
-      ;; is drawn as one elided headline whose seam reads *"/t opens it"*, and a second fold
-      ;; chord for a second kind of row would be a second thing to learn. The operator's words
-      ;; were *"expandable the usual way"*, so the seam names the key they already have.
-      ;; letibot ruled the same (`app.rs:6194-6203`).
-      ;;
-      ;; `/tools` is the DAEMON's listing verb and NOT a spelling of this fold: the reference
-      ;; moved it off the fold (*"i think i want it to show me currently seated tools"*), and
-      ;; the listing comes back on the session log. This head has no arm for it, so it travels.
+      ;; **THE PER-ROW WINDOW, moved off the chord onto the verb when the chord became the todos
+      ;; pane.** `/t` used to be *unfold the long rows* — the wall, every tool row and a queued echo
+      ;; at once — and that is now the `tools` row in `/config`, a setting rather than a verb: the
+      ;; seam under a long row names a key that acts on THAT row, and the operator's report on the
+      ;; wall was that a per-row seam cannot honestly name a key that opens every row. What `/t`
+      ;; keeps is the one thing a seam can name: a window on ONE row, folded back by the same verb.
       ((string= verb "t")
-       (%flip-fold head :show-tools))
+       (%row-window head))
       ;; **R38: A SETTING WITH MORE THAN TWO VALUES IS CHOSEN, NOT CYCLED.**
       ;;
       ;; `/verbosity` used to cycle, and with R37's fourth rung the reader who wanted one of the
