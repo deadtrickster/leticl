@@ -1125,21 +1125,26 @@ two sides in circles."
      ;; `config-change` says what each kind of row does on Enter.
      (config-change head))
     (:subagents
-     ;; **ENTER ATTACHES TO IT.** This read *"read that subagent's scrollback without moving this
-     ;; session there"*, and the operator's correction says the opposite is true of the relationship:
-     ;; *"why readonly? subagent session is more like you driving others via tmux. I already can post
-     ;; to subagent, and agent can talk back and forth too"* — and then, looking at the pane this arm
-     ;; produced: *"look at what the subagent convo rendering - it looks nothing like the normal
-     ;; convo"*. It looks like nothing else in this head because it IS nothing else: a peek draws PLAIN
-     ;; STRINGS through `subagent-out-lines`, while an ATTACH draws the child's conversation with the
-     ;; renderer every other session uses — markdown, the air rule, tool cards, the rung, live.
+     ;; **ENTER READS; `o` ATTACHES.** The two heads agree on this, and the argument is letibot's:
+     ;; *attaching on Enter silently redirects the next prompt to the child, which is exactly the hazard
+     ;; the read exists to avoid* — an operator who pressed the key to LOOK must not find their next
+     ;; message in somebody else's session.
      ;;
-     ;; A child is a session with a hub of its own, so attaching is ordinary rather than special, and
-     ;; `%subagent-switch` already does it — with the refusals a still-opening child needs, which is why
-     ;; this is the same function `o` calls rather than a second spelling of it. `/peek` stays the
-     ;; read-without-leaving: a real convenience, and letibot's judgement whether it still earns its
-     ;; place now that the picker lists children.
-     (%subagent-switch head))
+     ;; **And reading is no longer a lesser view**, which is what changed today: the peek asks for
+     ;; `PeekShape::Rows`, so it draws the child with the renderer every other session uses, and
+     ;; `tick-peek` re-reads it once a second — a live tail, looking exactly like a conversation, which
+     ;; is the operator's own ask (*"i want it to tail as a normal conversation while i look at it"*).
+     ;; It cost one field on the frame, and it buys the key that cannot misfire a prompt.
+     ;;
+     ;; A child still `opening` has nothing to read and the daemon would refuse the peek by name, so
+     ;; the refusal is said here rather than bounced through the daemon (app.rs:3678-3689).
+     (let ((row (nth (head-picker-sel head) (subagent-rows head))))
+       (cond ((null row) nil)
+             ((equal (getf row :state) "opening")
+              (say head "that subagent is still opening — nothing to read yet"))
+             (t (awhen (getf row :session-id)
+                  (%send head (make-peek it))
+                  (say head (format nil "reading ~a…" it)))))))
     (:peek
      ;; The pane's hint bar says *"enter re-reads"* and it did not: `:peek` was
      ;; not in this case at all. A running subagent has new output, which is the

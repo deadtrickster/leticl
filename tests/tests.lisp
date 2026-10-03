@@ -12074,21 +12074,25 @@ the daemon refused it by name (app.rs:3660-3709)."
           (head-mode h) :subagents)
     (leticl::%handle-key h (list :type :enter))
     (is (null (%sent wire)) "enter on one still opening sends nothing")
-    ;; **AND ON A CHILD THAT IS RUNNING, ENTER ATTACHES** — the operator's third ask, and the answer to
-    ;; *"look at what the subagent convo rendering - it looks nothing like the normal convo"*. A peek
-    ;; draws PLAIN STRINGS by construction (`subagent-out-lines`); an ATTACH draws the conversation with
-    ;; the renderer every other session uses, which is the only way the two can look alike.
+    (is (search "still opening" (head-status-note h))
+        "and the refusal is SAID here rather than bounced through the daemon — asserted before the\n next case, because a status note is the LATEST thing said and the running case below says its own")
+    ;; **AND ON A CHILD THAT IS RUNNING, ENTER READS IT — a live, real-rendered tail.** The two heads
+    ;; agree that Enter READS and a neighbour ATTACHES, because attaching on Enter silently redirects
+    ;; the next prompt to the child; and the read is no longer the lesser view: it asks for
+    ;; `PeekShape::Rows`, so it draws with the renderer every session uses, and `tick-peek` re-reads it
+    ;; once a second.
     (setf (session-subagents (head-session h))
           (list (list :subagent-id "s-run" :state "running" :prompt "a task" :role "worker"))
           (head-picker-sel h) 0
           (head-mode h) :subagents)
     (leticl::%handle-key h (list :type :enter))
     (let ((sent (%sent wire)))
-      (is (equal "switch" (getf (first sent) :frame))
-          (format nil "**enter attaches to the subagent** — the act `o` performs, and the one that gets a
- real conversation rather than a plain-string rendering of one: ~s" sent))
-      (is (equal "s-run" (getf (first sent) :session-id)) "to that subagent's own session id"))
-    (is (search "still opening" (head-status-note h)) "and says which silence it is")))
+      (is (equal "peek" (getf (first sent) :frame))
+          (format nil "**enter READS the subagent** — the key pressed to LOOK must not put the next
+ prompt in somebody else's session: ~s" sent))
+      (is (equal "Rows" (getf (first sent) :shape))
+          "and reads it as ROWS, which is what makes the read draw like a conversation")
+      (is (equal "s-run" (getf (first sent) :session-id)) "from that subagent's own session id"))))
 
 ;;; ----------------------------------------- the job-output overlay (R21) ;;;
 ;;;
