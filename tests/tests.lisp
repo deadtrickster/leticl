@@ -17427,6 +17427,130 @@ length. A version that truncated the sentence instead would pass a *fits* test a
         (is (<= (string-width wide) 120)
             (format nil "**and so does the wide one**: ~a columns of 120" (string-width wide)))))))
 
+(defun %prompt-flash-head (reasoning)
+  "The operator's own screen: their prompt, a settled turn's run, their NEXT prompt — and then a
+turn whose reasoning is still streaming.
+
+**The newest row is the operator's message and it stays that way while the model thinks**, which
+is the state the screen was in when they reported *\"your own stats flashes after my prompt.\"* A
+round's reasoning and its results are hidden at this rung, and the row that replaces them lands
+when the ROUND ends — so for the whole first round there is no visible row newer than theirs."
+  (let ((h (%on-head :cols 100 :rows 40)))
+    (setf (head-connected h) t)
+    (setf (session-items (head-session h))
+          (coerce
+           (append
+            (list (list :item-id "u1" :kind "user" :ts 0
+                        :item (list :type "user" :parts (list (list :text "first prompt")))))
+            (loop for i from 1 to 3
+                  append (list
+                          (list :item-id (format nil "t~d" i) :kind "tool_result" :ts 0
+                                :item (list :type "tool_result" :call-id (format nil "c~d" i)
+                                            :name "bash" :verb "ran"
+                                            :subject (format nil "\"cmd ~d\"" i)
+                                            :outcome (list :outcome "ok") :payload "PAYLOAD"))
+                          (list :item-id (format nil "r~d" i) :kind "reasoning" :ts 0
+                                :item (list :type "reasoning"
+                                            :text (format nil "thought ~d" i)))))
+            (list (list :item-id "u2" :kind "user" :ts 0
+                        :item (list :type "user"
+                                    :parts (list (list :text "your own stats flashes after my prompt"))))))
+           'vector))
+    (setf (session-turn (head-session h))
+          (list :turn-id "t1" :model "m" :state (list :state "running")
+                :text "" :calls nil :reasoning reasoning))
+    h))
+
+(def-test the-live-counts-stand-alone-rather-than-flashing-after-a-prompt (:suite leticl)
+  "**The operator: *\"your own stats flashes after my prompt.\"***
+
+The block after their message came and went, and the cause was the ONE road the counts had onto the
+screen: the walk handed the live work to whatever row the reader could see newest — `glue`'s second
+clause was `(or live-here (%run-continues-prose-p item))` — and when that row is THEIR OWN MESSAGE
+the join cannot be made, because a user row is drawn as a bar padded to the frame's own width
+(MEASURED here: 100 columns of 100, the timestamp right-aligned at its edge). So
+`%marker-onto-last-line` came back with the row unchanged, `glue` had already been decided, the
+walk's standalone branch was skipped, and **the counts were drawn NOWHERE**.
+
+What the operator saw is the alternation around that: a row that can take the counts (a note, a
+narration) puts them back, a round's hidden rows take them away again, and the block blinks. The
+fix is not a cache rule and not a colour — it is letibot's own rule, which this head already states
+in `%run-continues-prose-p`: **only the model's own prose carries a run's counts**, and a row that
+cannot take them does not try. The marker stands on its own line, which is what a run with no
+sentence above it has always done.
+
+Four claims, and each catches a different regression:
+
+  1. their own sentence does NOT carry the counts, and the counts are on a line of their own below
+     it — the shape they asked for (*\"add an empty line between them\"*);
+     **AND THIS IS THE CLAIM THE PRE-FIX CODE FAILS** — there the marker was built against their
+     padded row, the join was refused, and the counts were drawn nowhere at all. Claim 2 below is
+     what a fix that answered this by REFUSING the join would still fail: both frames empty, and
+     the comparison passing vacuously.
+  2. **the same rows whatever state the walk is in**: a frame where the counts moved (a MISS) and
+     the very next frame, where nothing moved (a HIT), draw the same screen. A version that draws
+them from one and drops them from the other is the flash;
+  3. and the number is the ONLY thing that moves — one line more of thinking changes the count and
+     nothing else, at the same row;
+  4. and the reason is measurable rather than asserted: their row has no room to give."
+  (let ((leticl::*verbosity* :reading) (leticl::*scroll-anchor* nil)
+        (leticl::*hist-cache* nil) (leticl::*live-counts-seen* nil)
+        (leticl::*hidden-run-open* nil) (leticl::*marker-seam* nil)
+        (leticl::*hist-generation* 0)
+        (h (%prompt-flash-head "one line of thinking")))
+    (flet ((rows ()
+             (mapcar (lambda (l) (if (consp l) (format nil "~{~a~}" (mapcar #'car l)) ""))
+                     (leticl::%viewport-lines h (head-cols h) 30)))
+           (reasoning (text)
+             (setf (getf (session-turn (head-session h)) :reasoning) text)))
+      (let* ((miss (rows))
+             ;; nothing about the turn has moved — not the reasoning, not a call, not a row — so
+             ;; this frame is served from the history cache, which is the frame the block used to
+             ;; vanish on
+             (hit (rows))
+             (moved (progn (reasoning (format nil "one line of thinking~%and a second one"))
+                           (rows)))
+             (their (position-if (lambda (s) (search "flashes after my prompt" s)) miss))
+             ;; **THE LIVE MARKER IS THE LAST ONE ON THE SCREEN** — the newest run's, after theirs.
+             ;; A settled run's marker is above it (`[3 tool calls, 3 thinking lines]`, the previous
+             ;; turn's), and both carry the words, so this asks for the counts' own text.
+             (at (position "[1 thinking line]" miss :test #'string=)))
+        ;; --- 1. their sentence, and the counts on a line of their own
+        ;;
+        ;; **THIS IS THE ASSERTION THE OLD CODE FAILS**, and it is first because everything
+        ;; below it is a comparison of screens that a frame with no marker satisfies
+        ;; vacuously: on the build this was written against, the counts rode their padded
+        ;; row, the join was refused, and `at` was NIL.
+        (is (and their at)
+            (format nil "**the live counts are drawn, on a line of their own** — not dropped into\n the operator's row: ~s" miss))
+        (is (and their (not (search "[" (nth their miss))))
+            (format nil "**and they do not glue to the operator's own sentence**: ~s"
+                    (if their (nth their miss) miss)))
+        (is (and their at (< their at))
+            "and they are a line of their OWN, below it")
+        (when (and their at)
+          ;; --- 2. THE FLASH: the same screen from a MISS and from the frame after it
+          (is (equal miss hit)
+              (format nil "**AND THE FRAME DOES NOT DEPEND ON WHICH WALK DREW IT.** These are the same
+ counts in the same place whether the walk rebuilt them (the counts moved) or served them from the
+ cache (they did not) — the alternation between the two is the flash: ~s vs ~s" miss hit))
+          ;; --- 3. the number is the only thing that moves
+          (is (equal (mapcar (lambda (s)
+                              (if (string= s "[1 thinking line]") "[2 thinking lines]" s))
+                            miss)
+                     moved)
+              (format nil "**one line more of thinking changes the NUMBER and nothing else** — same
+ rows, same place: ~s" moved)))
+        ;; --- 4. and the row that could not take them, measured
+        (is (= (head-cols h)
+               (string-width
+                (format nil "~{~a~}"
+                        (mapcar #'car
+                                (car (last (leticl::item-lines
+                                            (aref (session-items (head-session h)) 7)
+                                            (head-cols h) nil)))))))
+            "**their row has no room to give** — it is drawn padded to the frame's own width, so\n the join onto it can never be made and the marker has to stand alone")))))
+
 (def-test the-reading-rung-names-itself-on-a-row-that-does-not-expire (:suite leticl)
   "**R37: *the head says which state it is in* — and that is what makes hiding safe here, where
 an elision would need a disclosure per hidden row.**

@@ -1901,6 +1901,27 @@ When the run settles, the counts go back to the prose's own register with it."
 (defun %marker-onto-last-line (il items cols &optional newest live rising)
   "IL with the run's marker **appended to its last line**, split by ONE SPACE.
 
+**AND A SECOND VALUE SAYING WHETHER THE JOIN HAPPENED** — `T` when IL comes back with the counts on
+its last line, `NIL` when the join was refused. The caller has to be able to tell the two apart,
+because a refused join used to come back as IL and nothing else, and the counts were then drawn
+NOWHERE: `glue` had already been decided, so the walk skipped its own standalone branch and the
+marker was gone with no seam and no error.
+
+letibot answers the same question in one `match`, and this is that shape — the joined line is
+`Some(line)` only when the sentence's last line has room for it and the row is one the counts may
+continue, and `None` in every other case, which is the marker *drawn as a row of its own*:
+
+    let joined = … .filter(|l| visible_width(l) <= cfg.width);
+    match joined { Some(line) => { …glue… }, None => (RowClass::Activity, vec![painted]) }
+
+Their reason is this one, verbatim: *counts with no sentence are still the fact, and a marker
+clipped to fit would lose them.*
+
+**What NIL costs and what it buys.** Nothing of the marker is drawn here — IL comes back untouched —
+and the caller stands the marker on its own line instead, with the blank prose gets. So the counts
+may cost a row there, and that is deliberate: the alternative on the screen is not *no extra row*
+but *no counts*, and a dropped count is a marker that did nothing.
+
 **The space is the join, and it is what makes the counts read as part of the sentence.** letibot
 writes `format!(\"{} {}\", prose, marker)`; the operator's screen without it read
 `…commits.[3 tool calls, 7 thinking lines]` — *\"you miss spaces between [] and the sentence\"* —
@@ -1931,6 +1952,13 @@ line, and that is a line that was already full of the sentence."
   (let* ((last (car (last il)))
          (used (loop for seg in last sum (string-width (car seg))))
          ;; what is left of the line once the sentence and its one joining space are in
+         ;;
+         ;; **AND FOR A ROW THAT FILLS THE FRAME THIS IS NOT A ROOM AT ALL.** `room` is negative,
+         ;; `hidden-run-marker` is never asked, and the counts have nowhere to go. A user row is
+         ;; always this case: it is drawn as a bar padded to the frame's own width with the
+         ;; timestamp right-aligned at its edge — MEASURED, 172 columns of 172 on the operator's
+         ;; terminal — so work in flight rides a row with no columns left. The caller stands the
+         ;; marker on its own line there now, rather than dropping it (R37's flash).
          (room (- cols used 1))
          (marker (if (plusp room)
                      (hidden-run-marker items cols newest live (max 4 room) rising)
@@ -1948,11 +1976,15 @@ line, and that is a line that was already full of the sentence."
         ;; newest row while a turn runs, the assistant row once it lands). Whichever of the
         ;; two happened to land on a full line took this branch, so one frame had a line the
         ;; other did not -- intermittent, decided by line width, which is why turns held and
-        ;; then one moved. Returning IL keeps the prose and adds no row in either state, so
-        ;; the height is the same whether or not the marker fitted. A dropped count in the
-        ;; full-line case is a marker that did nothing, which is the rule at the end of the
-        ;; ladder too; a dropped SENTENCE is not.
-        il
+        ;; then one moved.
+        ;;
+        ;; **AND IT NO LONGER ENDS HERE.** This branch returns IL and a SECOND VALUE of NIL, which
+        ;; is the walk's signal to stand the marker on its own line instead of dropping the counts.
+        ;; Leaving the counts out was the one answer the operator's own screen refused: the block
+        ;; after their prompt came and went, because whether the counts had anywhere to go depended
+        ;; on which row they happened to ride — see `%history-until`'s glue. A dropped SENTENCE is
+        ;; still not acceptable; a vanished COUNT no longer is either.
+        (values il nil)
         (let ((out (append (butlast il)
                 (wrap-segments (append last (list (cons " " nil)) marker) (max 20 cols)))))
         ;; **AND THE MARKER MAY NEVER ADD A ROW** — the operator's ruling is that the number
@@ -1963,10 +1995,11 @@ line, and that is a line that was already full of the sentence."
         ;; of a turn, because the count grows as the work does: `[1 tool call, 88 thinking lines]` is at
         ;; its longest exactly when the settle finalises it, and the ladder that steps `tool calls`
         ;; down to `t` cannot help once four columns are handed out to a line with none. So if the
-        ;; fitted result is taller than the prose alone, the marker is dropped and the prose stands —
-        ;; the same choice as the no-room branch above, and for the same reason: a dropped COUNT is a
-        ;; marker that did nothing, a moved screen is the defect this path exists to stop.
-        (if (> (length out) (length il)) il out)))))
+        ;; fitted result is taller than the prose alone, the join is REFUSED — and the second value
+        ;; says so, which is the walk's cue to stand the marker on a line of its own. What is refused
+        ;; is the row growing by a WRAP of its own sentence; a refused join that quietly lost the
+        ;; counts is the defect this value exists to end.
+        (if (> (length out) (length il)) (values il nil) (values out t))))))
 
 (defun hidden-run-lines (items cols)
   "The ROWS a run stands for, for when it is OPEN — the rung lifted for these rows and no others.

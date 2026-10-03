@@ -696,10 +696,31 @@ thirty rows appended, and the view jumped to `row-62`."
                            ;; final): only an assistant row with visible text takes them. See
                            ;; `%run-continues-prose-p` for the screen that named the rule.
                            ;;
-                           ;; **AND LIVE WORK CARRIES THE SAME MARKER ON THE SAME ROW.** This is the
-                           ;; newest row the reader can see (`live-pending`, taken once), which is
-                           ;; exactly the row a live marker belongs to: the narration the model just
-                           ;; wrote, with the call it is running for hanging off the end of it.
+                           ;; **AND LIVE WORK CARRIES THE SAME MARKER ON THE SAME ROW — WHEN THAT
+                           ;; ROW IS ONE THE COUNTS MAY CONTINUE.** The row live work rides on is the
+                           ;; newest row the reader can see (`live-pending`, taken once), and when that
+                           ;; row is the narration the model just wrote, the call it is running for hangs
+                           ;; off the end of it — the shape the operator asked for.
+                           ;;
+                           ;; **BUT NOT WHEN IT IS THEIR OWN MESSAGE, AND THAT IS WHAT `live-here` USED
+                           ;; TO FORCE.** The second clause was `(or live-here (%run-continues-prose-p
+                           ;; item))`, so ONE FRAME WITH WORK IN FLIGHT made any row the counts' carrier —
+                           ;; including the operator's own message, which is drawn as a bar padded to the
+                           ;; frame's width (MEASURED: 172 columns of 172 at their terminal, the
+                           ;; timestamp right-aligned at its edge). The join is then refused, because
+                           ;; there is no room on a full line, and `%marker-onto-last-line` came back
+                           ;; with the row unchanged — while `glue` was already true, so the standalone
+                           ;; branch below was skipped and the counts were drawn NOWHERE.
+                           ;;
+                           ;; The screen the operator watched, and the words that name this defect:
+                           ;; *"your own stats flashes after my prompt."* The block came and went
+                           ;; because the carrier row changes as work lands — their message, which
+                           ;; cannot take the counts, then a note or a narration, which can. So the join
+                           ;; asks ONE question now, the same one the marker's own rule has always asked
+                           ;; (`%run-continues-prose-p`: *only the MODEL's own prose carries a run's
+                           ;; counts*), and a row that cannot take the counts does not try: the marker
+                           ;; stands on its own line, which is what a run with no sentence above it has
+                           ;; always done.
                            ;; **AND THE MARKER'S ROW DOES NOT DEPEND ON THE CACHE.** This was
                            ;; `(and live-pending live)`, and `live-pending` is `(and live (not cached) t)` --
                            ;; deliberately nil on a HIT, so that a hit does not re-arm the live counts onto a row
@@ -719,7 +740,7 @@ thirty rows appended, and the view jumped to `row-62`."
           (live-here (and live-pending live))
                            (glue (and (not open)
                                       (or run live-here)
-                                      (or live-here (%run-continues-prose-p item))))
+                                      (%run-continues-prose-p item)))
                            (marker-items (or run nil))
                            ;; **IS THIS MARKER'S NUMBER STILL GOING UP?** — the colour's question, and it is NOT
                            ;; *is the turn running*: the walk draws a marker for EVERY run in the transcript, so
@@ -749,11 +770,20 @@ thirty rows appended, and the view jumped to `row-62`."
                            ;; must. Every line above it is untouched, which is also why nothing jumps:
                            ;; an earlier line cannot be affected by a marker that lives on the last
                            ;; one.
-                           (il (if glue
-                                   (%marker-onto-last-line
-                                    (item-lines item cols (head-prefs head))
-                                    marker-items cols (and marker-items newest) live-here rising)
-                                   il)))
+                           ;; **TWO ANSWERS, BECAUSE THE TWO REFUSALS ARE DIFFERENT.** `glue` nil means
+                           ;; *this row was never the counts' to carry*; `glued` nil with `glue` true
+                           ;; means *it was, and the sentence's last line had no room* — and the second
+                           ;; falls to the standalone branch rather than losing the counts. letibot's own
+                           ;; shape: `match joined { Some(line) => …, None => (Activity, vec![painted]) }`
+                           ;; — *counts with no sentence are still the fact.*
+                           (joined (if glue
+                                       (multiple-value-list
+                                        (%marker-onto-last-line
+                                         (item-lines item cols (head-prefs head))
+                                         marker-items cols (and marker-items newest) live-here rising))
+                                       (list il nil)))
+                           (il (first joined))
+                           (glued (second joined)))
                       ;; **an OPEN run draws its rows between this row and the newer one** — this
                       ;; row is prepended after them, so they land in the gap the counts would have
                       ;; filled. They are real lines now, and the anchor may name them.
@@ -799,7 +829,7 @@ thirty rows appended, and the view jumped to `row-62`."
                       ;; time. **And the guard for it is now STRUCTURAL**, because the string-anchored
                       ;; version forbade a SPELLING — `(hidden-run-marker run cols newest nil nil
                       ;; busy)` — and this is the same bug, written another way.
-                      (when (and (or run live-here) (not open) (not glue))
+                      (when (and (or run live-here) (not open) (or (not glue) (not glued)))
                         (let* (;; **THE BLANK ABOVE IS THE AIR RULE'S, and this must not add a
                                ;; second one.** The walk prepends OLDER rows, so at this moment the
                                ;; row that will sit above the marker has not been seen yet — a blank
