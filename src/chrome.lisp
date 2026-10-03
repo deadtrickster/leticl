@@ -189,6 +189,20 @@ going to draw."
 ;;; for ever in exchange for being noticed once. The alarm line below carries
 ;;; the rest.
 
+(defvar *lf-note-said* nil
+  "Has the head already explained that LF is `ctrl-j` now — said ONCE, and for a reason.
+
+**The bytes cannot be told apart, so the SITUATION is what gets read.** `keys.lisp` no longer
+collapses LF onto Enter (the operator freed it for the jobs pane), which means a terminal path that
+delivers a bare LF for Return now opens the jobs pane where the reader meant to submit. There is no
+way to distinguish that from a reader pressing Ctrl-J on purpose — they are the same byte — but there
+IS a way to notice the moment it matters: LF arriving while the composer HOLDS TEXT is a submit that
+did not happen far more often than it is somebody checking jobs mid-sentence. So the head says so,
+once, in its own voice. A mystery turned into a message, the same move `no-daemon` and the
+host-library refusal make: the reading that could be wrong is at least on the screen where the
+reader can correct it. A `defvar` because it is running state, and ONE flag for the life of the
+process because a note that repeats is a note nobody reads (R29).")
+
 (defvar *alarms-acked* nil
   "`(LABEL . VALUE)` for every counter the reader has ACKNOWLEDGED at that value.
 
@@ -990,14 +1004,16 @@ is worse than no hint at all."
                  ;;     spelling of one pane is a key to learn for nothing), and `ctrl-r` says
                  ;;     *reasoning* where it said *thinking*.
                  ;;
-                 ;; **`ctrl-j` FOR THE JOBS PANE IS NOT POSSIBLE HERE, and the bar does not
-                 ;; pretend otherwise.** `keys.lisp:234-235` maps BOTH `#\return` and `#\newline`
-                 ;; to `:enter`, and a terminal sends Ctrl-J as 0x0A — LF, the same byte — so the
-                 ;; key can never reach a `:ctrl` arm. Binding it would advertise a key that does
-                 ;; nothing, which is what R29 forbids on a seam and is no better on the bar.
-                 ;; letibot reached the same conclusion for its own chord (its note on why jobs is
-                 ;; `ctrl-q` there); the operator's `ctrl-j` is waiting on a ruling about the
-                 ;; decoder, not on this file.
+                 ;; **`ctrl-j` IS THE JOBS PANE — THE OPERATOR RULED, AND THE DECODER FOLLOWED.**
+                 ;; The bar said this was impossible for one round, on `keys.lisp`'s own line mapping
+                 ;; BOTH `#\return` and `#\newline` to `:enter`. That line is gone: Enter arrives as
+                 ;; CR (0x0D, and `cfmakeraw` clears `ICRNL` so nothing translates it) while Ctrl+J
+                 ;; arrives as LF (0x0A), so the two were always different bytes on the wire and
+                 ;; collapsing them was a decoder choice rather than a terminal constraint. `h`, `i`
+                 ;; and `m` do stay unavailable — those three ARE their control bytes, which is
+                 ;; physics — and `j` was only ever in that list because of the deleted line.
+                 ;; The risk is in `keys.lisp` rather than here: a terminal path that delivers a bare
+                 ;; LF for Return now opens this pane instead of submitting.
                  ;;
                  ;; **The arithmetic, measured rather than asserted**, because R22's own note
                  ;; here is that this bar's placement is a measurement and not a taste:
@@ -1012,7 +1028,7 @@ is worse than no hint at all."
                  ;; at (1,642 times in the operator's own session) rather than only here. `/t`
                  ;; has no other affordance on a 40-column screen, which is why it takes the
                  ;; slot ahead of it.
-                 (t "ctrl-s sessions · ctrl-n notes · /t row window · ctrl-t todos · ctrl-g subagents · ctrl-r reasoning · ctrl-q jobs · tab completes /commands · /help"))))
+                 (t "ctrl-s sessions · ctrl-n notes · /t row window · ctrl-t todos · ctrl-g subagents · ctrl-r reasoning · ctrl-j jobs · tab completes /commands · /help"))))
     (if armed
         (list armed (cons (format nil " · ~a" tail) '(:dim t)))
         (list (cons tail '(:dim t))))))

@@ -971,7 +971,18 @@ Esc was a second thing to remember per pane."
          (%command head "notes dismiss all")
          t)
         ((#\g) (pane :subagents "subagents"))         ; the subagent tree
-        ((#\q) (pane :jobs "jobs"))                   ; the jobs pane
+        ((#\j)
+         ;; **THE JOBS PANE, AND THE ONE THING THAT CAN MAKE THIS KEY AMBIGUOUS — SAID ONCE.**
+         ;; `keys.lisp` frees LF for `ctrl-j` (the operator's ruling); LF is also what a terminal
+         ;; sends for Return on the paths that do not send CR, and those two are the same byte, so
+         ;; an Enter that never submitted and a reader checking jobs look identical here. What is
+         ;; legible is the state rather than the byte: LF arriving with text in the composer. See
+         ;; `*lf-note-said*` for why the head says so exactly once.
+         (when (and (not *lf-note-said*)
+                    (plusp (length (composer-buffer (head-composer head)))))
+           (setf *lf-note-said* t)
+           (say head "that was LF — ctrl-j, the jobs pane. if you meant Enter, this terminal is sending LF for Return; Enter is usually CR (0x0d)"))
+         (pane :jobs "jobs"))
         ((#\x)
          ;; raw `<function=…>` markup, which is NOT a fold: a fold hides
          ;; something the reader knows is there, while this reveals markup the

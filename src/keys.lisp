@@ -232,7 +232,22 @@ decode; a field with no reader is not a placeholder, it is a claim."
             (list :type :kill-word-back))
            (t (list :type :alt :ch next)))))
       ((char= ch #\return) (list :type :enter))
-      ((char= ch #\newline) (list :type :enter))
+      ;; **LF IS NOT ENTER — IT IS `ctrl-j`, AND THE OPERATOR RULED THAT THE JOBS PANE GOES THERE.**
+      ;; This read `((char= ch #\newline) (list :type :enter))`, collapsing LF onto Enter, and that one
+      ;; line was the whole reason `ctrl-j` was unavailable here. A terminal sends Enter as CR (0x0D) —
+      ;; `enter-raw` calls `cfmakeraw`, which clears `ICRNL`, so nothing translates CR into LF — and
+      ;; Ctrl+J as LF (0x0A). **Two different bytes on the wire, and this line was discarding the
+      ;; difference**: a decoder choice, not a terminal constraint. Deleting it lets 0x0A fall through
+      ;; to the `(< (char-code ch) 32)` arm below, which already spells it `(:type :ctrl :ch #\j)` —
+      ;; the information was there and one line threw it away.
+      ;;
+      ;; **`h`, `i` and `m` stay unavailable, and that is PHYSICS RATHER THAN A CHOICE**: Ctrl+H IS
+      ;; 0x08 IS Backspace, Ctrl+I IS 0x09 IS Tab, Ctrl+M IS 0x0D IS Enter — there is nothing to tell
+      ;; apart, because they are not two keys. `j` was in that list only because of the line above.
+      ;;
+      ;; **The risk, stated here rather than discovered later:** anything that delivers a bare LF to
+      ;; mean Return now opens the jobs pane instead of submitting. Raw mode makes that unlikely and
+      ;; it is not forbidden; bracketed paste is decoded separately, so a paste is unaffected.
       ((char= ch #\tab) (list :type :tab))
       ((or (char= ch #\backspace) (char= ch (code-char 127))) (list :type :backspace))
       ((< (char-code ch) 32)
