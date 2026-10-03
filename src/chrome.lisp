@@ -275,6 +275,11 @@ and still in the log, exactly as a retired note is."
                    ;; running and the conversation has the sentence, but a counter
                    ;; that only appears on `/status` is one the operator has to have
                    ;; already suspected.
+                   ;; **`routine` counts the WEATHER the head was told and did not draw** — the
+                   ;; operator's ruling that `model_slow_first_byte` belongs on the `⚠` rather than
+                   ;; in the conversation. A counter rather than a sentence for the reason the other
+                   ;; four are: the edge can afford a word and `/notes` holds the sentence.
+                   (cons "routine" *weather-notes*)
                    (cons "unreadable" *unreadable-total*))))
 
 (defun alarmed-p (head)

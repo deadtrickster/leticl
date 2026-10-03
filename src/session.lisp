@@ -949,6 +949,46 @@ from it rather than the other way round."
           do (setf (getf item :retired)
                    (and (session-retired-p session (getf item :warning)) t))))
 
+(defparameter +weather-warnings+
+  '("model_slow_first_byte" "model_endpoint_retry")
+  "The ROUTINE codes that are WEATHER — noted, pointed at, and never drawn in the conversation.
+
+**The operator's ruling, verbatim:** *\"regarding model_slow_first_byte - it is important diagnostics -
+we have a yellow triangle for that. both heads should not emit it inside conversation\"*. The
+diagnostic is WANTED; its PLACEMENT was wrong. So it is not deleted, not quietened, not made
+conditional — it leaves the transcript, lights the `⚠` (the pointer that already means *the head is
+alive and something was said — look at `/status`*), and `/notes` still lists the sentence in full,
+with `warning-identity` retiring it as before. Nothing is lost but the row.
+
+**AND IT IS A SUBSET OF `+routine-warnings+`, WHICH ALREADY EXISTED.** That list is the REGISTER
+— routine is drawn faint with a middot rather than red with a bang — and this one is the PLACEMENT:
+routine AND not a row. `model_slow_first_byte` has been in the register list since letibot's
+`e54b48a` put it there; what it lacked was somewhere to be that was not the conversation. The
+difference is the one the operator named, and the two lists must stay in that relation: a code in
+this list and not in that one would be a RED warning silenced, which is why
+`every-weather-code-is-a-routine-code` asserts the subset rather than trusting it.
+
+**The rule, because it is what tells the next person which register a NEW code belongs in — and
+because letibot's `Class::Routine` is not the test.** `auto_compact` and `compacted` are routine too,
+and they are things the operator has repeatedly wanted to SEE. The difference is that **a compaction
+changes the conversation and a slow first byte does not**: one is an event in the record, the other is
+a note about the weather. An event is a row; weather is not. Widening this list to *everything
+routine* would take the compactions off the screen, which is why it is a list of codes and not a
+class.
+
+**And the family is *a moment that passed*, not *provider*.** `model_endpoint_retry` is here — the
+endpoint was retried and answered, nothing to do — while `prefix_check_skipped` is deliberately NOT:
+D10 rules that a skipped check is *said, never counted as a pass*, so that one keeps its row. The
+boundary is whether the sentence still needs saying after the moment is over.")
+
+(defvar *weather-notes* 0
+  "How many weather notes this head has kept off the conversation — the counter the `⚠` reads.
+
+A `defvar` and not a session slot, for the reason every counter here is one: a struct change is a
+restart. It is counted rather than merely suppressed so that *\"I chose not to draw this\"* stays
+distinguishable from *\"nothing happened\"* — the division `/status`'s `filtered` counter keeps, and
+the reason this is a pointer at a screen rather than a silence.")
+
 (defparameter +failure-warnings+
   '("auto_compact_failed" "auto_compact_skipped" "auto_compact_no_progress"
     "context_wall" "gate" "gate_timeout" "turn_failed"
@@ -2538,6 +2578,23 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
            ;;    because the record is what `/notes` lists and a snapshot filters it
            ;;    out of its own notes for the same reason (app.rs:2527-2534).
            ((equal (getf w :code) "turn_failed") :quiet)
+           ;; **AND A WEATHER NOTE IS RECORDED, POINTED AT, AND NOT DRAWN.** See
+           ;; `+weather-warnings+` for the rule and for why letibot's `Class::Routine` is not the
+           ;; test — a compaction is routine and stays a row, because it changes the conversation.
+           ;;
+           ;; The RECORD is kept: `/notes` lists the sentence in full and `warning-identity` still
+           ;; retires it, so the diagnostic the operator calls important is one keypress away.
+           ;; What goes is the row, which was landing in the middle of a streaming turn — exactly
+           ;; the region `f3a1152`, `5d0d201`, `58d5ead` and `94895bb` had just made predictable,
+           ;; and the likeliest cause of *"leticl has troubles with thinking lines stat after it."*
+           ;;
+           ;; `:dirty` and not `:quiet`: the `⚠` DOES change on this frame, and calling a frame
+           ;; that gained a mark "filtered" would say nothing happened on a screen that just showed
+           ;; something.
+           ((member (getf w :code) +weather-warnings+ :test #'string=)
+            (push w (session-warnings session))
+            (incf *weather-notes*)
+            :dirty)
            ;; **AND A COMPACTION IS A TOOL CALL** (R24 part one). Filed as a ROW and
            ;; deliberately NOT into `session-warnings`: the requirement is that these
            ;; stop being notes at all, so `/notes` does not list them and `/status`
