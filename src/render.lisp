@@ -444,9 +444,33 @@ while a call runs. Measured on this head at 3,693 items: **2.8 ms per rebuild**,
 while a call is actually running — `%history-until` walks back from the newest row and stops
 when the viewport is full, so the cost is the window and not the session."
   (let ((turn (session-turn (head-session head))))
-    (when (and turn (some (lambda (c)
+    (when (and turn (or (some (lambda (c)
                             (string= (or (getf (getf c :state) :state) "") "running"))
-                          (getf turn :calls)))
+                          (getf turn :calls))
+                        ;; **AND WHILE THE MODEL IS THINKING**, which is the half this gate was
+                        ;; missing and the whole of the randomly-backfilled count.
+                        ;;
+                        ;; The rule above is right: a committed row's text is a function of the
+                        ;; clock, so the key has to carry the clock while such a row can change.
+                        ;; It was applied to CALLS only -- *"a running call is the only case"* --
+                        ;; and a marker carrying `[2 tool calls, 43 thinking lines]` is the second
+                        ;; case, because the number is a function of the reasoning text. With the
+                        ;; gate shut, `%hist-key` did not move while a model thought, so the cache
+                        ;; served the marker with the count it was built with and the number only
+                        ;; changed when SOMETHING ELSE bumped the generation.
+                        ;;
+                        ;; That is exactly the operator's report: *"they backfill randomly at the
+                        ;; latest [ ] stats block"* -- random, because the fill was not on a clock
+                        ;; at all, it was whenever an unrelated invalidation happened to land.
+                        ;; letibot's comment says the same thing from the other side: the number is
+                        ;; backfilled, and what fills it is the arrival of a ROW.
+                        ;;
+                        ;; Still the TICK and not the counts. Keying on the counts was tried and is
+                        ;; recorded as wrong one screen up: a committed row draws a live duration,
+                        ;; so a key that does not move with the clock freezes that timer. The counts
+                        ;; are what the tick's own VALUE is for; this only says WHEN to keep it
+                        ;; fresh, and thinking is such a time.
+                        (plusp (length (or (getf turn :reasoning) "")))))
       (floor (internal-real-time-ms) +live-frame-ms+))))
 
 (defun %hist-key (head cols)
