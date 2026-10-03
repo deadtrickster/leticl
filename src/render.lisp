@@ -420,7 +420,7 @@ fields matter.
 is DRAWN, not what the rows are, and bumping on them would rebuild the history
 every frame and lose the whole point.")
 
-(defun %hist-live-tick (head)
+(defun %hist-live-tick (head cols)
   "A value that changes while a COMMITTED row's content is a function of the CLOCK.
 
 **The cache was the other half of the operator's complaint, and it was the half that made
@@ -444,10 +444,32 @@ while a call runs. Measured on this head at 3,693 items: **2.8 ms per rebuild**,
 while a call is actually running — `%history-until` walks back from the newest row and stops
 when the viewport is full, so the cost is the window and not the session."
   (let ((turn (session-turn (head-session head))))
-    (when (and turn (some (lambda (c)
-                            (string= (or (getf (getf c :state) :state) "") "running"))
-                          (getf turn :calls)))
-      (floor (internal-real-time-ms) +live-frame-ms+))))
+    (when turn
+      (or
+       ;; a CALL RUNNING: the clock, because a committed row draws a live duration
+       (when (some (lambda (c)
+                     (string= (or (getf (getf c :state) :state) "") "running"))
+                   (getf turn :calls))
+         (floor (internal-real-time-ms) +live-frame-ms+))
+       ;; **AND THE MODELS THINKING: the LINE COUNT, NOT the clock.** This is the other case where
+       ;; a committed row text is a function of something that is not an event -- a marker reading
+       ;; `[2 tool calls, 43 thinking lines]` is a function of the reasoning text -- and it is the
+       ;; half the gate was missing, so the count sat in the cache until an unrelated invalidation
+       ;; happened to land. The operator: *"they backfill randomly at the latest [ ] stats block"*,
+       ;; and then the control that proved it: *"1 tool call saved it - the stats appeared
+       ;; immediately after the prompt"* -- live while a call ran, backfilled while it thought.
+       ;;
+       ;; **NOT the clock, and that is the whole point of using the count here.** Moving the tick to
+       ;; the clock for this case was tried and reverted: the tick own docstring measures the cliff
+       ;; it creates -- a HIT is 0.2 ms, a MISS is 11-13 ms -- and ten of those a second for the whole
+       ;; of a long think is visibly an animation in the composer. A LINE COUNT changes only when a
+       ;; screen line wraps, which is a handful of times a minute rather than ten times a second, so
+       ;; the count stays live for a fraction of that cost. Keying on counts was recorded as wrong
+       ;; one screen up, and it was: for the CALL case, where the row draws a duration. It is exactly
+       ;; right for this one, where the row draws a number.
+       (let ((r (getf turn :reasoning)))
+         (when (and (stringp r) (plusp (length r)))
+           (reasoning-line-count r (max 20 (- cols (activity-indent cols))))))))))
 
 (defun %hist-key (head cols)
   "Generation, width, the IDENTITY of the items vector, and the live tick.
@@ -488,7 +510,7 @@ changes… the composition of previous conversation can be cached.\"* The walk m
 SETTLED PREFIX plus a rebuilt TIP, with the tick invalidating only the tip. That is a change to
 `%history-until`'s walk, not to this key.\""
   (list *hist-generation* cols (session-items (head-session head))
-        (%hist-live-tick head)))
+        (%hist-live-tick head cols)))
 
 (defun %hist-key= (a b)
   "Two keys equal on the two numbers, the vector's IDENTITY, and the live tick."
