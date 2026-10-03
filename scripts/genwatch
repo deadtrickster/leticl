@@ -1,0 +1,26 @@
+#!/bin/sh
+# genwatch — `*scroll-max*` AND `*hist-generation*` from OUTSIDE, ~6x a second.
+#
+# The dip in `n` is confirmed and bottoms at 2-3 rather than at an intermediate
+# value, which is not a block being swapped for a shorter one. It looks like the
+# history being emptied and refilled. `*hist-generation*` is what empties the
+# cache, so if a settle bumps it and the next frame renders from a cold one, `n`
+# is whatever has been rebuilt so far -- near zero, climbing.
+#
+# This is a GUESS and the log is the test: if the dips coincide with bumps, the
+# defect is a frame drawn from a half-rebuilt cache, not the pin. If the
+# generation is flat across a dip, the guess is dead and the emptying is
+# somewhere else.
+#
+# Reads only; nothing is installed in the head.
+LOG=/tmp/genwatch.log
+: > "$LOG"
+i=0
+while [ "$i" -lt 900 ]; do
+  v=$(scripts/tui-eval --pid 2882193 \
+        '(list leticl::*scroll-max* leticl::*hist-generation*)' 2>/dev/null \
+      | grep '"value"' | sed 's/.*: *//; s/[",]//g')
+  printf '%s %s\n' "$i" "$v" >> "$LOG"
+  i=$((i + 1))
+  sleep 0.1
+done
