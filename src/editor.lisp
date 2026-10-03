@@ -970,7 +970,6 @@ Esc was a second thing to remember per pane."
          ;; presses again to find out.
          (%command head "notes dismiss all")
          t)
-        ((#\p) (pane :todos "todos"))                 ; the todos pane
         ((#\g) (pane :subagents "subagents"))         ; the subagent tree
         ((#\q) (pane :jobs "jobs"))                   ; the jobs pane
         ((#\x)

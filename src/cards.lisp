@@ -2045,7 +2045,7 @@ older than it, which has no sentence to continue and stands on its own line (`%h
      (let ((*verbosity* :terse))
        (loop for item in items
              append (item-lines item cols (head-prefs *hidden-run-head*))))
-     (list (list (cons (format nil "  … ctrl-t folds this back into ~d line~:p" (length items))
+     (list (list (cons (format nil "  … /t folds this back into ~d line~:p" (length items))
                        faint))))))
 
 (defun %set-hidden-run-open (id)
@@ -2395,7 +2395,7 @@ header, also printed `· 1 line` — a count for a fold with nothing to fold."
             (dolist (l (subseq rows 0 keep))
               (emit (cons (cons "  " nil) l)))
             (when (plusp hidden)
-              (emit (list (cons (format nil "  … +~d diff rows · /t unfolds it" hidden)
+              (emit (list (cons (format nil "  … +~d diff rows · /config unfolds it" hidden)
                                 faint)))))
           (return-from %tool-result-lines (nreverse out)))
         ;; Folded shows the first line, which is where a tool puts what it did,
@@ -2460,7 +2460,7 @@ header, also printed `· 1 line` — a count for a fold with nothing to fold."
             ;; the payload was short enough to show whole, but the REASON was
             ;; cut — so the affordance has to be here
             (why-folded
-             (emit (list (cons "  … the rest of the reason · /t unfolds it" faint)))))))
+             (emit (list (cons "  … the rest of the reason · /config unfolds it" faint)))))))
       ;; `item-lines` steps the whole row in by the activity indent
       (nreverse out))))
 
@@ -2758,7 +2758,7 @@ unknown speaker can name itself in the same place."
                      ;; sentence costs sixteen of the reader's columns, and the facts are the
                      ;; content — so the door gives way to `· ctrl-t`, which still names the key.
                      ;; R29 asks that a remedy be visible; it does not ask that it be verbose.
-                     (seam (if (>= head-cols 60) " · ctrl-t opens it" " · ctrl-t"))
+                     (seam (if (>= head-cols 60) " · /t opens it" " · /t"))
                      (named (and item (newest-payload-row-p item) t))
                      (room (if named (max 8 (- head-cols (length seam))) head-cols))
                      ;; **the chord only on the row it acts on** (R40): the window opens on the

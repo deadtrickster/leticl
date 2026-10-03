@@ -986,8 +986,18 @@ is worse than no hint at all."
                  ;;     column 33, inside the first forty columns where a reader looking for a
                  ;;     verb will see it;
                  ;;   · and the two REBINDINGS take their items' slots in place: `ctrl-t` is
-                 ;;     the todos pane where `ctrl-p` was, `ctrl-j` is the jobs pane where
-                 ;;     `ctrl-q` was, and `ctrl-r` says *reasoning* where it said *thinking*.
+                 ;;     the todos pane where `ctrl-p` was (and `ctrl-p` is UNBOUND — a second
+                 ;;     spelling of one pane is a key to learn for nothing), and `ctrl-r` says
+                 ;;     *reasoning* where it said *thinking*.
+                 ;;
+                 ;; **`ctrl-j` FOR THE JOBS PANE IS NOT POSSIBLE HERE, and the bar does not
+                 ;; pretend otherwise.** `keys.lisp:234-235` maps BOTH `#\return` and `#\newline`
+                 ;; to `:enter`, and a terminal sends Ctrl-J as 0x0A — LF, the same byte — so the
+                 ;; key can never reach a `:ctrl` arm. Binding it would advertise a key that does
+                 ;; nothing, which is what R29 forbids on a seam and is no better on the bar.
+                 ;; letibot reached the same conclusion for its own chord (its note on why jobs is
+                 ;; `ctrl-q` there); the operator's `ctrl-j` is waiting on a ruling about the
+                 ;; decoder, not on this file.
                  ;;
                  ;; **The arithmetic, measured rather than asserted**, because R22's own note
                  ;; here is that this bar's placement is a measurement and not a taste:
@@ -1002,7 +1012,7 @@ is worse than no hint at all."
                  ;; at (1,642 times in the operator's own session) rather than only here. `/t`
                  ;; has no other affordance on a 40-column screen, which is why it takes the
                  ;; slot ahead of it.
-                 (t "ctrl-s sessions · ctrl-n notes · /t row window · ctrl-t todos · ctrl-g subagents · ctrl-r reasoning · ctrl-j jobs · tab completes /commands · /help"))))
+                 (t "ctrl-s sessions · ctrl-n notes · /t row window · ctrl-t todos · ctrl-g subagents · ctrl-r reasoning · ctrl-q jobs · tab completes /commands · /help"))))
     (if armed
         (list armed (cons (format nil " · ~a" tail) '(:dim t)))
         (list (cons tail '(:dim t))))))
@@ -1098,8 +1108,14 @@ reference's `turn_status` (app.rs:7501-7566).
 ;;; edges) and this returns the bare line instead when the frame has not got
 ;;; them, so the composer never eats the last row of the transcript.
 
+(defvar *subagents-seen* 0
+  "DELETED — the pointer this counted was reverted. A finish is announced by the DAEMON, as a
+`User { speaker: Agent }` transcript row every head already renders; a head-side pointer beside it
+would be a second announcement of one fact. Kept as a stub only long enough to say so if a running
+image still holds it.")
+
 (defun composer-title (head)
-  "The right-hand label of the box's TOP edge: how many subagents are running.
+  "The right-hand label of the box's TOP edge: how many subagents are RUNNING.
 
 **Not the session title** — I put one there first, guessing from a code comment
 instead of reading the code, and the operator's screen showed a bare `╭───╮` where
@@ -1110,7 +1126,22 @@ Counted from the SUBAGENT events whose latest state for that subagent is
 `running` — `subagent-rows`, the same fold the subagents pane draws, so the edge
 and the pane cannot disagree. It used to fold here by the envelope's `session_id`,
 which is the PARENT's (event.rs:841), so two children of one session counted as
-one."
+one.
+
+**And the count that REACHES zero is NOT announced here, which is a decision rather than a gap.**
+The operator watched it go 1, 0, hidden — *"leticl's sub agents count in the status line went to 0
+and was hidden"* — and the first fix built a pointer here: `N subagent done · ctrl-g`, held until the
+reader opened the pane. **It was reverted, because the announcement belongs one layer down.** The
+daemon wakes the model with a durable `User { speaker: Agent }` transcript row when a child finishes,
+and every head renders that row already; a sentence — or a pointer — from this side would be a
+SECOND announcement of one fact, which is the defect this tree keeps finding under other names (a
+count drawn twice and in the tail, two file lists, a detector and a renderer with nothing between
+them). The crossing from 1 to 0 is a real event and the zero rule three screens up does trade it
+away — but the reader is told by the transcript row that follows, not by a label that lingers.
+
+**What stays is the running half**, unchanged: `N subagents running` while any are, and nothing
+otherwise. If the finish still needs saying on the edge once the wake lands and can be looked at,
+that is a decision to take against a screen, which is the only place it can be taken."
   (let ((running (count "running" (subagent-rows head)
                         :key (lambda (r) (or (getf r :state) "")) :test #'string=)))
     ;; NOTHING is nothing: returning a single space put a stray `╭ ───` on the box
