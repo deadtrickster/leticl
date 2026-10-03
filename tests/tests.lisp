@@ -5224,13 +5224,13 @@ envelope's `session_id`, which is the parent's."
       (is (search "▸ [x] first" (nth 2 text)) "the picked row, its mark by state")
       (is (search "       …11111111 · role worker · done" (nth 3 text)) "the short id, role and state under it")
       (is (search "  [~] second" (nth 4 text)) "the other row"))
-    (is (string= "1 subagent running" (leticl::composer-title h))
-        "and the box's top edge counts the same fold")
-    ;; the legend is the EDGE's to place: `box_edge` frames it and pins it right
-    ;; (app.rs:5384-5411), so the title itself carries no padding of its own
+    ;; **THE COUNT IS ON THE ROW ABOVE THE BOX NOW, BESIDE THE JOBS** — the operator: *"also a funny
+    ;; note - subagents count shown in one place and jobs count in another"*. The top edge answers NIL
+    ;; and the two running counts are one surface (see `composer-title`'s docstring).
+    (is (null (leticl::composer-title h)) "the top edge draws no count any more")
     (let ((edge (lines-text (list (leticl::composer-box-top h 60)))))
-      (is (search "1 subagent running ─╮" (first edge))
-          "and the edge pins it to the RIGHT, framed, not hard against the ╭"))))
+      (is (not (search "subagent running" (format nil "~{~a~}" edge)))
+          "and the box's top edge is bare — the count is on the row above it now, with the jobs\n (see `composer-title`'s docstring and `turn-report-row`, which draws both)"))))
 
 (def-test the-subagent-pane-draws-the-task-in-full-and-follows-the-rung (:suite leticl)
   "**The operator, on the subagents pane, two asks of four:** *\"the first prompt is truncated too

@@ -1218,7 +1218,17 @@ would be a second announcement of one fact. Kept as a stub only long enough to s
 image still holds it.")
 
 (defun composer-title (head)
-  "The right-hand label of the box's TOP edge: how many subagents are RUNNING.
+  "The right-hand label of the box's TOP edge — **which is now NONE, and the count it used to draw is
+on the bottom edge beside the jobs.**
+
+**MOVED 2026-10-04, on the operator's note:** *\"also a funny note - subagents count shown in one place
+and jobs count in another\"*. Two `N running` counts on two edges of one box is the same defect this tree
+keeps finding under other names — a count drawn twice, two file lists, a detector and a renderer with
+nothing between them — and the bottom edge is where that box's live facts already are: the alarm, the
+turn's status and the jobs. One surface for *what is running*.
+
+The history below stands as written: it is the reverted-pointer decision, and it is still the reason no
+announcement of a count reaching zero is drawn on an edge.
 
 **Not the session title** — I put one there first, guessing from a code comment
 instead of reading the code, and the operator's screen showed a bare `╭───╮` where
@@ -1245,14 +1255,11 @@ away — but the reader is told by the transcript row that follows, not by a lab
 **What stays is the running half**, unchanged: `N subagents running` while any are, and nothing
 otherwise. If the finish still needs saying on the edge once the wake lands and can be looked at,
 that is a decision to take against a screen, which is the only place it can be taken."
-  (let ((running (count "running" (subagent-rows head)
-                        :key (lambda (r) (or (getf r :state) "")) :test #'string=)))
-    ;; NOTHING is nothing: returning a single space put a stray `╭ ───` on the box
-    ;; where letibot draws `╭───`. Measured column-by-column against the two
-    ;; screens, which is the only way a one-column difference shows up.
-    (if (plusp running)
-        (format nil "~d subagent~p running" running running)
-        "")))
+  ;; **NOTHING, and that is the point**: the count moved to the bottom edge, beside the jobs. See the
+  ;; docstring — the body that drew it is in `turn-report-row` now, and the reference's arg for the top
+  ;; edge (a `N subagents running` label) is argued against there.
+  (declare (ignore head))
+  nil)
 
 (defun composer-wiring (head &optional (cols 40))
   "The right-hand label of the box's BOTTOM edge: the alarm and the turn's status.
@@ -1436,7 +1443,18 @@ form cannot both be true at once."
     ;; it would move with it. Anchored from the right edge, neither can move the other — which is
     ;; the same reason the spinner is anchored left in the first place.
     (let* ((jobs (running-jobs head))
-           (said (if (plusp jobs) (format nil "~d job~:p running" jobs) ""))
+           ;; **THE SUBAGENT COUNT LIVES HERE, BESIDE THE JOBS.** See `composer-title`: two `N running`
+           ;; counts on two edges of one box is the defect the operator's note names, and this edge is
+           ;; where the box's live facts already are. Counted by `subagent-rows`, the same fold the
+           ;; subagents pane draws, so the edge and the pane cannot disagree — and "nothing is nothing"
+           ;; on both halves.
+           (subagents (count "running" (subagent-rows head)
+                             :key (lambda (r) (or (getf r :state) "")) :test #'string=))
+           (said (format nil "~{~a~^ · ~}"
+                         (remove nil
+                                 (list (and (plusp subagents)
+                                            (format nil "~d subagent~:p running" subagents))
+                                       (and (plusp jobs) (format nil "~d job~:p running" jobs))))))
            (room (- cols (if (plusp (length said)) (1+ (string-width said)) 0)))
            (status (truncate-to-width (or (turn-status head cols) (turn-report-text))
                                       (max 1 room)))
