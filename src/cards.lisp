@@ -1936,7 +1936,23 @@ line, and that is a line that was already full of the sentence."
                      (hidden-run-marker items cols newest live (max 4 room) rising)
                      nil)))
     (if (null marker)
-        (butlast il)
+        ;; **AND THE PROSE KEEPS ITS LAST LINE WHEN THE MARKER WILL NOT FIT.**
+        ;; This returned `(butlast il)` -- the item's lines WITH THE LAST ONE REMOVED --
+        ;; so a marker that could not be fitted did not move to a line of its own, as this
+        ;; function's docstring promises: a line of the model's prose simply vanished, with
+        ;; no error and no seam. Reachable wherever a line fills the frame, and MORE likely
+        ;; the narrower the terminal.
+        ;;
+        ;; **It was also the residual turn-end jump.** The fit is computed against the newest
+        ;; row, and live and settled fit the same counts onto DIFFERENT rows (a hidden run's
+        ;; newest row while a turn runs, the assistant row once it lands). Whichever of the
+        ;; two happened to land on a full line took this branch, so one frame had a line the
+        ;; other did not -- intermittent, decided by line width, which is why turns held and
+        ;; then one moved. Returning IL keeps the prose and adds no row in either state, so
+        ;; the height is the same whether or not the marker fitted. A dropped count in the
+        ;; full-line case is a marker that did nothing, which is the rule at the end of the
+        ;; ladder too; a dropped SENTENCE is not.
+        il
         (append (butlast il)
                 (wrap-segments (append last (list (cons " " nil)) marker) (max 20 cols))))))
 
