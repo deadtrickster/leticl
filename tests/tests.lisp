@@ -17679,6 +17679,80 @@ The fix is the handover the text already has: **the row that took the reasoning 
             (format nil "**the live copy does not outlive the turn**: ~s"
                     (leticl::%hidden-run-live-work (session-turn s) (head-cols h))))))))
 
+(def-test the-answer-stays-on-the-screen-until-its-row-takes-it-over (:suite leticl)
+  "**The operator: *\"it flickers on when you stop replying - the very end.\"***
+
+Two switches drive ONE handover, and the flicker lives in the gap between them.
+
+  · `(getf turn :text)` is cleared by `transcript-content`, when the row that took the answer
+    over lands — that is the handover `turn-lines`' own docstring leans on;
+  · `turn-busy-p` is false the moment a turn is neither generating nor waiting on a call — and the
+    round's generation ENDS when its calls are proposed (`turn-state-name`: `\"finished\"` is what the
+    daemon sends at the round's end, exactly when a tool call starts), so the last thing keeping a
+    turn busy is its **last unfinished call**.
+
+So at the end of every turn, the last `tool_finished` makes the turn not busy while the answer's
+row has not landed yet: the TAIL stops drawing (it is gated on `turn-busy-p` as a whole), `:text` is
+still non-empty so the transcript has nothing to draw, and **the answer is on neither side of the
+handover for those frames** — the bottom-anchored window shifts by the tail's height and shifts back
+when the body lands. The measurement that fits: the operator's capture shows the whole screen
+bouncing ~3 rows at each turn end with no counts row among the movers, and the frame journal shows
+the body height *unchanged* (54) because a clamped window cannot show a content shift at all.
+
+The window is asserted here first, then both halves of the handover — because a fix that simply draws
+the tail more often would put the answer on the screen TWICE, which is the defect the gate existed
+for and which the text's own clearing is supposed to prevent."
+  (let ((leticl::*verbosity* :reading) (leticl::*hist-cache* nil)
+        (leticl::*live-counts-seen* nil) (leticl::*scroll-anchor* nil)
+        (leticl::*hist-bounds* nil) (leticl::*hist-depth* 0)
+        (leticl::*hidden-run-open* nil) (leticl::*marker-seam* nil)
+        (leticl::*answered-calls* nil)
+        (phrase "Second paragraph of the answer")
+        (answer (format nil "First line of the answer, long enough to wrap once here.~%Second paragraph of the answer, also wrapping.~%"))
+        (h (%on-head :cols 100 :rows 40))
+        (s nil))
+    (setf (head-connected h) t)
+    (setf s (head-session h))
+    (let ((items (make-array 8 :adjustable t :fill-pointer 0)))
+      (vector-push-extend (list :item-id "u0" :kind "user" :ts 0
+                                :item (list :type "user"
+                                            :parts (list (list :text "go on then"))))
+                          items)
+      (vector-push-extend (list :item-id "t1" :kind "tool_result" :ts 0
+                                :item (list :type "tool_result" :call-id "c1" :name "bash"
+                                            :verb "ran" :subject "\"x\""
+                                            :outcome (list :outcome "ok") :payload "P"))
+                          items)
+      (setf (session-items s) items))
+    (flet ((how-many ()
+             (count phrase
+                    (mapcar (lambda (l) (if (consp l) (format nil "~{~a~}" (mapcar #'car l)) ""))
+                            (leticl::%viewport-lines h (head-cols h) 20))
+                    :test (lambda (p r) (and (search p r) t)))))
+      ;; **THE WINDOW**: the round's generation has ended and its only call has finished, so the
+      ;; turn is NOT busy — and the answer's row has not landed, so `:text` is still the head's own.
+      (setf (session-turn s)
+            (list :turn-id "t1" :model "m" :ledger-head nil
+                  :text answer :reasoning "" :raw-calls ""
+                  :calls (list (list :call-id "c1" :name "bash"
+                                     :state (list :state "finished")))
+                  :appended nil :progress nil :tokens 0
+                  :state (list :state "finished")))
+      (is (not (turn-busy-p (session-turn s)))
+          "the turn is not busy — the last call has finished")
+      (is (plusp (length (getf (session-turn s) :text)))
+          "and the answer is still live, because no row has taken it over")
+      (is (= 1 (how-many))
+          (format nil "**so the answer must still be ON the screen** — drawn by the tail, since the\n transcript has nothing to draw yet: ~s" (how-many)))
+      ;; **THE HANDOVER**: the row lands, and now the tail must drop it — one copy, not two
+      (apply-event s (list :event "transcript_appended" :item-id "a1" :kind "assistant"
+                           :ts 0 :turn-id "t1"))
+      (apply-event s (list :event "transcript_content" :item-id "a1" :turn-id "t1"
+                           :item (list :type "assistant" :text answer)))
+      (is (zerop (length (getf (session-turn s) :text))) "the row took the text over")
+      (is (= 1 (how-many))
+          (format nil "**and the answer is on the screen exactly ONCE** — two would be the\n double-draw the gate exists to prevent: ~s" (how-many))))))
+
 (def-test the-reading-rung-names-itself-on-a-row-that-does-not-expire (:suite leticl)
   "**R37: *the head says which state it is in* — and that is what makes hiding safe here, where
 an elision would need a disclosure per hidden row.**

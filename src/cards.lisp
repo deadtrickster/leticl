@@ -3850,7 +3850,28 @@ gate.** A turn's text and reasoning are APPENDED to the transcript and CLEARED w
 (`:appended` names the item that took them, and MEASURED, `:text` is `\"\"` at state `\"finished\"`), so
 the answer is drawn once, from the transcript, and the live block has nothing to repeat. Both parts are
 already drawn only when non-empty, so the two cannot both draw the same bytes."
-  (when (and turn (turn-busy-p turn))
+  ;; **THE TAIL HOLDS WHAT THE TRANSCRIPT HAS NOT TAKEN OVER — AND THAT, NOT `turn-busy-p`, IS THE
+  ;; GATE.** The two are not the same question, and the operator's last report is the gap between
+  ;; them: *"it flickers on when you stop replying - the very end."*
+  ;;
+  ;; `turn-busy-p` is false the moment a turn is neither generating nor waiting on a call — and the
+  ;; round's generation ENDS when its calls are proposed, so the last thing keeping a turn busy is
+  ;; its LAST UNFINISHED CALL. So every turn's end ran: the last `tool_finished` made the turn not
+  ;; busy, this gate closed, the tail stopped drawing — **the answer included** — while `:text` was
+  ;; still non-empty (no row had taken it over) and the assistant row's body had not landed yet. For
+  ;; those frames the answer was on NEITHER side of the handover, the bottom-anchored window shifted
+  ;; by the tail's height, and it shifted back when the body arrived. The operator's capture shows
+  ;; exactly that: the whole screen bouncing ~3 rows at each turn end, with no counts row among the
+  ;; movers (the counts scroll with the content) and the frame journal showing the body height
+  ;; UNCHANGED, because a clamped window cannot show a content shift at all.
+  ;;
+  ;; The text's own rule was always the right one, and the docstring below already relied on it: **a
+  ;; part is drawn while it is non-empty, and cleared when the row that took it over lands.** So the
+  ;; answer is drawn while the head still holds it, whichever way the turn's state fell. That is
+  ;; also what letibot's live pane does — it draws unless `superseded`, the fact that every row the
+  ;; turn published has a body, and not a state name.
+  (when (and turn (or (turn-busy-p turn)
+                      (plusp (length (or (getf turn :text) "")))))
     (let ((ind (activity-indent cols))
           (out nil))
       ;; **R37: the rung hides the WORKING of a live turn and never the turn.** What goes is
