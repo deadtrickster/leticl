@@ -2235,23 +2235,27 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
              ;;
              ;; `:reading` still hides the TEXT — `+reading-hides+` is unchanged, and `turn-lines`
              ;; draws one marker line for the live turn rather than the working out.
-             ;; **BACK TO `:normal`, because a live count at this rung FLASHES.**
+             ;; **AND THE GATE THAT USED TO CLOSE THIS ARM IS GONE, BECAUSE WHAT IT WAS HOLDING BACK
+             ;; IS FIXED WHERE THE CAUSE WAS.** It read `(if (verbosity-at-least :normal) … (return-from
+             ;; apply-event :quiet))`, so at `:reading` — the rung this head is actually set to — the
+             ;; whole thinking phase was thrown away, and the bill came in now: *"the thinking lines
+             ;; count appeared only with the first tool call after my prompt."* A proposed CALL is live
+             ;; work whatever happened to the reasoning behind it, which is why the marker arrived
+             ;; exactly then and not a delta earlier.
              ;;
-             ;; Keeping the text here was what let `%hidden-run-live-work` hand `live-here` a count
-             ;; from the first delta. It does reach the screen -- and it took the screen with it:
-             ;; `live-pending` is `(and live (not cached) t)`, so the marker is drawn on the frames
-             ;; the history cache missed and gone on the frames it hit. While nothing was in flight
-             ;; `live` was nil and the two frames agreed; a count that is non-nil for the whole of a
-             ;; thinking phase makes them disagree on every frame, and the operator's report is the
-             ;; result: *"the whole thing kinda flashes now."*
+             ;; **WHAT MADE A COUNT-IN-FLIGHT FLASH WAS THE PLACEMENT, AND THAT IS FIXED IN THE WALK.**
+             ;; `live-pending` was `(and live (not cached) t)` — all or nothing, and off on every HIT —
+             ;; and `glue` was forced by `live-here`, so work in flight was handed to whichever row was
+             ;; newest, including a row that could not carry it: the join was refused, the counts were
+             ;; dropped entirely, and whether they were on the screen at all depended on the cache and
+             ;; on the carrier row. The operator's report is the result: *"the whole thing kinda flashes
+             ;; now."*
              ;;
-             ;; A flashing screen is worse than a missing count. The late-arriving marker this was
-             ;; meant to fix is the lesser defect, and it is NOT fixed by feeding a renderer that
-             ;; toggles -- it is fixed in the walk, where the run is drawn and where a frame that
-             ;; misses the cache still knows what the live run is.
-             ((:reasoning) (if (verbosity-at-least :normal)
-                               (appendf-text turn :reasoning (getf env :text))
-                               (return-from apply-event :quiet)))
+             ;; Both are fixed where the cause was, in `%history-until`: the counts re-arm when they MOVE
+             ;; rather than only on a miss, and a row that cannot take them does not try — the marker
+             ;; stands on its own line. With that in place the late-arriving marker this arm used to
+             ;; cause is the only defect left, and it is the one the operator named above.
+             ((:reasoning) (appendf-text turn :reasoning (getf env :text)))
              ((:tool-call) (appendf-text turn :raw-calls (getf env :text)))))
          ;; a delta for a turn we never saw TurnStarted for: quiet, not a crash
          (if turn :dirty :quiet)))

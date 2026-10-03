@@ -17551,6 +17551,51 @@ them from one and drops them from the other is the flash;
                                             (head-cols h) nil)))))))
             "**their row has no room to give** — it is drawn padded to the frame's own width, so\n the join onto it can never be made and the marker has to stand alone")))))
 
+(def-test the-thinking-count-is-live-from-the-first-delta-not-from-the-first-call (:suite leticl)
+  "**The operator, on the rung this head is actually set to: *\"the thinking lines count appeared only
+with the first tool call after my prompt.\"***
+
+At `:reading` the reasoning delta was THROWN AWAY — `apply-event`'s `:reasoning` arm gated on
+`(verbosity-at-least :normal)` and returned `:quiet` otherwise — so `(getf turn :reasoning)` stayed
+empty for the whole thinking phase, `%hidden-run-live-work` had no thinking to count, `live` was
+NIL, and the marker had no reason to exist. It appeared when the model finally proposed a tool call,
+because a proposed CALL is live work whether or not the reasoning behind it was kept.
+
+**That gate was put there to stop a flash, and the flash is now fixed where its cause was** — the
+walk's placement (`%history-until`: the counts stand on their own line instead of being forced onto
+a row that cannot take them, and re-arm when the counts move rather than only on a cache miss). A
+count that cannot be early is a count that arrives after the answer, which is the defect the gate's
+own docstring names; a count that is early AND stable is what both of them wanted.
+
+The three chunks are `let me `/`look at `/`this`, so the count is ONE screen line at 100 columns:
+the assertion is about the first delta reaching the marker, not about arithmetic."
+  (let ((leticl::*verbosity* :reading) (leticl::*scroll-anchor* nil)
+        (leticl::*hist-cache* nil) (leticl::*live-counts-seen* nil)
+        (leticl::*hidden-run-open* nil) (leticl::*marker-seam* nil)
+        (leticl::*hist-generation* 0)
+        (h (%prompt-flash-head ""))
+        (s nil))
+    (setf s (head-session h))
+    ;; the model thinks, and does nothing else: three deltas, no call proposed, no row landed
+    (loop for chunk in '("let me " "look at " "this")
+          for seq from 2
+          do (apply-event s (list :seq seq :event "delta" :turn-id "t1"
+                                  :target "reasoning" :text chunk)))
+    (let ((live (leticl::%hidden-run-live-work (session-turn s) (head-cols h))))
+      (is (plusp (or (getf live :thinking) 0))
+          (format nil "**the thinking is COUNTED from the first delta at this rung** — it used to be\n thrown away here, so there was nothing to count: ~s" live))
+      (is (zerop (or (getf live :calls) 0))
+          "and no call has been proposed, so the number is about the thinking alone"))
+    (let* ((rows (mapcar (lambda (l) (if (consp l) (format nil "~{~a~}" (mapcar #'car l)) ""))
+                         (leticl::%viewport-lines h (head-cols h) 30)))
+           ;; **THE LIVE MARKER'S OWN TEXT, and not the words.** The settled run above carries
+           ;; `[3 tool calls, 3 thinking lines]`, so a search for "thinking line" finds THAT one and
+           ;; the assertion would fail on the right answer — measured, on the first run of this test.
+           (at (position "[1 thinking line]" rows :test #'string=))
+           (their (position-if (lambda (r) (search "your own stats flashes" r)) rows)))
+      (is (and at their (< their at))
+          (format nil "**and the counts are on the screen, at the live edge, with no tool call at all** — this is the frame that used to draw nothing: ~s" rows)))))
+
 (def-test the-reading-rung-names-itself-on-a-row-that-does-not-expire (:suite leticl)
   "**R37: *the head says which state it is in* — and that is what makes hiding safe here, where
 an elision would need a disclosure per hidden row.**
