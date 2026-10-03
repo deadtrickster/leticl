@@ -1802,6 +1802,34 @@ beside the slot rather than a second slot: a struct layout change is a restart."
 (defvar *peeked-dropped* 0
   "How many of that subagent's events fell off the daemon's ring before the read.")
 
+(defvar *peeked-snapshot* nil
+  "The ROWS a peek answered with, when the daemon sends them — else NIL.
+
+**A `Peeked` MAY CARRY A SNAPSHOT NOW** (letibot `1520bb5`): a defaulted field on a frame the head
+already sends, so no protocol bump and an older daemon is unaffected. That field is what lets this head
+draw a child with the SAME renderer as any session — markdown, air rule, tool cards, the rung —
+instead of hand-drawing a ring of events nobody may fold (*for reading, NOT FOR FOLDING INTO THE
+HEAD'S STATE*, `Peeked`'s own docstring).
+
+**ABSENT IS NOT AN ERROR, and the fallback SAYS SO.** Three call sites in letibot pass none, so a peek
+with no rows happens — a daemon older than the field, or a path that did not ask — and a pane that drew
+the event list without saying which it was would make a degraded render look exactly like a plain one.
+See `peek-lines`, where the reader is looking.
+
+A `defvar` and not a head slot, for the reason all live state is: a struct change is a restart.")
+
+(defvar *peek-render-head* nil
+  "A scratch head for drawing a peeked session's rows, kept so one child costs one head.
+
+Rebuilt whenever the pane opens on a different child, and drawn under `with-replay-globals` so the
+child's frame cannot touch the globals the MAIN view is built from — the history cache, the scroll
+anchor, the depth high-water. Without that, scrolling a child and coming back would leave the parent
+anchored to the child's row.")
+
+(defun peeked-rows-p ()
+  "Did the last peek answer with ROWS?"
+  (and *peeked-snapshot* (getf *peeked-snapshot* :items) t))
+
 (defun subagent-out-lines (events &key (payloads t))
   "A subagent's scrollback as the reference draws it (`subagent_out_lines`,
 letibot `2ac6200`): every tool result as `· name — outcome` over its payload, and
@@ -2365,6 +2393,68 @@ unwindowed, which is the shape every other pane has."
                        (make-list (max 0 (- visible (- end start))))
                        footer))))))))
 
+(defun %peek-snapshot-pane (head cols room)
+  "The peeked child's rows, drawn by the renderer that draws the conversation.
+
+**ONE RENDERER, NOT TWO.** `Peeked` can answer with a snapshot now (letibot `1520bb5`), and a snapshot
+is a session's rows — so this builds a session from it and calls `%viewport-lines`, the function every
+frame of the main conversation comes through. Markdown, the air rule, the tool cards, the rung and the
+seams are all its, by construction rather than by imitation; `subagent-out-lines` is left to the path
+where no rows arrived.
+
+**Under `with-replay-globals`**, because that renderer reads globals the MAIN view owns — the history
+cache, the scroll anchor, the depth high-water — and a child drawn inside them would leave the parent
+anchored to the child's row. The scratch head is kept for the child it was built for, so opening one
+child costs one head rather than one per frame.
+
+**The dropped count STAYS.** A snapshot can be short the same way the ring could — the daemon bounds a
+view by count and by bytes — and a truncated read that renders as a complete one is the `Abstained`
+defect in another costume.
+
+`*pane-scroll*` is the child's scroll and `*peek-total*` its whole length: the pane measures off the
+BOTTOM (the tail is the origin, the reference's own `v.scroll`), which is what `head-scroll` 0 means,
+so the two agree without a conversion."
+  (let* ((snapshot *peeked-snapshot*)
+         (id (getf snapshot :session-id))
+         (head-lines (append
+                      (list (list (cons (format nil "subagent output — ~a"
+                                                (if id (short-id id) "?"))
+                                        '(:bold t))))
+                      (when (plusp *peeked-dropped*)
+                        (list (list (cons (format nil "    ~d earlier event~:p fell off the daemon's scrollback before this read"
+                                                  *peeked-dropped*)
+                                          '(:dim t)))))
+                      (list nil)))
+         (footer (list nil
+                       (list (cons "    arrows scroll · esc back · the same renderer as any session"
+                                   '(:dim t)))))
+         (room (max 8 (or room 40)))
+         (visible (max 1 (- room (length head-lines) (length footer))))
+         (scratch (let ((h *peek-render-head*))
+                    (if (and h id (equal (session-session-id (head-session h)) id))
+                        h
+                        (let ((h (%make-head)))
+                          (setf *peek-render-head* h)
+                          h))))
+         (s (head-session scratch)))
+    (ingest-snapshot s snapshot)
+    (when id (setf (session-session-id s) id))
+    (setf (head-cols scratch) cols
+          (head-rows scratch) room
+          (head-prefs scratch) (head-prefs head)
+          (head-scroll scratch) (max 0 *pane-scroll*))
+    (let ((lines (call-with-replay-globals
+                  (lambda ()
+                    (let ((*scroll-max* 0))
+                      (prog1 (%viewport-lines scratch cols visible)
+                        (setf *peek-total* (+ (length head-lines) *scroll-max* visible (length footer))
+                              *pane-scroll* (head-scroll scratch))))))))
+      (append head-lines
+              lines
+              ;; pad, so the footer sits on the pane's last row rather than floating under a short read
+              (make-list (max 0 (- visible (length lines))))
+              footer))))
+
 (defun peek-lines (head cols &optional room)
   "A peeked subagent's scrollback — the reference's `sub_out_lines`
 (app.rs:6844-6892): the title names the subagent, a dropped count when the ring
@@ -2389,6 +2479,10 @@ else is measured back from it.
 
 The footer names the SPILL FILE, which had no counterpart at all: the pane
 advertised three keys and a full copy on disk, and the copy was never written."
+  ;; **A SNAPSHOT IS DRAWN BY THE REAL RENDERER** — see `%peek-snapshot-pane`. Everything below is the
+  ;; path for a daemon that answers a peek with events and no rows, and that path SAYS which it is.
+  (when (peeked-rows-p)
+    (return-from peek-lines (%peek-snapshot-pane head cols room)))
   (let* ((events (head-peeked head))
          ;; **THE RUNG GOVERNS THIS VIEW TOO** — see `subagent-out-lines`: at `:reading` the child's
          ;; answers are drawn and its tool payloads are held behind a seam, which is the same question
@@ -2405,6 +2499,12 @@ advertised three keys and a full copy on disk, and the copy was never written."
                        (list (list (cons (format nil "    ~d earlier event~:p fell off the daemon's scrollback before this read"
                                                  *peeked-dropped*)
                                          '(:dim t)))))
+                     ;; **SAID, because a degraded render must not look like a plain one.** This daemon
+                     ;; answered the peek with events and no rows — older than the field, or a path that
+                     ;; did not ask — so the child is hand-drawn by `subagent-out-lines` rather than by
+                     ;; the renderer the conversation uses.
+                     (list (list (cons "    drawn from the event list — this daemon sends no rows for a peek"
+                                       '(:dim t))))
                      (list nil)))
          (wrapped (mappend (lambda (l) (or (wrap-segments (list (cons l nil)) (pane-width cols))
                                            (list nil)))

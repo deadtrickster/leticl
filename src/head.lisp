@@ -1141,6 +1141,9 @@ and a `hello` with a snapshot). Returns T when the queue moved."
        (setf (head-peeked head) (getf frame :events)
              *peeked-session* (getf frame :session-id)
              *peeked-dropped* (or (getf frame :dropped) 0)
+             ;; **the rows, when the daemon sends them** — and NIL when it does not, so a later reply
+             ;; cannot inherit the previous child's snapshot. See `*peeked-snapshot*`.
+             *peeked-snapshot* (getf frame :snapshot)
              (head-mode head) :peek
              (head-dirty head) t)
        (unless same (reset-pane-scroll)))

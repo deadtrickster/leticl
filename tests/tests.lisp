@@ -5309,6 +5309,56 @@ to read a child's earlier output is yanked back to the tail once a second."
       (leticl::%handle-frame h (list :frame "peeked" :session-id "s-other" :events nil :dropped 0))
       (is (zerop leticl::*pane-scroll*) "and the first peek for a NEW child opens at its tail"))))
 
+(def-test a-peeked-snapshot-is-drawn-by-the-real-renderer (:suite leticl)
+  "**letibot `1520bb5`: a peek can answer with the session's ROWS** — and then the child is drawn by
+the renderer that draws the conversation, not by this head's copy of `sub_out_lines`.
+
+The discriminator is decisive rather than cosmetic, which is why it is the assertion here: the copy
+draws a tool result as `· bash — ok` over its payload, and the real renderer draws the transcript's own
+headline — `Ran \"ls\" · ok · 2 lines` — with the air rule, the fold and the rung around it. A pane
+that still used the copy cannot pass this by accident.
+
+**And the fallback is untouched**: a daemon that answers with events and no rows takes the old path,
+which now SAYS so under the title, so a degraded render cannot pass for a plain one."
+  (let ((leticl::*peeked-session* "s-child")
+        (leticl::*peeked-dropped* 0)
+        (leticl::*peek-render-head* nil)
+        (leticl::*peek-total* 0) (leticl::*pane-scroll* 0)
+        (leticl::*hist-cache* nil) (leticl::*hist-depth* 0) (leticl::*hist-bounds* nil)
+        (leticl::*payload-view* nil) (leticl::*hidden-run-open* nil)
+        (leticl::*frozen* nil) (leticl::*frozen-frame* nil)
+        (leticl::*verbosity* :normal)
+        (leticl::*peeked-snapshot*
+         (list :session-id "s-child" :seq 9 :dropped 0 :items-dropped 0
+               :turn nil :open-decisions nil :settled-decisions nil :heads nil :warnings nil
+               :items (list (list :item-id "u1" :kind "user" :ts 0
+                                  :item (list :type "user"
+                                              :parts (list (list :text "the task the child was given"))))
+                            (list :item-id "t1" :kind "tool_result" :ts 0
+                                  :item (list :type "tool_result" :call-id "c1" :name "bash"
+                                              :verb "Ran" :subject "\"ls\""
+                                              :outcome (list :outcome "ok")
+                                              :payload (format nil "l1~%l2"))))))
+        (h (%on-head :cols 100 :rows 30)))
+    (flet ((pane ()
+             (format nil "~{~a~^~%~}"
+                     (mapcar (lambda (l) (if (consp l) (format nil "~{~a~}" (mapcar #'car l)) ""))
+                             (leticl::peek-lines h 100 30)))))
+      (is (leticl::peeked-rows-p) "the reply carried rows, so the pane takes the real renderer")
+      (let ((text (pane)))
+        (is (search "the task the child was given" text)
+            (format nil "**the child's task is drawn** — by `item-lines`, which is the point: ~s" text))
+        (is (search "Ran" text)
+            "**and the tool row carries the TRANSCRIPT's own headline**, not the copy's `· bash — ok`")
+        (is (not (search "· bash — ok" text)) "the copy's shape is gone from this path")
+        (is (search "the same renderer as any session" text) "and the footer says so"))
+      ;; **and the fallback: no rows, the event path, saying which it is**
+      (setf leticl::*peeked-snapshot* nil)
+      (is (not (leticl::peeked-rows-p)) "no rows: the event path")
+      (let ((text (pane)))
+        (is (search "drawn from the event list" text)
+            (format nil "**and it SAYS it was** — a degraded render must not pass for a plain one: ~s" text))))))
+
 (def-test the-config-pane-renders-every-row-with-its-source-under-the-cursor (:suite leticl)
   "The screen showed `UNBOUND-VARIABLE / The variable ANAPHORA:IT is unbound.`:
 an `awhen` whose TEST used `it` — `(and (getf r :editable) (plusp (length it)))` —

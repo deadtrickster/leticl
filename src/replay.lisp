@@ -232,6 +232,22 @@ see this file's header."
          (*replaying* t))
      ,@body))
 
+(defun call-with-replay-globals (thunk)
+  "Run THUNK with every global a frame reads back at its start-of-process value — the macro, as a
+FUNCTION, for the callers compiled before this file.
+
+**The macro is last in the build on purpose.** `leticl.asd`: *replay rebinds every global a frame reads
+so two replays in one image cannot see each other's* — it has to see every global there is — and a macro
+must exist when its caller is COMPILED. A file before this one that called it therefore compiles into a
+function call and dies on the first frame with `UNDEFINED-FUNCTION WITH-REPLAY-GLOBALS`, which is a
+measured failure and not a guess.
+
+So the callers that need the isolation without being able to expand the macro come through here:
+`%peek-snapshot-pane` draws a peeked child's rows through the real renderer and must not leave the MAIN
+view's caches, anchor and high-water behind. One line, and no second copy of the list — which is what a
+`let` written over there would have been."
+  (with-replay-globals () (funcall thunk)))
+
 (defun replay-screen-from-envelopes (envelopes &key (cols 100) (rows 40))
   "Fold ENVELOPES and answer the screen as one ANSI string per row.
 
