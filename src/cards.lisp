@@ -1953,8 +1953,20 @@ line, and that is a line that was already full of the sentence."
         ;; full-line case is a marker that did nothing, which is the rule at the end of the
         ;; ladder too; a dropped SENTENCE is not.
         il
-        (append (butlast il)
-                (wrap-segments (append last (list (cons " " nil)) marker) (max 20 cols))))))
+        (let ((out (append (butlast il)
+                (wrap-segments (append last (list (cons " " nil)) marker) (max 20 cols)))))
+        ;; **AND THE MARKER MAY NEVER ADD A ROW** — the operator's ruling is that the number
+        ;; inside a marker may change and its HEIGHT may not, and this is that ruling as a property
+        ;; rather than as a case. `(max 4 room)` renders the marker into four columns even when the
+        ;; last line has one, two or three left, so `wrap-segments` pushes it onto a SECOND ROW and the
+        ;; rendering is a row taller than the sentence alone — and a marker too wide is the NORMAL end
+        ;; of a turn, because the count grows as the work does: `[1 tool call, 88 thinking lines]` is at
+        ;; its longest exactly when the settle finalises it, and the ladder that steps `tool calls`
+        ;; down to `t` cannot help once four columns are handed out to a line with none. So if the
+        ;; fitted result is taller than the prose alone, the marker is dropped and the prose stands —
+        ;; the same choice as the no-room branch above, and for the same reason: a dropped COUNT is a
+        ;; marker that did nothing, a moved screen is the defect this path exists to stop.
+        (if (> (length out) (length il)) il out)))))
 
 (defun hidden-run-lines (items cols)
   "The ROWS a run stands for, for when it is OPEN — the rung lifted for these rows and no others.
