@@ -24383,6 +24383,50 @@ holds, and the two can carry wildly different figures without either lying."
     (is (null leticl::*compaction*) "the fold's end clears it")
     (is (not (leticl::compaction-active-p)) "and the line goes with it")))
 
+(def-test a-fold-that-stopped-ticking-is-not-still-compacting (:suite leticl)
+  "**The operator: *\"compacting the conversation still spins\"* — and the head had no way to notice.**
+
+A fold's ticks can simply STOP. The measured shape: an overrun compaction runs mid-turn, the daemon
+publishes its ticks, the fold ends — and the tick that ends it (`half` not positive) never arrives, or
+arrives after the turn has moved on. `*compaction*` stayed set, `compaction-active-p` was
+`(and *compaction* t)`, and the spinner spun on **three** surfaces (`chrome.lisp` draws it in three
+places) for a fold that finished minutes ago.
+
+The docstring claimed the state was *cleared by the fold's own end — the `compacted` warning, or a
+turn finishing* — and MEASURED, that was false twice: **`reset-compaction` had no caller anywhere in
+the tree**, and a `compacted` warning reaches `note-compaction`, which files a ROW and never touched
+this state.
+
+Three claims, and the third is what makes the second safe:
+
+  · **a tick that stopped is not a fold** — `tick-recent-p`, the same clock and the same window as the
+    filling bar, because two answers to *has the daemon gone quiet* is how they come to disagree;
+  · **a turn's end clears it**, through the one function every terminal arm of `apply-event` goes
+    through;
+  · **and a tick with NO clock does not expire** — a replay, and any suite that has not told the head
+    what time it is, must answer the same bytes twice."
+  (let ((leticl::*compaction* nil)
+        (leticl::*now-ms* 1000000))
+    (leticl::note-compaction-progress
+     (list :half 1 :halves 2 :prompt-tokens 69000 :processed 0 :written 12 :unit "chars"))
+    (is (leticl::compaction-active-p) "a fresh tick is a live fold, stamped with the clock")
+    (is (= 1000000 (getf leticl::*compaction* :at-ms)) "and the stamp is the tick's arrival")
+    ;; **the tick that never came.** Time passes; the fold must stop being drawn.
+    (setf leticl::*now-ms* (+ 1000000 leticl::*stall-ms*))
+    (is (not (leticl::compaction-active-p))
+        "**a fold whose tick is older than the stall window is NOT still compacting** — this is the
+ spin the operator watched, and `filling-active-p` has had this clause all along")
+    ;; and a tick with no clock is a REPLAY's, not a stale one
+    (setf leticl::*now-ms* 0)
+    (leticl::note-compaction-progress (list :half 1 :halves 2 :prompt-tokens 69000 :written 12))
+    (is (null (getf leticl::*compaction* :at-ms)) "with no clock the tick is unstamped")
+    (is (leticl::compaction-active-p)
+        "**and an unstamped fold does not expire** — a replay must answer the same bytes twice")
+    ;; **a turn's end is a fold's end**, and the docstring's claim is now true rather than asserted
+    (leticl::note-turn-finished "finished")
+    (is (null leticl::*compaction*) "a finished turn clears the fold")
+    (is (not (leticl::compaction-active-p)) "so nothing spins on after the turn it ran in")))
+
 (def-test a-bash-command-that-edits-a-file-draws-its-diff (:suite leticl)
   "**The operator: *\"why im not show normal diff card\"*, then *\"right and i want diff card for python
 edits you all love so much\"*.**

@@ -44,7 +44,18 @@ that is running — the two states are mutually exclusive by construction rather
 STATE is the turn's terminal state name: only `finished` is a *responding*, so an interrupted or
 failed turn does not report one. It CLEARS the slot instead, which is the honest thing to do with a
 row that is always on the screen: the turn that just ended did not answer, and the previous turn's
-`Responded in …` would be a claim about a turn that is no longer the last one."
+`Responded in …` would be a claim about a turn that is no longer the last one.
+
+**AND A TURN'S END IS A FOLD'S END, which is why `reset-compaction` is called from HERE.** Every
+terminal arm of `apply-event` comes through this function — finished, interrupted, failed — and so
+does `turn_started`, and the fold this head draws is one the TURN ran: a compaction that begins
+inside a turn cannot outlive it. The old docstring on `compaction-active-p` claimed the state was
+*\"cleared by the fold's own end — the `compacted` warning, or a turn finishing\"* and MEASURED, that
+was false twice: `reset-compaction` had no caller anywhere in the tree, and the only clear was a
+progress tick whose `half` is not positive. The operator's report is the consequence — *\"compacting
+the conversation still spins\"* — with a fold whose ticks stopped mid-turn and the spinner up for the
+rest of the head's life."
+  (reset-compaction)
   (setf *turn-last*
         (when (and (string= (or state "") "finished") *turn-started-ms*)
           (list :ms (max 0 (- (internal-real-time-ms) *turn-started-ms*))
@@ -1739,6 +1750,25 @@ A defvar, not a session slot, for the reason all live state is: a struct layout 
 is a restart. Bound by `with-replay-globals`, because a replay must answer the same
 bytes twice.")
 
+(defun tick-recent-p (state)
+  "Has STATE's tick been heard from LATELY? — one clock and one window for every progress state
+this head draws.
+
+**Written once because the rule was learned on one of them and the other went without it.** A
+progress state whose ticks stopped is not progress, and `filling-active-p`'s docstring carries the
+measurement: `republish` published 57 ticks and stopped, a session whose rows and items disagree
+ends the walk without ever sending `done == total`, and the bar sat at *57 of 1790 rows* for three
+and a half minutes while the operator watched a frozen screen. `*stall-ms*` is the window and
+`*now-ms*` the clock, and **both states read the same two so they cannot come to disagree about what
+silence means** — the argument the stall line next door already makes for sharing one number.
+
+**A state with no clock does not expire.** `:at-ms` is NIL in a replay and in any test that has not
+told the head what time it is (the note functions stamp it only when `*now-ms*` is positive), and
+expiring on an unknown age would make a head's behaviour depend on whether a clock was running
+rather than on the thing it is drawing."
+  (let ((at (getf state :at-ms)))
+    (or (null at) (not (plusp *now-ms*)) (< (- *now-ms* at) *stall-ms*))))
+
 (defun filling-active-p ()
   "Is a counted operation in flight that the head should draw?
 
@@ -1766,13 +1796,11 @@ positive), and expiring on an unknown age would make the bar's behaviour depend 
 clock was running rather than on the operation." 
   (and *filling*
        (let ((done (or (getf *filling* :done) 0))
-             (total (or (getf *filling* :total) 0))
-             (at (getf *filling* :at-ms)))
+             (total (or (getf *filling* :total) 0)))
          (and (plusp total) (< done total)
               ;; **the news test**: a stamped tick must be recent, an unstamped one is
-              ;; not aged at all — see the docstring
-              (or (null at) (not (plusp *now-ms*))
-                  (< (- *now-ms* at) *stall-ms*))))))
+              ;; not aged at all — see `tick-recent-p`
+              (tick-recent-p *filling*)))))
 
 (defun note-filling (env)
   "Fold one `filling` tick. Returns `:dirty` when the line should be redrawn.
@@ -1827,10 +1855,25 @@ restart. Bound by `with-replay-globals`, because a replay must answer the same b
 (defun compaction-active-p ()
   "Is a fold running that the head should draw?
 
-Ephemeral, like `Filling`: a progress frame from four minutes ago is a lie about now, so this is
-cleared by the fold's own end — the `compacted` warning, or a turn finishing — rather than by a
-timer in here."
-  (and *compaction* t))
+Ephemeral, like `Filling` — and **this was the one that did not expire.** The operator: *\"compacting
+the conversation still spins\"*, with the fold's end never arriving mid-turn.
+
+The docstring here used to say the state was *cleared by the fold's own end — the `compacted`
+warning, or a turn finishing — rather than by a timer in here*, and MEASURED, that was false twice
+over:
+
+  · `reset-compaction` **had no caller anywhere in the tree** — it was defined, documented as the
+    one writer, and called from nothing;
+  · and the only clear that existed was a progress tick whose `half` is not positive. So a fold
+    whose ticks STOPPED — which is what an overrun compaction mid-turn looks like from here — left
+    `*compaction*` set for the rest of the head's life, and the spinner spun on three surfaces
+    (chrome.lisp draws it in three places) for a fold that had finished minutes ago.
+
+Both halves are fixed where the shape says: the tick clause is `tick-recent-p` (the same clock and
+the same window as the filling bar, because two answers to *has the daemon gone quiet* is how they
+come to disagree), and the fold's own end is real now — `note-turn-finished` calls
+`reset-compaction`, and every terminal arm of `apply-event` goes through it."
+  (and *compaction* (tick-recent-p *compaction*)))
 
 (defun note-compaction-progress (env)
   "Fold one `compaction_progress` tick. Returns `:dirty`.
