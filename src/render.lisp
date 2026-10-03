@@ -643,7 +643,7 @@ thirty rows appended, and the view jumped to `row-62`."
                            (live-here (and live-pending live))
                            (glue (and (not open)
                                       (or run live-here)
-                                      (%run-continues-prose-p item)))
+                                      (or live-here (%run-continues-prose-p item))))
                            (marker-items (or run nil))
                            ;; **IS THIS MARKER'S NUMBER STILL GOING UP?** — the colour's question, and it is NOT
                            ;; *is the turn running*: the walk draws a marker for EVERY run in the transcript, so
