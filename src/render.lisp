@@ -498,6 +498,27 @@ SETTLED PREFIX plus a rebuilt TIP, with the tick invalidating only the tip. That
        (eq (third a) (third b))
        (eql (fourth a) (fourth b))))
 
+(defvar *live-counts-seen* nil
+  "The `(:calls N :thinking M)` the last walk armed the live marker with.
+
+**LETIBOT'S OWN ANSWER TO THE SAME DEFECT, AND IT IS A COMPARISON RATHER THAN A CACHE TEST.**
+`letibot`'s walk bakes the marker -- counts and all -- into its cache of rendered rows, so nothing in
+it moves when the live counts move, because the counts are not rows. Their comment says it exactly:
+
+    *the number is BACKFILLED, and what fills it is the arrival of a ROW -- the first non-thinking
+    line -- which invalidates the cache and re-renders the marker with whatever the counts had become.*
+
+and their fix is to remember the counts and invalidate **the one row the live work belongs to** when
+they change: *what is invalidated is one run, not the transcript.* `self.marker_counts` is this value.
+
+leticl had no such comparison. It had `live-pending`, which is `(and live (not cached) t)` -- ALL OR
+NOTHING, and off on every cache HIT. So on a hit the marker was served stale from the cache (the count
+frozen at whatever the frame that built it had), and on a miss the live counts were re-armed onto the
+newest row. Two different renderings of the same counts, decided by the cache, and the marker's HEIGHT
+differed between them -- which is the flash this path has been chasing all night.
+
+A `defvar`, so a push can introduce it.")
+
 (defun %history-until (head cols need &optional until-id)
   "The committed transcript's lines, oldest first, at least NEED of them.
 
@@ -554,7 +575,24 @@ thirty rows appended, and the view jumped to `row-62`."
           ;; there put the in-flight counts, and the yellow, on the first OLD row the extension
           ;; reached: a settled counter from an earlier turn lit up while a call ran. The live
           ;; marker's freshness on a hit is `%hist-live-tick`'s job, which is in the key.
-          (live-pending (and live (not cached) t))
+          ;; **RE-ARMED WHEN THE COUNTS CHANGE, WHICH IS LETIBOT'S RULE.** `(not cached)` alone
+          ;; means a hit never refreshes the marker, so the count sat frozen until a real row
+          ;; arrived and invalidated the cache -- the operator's *"backfilled after the first
+          ;; non-thinking line"*, verbatim. Comparing against what the last walk armed with is
+          ;; what makes the count LIVE without putting in-flight figures on an old row: the flag
+          ;; still only rides the newest row, and it now rides it on the frame the number moved.
+          (live-pending (and live
+                             ;; **ARMED ON A MISS *OR* WHEN THE COUNTS MOVED** — letibot's rule.
+                             ;; `(not cached)` alone means a hit never refreshes the marker, so the
+                             ;; count sat frozen until a real row arrived and invalidated the cache:
+                             ;; the operator's *"backfilled after the first non-thinking line"*,
+                             ;; verbatim. What it must NOT become is `live` itself — this flag is
+                             ;; SPENT (set to nil) by the first row that carries the marker, which is
+                             ;; what keeps one marker on the row the turn is at instead of one per
+                             ;; visible row.
+                             (let ((moved (not (equal live *live-counts-seen*))))
+                               (setf *live-counts-seen* live)
+                               (or (not cached) moved))))
           ;; **IS THE TURN STILL WORKING** — the COUNTS' question is `live` (what is in flight) and
           ;; the COLOUR's is this: a call finishing and the next round's first delta arriving are
           ;; two events, and between them `live` is nil while the turn runs on. Keying the yellow on
@@ -655,7 +693,8 @@ thirty rows appended, and the view jumped to `row-62`."
                            ;; the prompt, between the two. So `live-pending` keeps the job it was written for,
                            ;; which is whether the counts need RE-ARMING, and it no longer decides whether the
                            ;; marker gets a row of its own.
-                           (live-here live)
+                           ;; and the counts this walk stands behind, so the NEXT frame can tell whether they moved
+          (live-here (and live-pending live))
                            (glue (and (not open)
                                       (or run live-here)
                                       (or live-here (%run-continues-prose-p item))))
