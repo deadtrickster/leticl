@@ -640,7 +640,22 @@ thirty rows appended, and the view jumped to `row-62`."
                            ;; newest row the reader can see (`live-pending`, taken once), which is
                            ;; exactly the row a live marker belongs to: the narration the model just
                            ;; wrote, with the call it is running for hanging off the end of it.
-                           (live-here (and live-pending live))
+                           ;; **AND THE MARKER'S ROW DOES NOT DEPEND ON THE CACHE.** This was
+                           ;; `(and live-pending live)`, and `live-pending` is `(and live (not cached) t)` --
+                           ;; deliberately nil on a HIT, so that a hit does not re-arm the live counts onto a row
+                           ;; that already carries them. Sound for the count's FRESHNESS. It also made the
+                           ;; marker's HEIGHT depend on whether the history cache happened to be warm: on a hit
+                           ;; `live-here` was nil, `glue` fell through, and the marker took the standalone path --
+                           ;; marker plus a blank each side, three rows -- while the miss frame glued the same
+                           ;; counts onto a row for NOTHING. Same counts, two heights, decided by a cache.
+                           ;;
+                           ;; The operator watched it happen and named the shape without the code: *"is 'That
+                           ;; intuition ...' I see the lisp snippet, and then [113 thinking lines] appears below
+                           ;; the prompt and above 'That intuition...'"* -- the marker on its own line, under
+                           ;; the prompt, between the two. So `live-pending` keeps the job it was written for,
+                           ;; which is whether the counts need RE-ARMING, and it no longer decides whether the
+                           ;; marker gets a row of its own.
+                           (live-here live)
                            (glue (and (not open)
                                       (or run live-here)
                                       (or live-here (%run-continues-prose-p item))))
