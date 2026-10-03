@@ -15714,6 +15714,44 @@ it was asked — the task being the one field the notice does not carry."
     (is (search "Report one fact and nothing else" (segs-of (item-lines item 200 nil)))
         "**and the agent's own task is on the line** — looked up, because the notice does not carry it")))
 
+(defparameter +mixed-notice+
+  "[job] a job you backgrounded has ended:
+  - `j66` exited 0 after 4.0s, wrote 87 bytes: sleep 4
+[task] a subagent you started has finished:
+  - `s-1-sub-9` done: 4191 lines.
+This is the completion arriving on its own — you do not need to wait for it."
+  "Two notices the daemon COALESCED into one row, which is how the operator met them: their job and
+their subagent settled together, and the one-liner for the pair read `2 jobs ended (j66,
+  s-…-sub-…)` — a subagent called a job.")
+
+(def-test a-coalesced-notice-line-does-not-call-a-subagent-a-job (:suite leticl)
+  "**Found on the operator's own screen, one line under a working change.**
+
+The daemon coalesces notices that arrive together, so a row can hold a job's and a subagent's — and the
+multi-fact line counted the facts and said `2 jobs ended (j66, s-…-sub-…)`, which is the head asserting
+a kind it did not look at. The count is of the daemon's own OPENINGS (`[job] `/`[task] `), so the
+sentence cannot be wrong about what settled — and a batch of jobs still reads as jobs.
+
+This is R57's pattern applied to a noun: two kinds that arrive in one shape must not be described by
+the name of one of them."
+  (multiple-value-bind (item line) (%settlement-row "u11" +mixed-notice+)
+    (declare (ignore line))
+    (let* ((leticl::*payload-head* nil)
+           (text (segs-of (item-lines item 200 nil))))
+      (is (= 1 (length (item-lines item 200 nil))) "the coalesced row is still ONE line")
+      (is (search "1 job and 1 subagent finished" text)
+          (format nil "**the mixed row counts both kinds**: ~s" text))
+      (is (not (search "2 jobs ended" text))
+          "and does not call a subagent a job, which is what it did on the glass")
+      (is (search "j66" text) "with the ids — what a reader scanning for one of them wants")))
+  ;; and a batch that IS all jobs keeps the word
+  (multiple-value-bind (item line) (%settlement-row "u12" +job-notice-many+)
+    (declare (ignore line))
+    (let* ((leticl::*payload-head* nil)
+           (text (segs-of (item-lines item 200 nil))))
+      (is (search "3 jobs ended" text)
+          (format nil "a batch of jobs still says jobs: ~s" text)))))
+
 (def-test a-job-settlement-is-one-line-and-it-opens (:suite leticl)
   "**The operator, looking at two of their own screens: *\"we have to do something with this huge job
 blobs - make them one liners for conversation and Ctrl-t'able otherwise\"*** — and *\"something like

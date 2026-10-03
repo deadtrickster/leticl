@@ -2706,6 +2706,21 @@ with `- ` after trim, and everything after them is the closing sentence."
             (mapcar (lambda (l) (string-left-trim " -" l)) facts)
             (string-trim " " (format nil "~{~a~^ ~}" rest)))))
 
+(defun %notice-counts (text)
+  "How many JOBS and how many SUBAGENTS TEXT reports — counted per group, by the daemon's own headings.
+
+**A heading counts none of its own facts**: `[job] 3 jobs you backgrounded have ended:` is ONE
+opening line and THREE settlements under it, so counting the openings read *1 job ended (j12, j15,
+j19)* for a batch of three — measured on the first run of this. A heading (`[job] `/`[task] `) starts a
+group and each `- ` line under it is one settlement of that kind."
+  (let ((jobs 0) (tasks 0) (kind nil))
+    (dolist (line (uiop:split-string text :separator '(#\newline)))
+      (cond ((uiop:string-prefix-p "[job] " line) (setf kind :job))
+            ((uiop:string-prefix-p "[task] " line) (setf kind :task))
+            ((uiop:string-prefix-p "- " (string-left-trim " " line))
+             (case kind (:job (incf jobs)) (:task (incf tasks)) (t nil)))))
+    (values jobs tasks)))
+
 (defun %job-notice-facts (text)
   "The settlement's facts as ONE line — `j152 killed by job_kill after 27.6s, wrote 15 bytes`.
 
@@ -2744,12 +2759,19 @@ that has neither."
                          (%notice-agent-task text)
                          fact)
                  fact)))
-          (t (format nil "~d jobs ended (~{~a~^, ~})"
-                     (length one)
-                     ;; **the IDS**, which is what a reader scanning for one of them wants — the
-                     ;; first token of each fact line is the daemon's job id and nothing else.
-                     (mapcar (lambda (f) (subseq f 0 (or (position #\space f) (length f))))
-                             one))))))
+          ;; **SEVERAL NOTICES IN ONE ROW, AND THEY ARE NOT ALL JOBS.** The daemon coalesces notices
+          ;; that arrive together, so this branch sees a mixed row: measured on the operator's screen,
+          ;; `2 jobs ended (j66, s-…-sub-…)` — a subagent called a job by a line that counted the two
+          ;; openings in a row that had one of each. The count is of the OPENINGS, which are the
+          ;; daemon's own words, so the sentence cannot be wrong about what settled.
+          (t (multiple-value-bind (j k) (%notice-counts text)
+               (format nil "~a ended (~{~a~^, ~})"
+                       (cond ((and (plusp j) (plusp k))
+                              (format nil "~d job~:p and ~d subagent~:p finished" j k))
+                             ((plusp k) (format nil "~d subagent~:p finished" k))
+                             (t (format nil "~d job~:p" j)))
+                       (mapcar (lambda (f) (subseq f 0 (or (position #\space f) (length f))))
+                               one)))))))
 
 (defun %job-notice-rows (text)
   "The daemon's notice as rows a reader can OPEN — R41's own vocabulary, verbatim.
