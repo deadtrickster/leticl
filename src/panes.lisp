@@ -1811,6 +1811,21 @@ told the operator there was nothing (*\"when i enter - no output\"*). Reasoning
 stays out: it is the model thinking rather than its answer. Spills are listed at
 the end, so the full output is one path away.
 
+**AND THIS FUNCTION IS A COPY, WHICH IS THE THING TO FIX RATHER THAN IMPROVE.** It exists because
+`Peeked` hands back a ring of EVENTS and says what they are for — *these events are for reading, NOT
+FOR FOLDING INTO THE HEAD'S STATE* — so a head holding a peek has nothing it may fold and nothing to
+do but draw the events by hand. That is `sub_out_lines` (letibot `app.rs:12682`, `out.push(l.clone())`)
+and this is its copy; two head-local renderers for one conversation is the drift this pair has now hit
+five times in two days.
+
+**A CHILD IS A SESSION**, and the door that returns rows already exists: `SessionEvent::Subagent`'s
+`subagent_id` is documented as *the subagent's own session id*, and `Attach`/`Resync` with
+`since_seq = 0` answers with a `Snapshot` — rows, which this head draws with its real renderer,
+markdown and air rule and rung and all. So the fix is a **`Peeked` that carries a snapshot**, not a
+fold built here: **do not fold these events into a scratch session.** That would fold what the
+protocol says must not be folded, and it would be the sixth copy. This function, with the copy in
+letibot, goes the day `Peeked` carries rows.
+
 **AND THE CHILD'S TASK IS THE FIRST THING IN IT, in full.** The operator, reading the pane:
 *\"the first prompt is truncated too early\"* and *\"I want to be able to easily see it in full\"*.
 MEASURED, and the truncation is not this head's: the daemon publishes the `Subagent` event's
