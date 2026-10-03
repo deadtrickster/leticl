@@ -2378,6 +2378,35 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
            ;; and note it, so the assistant row above stops drawing a proposal
            ;; for a call whose result is now on the screen
            (note-answered-call (getf body :call-id)))
+         ;; **AND THE REASONING HANDS OVER THE WAY THE TEXT DOES, because it had no handover at
+         ;; all.** The text is cleared below by the row that took it over; the reasoning was cleared
+         ;; by NOTHING — not here, not at `turn_finished` — which did not matter while `apply-event`
+         ;; kept it only at `:normal` and this head draws at `:reading`. With the count live at every
+         ;; rung it matters three times in the last second of a turn, and a replay of a real
+         ;; recorded one (`tests/fixtures/tool-short.jsonl`) shows all three:
+         ;;
+         ;;     tool_finished       live=(:CALLS 1 :RUNNING 0 :THINKING 2)  [1 tool call, 2 thinking lines]
+         ;;     transcript_content  live=(:CALLS 1 :RUNNING 0 :THINKING 2)  [1 tool call, 4 thinking lines]
+         ;;     transcript_content  live=(:CALLS 1 :RUNNING 0 :THINKING 2)  [2 thinking lines] [1 tool call, 2 thinking lines]
+         ;;     turn_finished       live=(:CALLS 0 :RUNNING 0 :THINKING 2)
+         ;;
+         ;; **the number DOUBLES** as the row lands — the row counts the reasoning and the live copy
+         ;; counts the same text again, 2 → 4 for one 2-line thought — **a second marker appears**
+         ;; (the run's above the assistant row and the live counts ON it: one stretch of work drawn
+         ;; twice), and **the live copy outlives the turn** (nothing clears it, so `turn_finished`
+         ;; leaves it at `:THINKING 2` until the next turn replaces the turn object). Three
+         ;; frame-to-frame changes in one second, which is the operator's *"it flickers on when you
+         ;; stop replying - the very end."*
+         ;;
+         ;; The guard is `:appended` membership and not the body's kind, for the same reason the
+         ;; text's is: a snapshot's history, or a row from a turn already closed, must not empty the
+         ;; LIVE turn. And the row arrives whole — one reasoning row per round — so the handover is
+         ;; exact, and the marker's number does not move as it happens.
+         (when (and body (string= (getf body :type) "reasoning"))
+           (let ((turn (session-turn session)))
+             (when (and turn
+                        (member (getf env :item-id) (getf turn :appended) :test #'equal))
+               (setf (getf turn :reasoning) ""))))
          ;; an Assistant row ends a round, so the call ids in the staging table
          ;; must not survive into the next one
          (when (and body (string= (getf body :type) "assistant"))

@@ -17596,6 +17596,89 @@ the assertion is about the first delta reaching the marker, not about arithmetic
       (is (and at their (< their at))
           (format nil "**and the counts are on the screen, at the live edge, with no tool call at all** — this is the frame that used to draw nothing: ~s" rows)))))
 
+(def-test the-reasoning-hands-over-to-its-row-the-way-the-text-already-does (:suite leticl)
+  "**The operator: *\"it flickers on when you stop replying - the very end.\"***
+
+The flicker is a HANDOVER that exists for one of the two live copies and not the other.
+`transcript-content` clears the turn's `:text` when the assistant row this turn published takes it
+over — with the `:appended` membership guard, so a row from another turn cannot clear it — and
+**nothing clears `:reasoning`.** Until the reasoning is kept only at `:normal`, that did not matter:
+at `:reading` the turn's reasoning was empty, so there was nothing to hand over and nothing to
+duplicate.
+
+With the count live at every rung, it matters twice over, and the replay of a real recorded turn
+(`tests/fixtures/tool-short.jsonl`) shows both:
+
+    tool_finished       live=(:CALLS 1 :RUNNING 0 :THINKING 2)  [1 tool call, 2 thinking lines]
+    transcript_content  live=(:CALLS 1 :RUNNING 0 :THINKING 2)  [1 tool call, 4 thinking lines]
+    transcript_content  live=(:CALLS 1 :RUNNING 0 :THINKING 2)  [2 thinking lines]  [1 tool call, 2 thinking lines]
+    turn_finished       live=(:CALLS 0 :RUNNING 0 :THINKING 2)
+
+  · **the number DOUBLES** — the landed row counts the reasoning and the live copy counts the same
+    text again, 2 → 4 for one 2-line thought;
+  · **a second marker appears** — the run's counts above the assistant row and the live counts ON
+    it, one stretch of work drawn twice;
+  · **and the live work outlives the turn** — at `turn_finished` it is still `:THINKING 2`, so the
+    duplicate stays on the screen until the next turn replaces the turn object.
+
+Three frame-to-frame changes in the last second of a turn, which is the flicker: the block moves,
+the number jumps, and for a frame it is in two places at once.
+
+The fix is the handover the text already has: **the row that took the reasoning over clears it**, by
+`:appended` membership and not by kind, so a snapshot's history cannot empty the live turn."
+  (let ((leticl::*verbosity* :reading) (leticl::*hist-cache* nil)
+        (leticl::*live-counts-seen* nil) (leticl::*scroll-anchor* nil)
+        (leticl::*hist-bounds* nil) (leticl::*hist-depth* 0)
+        (leticl::*hidden-run-open* nil) (leticl::*marker-seam* nil)
+        (leticl::*answered-calls* nil)
+        (h (%on-head :cols 100 :rows 40))
+        (s nil))
+    (setf (head-connected h) t)
+    (setf s (head-session h))
+    ;; **a FILL-POINTER vector**, because a real session's is one — `push-item` is a
+    ;; `vector-push-extend` and the first row that lands dies on a plain vector.
+    (let ((items (make-array 8 :adjustable t :fill-pointer 0)))
+      (vector-push-extend (list :item-id "u0" :kind "user" :ts 0
+                                :item (list :type "user"
+                                            :parts (list (list :text "go on then"))))
+                          items)
+      (setf (session-items s) items))
+    (flet ((ev (env) (apply-event s env))
+           (markers ()
+             (remove-if-not (lambda (r) (and (plusp (length r)) (char= #\[ (char r 0))))
+                            (mapcar (lambda (l) (if (consp l)
+                                                    (format nil "~{~a~}" (mapcar #'car l)) ""))
+                                    (leticl::%viewport-lines h (head-cols h) 30)))))
+      (ev (list :seq 1 :event "turn_started" :turn-id "t1" :model "m"))
+      (ev (list :seq 2 :event "delta" :turn-id "t1" :target "reasoning"
+                :text (format nil "The `$f` in the for loop is a problem.~%")))
+      (ev (list :seq 3 :event "delta" :turn-id "t1" :target "reasoning"
+                :text (format nil "Let me just use literal paths, no loop.~%")))
+      (let ((before (markers)))
+        ;; `reasoning-line-count` is what the terminal will SPEND, and it counts the empty segment
+        ;; after a trailing newline: two lines ending in one are three. The number is not the point
+        ;; of this test — that it does not CHANGE as the row lands is.
+        (is (equal '("[3 thinking lines]") before)
+            (format nil "**one marker, the live one, before any row lands**: ~s" before))
+        ;; the row this turn published lands: appended first, its body second
+        (ev (list :seq 4 :event "transcript_appended" :item-id "i1" :kind "reasoning" :ts 0))
+        (ev (list :seq 5 :event "transcript_content" :item-id "i1"
+                  :item (list :type "reasoning"
+                              :text (format nil "The `$f` in the for loop is a problem.~%Let me just use literal paths, no loop.~%"))))
+        (is (string= "" (or (getf (session-turn s) :reasoning) ""))
+            (format nil "**the row TOOK the reasoning over** — the handover the text already has: ~s"
+                    (getf (session-turn s) :reasoning)))
+        (let ((after (markers)))
+          (is (equal before after)
+              (format nil "**and the counts do not flinch across it** — the same marker, the same\n number: before ~s, after ~s. A 2 that became 4 is one thought counted twice; two markers is\n one stretch of work drawn in two places" before after)))
+        ;; **and nothing outlives the turn**, which is the third symptom: with the row holding the
+        ;; reasoning there is no live copy left for `turn_finished` to leave behind, and the
+        ;; duplicate that stayed on the screen until the next turn cannot exist.
+        (ev (list :seq 6 :event "turn_finished" :turn-id "t1" :finish-reason "eos"))
+        (is (null (leticl::%hidden-run-live-work (session-turn s) (head-cols h)))
+            (format nil "**the live copy does not outlive the turn**: ~s"
+                    (leticl::%hidden-run-live-work (session-turn s) (head-cols h))))))))
+
 (def-test the-reading-rung-names-itself-on-a-row-that-does-not-expire (:suite leticl)
   "**R37: *the head says which state it is in* — and that is what makes hiding safe here, where
 an elision would need a disclosure per hidden row.**
