@@ -5290,7 +5290,11 @@ to read a child's earlier output is yanked back to the tail once a second."
       (let ((sent (%sent wire)))
         (is (= 1 (length sent)) "the pane's first tick asks once")
         (is (equal "peek" (getf (first sent) :frame)) "for the child's scrollback")
-        (is (equal "s-child" (getf (first sent) :session-id)) "by its session id"))
+        (is (equal "s-child" (getf (first sent) :session-id)) "by its session id")
+        (is (equal "Rows" (getf (first sent) :shape))
+            "**and asks for ROWS, which is a request field and not a favour.** `Events` is the default, so
+a head that sends no shape gets the ring — which is what this one did while a commit of ours claimed
+rows were not reachable. Measured after the field was added: `items: 26, events: 0`."))
       (leticl::tick-peek h)
       (is (null (%sent wire))
           "**once a second, not once a pass** — the tick is cheap here and the daemon is not this\n head's to hammer")
@@ -5935,13 +5939,14 @@ The counting itself is the subject of
       (is (string= "  /status or esc closes this" (car (last text))) "the closer")
       (is (not (some (lambda (l) (search "NIL" l)) text)) "and nothing prints NIL"))))
 
-(def-test the-picker-hides-subagents-and-right-aligns-the-facts (:suite leticl)
+(def-test the-picker-lists-sub-sessions-under-their-parent (:suite leticl)
   "letibot's picker on the same daemon had 28 sessions; ours 58, because ours
 listed the subagents too. Its rows are `▸  1  name` with the facts right-aligned
 to the pane's width and the full id under every row; ours were ` ● name`."
   (let* ((h (%pane-head))
          (s (head-session h)))
-    (is (= 2 (length (picker-sessions s))) "the child session is not listed")
+    (is (= 3 (length (picker-sessions s)))
+        "**the sub-session IS listed** — a child is a session, drawn under its parent")
     ;; 206 is the BODY width a 210-column terminal gives a pane: `%render` hands
     ;; every pane its cols net of the gutter and the right margin, and the row
     ;; fills exactly that — measured, letibot's facts end where its box does
@@ -5957,10 +5962,16 @@ to the pane's width and the full id under every row; ours were ` ● name`."
             "the store's count, the heads and the model")
         (is (string= "      s-1789639478142928813  ~/Projects/leticl" (fourth text))
             "the full id and the workspace under it")
-        (is (uiop:string-prefix-p "   2  …49398558" (fifth text))
+        ;; **THE CHILD, UNDER ITS PARENT AND UNNUMBERED.** The number is what makes a row a
+        ;; conversation — the header counts the numbered rows — and the mark is what makes it quiet.
+        (is (uiop:string-prefix-p "    ↳ Fix an auto-compaction failure" (fifth text))
+            (format nil "**the sub-session sits under its parent, with no number of its own**: ~s" (fifth text)))
+        (is (uiop:string-prefix-p "      s-child" (nth 5 text))
+            "and its own id line, where every other row keeps its id")
+        (is (uiop:string-prefix-p "   2  …49398558" (nth 6 text))
             "an unnamed session shows its short id")
-        (is (search "on disk · glm-5.3-flash" (fifth text)) "and that it is stored")
-        (is (uiop:string-prefix-p "  ↑↓ moves · enter switches" (nth 7 text)) "the hints close it"))
+        (is (search "on disk · glm-5.3-flash" (nth 6 text)) "and that it is stored")
+        (is (uiop:string-prefix-p "  ↑↓ moves · enter switches" (nth 9 text)) "the hints close it"))
       (is (member :reverse (cdr (first (third lines)))) "the picked row is reversed")
       (is (member :bold (cdr (second (third lines)))) "and the session we are in keeps its bold name")
       (is (= 2 sel-line) "the cursor's line is the first row's"))
@@ -5995,7 +6006,7 @@ word is the only thing anyone has, and using nothing else would be inventing."
     (multiple-value-bind (lines sel) (picker-lines s 0 206)
       (declare (ignore sel))
       (let ((here (third (lines-text lines)))
-            (other (fifth (lines-text lines))))
+            (other (nth 6 (lines-text lines))))
         (is (search "deepseek/deepseek-flash" here)
             (format nil "**and so does the picker's row for the same session**: ~s" here))
         (is (not (search "qwen-3.8-27b" here))
@@ -9500,8 +9511,8 @@ time kept walking under the new session's composer."
     (is (null (leticl::session-notices s)) "and so were the notices")
     (is (null leticl::*turn-started-ms*) "and the turn clock is not this session's")))
 
-(def-test a-hello-filters-subagents-and-adds-up-its-dropped (:suite leticl)
-  "Three findings on one frame. Subagents are not sessions a picker lists — the
+(def-test a-hello-keeps-sub-sessions-and-adds-up-its-dropped (:suite leticl)
+  "Three findings on one frame. Subagents ARE sessions a picker lists (corrected 2026-10-03: the filter was the bug) — the
 reference filters `parent_session_id` before STORING, on both frames that carry
 the list (app.rs:1668-1671, 1732-1735). `dropped` accumulates, and was assigned,
 so a reattach reset this head's running count of what it will never see. And
@@ -9514,7 +9525,8 @@ you just did is not\"* (app.rs:2815)."
                           :sessions (list (list :session-id "s-1" :title "mine")
                                           (list :session-id "sa-9" :title "a subagent"
                                                 :parent-session-id "s-1"))))
-    (is (= 1 (length (session-sessions s))) "the subagent row is not in the list")
+    (is (= 2 (length (session-sessions s)))
+        "**the sub-session IS in the list** — a child is a session, and this frame keeps it")
     (is (equal "s-1" (getf (first (session-sessions s)) :session-id)) "the session is")
     (is (equal "mine" (session-title s)) "and the title is still found")
     (is (= 2 (session-dropped s)) "the first Hello's dropped")
@@ -9592,8 +9604,8 @@ whose effect is invisible. The reference sets `session_id = current` and, when
                                                    (list :session-id "sa-1"
                                                          :parent-session-id "s-1"))))
     (is (null (funcall sent)) "a listing with no `created` sends nothing")
-    (is (= 1 (length (session-sessions (head-session h))))
-        "and the subagent row is filtered out of the picker's list here too")))
+    (is (= 2 (length (session-sessions (head-session h))))
+        "and it is kept on a listing too, which is the other frame that carries the list")))
 
 ;;; --------------- R16: a queued echo across a compaction -------------------- ;;;
 ;;;
@@ -12772,16 +12784,16 @@ about which row is which."
     ;; the head is in the FIRST session of `%pane-head`; put it in the second
     (is (= 0 (leticl::picker-initial-sel h)) "row 0 when you are the first row")
     (setf (session-session-id s) "s-1789418841049398558")
-    (is (= 1 (leticl::picker-initial-sel h))
-        "and row 1 when you are the second — subagents are not counted, so the
-child session between them does not move it")
+    (is (= 2 (leticl::picker-initial-sel h))
+        "and row 2 when you are the second — the child is listed between them, and the cursor
+ indexes the list it is in")
     ;; a session the daemon has not listed is row 0: there is nowhere else to be
     (setf (session-session-id s) "s-not-listed")
     (is (= 0 (leticl::picker-initial-sel h)) "0 when the list does not hold it")
     ;; and every other pane opens at the top, which is what one shared cursor
     ;; can honestly promise
     (setf (session-session-id s) "s-1789418841049398558")
-    (is (= 1 (leticl::pane-initial-sel h :picker)) "the picker is seeded")
+    (is (= 2 (leticl::pane-initial-sel h :picker)) "the picker is seeded")
     (dolist (mode '(:jobs :subagents :config :todos))
       (is (= 0 (leticl::pane-initial-sel h mode))
           (format nil "and the ~(~a~) pane opens at the top" mode)))))

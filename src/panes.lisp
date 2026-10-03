@@ -66,15 +66,45 @@ too: the facts are the part a narrow screen can do without."
 ;;; ------------------------------------------------------------- screens ;;;
 
 (defun picker-sessions (session)
-  "The sessions the picker lists: the daemon's, MINUS the subagents.
+  "The sessions the picker lists: the daemon's own, with a SUB-SESSION under its parent.
 
 The reference filters `parent_session_id.is_none()` on both `Hello` and
 `Sessions` (app.rs:1391), because a subagent is a child of a session, shown in the
 subagent tree and reached by `/switch id`. Ours listed them — measured on the
 same daemon, letibot's picker had 28 rows and ours 58 — so the header's count
 (`%session-position`) and the picker disagreed about how many sessions there
-were. One filter, here, that both read."
-  (remove-if (lambda (b) (getf b :parent-session-id)) (session-sessions session)))
+were. One filter, here, that both read.
+
+**CORRECTED 2026-10-03, after the operator read a plan that made a child something to VIEW:**
+
+  > why readonly? subagent session is more like you driving others via tmux. I already can post to
+  > subagent, and agent can talk back and forth too
+
+A child is a SESSION: it has a hub, rows, a store, a snapshot on request, and an id `/switch` already
+takes — and this head deliberately hid it from the one list that reaches sessions. Everything built to
+work around that hiding (the peek verb's renderer, `subagent-out-lines`, the pane's own Enter) is
+vestigial now that Enter attaches and the peek asks for rows.
+
+**WHAT THE FILTER WAS REACHING FOR IS REAL AND IS KEPT**: twenty subagents must not bury the four
+conversations the operator cares about. So a child is drawn UNDER its parent and UNNUMBERED, and
+`%session-position` counts the numbered rows only — the header says `1/3` for three conversations
+however many children they have."
+  (let* ((all (session-sessions session))
+         (out nil))
+    ;; **THE DAEMON'S ORDER, WITH EACH PARENT'S CHILDREN MOVED UP UNDER IT.** A child is a session —
+    ;; attachable, promptable, and it answers; see the docstring for the operator's words and for why the
+    ;; filter this replaces was the bug rather than the quiet.
+    (dolist (p all)
+      (unless (getf p :parent-session-id)
+        (push p out)
+        (dolist (c all)
+          (when (equal (getf c :parent-session-id) (getf p :session-id))
+            (push c out)))))
+    ;; a child whose parent is not in the list — a daemon that trimmed it — is still a session
+    (dolist (b all)
+      (unless (member b out :test #'equal)
+        (push b out)))
+    (nreverse out)))
 
 (defun picker-lines (session sel cols)
   "The session picker, row for row the reference's `picker_lines`:
@@ -148,8 +178,17 @@ Second value is the cursor's LINE: two lines per session, after a two-line heade
                                          (and (plusp (length model)) model))))
                     ;; the reference reverses the WHOLE left half, mark and name
                     ;; alike, and the name's bold rides inside it
-                    (left (list (cons (format nil "~a ~2d  " (if picked "▸" " ") (1+ i))
-                                      (and picked '(:reverse t)))
+                    (child (and (getf s :parent-session-id) t))
+                    (number (1+ (count-if-not (lambda (b) (getf b :parent-session-id))
+                                              (subseq rows 0 i))))
+                    (left (list (cons (if child
+                                         ;; **UNNUMBERED, and the number is what makes a row a CONVERSATION.**
+                                         ;; The header counts the same rows this numbers, so twenty
+                                         ;; subagents cannot turn it into `1/21`: a child sits under its
+                                         ;; parent, where it is both visible and quiet.
+                                         (format nil "~a   ↳ " (if picked "▸" " "))
+                                         (format nil "~a ~2d  " (if picked "▸" " ") number))
+                                       (and picked '(:reverse t)))
                                 (cons name (cond ((and picked here) '(:reverse t :bold t))
                                                  (picked '(:reverse t))
                                                  (here '(:bold t))
@@ -1811,9 +1850,11 @@ draw a child with the SAME renderer as any session — markdown, air rule, tool 
 instead of hand-drawing a ring of events nobody may fold (*for reading, NOT FOR FOLDING INTO THE
 HEAD'S STATE*, `Peeked`'s own docstring).
 
-**ABSENT IS NOT AN ERROR, and the fallback SAYS SO.** Three call sites in letibot pass none, so a peek
-with no rows happens — a daemon older than the field, or a path that did not ask — and a pane that drew
-the event list without saying which it was would make a degraded render look exactly like a plain one.
+**ABSENT ROWS ARE NOT AN ERROR, and the fallback SAYS SO.** The shape is OPT-IN: a peek that asks for
+rows gets a snapshot and an empty ring, and one that asks for events gets the ring and no rows — by
+design, and not by absence. A daemon older than the field answers an `Events` request whatever the head
+asked for, which is the same absent-means-old rule every field on this wire keeps. So the pane says which
+rendering the reader is looking at rather than drawing a degraded one that looks plain.
 See `peek-lines`, where the reader is looking.
 
 A `defvar` and not a head slot, for the reason all live state is: a struct change is a restart.")
@@ -2396,8 +2437,8 @@ unwindowed, which is the shape every other pane has."
 (defun %peek-snapshot-pane (head cols room)
   "The peeked child's rows, drawn by the renderer that draws the conversation.
 
-**ONE RENDERER, NOT TWO.** `Peeked` can answer with a snapshot now (letibot `1520bb5`), and a snapshot
-is a session's rows — so this builds a session from it and calls `%viewport-lines`, the function every
+**ONE RENDERER, NOT TWO.** A peek can answer with the session's ROWS when it asks for them
+(`PeekShape::Rows`, letibot `1520bb5`), and a snapshot is a session's rows — so this builds a session from it and calls `%viewport-lines`, the function every
 frame of the main conversation comes through. Markdown, the air rule, the tool cards, the rung and the
 seams are all its, by construction rather than by imitation; `subagent-out-lines` is left to the path
 where no rows arrived.
@@ -2503,7 +2544,7 @@ advertised three keys and a full copy on disk, and the copy was never written."
                      ;; answered the peek with events and no rows — older than the field, or a path that
                      ;; did not ask — so the child is hand-drawn by `subagent-out-lines` rather than by
                      ;; the renderer the conversation uses.
-                     (list (list (cons "    drawn from the event list — this daemon sends no rows for a peek"
+                     (list (list (cons "    drawn from the event list — no rows came back for this peek (a daemon older than `PeekShape::Rows`, or a caller that asked for events)"
                                        '(:dim t))))
                      (list nil)))
          (wrapped (mappend (lambda (l) (or (wrap-segments (list (cons l nil)) (pane-width cols))

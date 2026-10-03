@@ -375,11 +375,14 @@ assigns the id explicitly on that path and keeps the state it already has
   ;; every time it mattered (app.rs:1672 `+=`, app.rs:1937 `max`).
   (incf (session-dropped session) (or (getf hello :dropped) 0))
   (setf (session-sessions session)
-        ;; SUBAGENTS ARE NOT SESSIONS a picker lists: they are children of this
-        ;; one, shown in the subagent tree and reached by `/switch id`. The
-        ;; reference filters them before storing, on both frames that carry the
-        ;; list (app.rs:1668-1671, 1732-1735).
-        (remove-if (lambda (b) (getf b :parent-session-id)) (getf hello :sessions))
+        ;; **NO FILTER: A CHILD IS A SESSION.** This removed them, with the reference's own reason
+        ;; (*they are children of this one, shown in the subagent tree and reached by `/switch id`*) —
+        ;; and the operator's correction is that the reaching part was already true and the hiding was
+        ;; the bug: *"subagent session is more like you driving others via tmux"*. The list is stored as
+        ;; the daemon sent it and the PICKER decides how it draws — under its parent, unnumbered, with
+        ;; `%session-position` counting the numbered rows — so the quiet is the view's business and not
+        ;; the state's.
+        (getf hello :sessions)
         (session-wiring session) (getf hello :wiring))
   (if (getf hello :snapshot)
       ;; **A `Hello` is the ATTACH frame, so the first one for a session is the

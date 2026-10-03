@@ -1048,9 +1048,9 @@ and a `hello` with a snapshot). Returns T when the queue moved."
             :control)))))
     ((string= (frame-name frame) "sessions")
      (setf (session-sessions (head-session head))
-           ;; subagents are not sessions a picker lists, on this frame as on the
-           ;; Hello (app.rs:1732-1735)
-           (remove-if (lambda (b) (getf b :parent-session-id)) (getf frame :sessions))
+           ;; **A CHILD IS A SESSION, on this frame as on the Hello** — see `picker-sessions` for the
+           ;; operator's words and for why the filter this replaces was the bug rather than the quiet.
+           (getf frame :sessions)
            (head-picker-sel head) 0
            (head-dirty head) t)
      ;; `current` is the daemon's word for where this connection IS. It was

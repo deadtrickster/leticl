@@ -499,7 +499,18 @@ is empty\"* must not look alike (`view.rs:732-740`, `server.rs:683-690`)."
         :len len))
 
 (defun make-peek (session-id)
-  (list :frame "peek" :session-id session-id))
+  "Read another session's scrollback WITHOUT moving this head there.
+
+**AND ASK FOR ROWS, which is a request field and not a favour.** `PeekShape` is opt-in with `Events` as
+the default, and the two shapes are ALTERNATIVES: a head that asks for rows gets a snapshot and an EMPTY
+ring, because sending both would put the same content on the wire twice. So `snapshot: NIL` beside a
+full ring is the daemon answering an `Events` request exactly as designed — which is what this head did
+while a commit of ours claimed rows were not reachable. The claim was wrong; the missing field was ours.
+
+Rows are what make a peeked child draw like any other session: a `Snapshot` is the same thing an attach
+answers with, so `%peek-snapshot-pane` draws it with `%viewport-lines` and no head-side renderer is
+involved. `Events` stays reachable for a caller that wants the ring; nothing sends it today."
+  (list :frame "peek" :session-id session-id :shape "Rows"))
 
 (defun make-settings ()
   (list :frame "settings"))
