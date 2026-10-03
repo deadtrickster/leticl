@@ -1802,40 +1802,68 @@ beside the slot rather than a second slot: a struct layout change is a restart."
 (defvar *peeked-dropped* 0
   "How many of that subagent's events fell off the daemon's ring before the read.")
 
-(defun subagent-out-lines (events)
+(defun subagent-out-lines (events &key (payloads t))
   "A subagent's scrollback as the reference draws it (`subagent_out_lines`,
 letibot `2ac6200`): every tool result as `· name — outcome` over its payload, and
 the model's ANSWER text in order beside them — a `digest` subagent calls no tools
 by design and its whole product is prose, and the pane that drew only tool results
 told the operator there was nothing (*\"when i enter - no output\"*). Reasoning
 stays out: it is the model thinking rather than its answer. Spills are listed at
-the end, so the full output is one path away."
-  (let ((out nil) (spills nil))
-    (dolist (env events)
-      (case (event-name env)
-        ((:transcript-content)
-         (let ((item (getf env :item)))
-           (when item
-             (switch ((getf item :type) :test #'string=)
-               ("tool_result"
-                (push (format nil "· ~a — ~a" (getf item :name)
-                              (%outcome-word (outcome-name (getf item :outcome))))
-                      out)
-                (dolist (l (%payload-lines (getf item :payload)))
-                  (push (format nil "  ~a" l) out))
-                (push "" out))
-               ("assistant"
-                (let ((text (or (getf item :text) "")))
-                  (when (plusp (length (string-trim " " text)))
-                    (dolist (l (uiop:split-string text :separator '(#\newline)))
-                      (push l out))
-                    (push "" out))))))))
-        ((:tool-finished)
-         (awhen (getf env :spill) (push it spills)))))
-    (when spills
-      (push "full output on disk:" out)
-      (dolist (sp (nreverse spills)) (push (format nil "  ~a" sp) out))
-      (push "" out))
+the end, so the full output is one path away.
+
+**AND THE CHILD'S TASK IS THE FIRST THING IN IT, in full.** The operator, reading the pane:
+*\"the first prompt is truncated too early\"* and *\"I want to be able to easily see it in full\"*.
+MEASURED, and the truncation is not this head's: the daemon publishes the `Subagent` event's
+`prompt` as `derive_title(prompt)` — `harness.rs:7177` — **the subtask's FIRST LINE**, because the
+field doubles as the picker's title, and on the finishing event it publishes the child's *answer's*
+first line instead (`publish(\"done\", &first_line)`). So the pane's row can only ever show a title
+and, once the child is done, not even the task. **The transcript read is the only place the task
+survives**, and this function was dropping it: the child's own `user` row is drawn here now, wrapped
+by the caller like everything else, so the question is above its answer where it belongs.
+
+**AND THE RUNG GOVERNS IT**, because this is a view and view rules are the rung's: with `:payloads`
+NIL the answers are still drawn and the tool payloads are held back behind a seam that counts them —
+the same question the transcript asks a committed row (`reading-p`), asked of a conversation that is
+not the session's own. `peek-lines` passes it, so the pane follows `:reading` like every other view."
+  (let ((out nil) (spills nil) (hidden 0))
+    (flet ((emit (text) (push text out)))
+      (dolist (env events)
+        (case (event-name env)
+          ((:transcript-content)
+           (let ((item (getf env :item)))
+             (when item
+               (switch ((getf item :type) :test #'string=)
+                 ("user"
+                  ;; **THE TASK, WHICH THE EVENT'S `prompt` ONLY EVER CARRIED AS A TITLE.** Both user
+                  ;; shapes the wire uses: `:text`, and `:parts` for a row the daemon built from
+                  ;; fragments.
+                  (let ((text (or (getf item :text)
+                                  (getf (first (getf item :parts)) :text))))
+                    (when (and text (plusp (length (string-trim " " text))))
+                      (emit (format nil "▌ ~a" text))
+                      (emit ""))))
+                 ("tool_result"
+                  (emit (format nil "· ~a — ~a" (getf item :name)
+                                (%outcome-word (outcome-name (getf item :outcome)))))
+                  (let ((rows (%payload-lines (getf item :payload))))
+                    (if payloads
+                        (dolist (l rows) (emit (format nil "  ~a" l)))
+                        (incf hidden (length rows))))
+                  (emit ""))
+                 ("assistant"
+                  (let ((text (or (getf item :text) "")))
+                    (when (plusp (length (string-trim " " text)))
+                      (dolist (l (uiop:split-string text :separator '(#\newline)))
+                        (emit l))
+                      (emit ""))))))))
+          ((:tool-finished)
+           (awhen (getf env :spill) (push it spills)))))
+      (when (plusp hidden)
+        (emit (format nil "  … +~d line~:p at a higher rung · /verbosity" hidden)))
+      (when spills
+        (emit "full output on disk:")
+        (dolist (sp (nreverse spills)) (emit (format nil "  ~a" sp)))
+        (emit "")))
     (nreverse out)))
 
 (defvar *peek-total* 0
@@ -2337,7 +2365,10 @@ else is measured back from it.
 The footer names the SPILL FILE, which had no counterpart at all: the pane
 advertised three keys and a full copy on disk, and the copy was never written."
   (let* ((events (head-peeked head))
-         (body (subagent-out-lines events))
+         ;; **THE RUNG GOVERNS THIS VIEW TOO** — see `subagent-out-lines`: at `:reading` the child's
+         ;; answers are drawn and its tool payloads are held behind a seam, which is the same question
+         ;; the transcript asks a committed row.
+         (body (subagent-out-lines events :payloads (not (reading-p))))
          (spill (and body *peeked-session* (spill-peek *peeked-session* body)))
          (shown (or body
                     (list "    this subagent's scrollback has neither an answer nor tool output. It may still be running, or its rows may have fallen off the daemon's ring.")))

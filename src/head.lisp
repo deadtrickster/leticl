@@ -1131,12 +1131,19 @@ and a `hello` with a snapshot). Returns T when the queue moved."
                        (or (getf frame :total) 0))
      :control)
     ((string= (frame-name frame) "peeked")
-     (setf (head-peeked head) (getf frame :events)
-           *peeked-session* (getf frame :session-id)
-           *peeked-dropped* (or (getf frame :dropped) 0)
-           (head-mode head) :peek
-           (head-dirty head) t)
-     (reset-pane-scroll)
+     ;; **THE PANE TAILS, SO A REPEAT REPLY MUST NOT MOVE THE READER.** `reset-pane-scroll` belongs to
+     ;; the FIRST peek — the pane opening on that child — and not to every reply: with the re-ask in
+     ;; `tick-peek`, a reader who scrolled up to read a child's earlier output would be yanked back to
+     ;; the tail once a second. The test is whether this reply is the pane's own, which is the same
+     ;; question `*peeked-session*` answers for every other reader of it.
+     (let ((same (and (eq (head-mode head) :peek)
+                      (equal *peeked-session* (getf frame :session-id)))))
+       (setf (head-peeked head) (getf frame :events)
+             *peeked-session* (getf frame :session-id)
+             *peeked-dropped* (or (getf frame :dropped) 0)
+             (head-mode head) :peek
+             (head-dirty head) t)
+       (unless same (reset-pane-scroll)))
      :control)
     ((string= (frame-name frame) "bye")
      ;; **A BYE IS FINAL — UNLESS THIS HEAD ASKED FOR IT.** The daemon writes one
@@ -1922,6 +1929,42 @@ release paints the whole accumulated state in one pass — which is what *follow
   (or *frozen-frame*
       (and (not *frozen*) (or (head-dirty head) (live-frame-due-p head)))))
 
+(defparameter *peek-poll-ms* 1000
+  "How often a peeked subagent's scrollback is re-read while its pane is open.
+
+**The pane TAILS now, and this is what makes it a tail rather than a snapshot.** It read ONCE — the
+footer said `Enter re-reads` and that was the whole of it — so a child still working showed whatever
+it had produced at the moment somebody opened it, and nothing after. The operator: *\"when i 'enter'
+subagent i do not want to hit enter to refresh the view i want it to tail as a normal conversation
+while i look at it.\"*
+
+One second, because it IS a tail: the reply is bounded (the daemon's ring, already read once) and the
+head already polls for exactly this shape of absence — *its progress has no push path at all, it has
+to be asked for*, `tick-dash-feeds`. The daemon has no subscription for a session this head is not
+attached to, so asking again is the only way there is; if one ever lands, this is the function that
+goes.
+
+A `defparameter` and not a `defconstant`: the file pusher SKIPS constants, so this could never be
+tuned on a running head.")
+
+(defvar *peek-asked-at* 0
+  "When the peek last asked, on the loop's clock — so a pane that is open asks once a second and not
+once a pass. A defvar, and not reset by a session change: the next ask is a second away at worst.")
+
+(defun tick-peek (head)
+  "Re-read the peeked subagent's scrollback while its pane is open — see `*peek-poll-ms*`.
+
+**Only while the pane is OPEN**, and only when a clock is running. A head that kept asking after one
+`/peek` would read a child's scrollback for the rest of the session, which is the accumulation T24 is
+written about; and a replay has no clock, so it must not ask at all — the bytes it answers with have
+to be the bytes it was given."
+  (when (and (plusp *now-ms*)
+             (eq (head-mode head) :peek)
+             *peeked-session*
+             (<= (+ *peek-asked-at* *peek-poll-ms*) *now-ms*))
+    (setf *peek-asked-at* *now-ms*)
+    (%send head (make-peek *peeked-session*))))
+
 (defun run-loop (head)
   (loop while (head-running head)
         do (let ((rendered 0)
@@ -1948,6 +1991,10 @@ release paints the whole accumulated state in one pass — which is what *follow
              ;; (`leticl-dash-collector`) without writing a frame from a thread that does not own
              ;; the connection. See `tick-dash-feeds`.
              (tick-dash-feeds head)
+             ;; **AND A SUBAGENT'S SCROLLBACK, WHILE ITS PANE IS OPEN** — the same shape of absence as
+             ;; the job feed above: the daemon has no subscription for a session this head is not
+             ;; attached to, so a peek is a read and the pane tails by asking again.
+             (tick-peek head)
              ;; **AND THE WATCHERS' LIFECYCLE** (R56), on the same thread for the same reason: it asks
              ;; for the job list while something is waiting, and asking is `%send`. It is also where a
              ;; job-bound watcher STARTS the collector — an import that runs for hours cannot have its

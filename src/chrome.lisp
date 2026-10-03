@@ -1035,7 +1035,7 @@ is worse than no hint at all."
                       "↑↓ moves · enter reads the output · d opens its dashboard · esc closes"
                       "↑↓ moves · enter reads the output · esc closes"))
                  ((eq (head-mode head) :jobs) "background jobs this session started · ↑↓ then enter reads one · esc closes")
-                 ((eq (head-mode head) :peek) "arrows scroll · enter re-reads · esc back")
+                 ((eq (head-mode head) :peek) "tails live · arrows scroll · esc back")
                  ;; the overlay's row names ESC BACK TO JOBS, not "closes": the
                  ;; jobs list never closed under it, and a bottom row that says
                  ;; `esc closes` on a pane that goes back one level teaches the

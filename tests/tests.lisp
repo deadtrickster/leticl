@@ -5232,6 +5232,83 @@ envelope's `session_id`, which is the parent's."
       (is (search "1 subagent running ─╮" (first edge))
           "and the edge pins it to the RIGHT, framed, not hard against the ╭"))))
 
+(def-test the-subagent-pane-draws-the-task-in-full-and-follows-the-rung (:suite leticl)
+  "**The operator, on the subagents pane, two asks of four:** *\"the first prompt is truncated too
+early\"* and *\"I want to be able to easily see it in full\"*.
+
+MEASURED, and the truncation is not this head's to fix: the daemon publishes the `Subagent` event's
+`prompt` as `derive_title(prompt)` — the subtask's FIRST LINE (`harness.rs:7177`), because the field
+doubles as the picker's title — and on the finishing event it publishes the child's *answer's* first
+line instead (`publish(\"done\", &first_line)`). So the pane's row can only ever show a title, and once
+the child is done not even the task. **The transcript read is the one place the task survives**, and
+`subagent-out-lines` was dropping it: the child's own `user` row is drawn there now, in full and
+wrapped by the caller like every other line, so the question sits above its answer.
+
+The second half is the rung: with `:payloads` NIL the answers are still drawn and the tool payloads are
+held back behind a seam that counts them — the same question the transcript asks a committed row."
+  (let* ((events (list (list :event "transcript_content"
+                             :item (list :type "user"
+                                         :text (format nil "line one of the task~%line two of the task")))
+                       (list :event "transcript_content"
+                             :item (list :type "tool_result" :name "bash"
+                                         :outcome (list :outcome "ok")
+                                         :payload (format nil "p1~%p2~%p3")))
+                       (list :event "transcript_content"
+                             :item (list :type "assistant" :text "the answer"))))
+         (reading (leticl::subagent-out-lines events :payloads nil))
+         (loud (leticl::subagent-out-lines events :payloads t)))
+    (is (some (lambda (l) (search "line one of the task" l)) reading) "the task")
+    (is (some (lambda (l) (search "line two of the task" l)) reading)
+        "**and its SECOND LINE** — in full, not reduced to the title the event carries")
+    (is (some (lambda (l) (search "the answer" l)) reading) "the answer is drawn at every rung")
+    (is (notany (lambda (l) (search "p1" l)) reading) "the payload is held back")
+    (is (some (lambda (l) (search "+3 lines at a higher rung" l)) reading)
+        "**and counted, with the verb that changes the rung**")
+    (is (some (lambda (l) (search "p1" l)) loud) "at a higher rung the payload is there")
+    (is (notany (lambda (l) (search "at a higher rung" l)) loud) "and no seam is needed")))
+
+(def-test a-peeked-subagent-tails-without-a-keypress (:suite leticl)
+  "**The operator's third ask:** *\"when i 'enter' subagent i do not want to hit enter to refresh the
+view i want it to tail as a normal conversation while i look at it.\"*
+
+It read ONCE — the footer said `Enter re-reads` and that was the whole of it. `tick-peek` asks again
+once a second while the pane is open, which is the shape the job-output pane already keeps for the same
+absence: the daemon has no subscription for a session this head is not attached to.
+
+Two refusals, and the second is what keeps a reader's place: a head that is not peeking asks nothing,
+and a reply for the pane that is ALREADY open must not reset the scroll — or a reader who scrolled up
+to read a child's earlier output is yanked back to the tail once a second."
+  (let* ((leticl::*now-ms* 100000) (leticl::*peeked-session* "s-child")
+         (leticl::*peek-asked-at* 0) (leticl::*pane-scroll* 0)
+         (leticl::*peek-poll-ms* 1000)
+         (h (%on-head :cols 80 :rows 24)))
+    (let ((wire (%wire h)))
+      (leticl::tick-peek h)
+      (is (null (%sent wire)) "a head that is not peeking asks nothing")
+      (setf (head-mode h) :peek)
+      (leticl::tick-peek h)
+      (let ((sent (%sent wire)))
+        (is (= 1 (length sent)) "the pane's first tick asks once")
+        (is (equal "peek" (getf (first sent) :frame)) "for the child's scrollback")
+        (is (equal "s-child" (getf (first sent) :session-id)) "by its session id"))
+      (leticl::tick-peek h)
+      (is (null (%sent wire))
+          "**once a second, not once a pass** — the tick is cheap here and the daemon is not this\n head's to hammer")
+      (setf leticl::*now-ms* (+ 100000 leticl::*peek-poll-ms*))
+      (leticl::tick-peek h)
+      (is (= 1 (length (%sent wire))) "and when the second is up, it asks again")
+      (setf (head-mode h) :normal leticl::*peek-asked-at* 0)
+      (leticl::tick-peek h)
+      (is (null (%sent wire)) "a pane that closed stops asking")
+      ;; **and a repeat reply leaves a scrolled reader where they were**
+      (setf (head-mode h) :peek leticl::*peeked-session* "s-child" leticl::*pane-scroll* 7)
+      (leticl::%handle-frame h (list :frame "peeked" :session-id "s-child" :events nil :dropped 0))
+      (is (= 7 leticl::*pane-scroll*) "**the second reply for the same child does not move the reader**")
+      ;; while the FIRST peek for a child still opens at its tail
+      (setf (head-mode h) :normal leticl::*peeked-session* nil leticl::*pane-scroll* 7)
+      (leticl::%handle-frame h (list :frame "peeked" :session-id "s-other" :events nil :dropped 0))
+      (is (zerop leticl::*pane-scroll*) "and the first peek for a NEW child opens at its tail"))))
+
 (def-test the-config-pane-renders-every-row-with-its-source-under-the-cursor (:suite leticl)
   "The screen showed `UNBOUND-VARIABLE / The variable ANAPHORA:IT is unbound.`:
 an `awhen` whose TEST used `it` — `(and (getf r :editable) (plusp (length it)))` —
