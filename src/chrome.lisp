@@ -1150,8 +1150,8 @@ which is the PARENT's (event.rs:841), so two children of one session counted as
 one.
 
 **And the count that REACHES zero is NOT announced here, which is a decision rather than a gap.**
-The operator watched it go 1, 0, hidden — *"leticl's sub agents count in the status line went to 0
-and was hidden"* — and the first fix built a pointer here: `N subagent done · ctrl-g`, held until the
+The operator watched it go 1, 0, hidden — *\"leticl's sub agents count in the status line went to 0
+and was hidden\"* — and the first fix built a pointer here: `N subagent done · ctrl-g`, held until the
 reader opened the pane. **It was reverted, because the announcement belongs one layer down.** The
 daemon wakes the model with a durable `User { speaker: Agent }` transcript row when a child finishes,
 and every head renders that row already; a sentence — or a pointer — from this side would be a

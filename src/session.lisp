@@ -976,6 +976,13 @@ a note about the weather. An event is a row; weather is not. Widening this list 
 routine* would take the compactions off the screen, which is why it is a list of codes and not a
 class.
 
+**And the operator's other report of the same evening is the confirmation of the reading:** *\"leticl
+has troubles with thinking lines stat after it\"* — the stat was disturbed by exactly this row landing
+in the middle of a streaming turn, and once the row stopped being a row the operator's verdict was
+*\"yeah i think marker is fine\"*. Recorded because it is a MEASURED confirmation and not a plausible
+one: the interloper, the counts, and the fix are one sentence, and the next reader who sees a stat
+move during a turn has a place to start.
+
 **And the family is *a moment that passed*, not *provider*.** `model_endpoint_retry` is here — the
 endpoint was retried and answered, nothing to do — while `prefix_check_skipped` is deliberately NOT:
 D10 rules that a skipped check is *said, never counted as a pass*, so that one keeps its row. The
