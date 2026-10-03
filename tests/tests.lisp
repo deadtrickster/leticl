@@ -7251,6 +7251,43 @@ letibot does not: ~s"
                 (set-difference his mine :test #'string=)
                 (set-difference mine his :test #'string=)))))))
 
+(def-test every-weather-code-is-a-routine-code (:suite leticl)
+  "**The relation `+weather-warnings+`' docstring claims, asserted rather than trusted.**
+
+That docstring says the relation is asserted, and until this test it was not — the file claimed an
+invariant it did not hold, which is the defect this suite exists to catch one layer down.
+
+The weather list is the PLACEMENT half of a decision the daemon makes about the REGISTER: a code whose
+fact is routine *and* which is not an event in the record leaves the transcript and lights the `⚠`.
+Both halves are copies of a table letibot owns — `+routine-warnings+` here mirrors
+`crates/sessionlog/src/warning.rs`, and `a-routine-warning-code-is-one-letibot-calls-routine` fails when
+that copy moves — so the relation BETWEEN the two local lists has to be asserted as well, or a code
+could be silenced by being added to this one alone.
+
+  · **a code here and not there would be a RED warning silenced** — the direction that HIDES
+    something, which is what the severity table's own fail-safe is written against;
+  · **the reverse is not a defect.** Most routine codes stay rows, because most of them ARE events: a
+    compaction changes the conversation and a slow first byte does not. The whole list is two codes
+    and that is the ruling, not an oversight.
+
+**Where this list should LIVE is an open question between the two heads**, put to letibot with the
+rest of the weather decision: the daemon could classify weather beside `Class::Routine`, so both heads
+read one answer and neither can drift. Until it does, this is the guard that keeps the head-local copy
+honest."
+  (let ((weather leticl::+weather-warnings+)
+        (routine leticl::+routine-warnings+))
+    (is (plusp (length weather))
+        (format nil "**a plausible list, so this cannot pass by walking nothing**: ~s" weather))
+    (dolist (code weather)
+      (is (member code routine :test #'string=)
+          (format nil "**~a is weather AND routine** — a code silenced without having been classified
+ routine would be a red warning quietly hidden: ~s" code routine)))
+    (is (member "auto_compact" routine :test #'string=)
+        "the routine class still holds the compactions, which is what makes this a subset and not a class")
+    (is (not (member "auto_compact" weather :test #'string=))
+        "**and they are explicitly NOT weather** — a compaction changes the conversation, so it is an
+ event in the record and stays a row: the ruling is *is this an event*, not *is this routine*")))
+
 (def-test every-note-code-offers-a-remedy (:suite leticl)
   "**R29 rule one, and the assertion is the RULE rather than an example.**
 
