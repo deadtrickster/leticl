@@ -1239,8 +1239,10 @@ nine modes and read only `q` out of a printable one, so no character reached the
 composer while any pane was open — including the session picker, whose own hint
 bar says *\"type a number to switch · /new [title]\"* and meant neither
 (chrome.lisp:363). A pane open was a head you could not talk to: Esc out, type,
-and lose the list. The reference lets a pane's text fall through and gates only
-Enter and the pane's own letters on an empty line (app.rs:3370-3394, 3508-3548).
+and lose the list. The reference lets a pane's text fall through and gates only its letters on an empty
+line (app.rs:3370-3394, 3508-3548); **Enter was in that list once and is not any
+more** — letibot made it the pane's unconditionally at `ee33732`, and the arm below
+is that rule.
 
 `esc`/`q` closes any of them; the LIST panes also take a cursor (up/down) and an
 enter, and they share ONE cursor — `head-picker-sel` — because only one pane is
@@ -1361,8 +1363,10 @@ one thing this head must not need."
           ((:page-up) (scroll (- (max 1 (- *pane-room* 1)))))
           ((:wheel-down) (scroll (* (%wheel-notches key) *scroll-notch*)))
           ((:wheel-up) (scroll (- (* (%wheel-notches key) *scroll-notch*))))
-          ;; Tab unfolds a todo, BESIDE enter and under enter's own condition, so
-          ;; the two cannot disagree about whose key it is. On every OTHER pane it
+          ;; Tab unfolds a todo, beside enter — and it KEEPS the `empty` gate that
+          ;; enter has just given up, DELIBERATELY: with a word in the composer Tab is the
+          ;; composer's, because the hint bar promises *"tab completes /commands"*,
+          ;; where Enter is the pane's whatever the line holds. On every OTHER pane it
           ;; is not the pane's key at all: it used to set `head-dirty` to NIL
           ;; there — against its own comment — which suppressed the next repaint.
           ((:tab) (when (and (eq mode :todos) empty) (%pane-enter head))
@@ -1379,7 +1383,37 @@ one thing this head must not need."
           ;; whether there is anything to remove (and says so when there is not).
           ((:delete) (when (eq mode :todos) (%todo-remove head))
                      (eq mode :todos))
-          ((:enter) (when empty (%pane-enter head)) empty)
+          ((:enter)
+           ;; **ENTER IS THE PANE'S UNCONDITIONALLY, AND THIS `empty` GATE WAS THE BUG.** It read
+           ;; `(when empty (%pane-enter head)) empty`: with one character in the composer the arm
+           ;; returned NIL, the key fell through the ladder, and the half-written line was
+           ;; SUBMITTED — so a pane's own advertised key became `submit` for anyone who had typed a
+           ;; word. The operator hit it on the reference head (*"i went to jobs pane and hit
+           ;; enter"*, and what reached the model was a stray backslash), and their ruling is the
+           ;; whole of the rule: *"the pane own keyboard in a way, so enter is a pane thing."*
+           ;; letibot fixed it at `ee33732`; this head does the same.
+           ;;
+           ;; **AND THE WORDS ARE HELD, NEVER EATEN.** Claiming the key is not enough on its own:
+           ;; a pane that consumed the composer's line to keep the key would trade one silent loss
+           ;; for another, so `%pane-enter`'s arms leave `composer-buffer` alone — and the test
+           ;; beside this asserts that rather than assuming it.
+           ;;
+           ;; **THE ONE EXCLUSION IS THE SESSION PICKER, AND IT IS LETIBOT'S OWN LIST** (`ee33732`):
+           ;; *"the pickers, the mode picker, the decision ladder and the todos stops are excluded on
+           ;; purpose: for those a typed line IS the answer — a row number, an id prefix, a name — and
+           ;; `submit` routes it and holds the words. The rule is the pane owns the key, not the
+           ;; composer is dead."* `nil` here is what hands the key back to the composer's routing,
+           ;; and it is the ONLY arm that does.
+           ;;
+           ;; Three of those four exclusions are already outside this function: the mode picker and
+           ;; the ladder are asked in `%handle-key` before any pane is. The todos stops are NOT
+           ;; excluded, and the difference is measured rather than copied: this head's todos pane has
+           ;; no typed-line meaning — its Enter acts on the cursor, the add row or a fold — so
+           ;; excluding it would send the line to the MODEL, which is the defect this arm exists to
+           ;; stop. Two of the picker's checks (`/new notes` under the pane, and a row number) are
+           ;; what says whether that reading is right, and they are in `tests.lisp`.
+           (cond ((and (eq mode :picker) (not empty)) nil)
+                 (t (%pane-enter head) t)))
           ;; **SPACE MARKS A TODO, AND IT OWNS THE KEY WHILE THE PANE IS UP** — the same rule delete
           ;; and enter keep beside it. The operator asked for the key by naming the convention (*"space
           ;; for marking todo?"*), and it is free in this pane: a space was previously a `:char` that

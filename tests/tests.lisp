@@ -5238,6 +5238,50 @@ conversation."
     (leticl::%handle-key h (list :type :enter))
     (is (not leticl::*peek-prompt-only*) "enter is the conversation again, so it clears the flag")))
 
+;;; **THE PANE'S ENTER WAS GATED ON `empty`, AND THE GATE WAS THE BUG.** `%pane-key` read
+;;; `((:enter) (when empty (%pane-enter head)) empty)`: with one character in the composer the arm
+;;; returned NIL, the key fell through the ladder, and the half-written line was SUBMITTED — so a
+;;; pane's own advertised key became `submit` for anyone who had typed a word. The operator hit it
+;;; on the reference head (*"i went to jobs pane and hit enter"*, and what reached the model was a
+;;; stray backslash), and their ruling is the whole rule: *"the pane own keyboard in a way, so enter
+;;; is a pane thing."* letibot fixed it at `ee33732`; the arm is now `((:enter) (%pane-enter head) t)`.
+;;;
+;;; **AND CLAIMING THE KEY IS ONLY HALF**: the words are HELD, never eaten — a pane that consumed
+;;; the composer's line to keep the key would trade one silent loss for another.
+(def-test a-panes-enter-is-the-panes-whatever-the-composer-holds (:suite leticl)
+  "Enter in a pane while the composer holds a word: the pane's act runs, the key is claimed
+rather than submitted, and the buffer is asserted untouched under every act — including a pane
+whose act for the row under the cursor is nothing at all."
+  (let ((*pane-scroll* 0) (*repo-todo-open* nil)
+        (leticl::*frozen* nil) (leticl::*frozen-frame* nil) (leticl::*frozen-items* 0)
+        (h (%make-head)))
+    (setf (composer-buffer (head-composer h)) "half written")
+    ;; 1. a pane WITH an act, and one that sends nothing: the subagents pane on a child still
+    ;;    `opening` says its piece and returns (app.rs:3678-3689).
+    (setf (head-mode h) :subagents)
+    (setf (session-subagents (head-session h))
+          (list (list :session-id "parent" :subagent-id "s-aaaaaaaaaaaa11111111"
+                      :state "opening" :prompt "first" :role "worker")))
+    (setf (head-picker-sel h) 0)
+    (is (leticl::%pane-key h (list :type :enter) :enter)
+        "the pane claims Enter with a word in the box")
+    (is (search "still opening" (head-status-note h)) "and its act ran, and said its piece")
+    (is (string= "half written" (composer-buffer (head-composer h)))
+        "the words are held, never eaten")
+    ;; 2. a pane whose act for the row under the cursor is NOTHING — jobs with no rows. The key is
+    ;;    still the pane's: what it must not do is become `submit`.
+    (setf (head-mode h) :jobs (head-jobs h) nil)
+    (is (leticl::%pane-key h (list :type :enter) :enter)
+        "a rowless pane claims Enter too, so it cannot fall through to submit")
+    (is (string= "half written" (composer-buffer (head-composer h))) "and still holds the line")
+    ;; 3. and on a pane that is not a list at all — the dash, whose Enter opens the panel under the
+    ;;    cursor through the same nav every other key goes through.
+    (setf (head-mode h) :dash)
+    (let ((before leticl::*dash-nav*))
+      (is (leticl::%pane-key h (list :type :enter) :enter) "the dash claims it")
+      (is (not (equal before leticl::*dash-nav*)) "and its own act ran")
+      (is (string= "half written" (composer-buffer (head-composer h))) "with the line still held"))))
+
 (def-test the-subagents-pane-says-none-the-way-the-reference-does (:suite leticl)
   "letibot's subagents pane: `subagents`, a blank, `none spawned yet…`, a blank,
 `arrows move, Enter reads…`. Ours had never drawn (the same nested header as the
