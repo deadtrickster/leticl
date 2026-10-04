@@ -1002,7 +1002,10 @@ nowhere for exactly this, so the test is that the card now routes to it."
                      :before (format nil "a~%b~%c")
                      :after (format nil "a~%B~%c")))
          (text (segs-text (edit-lines edit 80))))
-    (is (search "src/thing.lisp" text) "the path is labelled")
+    (is (search "src/thing.lisp" text)
+        "the path is labelled — **by the DIFF, because this call passed no `:subject`**, which is the
+ safe direction: a pane or a test that renders a diff on its own gets the file named. The card
+ above it names the file itself and passes `:subject`, and then this row is not drawn")
     (is (search "311" text)
         "the changed line is numbered 311 — line numbers come from before_start,
 so a diff of an excerpt does not claim line 1 changed when it was line 311")
@@ -4100,6 +4103,49 @@ where the reference prints one row is a transcript nobody can scan."
     (let ((open (segs-of (item-lines item 80 (list :show-tools t)))))
       (is (search "line 1" open) "open, the output is there"))))
 
+(def-test a-card-that-drew-a-body-gets-air-and-two-liners-do-not (:suite leticl)
+  "**The operator, 2026-10-04: *\"no space between two Edited\"*** — one card's fourteen-row diff
+running straight into the next card's header.
+
+The air rule read the row's KIND and nothing else, so two `Activity` rows were glued: that was
+written for a RUN OF ONE-LINE CARDS (*\"two tool cards in a row are one block and read as one\"*),
+and it is right for those. A card that drew a BODY is not a line in a list — its last diff row and
+the next card's header are two blocks and must not touch.
+
+So the rule reads what the row above DREW: one line stays glued, more than one gets the blank,
+whichever class it is. Both halves are asserted here, because the fix for the first must not take
+the second away."
+  (flet ((rows (payloads)
+           (let* ((*call-targets* nil)
+                  (h (%on-head :cols 90 :rows 40)))
+             (setf (session-items (head-session h))
+                   (coerce (loop for p in payloads
+                                 for i from 1
+                                 collect (list :item-id (format nil "a~d" i) :kind "tool_result" :ts 0
+                                               :item (list :type "tool_result"
+                                                           :call-id (format nil "k~d" i)
+                                                           :name "bash"
+                                                           :outcome (list :outcome "ok")
+                                                           :payload p)))
+                           'vector))
+             (%rows h))))
+    ;; --- a card with a BODY, then another card
+    (let* ((rs (rows (list (%payload-text 30) "one line")))
+           (seam (position-if (lambda (s) (search "… +" s)) rs))
+           (next-header (position-if (lambda (s) (search "one line" s)) rs)))
+      (is (and seam next-header) (format nil "both cards are on the screen: ~s" rs))
+      (is (string= "" (nth (1+ seam) rs))
+          (format nil "**the card that drew a body is followed by AIR** — its seam and the next\n card's header are two blocks, not one line after another: ~s" rs))
+      (is (= (1+ (1+ seam)) next-header)
+          "and exactly ONE blank row, not a paragraph of them"))
+    ;; --- the control: two one-line cards stay one block
+    (let* ((rs (rows (list "one line" "another line")))
+           (first (position-if (lambda (s) (search "one line" s)) rs))
+           (second (position-if (lambda (s) (search "another line" s)) rs)))
+      (is (and first second) (format nil "both inlined rows are up: ~s" rs))
+      (is (= (1+ first) second)
+          (format nil "**two one-line cards are still glued** — the rule this change must not take\n away: ~s" rs)))))
+
 (def-test the-fold-key-is-the-one-the-head-sets (:suite leticl)
   "`:tools-open` was read in four places and SET NOWHERE — the head's plist key is
 `:show-tools`, so card bodies never rendered at all and ctrl-t flipped a key nothing
@@ -4846,6 +4892,56 @@ that keep it are named."
       "a modifier is not a subject, so pkill keeps it")
   ;; a tool with no arguments at all is not made to invent one
   (is (equal "{}" (display-target "{}")) "and nothing is not stretched into something"))
+
+(def-test the-subject-leads-and-a-files-body-is-not-a-label (:suite leticl)
+  "**The operator's own row, and the two rules behind it** (their screen, 2026-10-04):
+
+      ▾ Wrote \"repl: the eval socket's own surface, as a pane — `/lisp`\\n\\nHACKING.md's contract…\" · ok · 1ms · 1 line
+          /tmp/…/repl-msg.txt (new)
+
+Two things are wrong with it and they are different things.
+
+**THE SUBJECT DID NOT LEAD.** The line that was supposed to put it first moved it only when the loop
+had NOT reached one — `(and (not subject-seen) subject-value)` — and `subject-value` was assigned
+inside the same `when` that set `subject-seen`, so the branch could never run. The parts stayed in
+WRITTEN order, and the harness writes `content` first: the headline was the first forty characters of
+a five-kilobyte file and the PATH was elided off the end of the row, because `*target-max-cols*` is a
+KEEP bound and it cut there.
+
+**AND A FILE'S BODY IS NOT A PART OF ITS LABEL.** The write's `content` is drawn by the card
+underneath the row — the edit excerpt is a diff of it — which is the same argument a nested `[…]`
+is dropped on. What the row is for is `Wrote <file>`."
+  ;; the operator's arguments, in their own order. **THE PATH IS UNQUOTED**: only an argument with
+  ;; WHITESPACE is quoted (`%debug-quote`, Rust's `{:?}`), which is how every other row draws a path
+  ;; — `Read src/cards.lisp`, `Edited src/f.lisp` — and the body that used to lead here IS quoted,
+  ;; which is half of why the row read as a wall
+  (is (equal "/tmp/x/repl-msg.txt"
+             (display-target
+              "{\"content\": \"repl: the eval socket's own surface, as a pane\\n\\nHACKING.md's contract is that this head is a LIVE IMAGE\", \"path\": \"/tmp/x/repl-msg.txt\"}"))
+      "**`Wrote /tmp/x/repl-msg.txt`** — the file, and the body is not on the row at all")
+  ;; the order the subject-second case also leads now: an `edit` whose strings come first
+  (let ((out (display-target
+              "{\"old_string\":\"aaaa bbbb\",\"new_string\":\"cccc dddd\",\"path\":\"src/f.lisp\"}")))
+    (is (plusp (length out)) "the edit still names something")
+    (is (< (search "src/f.lisp" out) (search "aaaa" out))
+        (format nil "**the file leads the strings that came before it in the arguments**: ~s" out))
+    (is (search "aaaa bbbb" out)
+        "…and an EDIT's old/new strings stay: they are what changed, not the whole file, and the\n diff underneath spells them out for a reader who wants the rest"))
+  ;; THE GUARD: a body with no subject is what the row has, so it is still the label
+  (is (equal "\"only a body here\"" (display-target "{\"content\":\"only a body here\"}"))
+      "**a body with no path keeps its place** — a call that names no file is labelled by its body,\n which is the `[…]`-with-nothing-else rule one case out")
+  ;; **AND THE DIFF'S HEAD-LINE IS THE SAME RULE, ON THE OTHER SIDE OF THE ROW.** The card that has
+  ;; already named the file does not draw the cyan path row under it; a caller that passes no
+  ;; subject — a pane, a test — still gets it, and so does a `bash` row whose subject is the command.
+  (let ((edit (list :path "src/thing.lisp" :created t :before-start 1 :after-start 1
+                    :before-lines 0 :after-lines 3 :truncated nil
+                    :before "" :after (format nil "a~%B~%c"))))
+    (is (search "src/thing.lisp" (segs-text (edit-lines edit 80)))
+        "a diff drawn with NO subject labels its own file")
+    (is (not (search "src/thing.lisp" (segs-text (edit-lines edit 80 :subject "src/thing.lisp"))))
+        "**and the same diff under a card that named it does not** — one file, one name")
+    (is (search "src/thing.lisp" (segs-text (edit-lines edit 80 :subject "\"python3 - <<'PY' …\"")))
+        "**and a `bash` row keeps it**: that subject is the command, and the file is named nowhere else\n on the card")))
 
 (def-test the-reasoning-header-counts-screen-lines-and-its-mark-is-plain (:suite leticl)
   "letibot: `▸ ESC[1mThoughtESC[0;2m · 13 lines · ctrl-r` — the mark carries no

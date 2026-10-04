@@ -414,7 +414,7 @@ neighbours: does a blank line belong between them. The reference's `RowClass`."
 ;;; over, so scrolling further costs the difference and not the whole depth.
 
 (defvar *hist-cache* nil
-  "`(key lines next-index class-above)` for the committed transcript, or NIL.
+  "`(key lines next-index class-above bounds)` for the committed transcript, or NIL.
 
 A defvar: a push must not drop a running head's cache, which would cost one
 rebuild rather than a wrong frame, but a cache that resets on every push is a
@@ -903,8 +903,31 @@ thirty rows appended, and the view jumped to `row-62`."
                           (dolist (it run)
                             (push (cons (getf it :item-id) (cons at (1+ at))) raw))))
                       (let ((before (length lines)))
+                        ;; **AIR WHERE THE KIND CHANGES**, which is the reference's `RowClass` rule
+                        ;; and the spacing this head was missing: a blank line goes before a row
+                        ;; unless BOTH it and the row above are `Activity`. Two tool cards in a row
+                        ;; are one block and read as one — a blank between each was a third of the
+                        ;; vertical budget spent separating what a glyph in the first column
+                        ;; already separates — while prose against a card is a change of kind and
+                        ;; gets the air.
+                        ;;
+                        ;; **AND A CARD THAT DREW A BODY IS NOT A LINE IN A LIST** (the operator,
+                        ;; 2026-10-04: *"no space between two Edited"*, one card's diff running
+                        ;; straight into the next card's header). The old rule read the row's KIND
+                        ;; and nothing else, so two `Activity` rows were glued whether the first was
+                        ;; one line or a fourteen-row diff.
+                        ;;
+                        ;; **THE BLOCK IS THE ROW BEING DRAWN, and that is not the same as the row
+                        ;; above it.** The walk runs NEWEST FIRST and prepends, so the blank added
+                        ;; here lands BETWEEN this row and the newer ones already in `lines` — the
+                        ;; boundary the reader sees as *the row above and the row below*. So the
+                        ;; question is this row's own height (`il`, which IS that block), and the
+                        ;; first fix for this asked `above-lines` instead: it was written, it read
+                        ;; the already-drawn one-liner, and the test below showed the blank landing
+                        ;; one boundary too high.
                         (when (and lines class-above
-                                   (not (and (eq class :activity) (eq class-above :activity))))
+                                   (or (not (and (eq class :activity) (eq class-above :activity)))
+                                       (> (length il) 1)))
                           (setf lines (cons nil lines)))
                         (setf class-above class)
                         ;; `append`, NOT `revappend`. `(append il lines)` copies IL — the
@@ -1633,6 +1656,11 @@ scrolls the transcript by a row every keystroke.
     ;; `*link-cwd*` from the session's own workspace, since a terminal has no idea where this head
     ;; is and a relative `file://` URL is not a broken link but a meaningless one.
     (link-reset)
+    ;; **AND A PUSH RE-DERIVES WHAT THE PREVIOUS CODE DERIVED.** One comparison a frame, one walk per
+    ;; push: `*call-targets*` holds readings of `display-target`, so a redefinition of it leaves
+    ;; every recorded target saying what the old version said — and that is the row a reader is
+    ;; looking at. See `refresh-call-targets`/`*call-targets-generation*` for the measurement.
+    (refresh-call-targets head)
     (setf *link-enabled* (not (null (getf (head-prefs head) :links)))
           *link-cwd* (getf (session-wiring (head-session head)) :workspace))
     ;; The card that owns the keyboard, in the reference's own order

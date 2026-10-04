@@ -102,6 +102,25 @@ KEYWORDS, because objects decode to keyword-key plists (`json.lisp`) — an
 arguments string is JSON like any other, so `{\"path\": \"a\"}` arrives as
 `(:PATH \"a\")` and a string comparison against \"path\" would never match.")
 
+(defparameter *body-keys* '(:content)
+  "Argument keys whose value is a file's whole BODY rather than a label: **not part of the subject.**
+
+**THE SAME ARGUMENT THE NESTED PLACEHOLDER IS DROPPED ON, one case further out.** A nested value is
+a pointer at the card drawn underneath the row; a write's `content` IS the card drawn underneath the
+row — the edit excerpt is a diff of it. Spending the row's best columns restating it, quoted and
+escaped, is the operator's own report from their screen (2026-10-04):
+
+    ▾ Wrote \"repl: the eval socket's own surface, as a pane — `/lisp`\\n\\nHACKING.md's contract…\" · ok · 1ms · 1 line
+        /tmp/letibot-scratch-2197601/repl-msg.txt (new)
+
+two rows, and **neither of them is a headline a person can use**: the body's first forty characters
+are not a filename, and the file only appears on the row below, in cyan, as a thing the diff drew.
+What the row is FOR is `Wrote <file>`.
+
+**Only when a subject named the row**, the guard the nested rule keeps and for the same reason: a
+call with a body and no path has nothing else to be labelled by, and its body is then the honest
+label — a nested value is a placeholder, not a part, unless it is the only thing there is.")
+
 (defun %json-object-p (x)
   "A decoded JSON object: the repo's own plist test, which is what closes the
 object/array ambiguity (PLAN §7)."
@@ -221,35 +240,46 @@ is about to DRAW this must give it a width."
       ;; informative thing available
       ((null json) (truncate-target (string-trim " " (or arguments ""))))
       ((%json-object-p json)
-       (let ((parts nil)
-             (subject-seen nil)
-             (subject-value nil))
+       (let ((parts nil)                 ; `(KEY . PART)`, in written order
+             (subject-entry nil))       ; the FIRST subject key's entry — it leads
          ;; `on JSON`, not `on (cdr JSON)`: a plist's pairs are the WHOLE list.
          ;; Taking the cdr binds the first VALUE as a key and leaves the first
          ;; pair unread, so every target came out `null` — measured against
          ;; letibot, whose cards said `Ran "cd /tmp/…"` while ours said `Ran "null"`.
          (loop for (k v) on json by #'cddr
-               do (when (member k *subject-keys*)
-                    (setf subject-seen t
-                          subject-value (or subject-value v)))
-                  (push (%part v) parts))
+               do (let ((entry (cons k (%part v))))
+                    (when (and (member k *subject-keys*) (null subject-entry))
+                      (setf subject-entry entry))
+                    (push entry parts)))
          (setf parts (nreverse parts))
-         ;; a subject the loop never reached is PREPENDED: a write's content
-         ;; buries its path, and the file is what a person reads
-         (when (and (not subject-seen) subject-value)
-           (push (%part subject-value) parts))
+         ;; **THE SUBJECT LEADS, AND IT ALWAYS DID IN THE COMMENT.** What stood here moved it to the
+         ;; front only when the loop had NOT reached one — `(and (not subject-seen) subject-value)` —
+         ;; and that condition could never be true: `subject-value` was assigned inside the same
+         ;; `when` that set `subject-seen`. So the parts stayed in WRITTEN order, and MEASURED on the
+         ;; operator's own screen that is a row about nothing: their `write` sent `content` first,
+         ;; so the headline was the first forty characters of a five-kilobyte file and the PATH was
+         ;; elided off the end of the row (`*target-max-cols*` is a KEEP bound, and it cut there).
+         ;; The file is what a person reads: it is first, and the body is not on the row at all.
+         ;; See `*body-keys*` for the second half and for the screen it came from.
+         (when subject-entry
+           (setf parts (cons subject-entry
+                             (remove-if (lambda (e)
+                                          (or (eq e subject-entry)
+                                              (member (car e) *body-keys*)))
+                                        parts))))
          ;; **and a nested part is dropped when a subject named the row.** The
          ;; ruling (R15, the operator): a batch `edit` writes its `edits` array
          ;; before its `path`, so the placeholder took the row's best position to
          ;; point at the diff drawn underneath it. Not moved, not reordered —
          ;; gone; the file is the label, and the line this draws is that a nested
          ;; value is a placeholder, never a peer of a subject.
-         (truncate-target
-          (string-trim " "
-                       (format nil "~{~a~^ ~}"
-                               (loop for p in parts
-                                     for text = (%part-text p subject-seen)
-                                     when text collect text))))))
+         (let ((subject-seen (and subject-entry t)))
+           (truncate-target
+            (string-trim " "
+                         (format nil "~{~a~^ ~}"
+                                 (loop for e in parts
+                                       for text = (%part-text (cdr e) subject-seen)
+                                       when text collect text)))))))
       ;; an array is not a label
       ((consp json) (truncate-target "[…]"))
       (t (let ((label (%scalar-label json)))
@@ -497,11 +527,46 @@ does not draw the proposal as well."
 
 One pass at attach, because a head that attached after a turn has no proposals to
 learn from — the row is the only place the call is described. Without this every
-settled row older than the attach would render with no target at all."
+settled row older than the attach would render with no target at all.
+
+**And the same walk is what a PUSH needs** — see `refresh-call-targets`: a target is
+DERIVED from the arguments by code, so redefining that code leaves every recorded target
+saying what the previous version said."
   (dolist (item (coerce items 'list))
     (let ((body (getf item :item)))
       (when (and (consp body) (string= (getf body :type) "assistant"))
         (note-assistant-targets body)))))
+
+(defvar *call-targets-generation* 0
+  "The `*code-generation*` the targets in `*call-targets*` were DERIVED under.
+
+**THE THIRD CACHE WITH THIS SHAPE, and it is the one a reader actually sees.** A target is not
+what the arguments say — it is what `display-target` makes of them — so a push that redefines the
+derivation leaves every recorded target holding the OLD reading, and `*call-targets*` is a defvar
+that outlives the push. MEASURED, on the push that fixed the write card's subject: the head's own
+row for `/tmp/…/dbg7.lisp` still answered the file's CONTENT after the fix landed, because the
+target had been derived before it.
+
+The other two are `*repo-todo-cache*` (which reads `*code-generation*` itself) and the item memo's
+stamp (which reads it too, added with this). A `defvar`, so a push does not drop the table it
+belongs to.")
+
+(defun refresh-call-targets (head)
+  "Re-derive every target when the CODE that derives them has moved. T when it did.
+
+One comparison a frame and one walk per PUSH — not per frame, which is why the generation is
+remembered rather than recomputed: the walk is over the session's rows, and the frame path may not
+pay that twice.
+
+**It does not CLEAR the table first, deliberately.** The walk covers the rows this head HOLDS, and
+the ids above that window keep their old reading rather than losing their target entirely — a row
+older than the window draws `(call-id)` for its subject either way, and one of the two is a
+re-derivation away from being right. The alternative — an empty table — costs every fetched row its
+subject until it is scrolled past again."
+  (when (> *code-generation* *call-targets-generation*)
+    (setf *call-targets-generation* *code-generation*)
+    (note-snapshot-targets (session-items (head-session head)))
+    t))
 
 (defun item-facts (item-id)
   "What the live turn knew about the row ITEM-ID, or NIL."
@@ -2484,6 +2549,7 @@ header, also printed `· 1 line` — a count for a fold with nothing to fold."
         ;; has its own row above saying so, and the run that carries this excerpt succeeded.
         (when (and edit (not bad))
           (let* ((rows (edit-lines edit (- w 2) :folded nil
+                                   :subject subject
                                    :split (string= (or (getf prefs :diff) "unified") "split")))
                  (keep (if open (length rows) (min 8 (length rows))))
                  (hidden (- (length rows) keep)))
@@ -3327,7 +3393,16 @@ input, and the input is whatever the tests bind."
         ;; changing. It is the same class of input as `*payload-view*` below it, and it was found
         ;; the same way: a memo that stops holding does not fail, and a memo that holds across an
         ;; input it does not name draws the row as it was.
-        *bound-prompts*))
+        *bound-prompts*
+        ;; **AND `*code-generation*`: A PUSH CHANGES THE CODE THAT DRAWS EVERY ROW.** MEASURED, on
+        ;; the very push that added the rule above — `/lisp` was pushed to a live head with this
+        ;; memo already full, and the rows kept the OLD rendering until something else happened to
+        ;; invalidate them, because a push bumps `*code-generation*` and nothing here read it. That
+        ;; is `*code-generation*`'s own paragraph (`head.lisp`) one cache over: the counter exists
+        ;; because *a cache validated against the FILE it was read from stays valid across a
+        ;; redefinition — the file did not move* — and `*repo-todo-cache*` was the only reader of
+        ;; it until now. One bump, one frame of re-renders, and the screen matches the image.
+        *code-generation*))
 
 (defun %item-live-p (item)
   "Does this ITEM draw something that is a function of the CLOCK, or of a count that keeps moving?
@@ -3955,7 +4030,7 @@ three colours, none of them the reference's."
       ;; fact** — the second place this same guard was written, and the reason the drift would
       ;; have survived a fix to only one of them. See `%tool-result-lines` for the measurement.
       (when edit
-        (setf body (edit-lines edit (- cols 2))))
+        (setf body (edit-lines edit (- cols 2) :subject target-raw)))
       ;; the approval this call was gated by, in the dim register: a fact about
       ;; the call, not a stray note. It was on the settled row and NOT here, so
       ;; the one moment a person can still act on it was the one moment it was
@@ -3995,7 +4070,25 @@ in the range\")."
   ;; one rule; this is its caller, not a second copy of it.
   (%lines-of text))
 
-(defun edit-lines (edit cols &key (folded nil) (split nil))
+(defun %subject-names-path-p (subject path)
+  "Does the row's own SUBJECT name this PATH — so the diff below it must not repeat it?
+
+**ONE FILE, ONE NAME.** MEASURED on the operator's screen (2026-10-04): their `write` row drew
+`Wrote \"<path>\"` and the diff drew `  <path> (new)` in cyan directly under it — the same string
+twice, the second time in the loudest style on the frame. The header is the row a reader reads; the
+diff's job is the CHANGE.
+
+**AND THE ROW THAT STILL NEEDS IT IS WHY THIS IS A PREDICATE RATHER THAN A DELETION.** A `bash`
+command that edited a file in passing is a row whose subject is the COMMAND — `Ran \"python3 - <<'PY'…\"`
+— and the file is named NOWHERE else on that card. Stripped of the quoting a path argument is drawn
+with, the subject must LEAD with the path: that is exactly what `display-target` composes for a write
+or an edit, and it cannot be true of a command that merely mentions the file in the middle."
+  (let ((s (string-trim "\"" (or subject ""))))
+    (and (plusp (length path))
+         (>= (length s) (length path))
+         (string= path (subseq s 0 (length path))))))
+
+(defun edit-lines (edit cols &key (folded nil) (split nil) (subject nil))
   "The diff of an EDIT, as segment lines.
 
 This is the twice-requested diff, and it is why `render-diff` exists: the edit
@@ -4007,13 +4100,30 @@ which is what the operator reported as *\"nothing really shown\"*.
 
 `before_start`/`after_start` are 1-based lines of the WHOLE file, so the gutter
 numbers the file and not the excerpt (\"a diff numbered from 1 tells the reader
-line 4 changed when it was line 313\")."
+line 4 changed when it was line 313\").
+
+**AND THE DIFF DOES NOT LABEL A FILE THE CARD HAS ALREADY NAMED.** The card's header carries it —
+`Wrote \"<path>\"`, the row a reader reads — and a second copy in bold cyan on the row directly under
+it is the same string twice, the second time in the loudest style on the frame. The screen that said
+so is quoted in `*body-keys*` (their 2026-10-04 report: the header's subject was the file's BODY, so
+the path appeared only here).
+
+**IT IS A CONDITION AND NOT A DELETION, because one card still needs it**: a `bash` row whose subject
+is the COMMAND — `Ran \"python3 - <<'PY'…\"` — names the file nowhere else. `%subject-names-path-p`
+answers whether THIS card has already named it; a caller that passes no `:subject` (a test, a pane)
+gets the row, which is the old behaviour and the safe direction. What a reader needs from a diff is
+the CHANGE; the file is named above it when the row knows its name."
   (when edit
     (let* ((path (getf edit :path))
            (created (getf edit :created))
-           (head-line (list (list (cons (format nil "  ~a~a" path
-                                                (if created " (new)" ""))
-                                      '(:bold t :fg :cyan)))))
+           ;; **THE CARD THAT ALREADY NAMED THE FILE DOES NOT DRAW IT AGAIN** — see
+           ;; `%subject-names-path-p`, and note that the row is KEPT for a caller that passes no
+           ;; subject (a test, a pane) and for a bash row, whose subject is the command.
+           (head-line
+             (unless (%subject-names-path-p subject path)
+               (list (list (cons (format nil "  ~a~a" path
+                                         (if created " (new)" ""))
+                                 '(:bold t :fg :cyan))))))
            (body (if split
                      ;; the two-panel view, when the operator has asked for it
                      ;; (`/config`'s diff row): before on the left, after on the
