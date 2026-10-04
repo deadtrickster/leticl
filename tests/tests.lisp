@@ -1624,15 +1624,33 @@ a painter change, not a head change."
 ;;; ------------------------------------------- live state is defvar, not defparameter ;;;
 
 (defun source-of (name)
-  "The text of one src file, so a test can assert on declarations."
-  (let ((p (merge-pathnames (format nil "src/~a.lisp" name)
-                            (uiop:pathname-directory-pathname
-                             (or *load-truename* #p"./")))))
-    (if (probe-file p)
-        (uiop:read-file-string p)
-        ;; the test system loads from the repo root, but be explicit
-        (uiop:read-file-string
-         (merge-pathnames (format nil "src/~a.lisp" name) #p"/home/dead/Projects/leticl/")))))
+  "The text of one src file — or one src MODULE, which is what `cards` is now.
+
+The card module was a single 4,800-line `cards.lisp` and is now `src/cards/`; a test
+that asserts on *the card code* means the module, so `(source-of \"cards\")` reads
+every `.lisp` under that directory. The glob is the list rather than `leticl.asd`,
+so a file added to the module is covered the day it lands — and the order is the
+directory's, which no caller can see: every user of this searches the text.
+
+The two roots are the old function's — where this file was loaded from, and the
+repo root as a backstop, because the test system loads from the root but a
+`--script` invocation need not."
+  (let* ((roots (list (uiop:pathname-directory-pathname (or *load-truename* #p"./"))
+                      #p"/home/dead/Projects/leticl/"))
+         (root (or (find-if (lambda (r) (probe-file (merge-pathnames (format nil "src/~a.lisp" name) r)))
+                            roots)
+                   (find-if (lambda (r) (probe-file (merge-pathnames (format nil "src/~a/" name) r)))
+                            roots)
+                   (first roots)))
+         (file (merge-pathnames (format nil "src/~a.lisp" name) root))
+         (dir (merge-pathnames (format nil "src/~a/" name) root)))
+    (cond
+      ((probe-file file) (uiop:read-file-string file))
+      ((probe-file dir)
+       (with-output-to-string (s)
+         (dolist (p (directory (merge-pathnames "*.lisp" dir)))
+           (write-string (uiop:read-file-string p) s))))
+      (t (uiop:read-file-string file)))))
 
 ;;; -------------------- a docstring that stops in the middle ---------------- ;;;
 ;;;
@@ -1650,6 +1668,25 @@ a painter change, not a head change."
 ;;; So it is CHECKED rather than remembered. The check reads every file with the READER
 ;;; — the thing the compiler does with it — and looks for the shape the wreckage has:
 ;;; **a body form that is not a form.**
+
+(defun %lisp-files-under (dir)
+  "Every `.lisp` file under DIR, at ANY depth.
+
+ **The walk is recursive because the tree stopped being flat**: the card module is
+`src/cards/`, eleven files, and a one-level walk would check every one of them
+NOTHING — the docstring-truncation and package checks below are per file, so the
+suite would go on passing while measuring ten files less. That is the same vacuous
+pass the root-finding above was written to end, one level down. **Measured**: the
+suite read 7,155 checks before the split and 7,153 after it, green; the two that
+went were this walk's, one per per-file test that reads it, because `cards.lisp`
+was one file and `src/cards/` is eleven a flat walk cannot see."
+  (append (loop for p in (uiop:directory-files dir)
+                for n = (file-namestring p)
+                for l = (length n)
+                when (and (> l 5) (string= ".lisp" n :start2 (- l 5)))
+                  collect p)
+          (loop for d in (uiop:subdirectories dir)
+                append (%lisp-files-under d))))
 
 (defun %lisp-source-files ()
   "Every `.lisp` file under `src/` and `tests/`, as (PATHNAME . PACKAGE-NAME).
@@ -1683,11 +1720,8 @@ is a fact about the caller's assumption and not about the tree."
              candidates))
     (loop for dir in '("src/" "tests/")
           for pkg in '("LETICL" "LETICL/TESTS")
-          append (loop for p in (uiop:directory-files (merge-pathnames dir root))
-                       for n = (file-namestring p)
-                       for l = (length n)
-                       when (and (> l 5) (string= ".lisp" n :start2 (- l 5)))
-                         collect (cons p pkg)))))
+          append (loop for p in (%lisp-files-under (merge-pathnames dir root))
+                       collect (cons p pkg)))))
 
 (defparameter +forms-with-a-docstring+
   '((defun . 3) (defmacro . 3) (defmethod . 3) (def-test . 3) (lambda . 2)
@@ -20362,10 +20396,10 @@ here and fourteen there."
     (is (equal (cons "… +55 lines" '(:dim t)) (first (third rows)))
         "and the marker is a separator row that says how many went, never a silent cut")
     (is (equal "line 60" (car (first (car (last rows))))) "the tail is the end"))
-  (is (equal '(5 . 3) (leticl::%budget-for-verb "read")) "Read: enough head to see what it is")
-  (is (equal '(5 . 3) (leticl::%budget-for-verb "ls")) "List with it")
-  (is (equal '(2 . 3) (leticl::%budget-for-verb "bash")) "a shell command's tail is what matters")
-  (is (equal '(10 . 3) (leticl::%budget-for-verb "some_unknown_tool")) "anything else")
+  (is (equal '(5 . 3) (leticl::card-body-budget (leticl::tool-card-of "read"))) "Read: enough head to see what it is")
+  (is (equal '(5 . 3) (leticl::card-body-budget (leticl::tool-card-of "ls"))) "List with it")
+  (is (equal '(2 . 3) (leticl::card-body-budget (leticl::tool-card-of "bash"))) "a shell command's tail is what matters")
+  (is (equal '(10 . 3) (leticl::card-body-budget (leticl::tool-card-of "some_unknown_tool"))) "anything else")
   ;; and a short body is not touched
   (let ((rows (list (list (cons "a" nil)) (list (cons "b" nil)))))
     (is (equal rows (leticl::head-tail-lines rows 5 3))

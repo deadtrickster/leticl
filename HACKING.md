@@ -343,22 +343,24 @@ starves what it measures, and an eval that pokes dirt REFRESHES it.
 
 **The gate checks that the head can *paint*, not that your change is *loaded*.**
 Those came apart as soon as rendering lived in more than one file: edit
-`src/cards.lisp`, push `src/render.lisp` (which used to hold all of it), and you
-get `exit 0` with a green gate and the old cards still on screen. A green gate
+`src/cards/tool-result-card.lisp`, push `src/render.lisp` (which used to hold all of it), and
+you get `exit 0` with a green gate and the old cards still on screen. A green gate
 means the head is healthy, never that your file is in it.
 
 ```sh
 tui-eval --tree
-# pushing the tree in leticl.asd order (23 files)
+# pushing the tree in leticl.asd order (50 files)
 #   package.lisp   (:EVALUATED 0 :SKIPPED ("defpackage" "defpackage") :FAILED NIL)
 #   …
-# ok: 23 files pushed
+# ok: 50 files pushed
 ```
 
 It reads `leticl.asd` for the file list, so it pushes exactly what the system
 loads, **in the order the system loads them** — the asd is `:serial t`, and some
 other order can evaluate a form before the thing it calls exists. (The asd writes
 components without the extension, so `src/package` means `src/package.lisp`.)
+The count is the asd's, so it moves as the tree grows: it read 23 when this
+paragraph was written and 50 after the cards module was split into `src/cards/`.
 
 **It stops at the first failure**, and says so loudly, because the failure mode
 it guards is the quiet one: a half-pushed tree is a new `cards` beside an old
@@ -369,7 +371,7 @@ it guards is the quiet one: a half-pushed tree is a new `cards` beside an old
 
 ```sh
 tui-eval --where item-lines
-# item-lines: from the IMAGE — (:FILE "/home/dead/Projects/leticl/src/cards.lisp" :FORM-PATH (4) …)
+# item-lines: from the IMAGE — (:FILE "/home/dead/Projects/leticl/src/cards/item-lines.lisp" :FORM-PATH (4) …)
 
 tui-eval --tree
 tui-eval --where item-lines

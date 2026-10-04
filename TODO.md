@@ -361,7 +361,7 @@ carry.
 
 ## In flight
 
-- [~] **cards + markdown + width** — `cards.lisp`, `markdown.lisp`, `width.lisp`,
+- [~] **cards + markdown + width** — `cards/*.lisp`, `markdown.lisp`, `width.lisp`,
   `cells.lisp`. Priority one is **escape sanitising**: tool output currently
   reaches the terminal unfiltered, and the reference closed that in `f36d927`
   ("a tool's output cannot reconfigure the operator's terminal"). **The width half is

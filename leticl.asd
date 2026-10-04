@@ -50,7 +50,36 @@ through an eval socket and see the change on the next frame."
                ;; calls and warn rather than fail.
                (:file "src/head")
                (:file "src/commands")
-               (:file "src/cards")
+               (:file "src/cards/protocol")
+               ;; **THE CARDS, ONE FILE PER CARD** — plus the machinery they share. This was one
+               ;; 4,800-line `cards.lisp`, then a layer-named split; a reader looking for the
+               ;; edit card should find `edit-card.lisp`. The order is dependency order, not the
+               ;; old file's: the base class and generics, the shared vocabulary (`targets` what
+               ;; a call names, `roles` the words and row budgets, `decisions` what an approval
+               ;; is said as, `payload` the window into a long result, `hidden-run` R37, `memo`
+               ;; the render memo), then the cards that are SHAPES (`edit-card` the diff,
+               ;; `write-card` the paths a write opens), then one file per row kind, then
+               ;; `tool-result-card` (the settled tool row and the tool families),
+               ;; `live-call-card` (the running one), `item-lines` (the door and the factories,
+               ;; which name every class above) and `turn`.
+               (:file "src/cards/targets")
+               (:file "src/cards/roles")
+               (:file "src/cards/decisions")
+               (:file "src/cards/payload")
+               (:file "src/cards/hidden-run")
+               (:file "src/cards/memo")
+               (:file "src/cards/edit-card")
+               (:file "src/cards/write-card")
+               (:file "src/cards/live-call-card")
+               (:file "src/cards/notice-card")
+               (:file "src/cards/user-card")
+               (:file "src/cards/assistant-card")
+               (:file "src/cards/reasoning-card")
+               (:file "src/cards/note-card")
+               (:file "src/cards/static-cards")
+               (:file "src/cards/tool-result-card")
+               (:file "src/cards/item-lines")
+               (:file "src/cards/turn")
                (:file "src/chrome")
                ;; **THE DASHBOARD VOCABULARY** (serenedash's philosophy, composed at runtime):
                ;; values, series, panels and the keys. After `chrome` because it reads the
