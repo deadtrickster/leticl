@@ -1317,7 +1317,7 @@ one — the same rule `payload-view-seed` already keeps."
       ((and (string= (getf body :type) "user")
             (eq (%user-speaker body) :agent))
        (let ((text (%user-parts-text body)))
-         (and (%job-notice-p text) (%job-notice-rows text))))
+         (and (%notice-folds-p text) (%job-notice-rows text))))
       (t nil))))
 
 (defun newest-payload-item-id (session)
@@ -2661,7 +2661,7 @@ next row's wrap cannot depend on which register the operator chose."
                         (cons (if (and (= i 0) (plusp (length stamp))) stamp "")
                               +operator-block-style+)))))
 
-(defparameter +notice-prefixes+ (list "[job] " "[task] ")
+(defparameter +notice-prefixes+ (list "[job] " "[task] " "[todo check] ")
   "The daemon's own openings for a completion notice: a settled job, and a finished subagent.
 
 **The prefix is the daemon's, not this head's invention** — the same discipline as keying a note's
@@ -2677,10 +2677,26 @@ for example i dont want to see that message to you 'This is the completion…' I
 result summary or wrap> same for agents.\"*")
 
 (defun %notice-kind (text)
-  "`:job`, `:task`, or NIL — which of the daemon's notices TEXT is, by its own opening."
+  "`:job`, `:task`, `:todo`, or NIL — which of the daemon's notices TEXT is, by its own opening.
+
+**`[todo check] ` is the third, and it is a NUDGE rather than a settlement** — a heading, the item, and
+a closing paragraph addressed to the MODEL (*do this one, or mark it done, or drop it*). Its prefix is
+the daemon's, the same discipline as the other two: the text is what says what it is."
   (cond ((and (stringp text) (uiop:string-prefix-p "[job] " text)) :job)
         ((and (stringp text) (uiop:string-prefix-p "[task] " text)) :task)
+        ((and (stringp text) (uiop:string-prefix-p "[todo check] " text)) :todo)
         (t nil)))
+
+(defun %notice-folds-p (text)
+  "Is TEXT drawn as a card rather than as prose?
+
+**A settlement always folds — the operator asked for that in their own words. A TODO NAG folds only at
+a READING rung**: *\"in read verbosity todo nag shouldnt show me model prompt only todo head\"* is a
+statement about a RUNG and not about the row, so above `reading` the whole nag is drawn, advice and all,
+which is what letibot does at the same rung (their 281f3d6). Per-kind because a nag's advice and a
+settlement's closing promise are different things that sit in the same place."
+  (let ((kind (%notice-kind text)))
+    (and kind (or (not (eq kind :todo)) (reading-p)))))
 
 (defun %job-notice-p (text)
   "Is TEXT one of the daemon's completion notices? — R41's own message, in its own voice."

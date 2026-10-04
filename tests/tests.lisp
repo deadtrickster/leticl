@@ -5441,6 +5441,23 @@ that — never a glyph cut in half."
     (is (eq :read-edits (leticl::next-verbosity :reading))
         "the ring knows it, or `next-verbosity`'s `ecase` would ERROR on the rung")))
 
+;;; **THE OPERATOR'S ROW, in their words**: *"in read verbosity todo nag shouldnt show me model prompt
+;;; only todo head."* The row opens `[todo check] ` — a heading, the item, and a closing paragraph
+;;; addressed to the MODEL — and the sentence is about a RUNG, not about the row.
+(def-test the-todo-nag-folds-at-a-reading-rung-and-not-above-it (:suite leticl)
+  "A third opening, recognised; and a fold that belongs to the rung."
+  (let ((nag "[todo check] one item is not done (1 more open): do this one, or mark it done, or drop it.")
+        (job "[job] a job you backgrounded has ended:"))
+    (is (eq :todo (leticl::%notice-kind nag)) "the daemon has a third opening and this head knows it")
+    (is (eq :job (leticl::%notice-kind job)) "and the two settlements are unchanged")
+    (dolist (rung '(:read-edits :reading))
+      (let ((leticl::*verbosity* rung))
+        (is (leticl::%notice-folds-p nag) (format nil "**at ~a the nag folds to its head and item**" rung))))
+    (let ((leticl::*verbosity* :normal))
+      (is (not (leticl::%notice-folds-p nag))
+          "**above the reading rungs the whole nag is drawn, advice and all**")
+      (is (leticl::%notice-folds-p job) "while a settlement still folds there, as asked"))))
+
 (def-test the-config-pane-lists-the-git-format-and-cycles-it (:suite leticl)
   "The row is on the pane, it names what is in force, and Enter rings three shapes."
   (let ((h (%make-head)))
