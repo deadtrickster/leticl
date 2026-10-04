@@ -1,7 +1,10 @@
 # Wire and session state — leticl against letibot
 
 **Reference** `/home/dead/Projects/letibot/letibot` at `8af671e3467ce0a139ba25d99a18378ba39c910b`
-(verified with `git -C … rev-parse HEAD`).
+(verified with `git -C … rev-parse HEAD`). **The pin is now `149edf91b9740ac7775a0a875abfcd562c8fd3e6`
+(2026-10-04), and of the 201 `file.rs:NNN` citations below 3 are still exact against it —
+192 have moved and one points past the end of a file that changed shape**; re-read the
+function, not the line, and see TODO.md's pin section (`scripts/repin-check` measures it).
 **Subject** `/home/dead/Projects/leticl` at `dc62ddf` (2026-09-20 22:19; the pass
 finished at `7c2c6fc`, 23:37).
 

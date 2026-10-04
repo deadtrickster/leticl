@@ -63,14 +63,58 @@ Status: `[ ]` open · `[~]` in flight · `[x]` done, with the commit.
 
 | repo | commit | date |
 |---|---|---|
-| `letibot` (reference) | `8af671e3467ce0a139ba25d99a18378ba39c910b` | 2026-09-20 |
+| `letibot` (reference) | `149edf91b9740ac7775a0a875abfcd562c8fd3e6` | 2026-10-04 |
+| `letibot` (the pin this replaced) | `8af671e3467ce0a139ba25d99a18378ba39c910b` | 2026-09-20 |
 | `leticl` (this) | the commit each row names | |
 
+**THE PIN MOVED 2026-10-04, AND THE PAIRING IS WHAT SAYS IT IS SAFE.** 322 commits
+between the two, and `PROTOCOL_VERSION` went **21 → 27** — so the reference is now
+the daemon this head actually speaks to, which the ship pin already was
+(`LETIBOT_REF: v0.2.2` in the release workflow is the same 27; the ordering rule
+lives there: letibot tags, that pin follows, this repository tags third).
+
 Every citation in `docs/parity/` is a line in **that** commit. Before acting on
-one, `git -C ~/Projects/letibot/letibot log --oneline 8af671e..HEAD` and re-read
-the function: a citation is a pointer into a moving tree, not a specification.
-When the numbers stop matching, **re-measure the document** rather than guessing
-which line moved.
+one, `git -C ~/Projects/letibot/letibot log --oneline <the commit the citation
+names>..HEAD` and re-read the function: a citation is a pointer into a moving
+tree, not a specification. When the numbers stop matching, **re-measure the
+document** rather than guessing which line moved.
+
+**AND WHAT MOVING IT COST IS MEASURED, not discovered one citation at a time.**
+`scripts/repin-check OLD NEW [DOC…]` answers the only question a repin has to
+answer — *is that line still the line* — over every `something.rs:NNN` in a
+document, and prints this:
+
+    document                  cites  exact  moved  gone  lost  ambig
+    keys.md                     130      5    125     0     0      0
+    wire.md                     201      3    192     1     0      5
+    rendering.md                329     36    248     0     0     45
+    panes.md                    177      5    149    19     2      2
+    one-to-one.md                 4      0      4     0     0      0
+    TOTAL                       854     49    731    20     2     52
+
+`exact` is the strong claim: the same text is at that line in both revisions.
+`moved` is what this doctrine expects, and the answer to it is *re-read the
+function*. **The twenty `gone` and the two `lost` are ONE structural move and not
+twenty-two edits**: `crates/tui/src/bin/letibot-tui.rs` was 759 lines at the old pin
+and is 11 at the new one, because the Rust TUI became a workspace crate
+(`app.rs`, `head.rs`, `render.rs`, `term.rs`, …) — every `bin/letibot-tui.rs:NNN`
+citation has to be re-POINTED rather than renumbered. `ambig` is a basename that
+matches more than one path in the reference (`syntax.rs`): the tool refuses to
+guess which one a document meant, which is the whole reason it is run before the
+documents are touched.
+
+**AND THE SOURCES CITE IT TOO** — the same measurement over `src/*.lisp`, which is
+where this tree's method actually keeps its citations:
+
+    src/*.lisp                  338     20    299     5     1     13
+
+So the pin's move is **1192 citations and not 854**: 69 exact against the new
+commit, 1030 moved, and six that cannot be followed at all — five into
+`bin/letibot-tui.rs` (`chrome.lisp`'s `ATTACH_WAIT` and `replay.lisp`'s four) and one
+into `rano/src/syntax.rs` (`markdown.lisp`). **None of them was rewritten to hide
+this.** A docstring that cites `app.rs:9712` is a record of what was READ at a
+commit; the honest answer is the pin that says which tree, and the next pass's
+queue — not an edit that would make a stale line look measured.
 
 ## The two gates, and what "done" means
 

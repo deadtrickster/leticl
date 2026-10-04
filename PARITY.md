@@ -1,7 +1,16 @@
 # leticl ↔ letibot: the second measurement, for the switch
 
-**Reference: letibot `8af671e` (2026-09-20). Subject: leticl at the commit each
-row names.** The first measurement is archived whole at
+**Reference: letibot `8af671e` (2026-09-20) — where this was measured. THE PIN IS
+NOW `149edf9` (2026-10-04).** Subject: leticl at the commit each row names.
+
+**AND THE CITED LINES ARE THE OLD PIN'S.** 322 letibot commits and `PROTOCOL_VERSION`
+21 → 27 have passed between the two; of the 854 `file.rs:NNN` citations in this set,
+**49 are still exact** against the new pin, 731 have moved, 20 point past the end of a
+file and 2 at a path that is gone — and those 22 are ONE structural move, not 22 edits:
+`bin/letibot-tui.rs` is 759 lines at the old pin and 11 at the new, because the Rust
+TUI became a workspace crate. `scripts/repin-check OLD NEW` measures this over any
+document; the per-file numbers are in TODO.md's pin section. The first measurement is
+archived whole at
 `docs/archive/2026-09-20/`, its screen captures included; this one starts from
 the reference rather than from it.
 
@@ -30,7 +39,8 @@ Counts, as measured: **keys 35 of 38** · **slash commands 36 of 39** ·
 ## What the two instruments are
 
 1. **Read both sides.** A citation is a pointer, not a specification: every line
-   number is a line at `8af671e`, and the reference is a live repo.
+   number is a line at `8af671e` — the pin has moved since; see the head of this
+   file — and the reference is a live repo.
 2. **Look at the screen.** `scripts/compare-heads` captures both heads with
    `tmux capture-pane -e` — escapes included, because a bold title over a dim
    path and an all-bold header are the same plain text, and a plain diff read

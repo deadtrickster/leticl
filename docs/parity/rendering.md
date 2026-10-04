@@ -1,7 +1,11 @@
 # What a turn looks like on screen — leticl ↔ letibot
 
 **Reference**: `~/Projects/letibot/letibot` @ `8af671e3467ce0a139ba25d99a18378ba39c910b`
-(verified with `git rev-parse HEAD`, 2026-09-20). Every `app.rs`/`render.rs`/
+(verified with `git rev-parse HEAD`, 2026-09-20). **The pin is now
+`149edf91b9740ac7775a0a875abfcd562c8fd3e6` (2026-10-04): of the 329 `file.rs:NNN`
+citations below, 36 are still exact against it and 248 have moved** (45 name a
+basename that matches more than one path and were skipped rather than guessed).
+Every `app.rs`/`render.rs`/
 `card.rs` line number below is a line in **that** commit; `.claude/worktrees/*`
 copies in the reference tree are stale and were not read.
 

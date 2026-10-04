@@ -1,8 +1,14 @@
 # The second parity measurement — for the switch
 
-**Reference: letibot `8af671e` (2026-09-20).** Every claim in these files cites a
+**Reference: letibot `8af671e` (2026-09-20) — where these files were measured. THE
+PIN IS NOW `149edf9` (2026-10-04).** Every claim in these files cites a
 file and a line in *that* commit on one side and a file and a line in leticl on
-the other. The first measurement is archived whole at
+the other — and **of the 854 `file.rs:NNN` citations across all four, 49 are still
+exact against the new pin**, 731 have moved, 20 point past the end of a file and 2 at a
+path that is gone (all from one structural move: `bin/letibot-tui.rs` went from 759
+lines to 11). Read the FUNCTION, not the line; the per-file table and what the move was
+are in TODO.md's pin section, and `scripts/repin-check OLD NEW` measures it for any
+document. The first measurement is archived whole at
 `docs/archive/2026-09-20/`, evidence included; this one starts from the reference
 rather than from it.
 

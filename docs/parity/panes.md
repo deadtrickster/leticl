@@ -6,6 +6,12 @@ the wire, not transcript row rendering — those are measured elsewhere.
 
 **Reference:** `/home/dead/Projects/letibot/letibot` at `8af671e`
 (`git -C … rev-parse HEAD` → `8af671e3467ce0a139ba25d99a18378ba39c910b`).
+**The pin is now `149edf9` (2026-10-04), and THIS FILE IS THE ONE THE MOVE BROKE**: of
+its 177 `file.rs:NNN` citations, 5 are still exact, 149 have moved, **19 point past the
+end of a file and 2 at a path that is gone** — every `bin/letibot-tui.rs:NNN` among them,
+because that file was 759 lines at the old pin and is 11 at the new one (the TUI became
+`crates/tui/src/{app,head,render,term}.rs`). Those citations need RE-POINTING, not
+renumbering; see TODO.md's pin section.
 Cited as `app.rs:N`, `term.rs:N`, `prefs.rs:N`, `bin/letibot-tui.rs:N`, `driver.rs:N`
 — all under `crates/tui/src/`.
 

@@ -2,7 +2,10 @@
 
 **Reference: letibot `8af671e`.** Subject: leticl at `dc62ddf` (2026-09-20 22:19; the
 pass finished at `7c2c6fc`, 23:37). Every row below cites a file and a line on both
-sides. Nothing here was run: the reference
+sides — **measured at that pin, which has since moved to `149edf9` (2026-10-04): of the
+130 `file.rs:NNN` citations below, 5 are still exact against the new one and 125 have
+moved, so re-read the FUNCTION and not the line (`scripts/repin-check`, and the pin
+section of TODO.md for what the move was).** Nothing here was run: the reference
 was read at `crates/tui/src/term.rs` (the decoder), `crates/tui/src/app.rs`
 (`enum Key`, `App::key`, `command`, `SLASH_COMMANDS`) and
 `crates/ui/src/editor.rs` (the composer); leticl at `src/keys.lisp`,

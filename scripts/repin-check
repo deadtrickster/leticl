@@ -1,0 +1,145 @@
+#!/usr/bin/env python3
+"""repin-check — how stale is every citation, between two letibot revisions.
+
+    scripts/repin-check OLD NEW [DOC ...]
+
+Defaults to the parity set — `PARITY.md`, `TODO.md`, `docs/parity/*.md` — and
+answers the only question a repin has to answer: **is that line still the line?**
+
+  exact   the SAME TEXT is at that line in both revisions
+  moved   the file changed and the cited line now holds something else
+  gone    the line is past the end of the file at NEW
+  lost    the file does not exist at NEW
+  ambig   the basename matches more than one path at NEW — SKIPPED, not guessed
+
+A basename is resolved against the whole tree at NEW (`crates/*/src/*.rs`), so
+`host.rs` finds `crates/tools/src/exec/host.rs`. Refusing to guess an ambiguous
+one is the point: `syntax.rs` matches two files, and a document that meant one of
+them would be measured as the other.
+
+**WHY THIS EXISTS.** `TODO.md` pins the reference letibot commit and says the pin
+moves, and every citation in `docs/parity/` is a line in THAT commit — so moving
+the pin silently ages 850 pointers, and the tree's own rule (*re-measure the
+document rather than guessing which line moved*) is unaffordable without knowing
+which ones moved. MEASURED for the 2026-10-04 repin, `8af671e` -> `149edf9`:
+
+    document                  cites  exact  moved  gone  lost  ambig
+    keys.md                     130      5    125     0     0      0
+    wire.md                     201      3    192     1     0      5
+    rendering.md                329     36    248     0     0     45
+    panes.md                    177      5    149    19     2      2
+    one-to-one.md                 4      0      4     0     0      0
+    TOTAL                       854     49    731    20     2     52
+
+**`exact` IS THE STRONG CLAIM AND `moved` IS NOT A DEFECT.** A citation is a
+pointer, and the doctrine is to read the FUNCTION; `moved` is the number that says
+*read it*. The 22 `gone`/`lost` were the finding: they are one structural move —
+`crates/tui/src/bin/letibot-tui.rs` is 759 lines at the old pin and 11 at the new,
+with the TUI in `crates/tui/src/{app,head,render,term}.rs` — so those citations need
+re-POINTING rather than renumbering, which no line-number diff would have said.
+
+Read-only: `git show` and `git ls-tree` in the reference repo. No checkout, no
+network, nothing written.
+"""
+import os
+import re
+import subprocess
+import sys
+from collections import defaultdict
+
+LETIBOT = os.path.expanduser("~/Projects/letibot/letibot")
+DOCS = ["PARITY.md", "TODO.md",
+        "docs/parity/README.md", "docs/parity/keys.md", "docs/parity/wire.md",
+        "docs/parity/rendering.md", "docs/parity/panes.md",
+        "docs/parity/one-to-one.md"]
+
+# `file.rs:123` and `file.rs:123-130`. The path may be bare (`app.rs`, the way the
+# documents write it) or full (`crates/tui/src/app.rs`); the basename is what is
+# resolved, which is how `bin/letibot-tui.rs` finds its file too.
+CITE = re.compile(r"([A-Za-z0-9_./-]+\.rs):(\d+)(?:\s*-\s*(\d+))?")
+
+_files = {}
+
+
+def show(rev, path):
+    key = (rev, path)
+    if key not in _files:
+        out = subprocess.run(["git", "-C", LETIBOT, "show", f"{rev}:{path}"],
+                             capture_output=True, text=True)
+        _files[key] = None if out.returncode else out.stdout.splitlines()
+    return _files[key]
+
+
+_paths = None
+
+
+def resolve(rev, name):
+    """Every full path whose basename is NAME at REV — a list, because ambiguity is a fact."""
+    global _paths
+    if _paths is None:
+        out = subprocess.run(["git", "-C", LETIBOT, "ls-tree", "-r", "--name-only", rev],
+                             capture_output=True, text=True, check=True)
+        _paths = defaultdict(list)
+        for p in out.stdout.split():
+            if p.endswith(".rs"):
+                _paths[p.rsplit("/", 1)[-1]].append(p)
+    return _paths[name]
+
+
+def main(argv):
+    if len(argv) < 3:
+        print(__doc__.split("\n\n")[0])
+        return 2
+    old, new, docs = argv[1], argv[2], (argv[3:] or DOCS)
+    rows = []
+    for doc in docs:
+        try:
+            text = open(doc, encoding="utf-8", errors="replace").read()
+        except OSError as e:
+            print(f"  {doc}: {e}")
+            continue
+        seen = set()
+        for m in CITE.finditer(text):
+            name, line = m.group(1), int(m.group(2))
+            if (doc, name, line) in seen:
+                continue
+            seen.add((doc, name, line))
+            paths = resolve(new, name.rsplit("/", 1)[-1])
+            if not paths:
+                rows.append((doc, name, line, "lost", "the basename is gone from the tree"))
+            elif len(paths) > 1:
+                rows.append((doc, name, line, "ambiguous", f"{len(paths)} paths: {', '.join(paths)}"))
+            else:
+                path = paths[0]
+                a, b = show(old, path), show(new, path)
+                if b is None:
+                    rows.append((doc, name, line, "lost", path))
+                elif line > len(b):
+                    rows.append((doc, name, line, "gone", f"{path} is {len(b)} lines"))
+                elif a is None or line > len(a) or a[line - 1] != b[line - 1]:
+                    rows.append((doc, name, line, "moved", path))
+                else:
+                    rows.append((doc, name, line, "exact", path))
+
+    order = ["exact", "moved", "gone", "lost", "ambiguous"]
+    per = defaultdict(lambda: defaultdict(int))
+    for doc, _, _, verdict, _ in rows:
+        per[doc][verdict] += 1
+    print(f"{'document':28} {'cites':>6} " + " ".join(f"{k:>6}" for k in order))
+    tot = defaultdict(int)
+    for doc in docs:
+        c, n = per[doc], sum(per[doc].values())
+        for k, v in c.items():
+            tot[k] += v
+        print(f"{doc:28} {n:6} " + " ".join(f"{c[k]:6}" for k in order))
+    print(f"{'TOTAL':28} {sum(tot.values()):6} " + " ".join(f"{tot[k]:6}" for k in order))
+
+    for verdict in ("gone", "lost"):
+        for doc, name, line, v, why in rows:
+            if v == verdict:
+                print(f"BROKEN {doc}: {name}:{line}  {verdict} — {why}")
+    return 1 if (tot["gone"] or tot["lost"]) else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

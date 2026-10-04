@@ -8,8 +8,12 @@ not a controlled test, and one comparison in the last round was invalid for
 exactly that reason. This file records the instrument that replaces it, and the
 first measurement it took.
 
-**Reference**: `~/Projects/letibot/letibot` @ `8af671e` (read-only).
-`crates/tui/src/bin/letibot-tui.rs`, `fn replay` (line 236) and `--no-tty`.
+**Reference**: `~/Projects/letibot/letibot` @ `8af671e` (read-only), **where this was
+measured; the pin is now `149edf9` (2026-10-04)**. `crates/tui/src/bin/letibot-tui.rs`,
+`fn replay` (line 236) and `--no-tty` — **and that line is one of the citations the pin's
+move broke**: the file is 11 lines now, with the TUI in `crates/tui/src/render.rs` and
+`app.rs`, so this one needs re-pointing rather than renumbering (see TODO.md's pin
+section).
 **Subject**: this tree. **Taken**: 2026-09-20.
 
 ---
