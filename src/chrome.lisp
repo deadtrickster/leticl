@@ -833,7 +833,7 @@ knows this row."
 **READ ON THE READER THREAD, NOT IN A PAINT.** `*prefs*` may have been loaded by a build that
 predates the key, so the preference is read under `ignore-errors`: a mistyped template or a
 missing accessor is then a bad line rather than a header that fails to draw."
-  (let ((f (and *prefs* (ignore-errors (prefs-git-format *prefs*)))))
+  (let ((f (and *head* (ignore-errors (getf (head-prefs *head*) :git-format)))))
     (if (and f (stringp f) (plusp (length f))) f +git-format-default+)))
 
 (defun %git-pieces (state format)

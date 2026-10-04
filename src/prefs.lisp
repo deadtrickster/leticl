@@ -180,7 +180,11 @@ shares now, by `load-retired-into`, which `load-prefs-into` calls beside this."
   (setf (head-pref head :show-reasoning) (fold-on-p (prefs-thinking p))
         (head-pref head :show-tools) (fold-on-p (prefs-tools p))
         (head-pref head :raw-calls) (prefs-raw-calls p)
-        (head-pref head :diff) (prefs-diff p))
+        (head-pref head :diff) (prefs-diff p)
+        ;; **THE GIT FORMAT IS A LIVE PREFERENCE TOO**, and these two lines are the whole bridge:
+        ;; the file's template lands here on load and `head-into-prefs` reads it back on save — so
+        ;; `/config` and `head.toml` cannot drift into two answers.
+        (head-pref head :git-format) (prefs-git-format p))
   ;; **the run marker's seam is a RENDER input, so it bumps the generation like the folds** —
   ;; and it is its own form because `%set-marker-seam` is a function call and not a place, which
   ;; `(setf place …)` cannot take. Measured: it read as a `(setf %set-marker-seam)` and the head
@@ -226,6 +230,7 @@ saving over a list it never saw. Nothing is written here either way; this only r
           (prefs-raw-calls p) (and (getf (head-prefs head) :raw-calls) t)
           (prefs-marker-seam p) (and *marker-seam* t)
           (prefs-diff p) (or (getf (head-prefs head) :diff) "split")
+          (prefs-git-format p) (getf (head-prefs head) :git-format)
           ;; **the rung, read from the LIVE variable** — the plist and the file disagree for the
           ;; moment between a change and a save, and the plist is what is actually in effect.
           (prefs-verbosity p) (verbosity-name))

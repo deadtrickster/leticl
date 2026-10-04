@@ -410,7 +410,7 @@ fourteen-column indent, then a blank. 26 rows against our 18."
 ;;; --------------------------------------------------------- the config pane ;;;
 
 (defparameter *head-setting-rows*
-  '("diff" "verbosity" "thinking" "tools" "raw_calls" "marker_seam")
+  '("diff" "verbosity" "thinking" "tools" "raw_calls" "marker_seam" "git_format")
   "The settings the HEAD owns, in the config pane's own order.
 
 The daemon's rows are its own and read-only here — this head cannot change what a
@@ -441,6 +441,13 @@ hidden` where ours said `raw_calls = off`."
          ;; the reference's own word for a fold, which is what this is: the seam shown or not
          (if *marker-seam* "shown" "hidden"))
         ((string= key "verbosity") (verbosity-name))
+        ;; **THE GIT FIELD'S FORMAT IS HERE BECAUSE THE OPERATOR LOOKED FOR IT HERE.** The row names
+        ;; the template IN FORCE (so the pane and the row can never disagree), and the first stop of
+        ;; the cycle is the built-in default. A FREE template stays the file's business — `git_format`
+        ;; takes any of them, and the pane cycles presets rather than pretending to edit text.
+        ((string= key "git_format")
+         (or (getf (head-prefs head) :git-format)
+             (format nil "default (~a)" +git-format-default+)))
         (t "?")))
 
 (defun %save-head-prefs-note (head)
@@ -467,6 +474,14 @@ step. Returns the save's complaint, or NIL when it landed."
            (if (string= (%head-setting-value head "diff") "split") "unified" "split")))
     ((string= key "thinking") (%flip-fold head :show-reasoning))
     ((string= key "tools") (%flip-fold head :show-tools))
+    ((string= key "git_format")
+     ;; Three stops: the shipped default, a spaced one, and the branch alone. `nil` is the default
+     ;; rather than a fourth string, because the default has to stay one value in one place.
+     (let ((now (getf (head-prefs head) :git-format)))
+       (setf (head-pref head :git-format)
+             (cond ((null now) "%b %!%+")
+                   ((string= now "%b %!%+") "%b")
+                   (t nil)))))
     ((string= key "raw_calls")
      (setf (head-pref head :raw-calls)
            (not (head-pref head :raw-calls)))))
@@ -520,7 +535,7 @@ row's label."
     (append
      (loop for key in *head-setting-rows*
            for label in '("diff view" "verbosity" "reasoning" "tool output" "raw tool calls"
-                          "marker seam")
+                          "marker seam" "git format")
            collect (list :section "head — this window"
                          :key label
                          :value (%head-setting-value head key)

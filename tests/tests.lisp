@@ -5369,6 +5369,29 @@ that — never a glyph cut in half."
 ;;; ARE the glyphs — `%b` branch, `%!` unstaged, `%%` a literal per cent — which is the whole
 ;;; mnemonic, and a template can reorder, elide and punctuate what no list of switches could.
 ;;; Colours are ROLES, one per segment, chosen to say what the segment says.
+;;; **A PREFERENCE THE PANE DOES NOT SHOW IS A PREFERENCE NOBODY FINDS** — and this one was invisible
+;;; for a reason worth keeping: `*head-setting-rows*` is a list of KEYS and the labels beside it are
+;;; a PARALLEL list walked by the same loop, so a key added without a label draws no row at all.
+(def-test the-config-pane-lists-the-git-format-and-cycles-it (:suite leticl)
+  "The row is on the pane, it names what is in force, and Enter rings three shapes."
+  (let ((h (%make-head)))
+    (is (member "git_format"
+                (mapcar (lambda (r) (getf (getf r :edit) :head)) (leticl::config-rows h))
+                :test #'string=)
+        "**the row is on the pane, and its :edit carries the key the file uses**")
+    (is (some (lambda (l) (search "git format" l))
+              (lines-text (leticl::config-lines h (leticl::config-rows h) 100)))
+        "**and it is DRAWN** — the label list is what made it invisible")
+    (is (search "default" (leticl::%head-setting-value h "git_format"))
+        "with nothing set it names the built-in default")
+    (leticl::%flip-head-setting h "git_format")
+    (is (string= "%b %!%+" (leticl::%head-setting-value h "git_format")) "one press: a spaced template")
+    (leticl::%flip-head-setting h "git_format")
+    (is (string= "%b" (leticl::%head-setting-value h "git_format")) "two: the branch alone")
+    (leticl::%flip-head-setting h "git_format")
+    (is (search "default" (leticl::%head-setting-value h "git_format"))
+        "and three come round to the default, so the cycle is a ring")))
+
 (def-test the-git-format-is-configurable-and-the-colours-are-roles (:suite leticl)
   "A template decides the text and the order; the styles are roles, and the branch's own role
 depends on whether the tree is dirty."
@@ -5633,11 +5656,13 @@ files, then the closing sentence."
         ;; OFF and therefore a row this pane has to be able to flip — see `*marker-seam*`.
         (is (string= "  ✎ marker seam      hidden" (nth 9 text))
             "the seam after the counts, hidden by default, with the same shown/hidden words")
-        (is (string= "" (nth 10 text)) "a blank between sections")
-        (is (string= "  session — the daemon" (nth 11 text)))
-        (is (string= "  ✎ mode             allow-all (this box, consented)" (nth 12 text))
+        (is (some (lambda (l) (search "git format" l)) text)
+            "**the seventh head row is drawn** — the label list is what made it invisible")
+        (is (string= "" (nth 11 text)) "a blank between sections")
+        (is (string= "  session — the daemon" (nth 12 text)))
+        (is (string= "  ✎ mode             allow-all (this box, consented)" (nth 13 text))
             "a daemon row a verb changes carries ✎")
-        (is (string= "    session          s-1789639478142928813" (nth 15 text))
+        (is (string= "    session          s-1789639478142928813" (nth 16 text))
             "one that takes a restart does not")
         (is (some (lambda (l) (search "files — edit with an editor" l)) text) "the daemon's files")
         (is (some (lambda (l) (search "permission.json" l)) text) "by name")
@@ -5653,17 +5678,17 @@ files, then the closing sentence."
             "**the rung's row POINTS AT THE VERB** — letibot's sentence, word for word, because
  a four-value setting walked through one Enter at a time is the interface R38 removed")))
     ;; the cursor walks EVERY row, and the source follows it
-    (setf (head-picker-sel h) 6)
+    (setf (head-picker-sel h) 7)
     (multiple-value-bind (lines sel-line) (config-lines h (head-settings h) 210)
       (is (search "▸ ✎ mode" (nth sel-line (lines-text lines)))
-          "**the seventh row is the daemon's mode** — six head rows, then its section")
-      (is (= 11 sel-line)
-          "on line 11 — the blank and the second section name are counted, and the source line only follows the cursor"))
+          "**the eighth row is the daemon's mode** — seven head rows, then its section")
+      (is (= 12 sel-line)
+          "on line 12 — the blank and the second section name are counted, and the source line only follows the cursor"))
     ;; enter on a daemon row goes through the verb, not around it
-    (setf (head-picker-sel h) 8)        ; supervise
+    (setf (head-picker-sel h) 9)        ; supervise (one more head row above it)
     (leticl::config-change h)
     (is (search "supervise off" (head-status-note h)) "supervise flips through its own verb")
-    (setf (head-picker-sel h) 9)        ; session, not editable
+    (setf (head-picker-sel h) 10)       ; session, not editable
     (leticl::config-change h)
     (is (search "takes a restart" (head-status-note h)) "a read-only row says why")))
 
