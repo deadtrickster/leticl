@@ -1805,7 +1805,19 @@ scrolls the transcript by a row every keystroke.
             (dolist (line composer) (row line))))
         (when alarm-row (put-segments s alarm-row gutter alarm))
         ;; **and the hint bar, when the ghost is not standing in its row** — see `ghost` above.
-        (when hint-shown (put-segments s hint-row gutter (hint-bar head cols)))
+        (when hint-shown
+          ;; **CENTRED, and it is a rule about the ROW rather than about the string.** The legend is
+          ;; the one row in this frame with nothing on its left edge to align to — the key legend and
+          ;; a pane's own hint are the same row in different contexts — so it sits in the middle of
+          ;; the body, inside the same two-column gutter everything else keeps. The pad is charged
+          ;; against the BODY and not against the terminal, or the gutter would count twice and the
+          ;; row would sit two columns left of centre, which is the kind of half-right nobody sees
+          ;; until it is measured.
+          (let* ((segs (hint-bar head cols))
+                 (w (loop for seg in segs sum (string-width (car seg)))))
+            (put-segments s hint-row
+                          (+ gutter (max 0 (floor (- cols (* 2 gutter) w) 2)))
+                          segs)))
         ;; **and where the terminal's own caret goes.** The painter emits the move
         ;; and `ESC[?25h` after the frame; without it the head hid the cursor at
         ;; startup and never showed it again, so the composer had no caret at all.
