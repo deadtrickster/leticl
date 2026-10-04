@@ -5328,13 +5328,18 @@ action, and `~`, `+`, `!`, `?` — parsed out of `--porcelain=v2`, in gitstatus'
 (def-test the-git-field-drops-its-marks-and-keeps-its-branch (:suite leticl)
   "The fitting: everything when there is room, the branch alone when there is not, absence below
 that — never a glyph cut in half."
-  (let ((parts (list "main" "⇡2" "*3" "merge" "~6" "+7" "!8" "?9")))
-    (is (equal parts (leticl::%git-fit parts 100)) "everything, with room to spare")
-    (let ((tight (leticl::%git-fit parts 12)))
-      (is (equal "main" (first tight)) "**the branch survives a narrow frame**")
-      (is (< (length tight) (length parts)) "and the right-hand marks fell off"))
-    (is (equal '("main") (leticl::%git-fit parts 8)) "with only room for the branch, the branch")
-    (is (null (leticl::%git-fit parts 3)) "and below that the field is ABSENT, not cut mid-glyph")))
+  (let ((pieces (list (cons "main" '(:fg :green)) (cons "⇡2" '(:fg :cyan))
+                      (cons "*3" '(:fg :magenta)) (cons "merge" '(:fg :magenta :bold t))
+                      (cons "~6" '(:fg :red :bold t)) (cons "+7" '(:fg :green))
+                      (cons "!8" '(:fg :yellow)) (cons "?9" '(:dim t)))))
+    (is (equal pieces (leticl::%git-fit pieces 100)) "everything, with room to spare")
+    (let ((tight (leticl::%git-fit pieces 12)))
+      (is (equal "main" (caar tight)) "**the branch survives a narrow frame**")
+      (is (equal '(:fg :green) (cdar tight)) "**and a kept mark keeps its own colour**")
+      (is (< (length tight) (length pieces)) "and the right-hand marks fell off"))
+    (is (equal '("main") (mapcar #'car (leticl::%git-fit pieces 8)))
+        "with only room for the branch, the branch")
+    (is (null (leticl::%git-fit pieces 3)) "and below that the field is ABSENT, not cut mid-glyph")))
 
 ;;; **AND THE READING REACHES THE ROW, KEYED BY THE DIRECTORY IT WAS TAKEN OF.** A head that
 ;;; switched projects must not keep the last one's branch on its header — that is the whole reason
@@ -5360,15 +5365,54 @@ that — never a glyph cut in half."
     (is (equal "/tmp" (nth 4 argv)) "…and `-C` takes an argument, which is why this is nth 4")
     (is (equal "status" (nth 6 argv)) "and it is a status, not a log")))
 
+;;; **THE FORMAT IS A PREFERENCE, SO IT IS A TEMPLATE AND NOT A LIST OF FLAGS.** The placeholders
+;;; ARE the glyphs — `%b` branch, `%!` unstaged, `%%` a literal per cent — which is the whole
+;;; mnemonic, and a template can reorder, elide and punctuate what no list of switches could.
+;;; Colours are ROLES, one per segment, chosen to say what the segment says.
+(def-test the-git-format-is-configurable-and-the-colours-are-roles (:suite leticl)
+  "A template decides the text and the order; the styles are roles, and the branch's own role
+depends on whether the tree is dirty."
+  (let* ((dirty (format nil "# branch.head main~%1 .M N... 100644 100644 100644 a b f.txt~%# stash 2"))
+         (state (leticl::%git-parts dirty nil))
+         (clean (leticl::%git-parts "# branch.head main" nil)))
+    (is (equal '("main" "!1") (mapcar #'car (leticl::%git-pieces state "%b%!")))
+        "two placeholders, in the template's order")
+    (is (equal '("!1" " main") (mapcar #'car (leticl::%git-pieces state "%! %b")))
+        "**reordered — and a literal is part of the piece it precedes, not a piece of its own**")
+    (is (equal "!1 main" (format nil "~{~a~}" (mapcar #'car (leticl::%git-pieces state "%! %b"))))
+        "which concatenates to the same row a reader sees")
+    (is (equal '("100% main") (mapcar #'car (leticl::%git-pieces state "100%% %b")))
+        "`%%` is a literal per cent")
+    (is (equal '("main") (mapcar #'car (leticl::%git-pieces state "%b")))
+        "a template may leave segments out entirely")
+    (is (null (leticl::%git-pieces state "")) "and an empty template draws nothing")
+    (is (equal '("2" "%") (list (format nil "~a" (getf state :stash)) "%"))
+        "the stash is read as a FACT, not as the glyph it will be drawn with")
+    (let ((pieces (leticl::%git-pieces state "%b%!%s")))
+      (is (equal '(:fg :yellow) (cdr (first pieces))) "**a dirty branch is yellow**")
+      (is (equal '(:fg :yellow) (cdr (second pieces))) "unstaged is yellow")
+      (is (equal '(:fg :magenta) (cdr (third pieces))) "a stash is magenta"))
+    (is (equal '(:fg :green) (cdr (first (leticl::%git-pieces clean "%b"))))
+        "**and a clean branch is green** — the one fact read at a glance")
+    (is (equal '(:fg :red :bold t) (cdr (first (leticl::%git-pieces (leticl::%git-parts
+                                                                     (format nil "# branch.head main~%u UU N... 100644 100644 100644 100644 a b c f")
+                                                                     nil) "%~"))))
+        "a conflict is red and bold, because nothing else on that row is a demand")))
+
 (def-test the-header-shows-the-workspaces-repository (:suite leticl)
   "The branch is drawn beside the workspace path, and only for the workspace it was read from."
   (let* ((h (%on-head :cols 140 :rows 24))
          (s (head-session h)))
     (setf (session-wiring s) (list* :workspace "/tmp" (session-wiring s)))
-    (let ((leticl::*git-cache* (list :dir "/tmp" :parts '("main" "!1" "?2") :at 0)))
+    (let ((leticl::*git-cache* (list :dir "/tmp"
+                                    :pieces (list (cons "main" '(:fg :green))
+                                                  (cons "!1" '(:fg :yellow))
+                                                  (cons "?2" '(:dim t)))
+                                    :at 0)))
       (leticl::%render h)
       (is (search "(main!1?2)" (%screen-text h)) "the segments are drawn beside the workspace")
-      (setf leticl::*git-cache* (list :dir "/somewhere/else" :parts '("trunk") :at 0))
+      (setf leticl::*git-cache* (list :dir "/somewhere/else"
+                                      :pieces (list (cons "trunk" '(:fg :green))) :at 0))
       (leticl::%render h)
       (is (not (search "trunk" (%screen-text h)))
           "another directory's reading is NOT drawn under this workspace"))

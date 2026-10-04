@@ -18,7 +18,7 @@
 (in-package #:leticl)
 
 (defparameter *prefs-keys*
-  '("diff" "thinking" "tools" "raw_calls" "verbosity" "todo_template")
+  '("diff" "thinking" "tools" "raw_calls" "verbosity" "todo_template" "git_format")
   "The keys THIS build owns, in THIS head's own file. Anything else is somebody else's — a
 newer build's, or the operator's — and is preserved verbatim.
 
@@ -84,6 +84,12 @@ understood here.")
         ;; `reading` here the whole suite went red in the tests that assert a tool or system row
         ;; is DRAWN, which is the default being wrong rather than any of them.
         :verbosity "normal"
+        ;; **THE GIT FIELD'S FORMAT** — a template of `%b %d %a %s %m %~ %+ %! %?`, one
+        ;; placeholder per segment and `%%` for a literal per cent; `+git-format-default+` says
+        ;; what each one is. NIL means the built-in default: a preference whose default is a
+        ;; COPY of a constant is a second place to keep one value, and the first time they
+        ;; disagree nobody can say which is the default.
+        :git-format nil
         :path nil)           ; where it came from, so a save goes back there; NIL
                              ; for a head with nowhere to write, which SAYS SO
                              ; rather than writing into the working directory
@@ -103,6 +109,7 @@ understood here.")
 (defun prefs-verbosity (p) (getf p :verbosity))
 (defun prefs-todo-template (p) (getf p :todo-template))
 (defun prefs-path (p)     (getf p :path))
+(defun prefs-git-format (p) (getf p :git-format))
 
 (defun %prefs-with-every-key (p)
   "P with every key in `*prefs-defaults*` present, a missing one pushed on the FRONT.
@@ -137,6 +144,7 @@ the caller still holds, so the honest place to repair it is where the plist is a
 (defun (setf prefs-verbosity) (v p) (setf (getf p :verbosity) v))
 (defun (setf prefs-todo-template) (v p) (setf (getf p :todo-template) v))
 (defun (setf prefs-path) (v p)     (setf (getf p :path) v))
+(defun (setf prefs-git-format) (v p) (setf (getf p :git-format) v))
 
 ;;; ------------------------------------------- the bridge to a running head ;;;
 ;;;
@@ -870,7 +878,21 @@ than the bad line. Returns `(values prefs notes)`."
                                         value
                                         (mapcar #'verbosity-name +verbosity-ladder+))
                                 notes)))))
-              ((string= key "todo_template")
+              ((string= key "git_format")
+                ;; **A QUOTED TEMPLATE, or `false` for the default.** A bare `git_format = %b`
+                ;; would be a template nobody meant, so it has to be quoted the way
+                ;; `todo_template`'s path is — and anything unquoted is refused BY NAME rather
+                ;; than read as a one-word format.
+                (cond ((and (>= (length value) 2)
+                            (char= (char value 0) #\")
+                            (char= (char value (1- (length value))) #\"))
+                       (setf (prefs-git-format p) (subseq value 1 (1- (length value)))))
+                      ((or (string= value "false") (string= value "nil") (string= value ""))
+                       (setf (prefs-git-format p) nil))
+                      (t (push (format nil "head.toml: git_format = ~s is a QUOTED template, or false for the default"
+                                       value)
+                               notes))))
+               ((string= key "todo_template")
                ;; **THREE ANSWERS, and the third is why this is not a boolean.** `false` is off;
                ;; `true` is the default template file; a QUOTED STRING is a path to another one.
                ;; Reading a bare path as a truthy string would turn `todo_template = "typo.md"` into
@@ -922,6 +944,12 @@ Returns the path written, or NIL for a head with nowhere to write."
                      (cons "thinking" (format nil "~s" (prefs-thinking p)))
                      (cons "tools" (format nil "~s" (prefs-tools p)))
                      (cons "raw_calls" (if (prefs-raw-calls p) "true" "false"))
+                      ;; **Quoted like `todo_template`'s path**, because a template with a space
+                      ;; in it is legal and an unquoted one would come back as two keys. NIL is
+                      ;; `false`, which is the default.
+                      (cons "git_format" (if (prefs-git-format p)
+                                             (format nil "~s" (prefs-git-format p))
+                                             "false"))
                      (cons "marker_seam" (if (prefs-marker-seam p) "true" "false"))
                      ;; **Quoted like letibot spells its own**, so the two heads' files read
                      ;; alike for a key they share a vocabulary for.

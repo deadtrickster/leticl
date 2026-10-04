@@ -716,23 +716,62 @@ in the output at all — no upstream, no stashes, a one-line reading."
   (let ((line (find-if (lambda (l) (and (>= (length l) 11) (string= "# branch.ab" l :end2 11))) lines)))
     (when line (%git-count line what))))
 
+(defparameter +git-format-default+ "%b%d%a%s%m%~%+%!%?"
+  "The default format: gitstatus's segments, in gitstatus's order, concatenated.
+
+**The placeholders ARE the glyphs**, which is the whole mnemonic: `%b` branch (or `@oid` when
+detached), `%d` behind, `%a` ahead, `%s` stashes, `%m` the action in progress, `%~` conflicts,
+`%+` staged, `%!` unstaged, `%?` untracked. `%%` is a literal per cent and anything else is
+literal text. `git_format` in this head's preferences file overrides it — one line, and the
+segments it does not mention are simply not drawn.")
+
+(defparameter +git-slots+
+  '(("%b" . :branch) ("%d" . :behind) ("%a" . :ahead) ("%s" . :stash) ("%m" . :action)
+    ("%~" . :conflict) ("%+" . :staged) ("%!" . :unstaged) ("%?" . :untracked))
+  "The format's placeholders, in the order the default spells them.")
+
+(defparameter +git-styles+
+  '((:branch-clean . (:fg :green))
+    (:branch-dirty . (:fg :yellow))
+    (:behind . (:fg :cyan))
+    (:ahead . (:fg :cyan))
+    (:stash . (:fg :magenta))
+    (:action . (:fg :magenta :bold t))
+    (:conflict . (:fg :red :bold t))
+    (:staged . (:fg :green))
+    (:unstaged . (:fg :yellow))
+    (:untracked . (:dim t)))
+  "One role per segment, chosen to say what the segment SAYS.
+
+**A branch is green when the tree is clean and yellow when it is not** — the one fact a person
+reads at a glance — staged work is green, unstaged is yellow, conflicts are red and bold because
+nothing else on that row is a demand, and untracked files are dim because they are usually noise.")
+
+(defun %git-style (key)
+  "KEY's role, or NIL for a segment this head has no opinion about."
+  (cdr (assoc key +git-styles+)))
+
 (defun %git-parts (porcelain dir)
-  "PORCELAIN v2 output as gitstatus's prompt segments, in gitstatus's own order and glyphs:
+  "PORCELAIN v2 output as gitstatus's prompt segments — the FACTS, not the text:
 
-    main  ⇣1 ⇡2  *5  merge  ~6  +7  !8  ?9
+    (:branch \"main\" :detached nil :behind nil :ahead 2 :stash 5 :action \"merge\"
+     :conflict 6 :staged 7 :unstaged 8 :untracked 9)
 
-branch or `@oid` when detached (gitstatus shows the commit and not the branch), behind and
-ahead of the upstream, the stash count, the action in progress, conflicts, staged, unstaged and
-untracked — the table in gitstatus's README, and the order it prints them in. NIL when the input
-does not even name a branch.
+branch or `@oid` when detached (gitstatus shows the commit and not the branch), behind and ahead
+of the upstream, the stash count, the action in progress, conflicts, staged, unstaged and
+untracked — the table in gitstatus's README, in the order it prints them. NIL when the input does
+not even name a branch.
 
-**`⇠`/`⇢` are absent on purpose**: those are the PUSH remote, which `git status` does not know,
-and printing the upstream's numbers with the push remote's glyphs is the kind of lie a field on
-every screen must not tell."
+**The facts and not the text**, because the format decides the text and a preference may change
+the format: a cache of strings would be a cache of somebody's old choice.
+
+**`⇠`/`⇢` are absent on purpose**: those are the PUSH remote, which `git status` does not know, and
+printing the upstream's numbers with the push remote's glyphs is the kind of lie a field on every
+screen must not tell."
   (let ((lines (remove-if (lambda (l) (zerop (length l)))
                           (mapcar (lambda (l) (string-right-trim '(#\Return #\Newline) l))
                                   (uiop:split-string (or porcelain "") :separator '(#\Newline)))))
-        (parts nil) (staged 0) (unstaged 0) (untracked 0) (conflict 0))
+        (staged 0) (unstaged 0) (untracked 0) (conflict 0))
     (let* ((head (find-if (lambda (l) (and (>= (length l) 14)
                                           ;; `# branch.head ` is FOURTEEN characters: the hash,
                                           ;; the space, the word, the space
@@ -741,51 +780,102 @@ every screen must not tell."
            (name (if head (subseq head 14) nil))
            (oid (%git-oid lines)))
       (when head
-        (push (cond ((and name (string= name "(detached)"))
-                     (if oid (format nil "@~a" (subseq oid 0 (min 8 (length oid)))) "@"))
-                    (t name))
-              parts)
-        (when (null (string= name "(detached)"))
-          (let ((behind (%git-count-branch-ab lines "-")))
-            (when (and behind (plusp behind)) (push (format nil "⇣~d" behind) parts))))
-        (let ((ahead (%git-count-branch-ab lines "+")))
-          (when (and ahead (plusp ahead)) (push (format nil "⇡~d" ahead) parts)))
         (dolist (l lines)
           (cond ;; **THE GUARD IS THE PREFIX'S OWN LENGTH, EVERY TIME.** A `string=` bounded at N on a
                 ;; line shorter than N is a BOUNDS ERROR, not a false — measured here on a three-character
                 ;; `? h` line, which is the shape an untracked entry takes — and every prefix test in this
                 ;; function carries the length it compares.
-                ((and (>= (length l) 8) (string= "# stash " l :end2 8))
-                 (let ((n (%git-count l "# stash "))) (when (and n (plusp n)) (push (format nil "*~d" n) parts))))
-                ((and (plusp (length l)) (member (char l 0) '(#\1 #\2) :test #'char=))
+                ((and (>= (length l) 4) (member (char l 0) '(#\1 #\2) :test #'char=))
                  ;; `1 XY …` and `2 XY …` — X is index-vs-HEAD, Y is workdir-vs-index
-                 (when (and (>= (length l) 4) (char/= (char l 2) #\.)) (incf staged))
-                 (when (and (>= (length l) 4) (char/= (char l 3) #\.)) (incf unstaged)))
+                 (when (char/= (char l 2) #\.) (incf staged))
+                 (when (char/= (char l 3) #\.) (incf unstaged)))
                 ((and (plusp (length l)) (char= (char l 0) #\u)) (incf conflict))
                 ((and (plusp (length l)) (char= (char l 0) #\?)) (incf untracked))))
-        (let ((action (%git-action dir)))
-          (when action (push action parts)))
-        (when (plusp conflict) (push (format nil "~~~d" conflict) parts))
-        (when (plusp staged) (push (format nil "+~d" staged) parts))
-        (when (plusp unstaged) (push (format nil "!~d" unstaged) parts))
-        (when (plusp untracked) (push (format nil "?~d" untracked) parts)))
-      (nreverse parts))))
+        (list :branch (if (and name (string= name "(detached)"))
+                          (if oid (format nil "@~a" (subseq oid 0 (min 8 (length oid)))) "@")
+                          name)
+              :detached (and name (string= name "(detached)"))
+              :behind (let ((n (%git-count-branch-ab lines "-"))) (and n (plusp n) n))
+              :ahead (let ((n (%git-count-branch-ab lines "+"))) (and n (plusp n) n))
+              :stash (let ((n (%git-count (find-if (lambda (l) (and (>= (length l) 8)
+                                                                    (string= "# stash " l :end2 8)))
+                                                   lines)
+                                          "# stash ")))
+                       (and n (plusp n) n))
+              :action (%git-action dir)
+              :conflict (and (plusp conflict) conflict)
+              :staged (and (plusp staged) staged)
+              :unstaged (and (plusp unstaged) unstaged)
+              :untracked (and (plusp untracked) untracked))))))
+
+(defun %git-segment (key state)
+  "The `(TEXT . STYLE)` for KEY in STATE, or NIL when it has nothing to say.
+
+The glyphs are gitstatus's own — `⇣` `⇡` `*` `~` `+` `!` `?` — so a reader who knows that prompt
+knows this row."
+  (let ((n (getf state key)))
+    (cond ((null n) nil)
+          ((eq key :branch)
+           (let ((dirty (or (getf state :staged) (getf state :unstaged) (getf state :untracked)
+                            (getf state :conflict))))
+             (cons n (if dirty (%git-style :branch-dirty) (%git-style :branch-clean)))))
+          ((eq key :action) (cons n (%git-style :action)))
+          ((integerp n) (cons (format nil "~a~d"
+                                      (ecase key (:behind "⇣") (:ahead "⇡") (:stash "*")
+                                                  (:conflict "~") (:staged "+") (:unstaged "!")
+                                                  (:untracked "?"))
+                                      n)
+                              (%git-style key))))))
+
+(defun %git-format ()
+  "The format in force: the preference when there is one, the default otherwise.
+
+**READ ON THE READER THREAD, NOT IN A PAINT.** `*prefs*` may have been loaded by a build that
+predates the key, so the preference is read under `ignore-errors`: a mistyped template or a
+missing accessor is then a bad line rather than a header that fails to draw."
+  (let ((f (and *prefs* (ignore-errors (prefs-git-format *prefs*)))))
+    (if (and f (stringp f) (plusp (length f))) f +git-format-default+)))
+
+(defun %git-pieces (state format)
+  "STATE as the list of `(TEXT . STYLE)` the format asks for.
+
+Literals are attached to the piece they PRECEDE — a space before a mark travels with the mark — so
+that fitting drops whole pieces and never half of one."
+  (let ((out nil) (pending "") (i 0) (n (length format)))
+    (loop while (< i n) do
+      (if (char/= (char format i) #\%)
+          (progn (setf pending (concatenate 'string pending (string (char format i))))
+                 (incf i))
+          (let* ((two (subseq format i (min (+ i 2) n)))
+                 (pair (and (= (length two) 2) (assoc two +git-slots+ :test #'string=))))
+            (if pair
+                (progn
+                  (let ((seg (%git-segment (cdr pair) state)))
+                    (when seg (push (cons (concatenate 'string pending (car seg)) (cdr seg)) out))
+                    (setf pending ""))
+                  (incf i 2))
+                (progn ;; `%%` is a literal per cent, and a trailing `%` is literal too
+                  (setf pending (concatenate 'string pending "%"))
+                  (incf i (if (= (length two) 2) 2 1)))))))
+    (when (and (plusp (length pending)) out)
+      (setf (car out) (cons (concatenate 'string (caar out) pending) (cdar out))))
+    (nreverse out)))
 
 (defun %git-text (porcelain &optional dir)
-  "PORCELAIN as one string, which is what the tests assert and the cache stores."
-  (let ((parts (%git-parts porcelain dir)))
-    (when parts (format nil "~{~a~}" parts))))
+  "PORCELAIN as one string through the DEFAULT format — what the tests assert."
+  (let ((state (%git-parts porcelain dir)))
+    (when state (format nil "~{~a~}" (mapcar #'car (%git-pieces state +git-format-default+))))))
 
-(defun %git-fit (parts room)
-  "The longest PREFIX of PARTS that fits in ROOM columns, or NIL.
+(defun %git-fit (pieces room)
+  "The longest PREFIX of PIECES that fits in ROOM columns, or NIL.
 
 **The field degrades by DELETION, like every other thing on this row** — the branch is the floor
 and the marks fall off its right in gitstatus's own order, so a narrow screen loses `?4` and not
 the branch. A field dropped whole is the behaviour this replaces."
   (loop with out = nil and used = 3
-        for p in parts
-        while (<= (+ used (string-width p) 1) room)
-        do (push p out) (incf used (string-width p))
+        for p in pieces
+        while (<= (+ used (string-width (car p)) 1) room)
+        do (push p out) (incf used (string-width (car p)))
         finally (return (nreverse out))))
 
 (defun %git-command (dir)
@@ -803,13 +893,84 @@ was MEASURED accepting 1 against a `sleep 30` and taking 30 seconds."
         "status" "--porcelain=v2" "--branch" "--show-stash"))
 
 (defun %git-refresh (dir)
-  "Read DIR's repository and store the reading. Returns the parts, or NIL."
+  "Read DIR's repository, render it through the format in force, and store BOTH.
+
+**THE FORMAT IS APPLIED HERE, ON THE READER THREAD, AND NOWHERE ELSE.** A paint draws cached
+pieces: it never parses, never formats, and cannot meet a template somebody mistyped or a
+preference function this build does not carry. That is what keeps a bad format a bad line rather
+than a header that fails to draw."
   (let ((text (ignore-errors
                 (uiop:run-program (%git-command dir)
                                   :output :string :error-output nil
                                   :ignore-error-status t))))
-    (setf *git-cache* (list :dir dir :parts (%git-parts text dir) :at (internal-real-time-ms)))
-    (getf *git-cache* :parts)))
+    (let ((state (%git-parts text dir)))
+      (setf *git-cache* (list :dir dir
+                              :state state
+                              :pieces (and state (%git-pieces state (%git-format)))
+                              :at (internal-real-time-ms)))
+      (getf *git-cache* :pieces))))
+
+(defvar *git-dir* nil
+  "The workspace the reader is pointed at, set by the loop's `tick-git`.")
+
+(defvar *git-thread* nil
+  "The reader thread, or NIL. `dash-start`'s pattern, and for its reason.")
+
+(defvar *git-running* nil
+  "Does the reader keep reading? Cleared by `git-stop`, felt within a step.")
+
+(defun %git-collect-once ()
+  "One reading, if the interval has passed or the workspace has moved.
+
+**A repo nobody in this session touches still has to be read**, which is why this is a clock and
+not an event: the operator edits and commits in another terminal, the other agent commits in this
+one, an editor writes a file — none of those reach this head as anything it can subscribe to. The
+clock is what sees them. What must not happen is the clock running IN THE LOOP."
+  (let ((dir *git-dir*)
+        (cache *git-cache*))
+    (when (and dir (plusp (length dir))
+               (or (null cache)
+                   (not (equal dir (getf cache :dir)))
+                   (>= (- (internal-real-time-ms) (or (getf cache :at) 0)) +git-refresh-ms+)))
+      (%git-refresh dir))))
+
+(defun git-start ()
+  "Start the reader thread. Idempotent: calling it twice does not make two threads.
+
+`dash-start`'s shape, including the small-step sleep and its reason: a stop felt only after a
+whole interval reads as a hang."
+  (setf *git-running* t)
+  (unless (and *git-thread* (sb-thread:thread-alive-p *git-thread*))
+    (setf *git-thread*
+          (sb-thread:make-thread
+           (lambda ()
+             (loop while *git-running*
+                   do (ignore-errors (%git-collect-once))
+                      (loop repeat 10 while *git-running* do (sleep 0.1))))
+           :name "leticl-git-reader")))
+  *git-refresh-ms+)
+
+(defun git-stop ()
+  "Stop the reader. Idempotent."
+  (setf *git-running* nil)
+  (when (and *git-thread* (sb-thread:thread-alive-p *git-thread*))
+    (ignore-errors (sb-thread:join-thread *git-thread* :timeout 2)))
+  (setf *git-thread* nil)
+  (values))
+
+(defun tick-git (head)
+  "Point the reader at this session's workspace and make sure it is running.
+
+**CALLED FROM THE LOOP, AND IT MUST NEVER RUN A PROCESS.** The first version did, every two
+seconds, wrapped in `timeout 1`: on this checkout that is nothing, and on a checkout where git is
+slow it is up to a second with no keys and no repaint — the loop is the one thing in this head
+that may not wait, which is why the dash collectors were moved onto a thread after being wedged by
+exactly this. So the loop sets a directory and starts a thread; the reading happens over there and
+the paint reads whatever the last one left."
+  (let ((dir (getf (session-wiring (head-session head)) :workspace)))
+    (when (and dir (plusp (length dir)))
+      (unless (equal dir *git-dir*) (setf *git-dir* dir))
+      (git-start))))
 
 (defun top-border (head cols)
   "The header: what this session IS on the left, what it is COSTING on the right.
@@ -898,15 +1059,19 @@ its end, and a token count is not recoverable from anywhere else on the screen."
               (setf left (append left (list (cons (format nil "  ~a" shown) '(:dim t)))))
               (incf left-cols (+ 2 (string-width shown)))))))
       ;; **AND THE WORKSPACE'S REPOSITORY**, beside the path it is a fact about, in gitstatus's
-      ;; own segments. READ here, never RUN here: the reading is the reader thread's (`tick-git`),
-      ;; and a paint is not where a process goes. What is chosen here is only how MUCH of it fits.
-      (let* ((parts (getf *git-cache* :parts))
+      ;; own segments AND its own colours. READ here, never RUN and never FORMATTED here: the
+      ;; reader thread parses and renders, and this only chooses how much fits. **The segments
+      ;; carry their own styles** — a green branch, a yellow `!`, a red `~` — and the parens are
+      ;; the row's own faint, so the field still reads as one thing.
+      (let* ((pieces (getf *git-cache* :pieces))
              (room (- cols left-cols tail-cols 2))
              (fit (and (equal (getf *git-cache* :dir) (getf (session-wiring s) :workspace))
-                       (%git-fit parts room))))
+                       (%git-fit pieces room))))
         (when fit
-          (setf left (append left (list (cons (format nil " (~{~a~})" fit) '(:dim t)))))
-          (incf left-cols (+ 3 (string-width (format nil "~{~a~}" fit))))))
+          (setf left (append left (list (cons " (" '(:dim t))))
+                left (append left fit)
+                left (append left (list (cons ")" '(:dim t)))))
+          (incf left-cols (+ 3 (loop for piece in fit sum (string-width (car piece)))))))
       (let* ((pad (max 0 (- cols left-cols tail-reserved)))
              ;; **AND THE RESERVED BUT UNUSED COLUMNS AFTER THE TAIL.** The block the fields sit in
              ;; is `tail-reserved` wide whatever happens to be in it, so `2/2` stands where `2/2`
