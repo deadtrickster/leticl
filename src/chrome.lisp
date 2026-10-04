@@ -1030,7 +1030,7 @@ is worse than no hint at all."
                  ;; `BINDINGS` rather than typed.
                  ((eq (head-mode head) :dash) (format nil "~a · esc closes" (dash-bindings)))
                  ((eq (head-mode head) :config) "arrows move · enter changes a row marked ✎ · esc closes")
-                 ((eq (head-mode head) :subagents) "subagents this session spawned · enter reads one (live) · o attaches to it · esc closes")
+                 ((eq (head-mode head) :subagents) "subagents this session spawned · enter reads one (live) · p its prompt · o attaches to it · esc closes")
                  ;; **THE JOBS PANE NAMES `d` ONLY WHEN THERE IS SOMETHING TO OPEN**, and the
                  ;; count comes from the panels rather than from a guess: a hint that offers a key
                  ;; which does nothing on this job is worse than a shorter hint.

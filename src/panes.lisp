@@ -2453,6 +2453,54 @@ unwindowed, which is the shape every other pane has."
                        (make-list (max 0 (- visible (- end start))))
                        footer))))))))
 
+(defvar *peek-prompt-only* nil
+  "Did the reader press `p` — the child's PROMPT rather than its conversation?
+
+The operator: *\"when i select an agent and press 'p' it should show me prompt in a scrollable popup.\"*
+Set by the key, read by `peek-lines`, and CLEARED by every other way into the peek pane (Enter, `/peek`)
+so the narrow view cannot outlive the press that asked for it.")
+
+(defun %peek-prompt-pane (head cols room)
+  "The child's own task, whole, in a popup that scrolls — what `p` opens.
+
+**The pane's first line is an EXCERPT; this is the whole thing.** The pane draws `Subagent.prompt`, which
+is `derive_title(prompt)` — the task's first line and nothing more — so a long task is cut there for
+ever. The full text survives in exactly one place: **the child's own transcript**, whose first row is the
+`user` row the daemon gave it when it spawned it.
+
+Drawn through `item-lines` — the renderer every transcript row uses — so the prompt arrives with the
+same block and wrapping it has in a conversation, and SCROLLS with the keys every overlay already has:
+the same `*pane-scroll*`, the same tail-origin window, the same Esc.
+
+`PeekShape::Rows` is what makes this possible at all: the reply carries the child's rows, so the head has
+the task without reading events it may not fold."
+  (let* ((snapshot *peeked-snapshot*)
+         (id (getf snapshot :session-id))
+         (items (getf snapshot :items))
+         (task (first (remove-if-not (lambda (i)
+                                       (equal (getf (leticl::item-body i) :type) "user"))
+                                     items)))
+         (card (if task
+                   (item-lines task cols (head-prefs head))
+                   (list (list (cons "    this child's transcript carries no prompt — nothing was asked, or its
+ first rows fell off the daemon's scrollback." '(:dim t))))))
+         (room (max 8 (or room 40)))
+         (head-lines (list (list (cons (format nil "prompt — ~a" (if id (short-id id) "?"))
+                                          '(:bold t)))
+                           nil))
+         (footer (list nil (list (cons "    arrows scroll · esc back" '(:dim t)))))
+         (visible (max 1 (- room (length head-lines) (length footer))))
+         (total (length card))
+         (scroll (min (max 0 *pane-scroll*) (max 0 (- total visible))))
+         (end (- total scroll))
+         (start (max 0 (- end visible))))
+    (setf *pane-scroll* scroll
+          *peek-total* (+ (length head-lines) total (length footer)))
+    (append head-lines
+            (subseq card start end)
+            (make-list (max 0 (- visible (- end start))))
+            footer)))
+
 (defun %peek-snapshot-pane (head cols room)
   "The peeked child's rows, drawn by the renderer that draws the conversation.
 
@@ -2539,6 +2587,10 @@ else is measured back from it.
 
 The footer names the SPILL FILE, which had no counterpart at all: the pane
 advertised three keys and a full copy on disk, and the copy was never written."
+  ;; **`p` SHOWS THE PROMPT AND NOTHING ELSE** — the narrow view of the same fetch. See
+  ;; `%peek-prompt-pane`; Enter and `/peek` clear the flag, so this cannot outlive the press.
+  (when (and *peek-prompt-only* (peeked-rows-p))
+    (return-from peek-lines (%peek-prompt-pane head cols room)))
   ;; **A SNAPSHOT IS DRAWN BY THE REAL RENDERER** — see `%peek-snapshot-pane`. Everything below is the
   ;; path for a daemon that answers a peek with events and no rows, and that path SAYS which it is.
   (when (peeked-rows-p)

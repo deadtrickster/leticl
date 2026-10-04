@@ -1143,6 +1143,10 @@ two sides in circles."
              ((equal (getf row :state) "opening")
               (say head "that subagent is still opening — nothing to read yet"))
              (t (awhen (getf row :session-id)
+                  ;; **ENTER IS THE CONVERSATION**, so it clears the narrow view (`p`) on its way in:
+                  ;; a flag that outlived the key that set it would draw a prompt for a reader who
+                  ;; asked for the answer.
+                  (setf *peek-prompt-only* nil)
                   (%send head (make-peek it))
                   (say head (format nil "reading ~a…" it)))))))
     (:peek
@@ -1405,6 +1409,22 @@ one thing this head must not need."
                    ((not empty) nil)
                    ((eql ch #\q) (shut))
                    ((and (eql ch #\o) (eq mode :subagents)) (%subagent-switch head) t)
+                   ;; **`p` IS THE PROMPT, ALONE, IN A POPUP THAT SCROLLS.** The operator: *"when i select
+                   ;; an agent and press 'p' it should show me prompt in a scrollable popup."* The pane's
+                   ;; first line is an EXCERPT — the daemon's `Subagent.prompt` is the task's first line
+                   ;; and nothing more — so the whole task needs a view of its own, and the child's own
+                   ;; transcript is where it lives. The same peek Enter sends; the flag is what makes it
+                   ;; narrow (see `%peek-prompt-pane`).
+                   ((and (eql ch #\p) (eq mode :subagents))
+                    (let ((row (nth (head-picker-sel head) (subagent-rows head))))
+                      (cond ((null row) nil)
+                            ((equal (getf row :state) "opening")
+                             (say head "that subagent is still opening — nothing to read yet") t)
+                            (t (let ((id (getf row :session-id)))
+                                 (when id
+                                   (setf *peek-prompt-only* t)
+                                   (%send head (make-peek id))
+                                   (say head (format nil "reading ~a's prompt…" id))))))))
                    ;; the operator's own ask: the job row links to its dashboard
                    ((and (eql ch #\d) (eq mode :jobs))
                     (let ((job (nth (head-picker-sel head) (head-jobs head))))
