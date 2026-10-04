@@ -1,5 +1,33 @@
 # leticl — TODO, for the switch
 
+- [ ] **the git field's COLOURS and its CONFIGURABLE FORMAT** — designed, reverted, written down.
+  The operator asked for both, 2026-10-04, right after the field gained gitstatus's segments:
+  *"how about we do the colours too and the configurable format too"*.
+
+  **The decisions, which are the expensive part**:
+
+  · the cache holds the **STATE** (`:branch :detached :behind :ahead :stash :action :conflict
+    :staged :unstaged :untracked`), never a rendered string — a cache of text is a cache of
+    somebody's old format choice;
+  · a **format** turns the state into PIECES, one `(text . style)` per placeholder, literals
+    attached to the piece they PRECEDE so fitting drops whole pieces and never half of one;
+  · placeholders **are the glyphs**: `%b %d %a %s %m %~ %+ %! %?`, `%%` literal; default
+    `"%b%d%a%s%m%~%+%!%?"`, which is the concatenation that ships;
+  · **colours are roles, one per segment**: branch green when clean and yellow when not (the one
+    fact read at a glance), `+` green, `!` yellow, `?` dim, `~` red and bold, the action bold
+    magenta, `*` magenta, `⇣`/`⇡` cyan;
+  · **the format is applied ON THE READER THREAD, never in a paint** — a mistyped template or a
+    preference function this build lacks is then a bad line rather than a header that fails to
+    draw;
+  · the preference is `git_format` in this head's own file: add it to `*prefs-keys*` and
+    `*prefs-defaults*`, an accessor pair, one load arm and one save arm — the load arm needs the
+    quoted-string handling `todo_template` has.
+
+  **Where it stopped**: the core was written into `src/chrome.lisp` and then reverted, because
+  the migration left three callers speaking the old shape and the git tests at 3/15 — so this
+  starts from the decisions rather than the wreckage. HEAD is green (`41d8935`, 7043 checks).
+
+
 Derived from `PARITY.md` and the four measurements under `docs/parity/`. The
 previous list — twelve strands, `S0`–`S11`, `P1`–`P46` — is archived whole at
 `docs/archive/2026-09-20/TODO.md` along with the measurement it came from. It is
