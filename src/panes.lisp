@@ -2753,6 +2753,29 @@ list says the bare form the header shows."
     (:model (%header-model (or (setting-value head "model") "")))
     ((nil) "")))
 
+(defun %keyed-providers (head)
+  "The providers this box holds a key for, from the daemon's OWN row (`models.keys`).
+
+**Empty means NO greening rather than every row greened** - letibot's rule for the same row (their
+c25c7c8, the rule `daemon_verbs` follows): a row that is not there is a daemon older than the one
+that publishes it, and colouring every model on no evidence is a claim a reader cannot check."
+  (remove ""
+          (mapcar (lambda (s) (string-trim " " s))
+                  (uiop:split-string (or (setting-value head "models.keys") "") :separator '(#\,)))
+          :test #'string=))
+
+(defun %model-keyed-p (head choice)
+  "Does this box hold a key for CHOICE - the operator's question as they press enter.
+
+**`local` is ready for a reason of its own**: it needs no credential, and leaving it uncoloured
+would read as *this row has no key* about the one row that never wanted one."
+  (let* ((str (or choice ""))
+         (provider (if (alexandria:starts-with-subseq "local" str)
+                       "local"
+                       (subseq str 0 (or (position #\/ str) (length str))))))
+    (or (string= provider "local")
+        (member provider (%keyed-providers head) :test #'string=))))
+
 (defun %header-model (value)
   "`local (qwen-3.8-27b)` → `qwen-3.8-27b`; anything else as written — the
 reference's `header_model`."
@@ -2809,7 +2832,10 @@ the one that answers, then the two dim hint rows (three for models)."
            for here = (string= name current)
            for picked = (= i sel)
            append (let* ((left (list (cons (format nil "~a ~2d  " (if picked "▸" " ") (1+ i)) nil)
-                                      (cons name (if here '(:bold t) nil))))
+                                      (cons name (cond ((and models (%model-keyed-p head name))
+                                            (if here '(:bold t :fg :green) '(:fg :green)))
+                                           (here '(:bold t))
+                                           (t nil)))))
                           (right (if here (list (cons "← now" '(:dim t))) nil))
                           ;; the cursor's row is reversed over its TEXT — mark,
                           ;; number, name — and the padding is plain: the
@@ -2844,6 +2870,8 @@ the one that answers, then the two dim hint rows (three for models)."
                        '(:dim t))))
      (when models
        (list (list (cons "  `/default-model NAME` is what new sessions start on · this is not that"
+                         '(:dim t)))
+             (list (cons "  green: this box holds a key for it; the others need `/models NAME --key PASTE`"
                          '(:dim t)))))
      ;; **and the two typed paths are named, because the card's own hint row promises one of
      ;; them** (*or type a name or the number on the left*) and a reader who wants none of this

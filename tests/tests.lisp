@@ -5458,6 +5458,21 @@ that — never a glyph cut in half."
           "**above the reading rungs the whole nag is drawn, advice and all**")
       (is (leticl::%notice-folds-p job) "while a settlement still folds there, as asked"))))
 
+(def-test the-model-card-greens-what-this-box-can-take (:suite leticl)
+  "A keyed provider is green, `local` is green for its own reason, an unkeyed one is not."
+  (let ((h (%make-head)))
+    (setf (head-settings h) (list (list :key "models.keys" :value "glm-coding,deepseek")))
+    (is (equal '("glm-coding" "deepseek") (leticl::%keyed-providers h)) "the daemon's own list")
+    (is (leticl::%model-keyed-p h "glm-coding/glm-4.6") "a provider with a key")
+    (is (not (leticl::%model-keyed-p h "openai/gpt-5")) "and one without")
+    (is (leticl::%model-keyed-p h "local (qwen-3.8-27b)")
+        "**`local` needs no credential, so it is ready for its own reason**")
+    ;; **an absent row is an OLDER DAEMON, and that is no greening rather than all of them**
+    (setf (head-settings h) (list (list :key "mode" :value "allow-all")))
+    (is (null (leticl::%keyed-providers h)) "no row, no list")
+    (is (not (leticl::%model-keyed-p h "glm-coding/glm-4.6")) "**and nothing is greened on no evidence**")
+    (is (leticl::%model-keyed-p h "local (qwen-3.8-27b)") "while `local` still is")))
+
 (def-test the-config-pane-lists-the-git-format-and-cycles-it (:suite leticl)
   "The row is on the pane, it names what is in force, and Enter rings three shapes."
   (let ((h (%make-head)))
