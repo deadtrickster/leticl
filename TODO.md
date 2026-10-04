@@ -1,5 +1,25 @@
 # leticl — TODO, for the switch
 
+- [ ] **the git format's row on `/config`** — the FINDING is in, the row is not.
+  The operator: *"i dont see the config in /config"*. It was invisible for a reason worth keeping:
+  **`*head-setting-rows*` is a list of KEYS and the labels beside it are a PARALLEL list** in the
+  `loop` that builds the pane (`panes.lisp`, `config-rows`) — so a key added without a label does
+  not draw a row at all; the loop simply runs out of labels and drops what is left. Adding the key
+  is not enough, and nothing says so.
+
+  **What is needed** (all written once, reverted to keep HEAD green):
+  · `"git_format"` in `*head-setting-rows*` AND `"git format"` in the labels list;
+  · `%head-setting-value`: the template IN FORCE (`(or (getf (head-prefs head) :git-format)
+    (format nil "default (~a)" +git-format-default+))`);
+  · `%flip-head-setting`: three stops — nil → `"%b %!%+"` → `"%b"` → nil;
+  · the bridges: `prefs-into-head` seeds `head-prefs :git-format` from the file and
+    `head-into-prefs` reads it back, so `/config` and `head.toml` cannot drift;
+  · `%git-format` reads the LIVE plist (`*head*`'s `head-prefs`), not `*prefs*`;
+  · and **the pane's own fixture needs four lines**: the new row's exact column padding, the
+    cursor line, and two more `nth` positions in
+    `the-config-pane-renders-every-row-with-its-source-under-the-cursor`.
+
+
 - [ ] **the git field's COLOURS and its CONFIGURABLE FORMAT** — designed, reverted, written down.
   The operator asked for both, 2026-10-04, right after the field gained gitstatus's segments:
   *"how about we do the colours too and the configurable format too"*.
