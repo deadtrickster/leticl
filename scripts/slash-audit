@@ -122,13 +122,26 @@ PROBE = r'''
 '''
 
 
+
+def commands_module_text():
+    """Every file under `src/commands/`, concatenated.
+
+    **The module, not one file**: `commands` was a single `commands.lisp` and is now a
+    directory, and the two things this script slices out of it — `*slash-commands*` and
+    the body of `%command` — live in different files of it now (`verbs.lisp` and
+    `dispatch.lisp`). The markers are unchanged, so the slices still land.
+    """
+    d = os.path.join(ROOT, "src", "commands")
+    return "".join(open(os.path.join(d, f)).read()
+                   for f in sorted(os.listdir(d)) if f.endswith(".lisp"))
+
 def registry_rows():
     """The registry's ROWS, as the head itself spells them.
 
     A row may be a bare name or a `(name . hint)` pair — `*slash-commands*` carries hints, and
     a two-word row like `reseat summarise` is ONE row and not two verbs.
     """
-    text = open(os.path.join(ROOT, "src/commands.lisp")).read()
+    text = commands_module_text()
     start = text.index("(defparameter *slash-commands*")
     end = text.index("\n\n", start)
     block = text[start:end]
@@ -144,7 +157,7 @@ def candidates(registry):
     A superset on purpose: the classification below decides, and the union is what makes the
     OTHER direction measurable — a row with no arm behind it.
     """
-    text = open(os.path.join(ROOT, "src/commands.lisp")).read()
+    text = commands_module_text()
     body = text[text.index("(defun %command "):text.index("(defun %notes ")]
     body = re.sub(r";;.*$", "", body, flags=re.M)
     out = []

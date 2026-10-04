@@ -125,17 +125,32 @@ in Rust; we inherit the shape, not the bug):
 | layer | file(s) | is |
 |---|---|---|
 | term | `src/term.lisp` | raw mode (sb-alien termios), alt screen enter/exit, winsize ioctl, UTF-8 fd-streams |
-| width | `src/width.lisp` | per-char display width, ported from `crates/ui/src/width.rs` (cluster-aware version later) |
-| cells | `src/cells.lisp` | cell buffer (char + interned style), SGR builder, diff painter, full painter |
+| width | `src/width/` | per-char display width, ported from `crates/ui/src/width.rs` (cluster-aware version later): `clusters`, `width` |
+| cells | `src/cells/` | `styles` the cell buffer's styles, `screen` the buffer, `paint` the SGR builder and both painters |
 | json | `src/json.lisp` | yason wrappers; the key convention lives here |
 | wire | `src/wire.lisp` | NDJSON read/write, `wire-error` carrying the offending line |
-| protocol | `src/protocol.lisp` | the protocol-version constant, frame constructors, encode/decode |
+| protocol | `src/protocol/` | `versions` what other halves speak, `decoding`, `the-wire` the frame constructors, `the-operator-call-door`, `the-oracle` |
 | socket | `src/socket.lisp` | unix connect, daemon discovery from `$XDG_RUNTIME_DIR/letibot/*.json` |
-| session | `src/session.lisp` | attach/hello/snapshot ingestion, event application, ack bookkeeping, resync |
-| head | `src/head.lisp` | threads + mailboxes, paint-on-dirty loop, resize poll |
-| render | `src/render.lisp` | transcript items → cells, chrome, fit loop |
+| session | `src/session/` | `state` the struct and accessors, `events` folding a frame in, `own-rows`, `warnings`, `compaction`, `carry`, `fetch`, `seq-gap` |
+| head | `src/head/` | `io` the daemon socket, `frames` the head's state and its fold, `fetch-row`, `loop`, `stop`, `op-call`, `lifecycle` |
+| render | `src/render/` | `wrapping` a row to the columns it has, `rendering` the frame, `history-cache` the line cache and the paint lock |
+| cards | `src/cards/` | one file per card, plus the vocabulary they share; `protocol.lisp` holds the classes |
+| panes | `src/panes/` | one file per full-body screen, and `pane-protocol.lisp` the classes they answer through |
+| dash | `src/dash/`, `src/dashfiles/`, `src/dashwatch/` | the panel vocabulary, the files a dashboard can be, and what produces the numbers |
+| chrome | `src/chrome/` | the frame's furniture: `counters`, `border`, `git`, `alarm`, `status`, `hint`, `composer`, `notice`, `frame`, `attach`, `carry` |
+| editor | `src/editor/` | the composer and the key map: `s4`, `answer`, `submit`, `completion`, `chords`, `click-actions`, `pane-keys`, `overlay-keys`, `dispatch`, `motion`, `click` |
+| commands | `src/commands/` | `verbs` the table, `dispatch`, `op-call`, `the-operator-todos`, `the-api-key-card` |
+| markdown | `src/markdown/` | `roles`, `inline`, `fences`, `lexer`, `rendering` |
+| highlight | `src/highlight/` | `so` the C library, `language`, `grid`, `roles`, `panels`, `lines` |
 | keys | `src/keys.lisp` | escape-sequence decoding (port of term.rs tables), composer editing |
 | hack | `src/hack.lisp` | the eval socket; `scripts/tui-eval` is its CLI |
+
+**A file is a file when it holds ONE concern** — `json`, `wire`, `term`, `socket`,
+`keys`, `links`, `diff`, `sidediff`, `hack`, `replay`, `demo`, `package` — because a
+directory with one file in it is not a structure. Everything above was split by the
+ruling the cards set: *a reader looking for the edit card should find
+`edit-card.lisp`*. Every split's ranges are consecutive sections of the file it came
+from, so no reference changed direction and no behaviour moved.
 
 **One package** (`:leticl`, nickname `:lt`), on purpose: a model hacking a live
 instance reaches everything without package imports. The package *is* the

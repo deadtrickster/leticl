@@ -1,5 +1,11 @@
 # What a turn looks like on screen — leticl ↔ letibot
 
+
+**The `src/…` citations below name the PRE-SPLIT paths** — `src/session.lisp`,
+`src/editor.lisp`, `src/panes.lisp` — because that is what was read when the row was
+measured. The tree has since been cut into directories (`PLAN.md` §6 maps every one), and
+re-measuring these citations is a pass of its own, on the same terms as the repin: a
+citation is a record of what was read, never a claim about where it is now.
 **Reference**: `~/Projects/letibot/letibot` @ `8af671e3467ce0a139ba25d99a18378ba39c910b`
 (verified with `git rev-parse HEAD`, 2026-09-20). **The pin is now
 `149edf91b9740ac7775a0a875abfcd562c8fd3e6` (2026-10-04): of the 329 `file.rs:NNN`

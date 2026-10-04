@@ -127,7 +127,8 @@ tui-eval '(setf (head-status-note *head*) "restyled by the model")'
 
 **An eval holds the paint lock, and the loop you are measuring runs under it.** `tui-eval`
 takes `paint-lock` for the whole eval so a push cannot land in the middle of a frame
-(`src/render.lisp:873-895`), and the same mutex is held by `%render-and-paint`. So a form
+(`src/render/history-cache.lisp`, where the paint lock lives since the frame engine
+was split into files), and the same mutex is held by `%render-and-paint`. So a form
 that blocks — a `sleep`, a long walk, a big allocation — holds the lock for its whole
 duration, and **the head stops drawing, stops folding and stops counting until it returns**.
 The loop is not slow; it is not running.
@@ -343,16 +344,16 @@ starves what it measures, and an eval that pokes dirt REFRESHES it.
 
 **The gate checks that the head can *paint*, not that your change is *loaded*.**
 Those came apart as soon as rendering lived in more than one file: edit
-`src/cards/tool-result-card.lisp`, push `src/render.lisp` (which used to hold all of it), and
+`src/cards/tool-result-card.lisp`, push `src/render/rendering.lisp` (which used to hold all of it), and
 you get `exit 0` with a green gate and the old cards still on screen. A green gate
 means the head is healthy, never that your file is in it.
 
 ```sh
 tui-eval --tree
-# pushing the tree in leticl.asd order (50 files)
+# pushing the tree in leticl.asd order (144 files)
 #   package.lisp   (:EVALUATED 0 :SKIPPED ("defpackage" "defpackage") :FAILED NIL)
 #   …
-# ok: 50 files pushed
+# ok: 144 files pushed
 ```
 
 It reads `leticl.asd` for the file list, so it pushes exactly what the system
@@ -360,7 +361,8 @@ loads, **in the order the system loads them** — the asd is `:serial t`, and so
 other order can evaluate a form before the thing it calls exists. (The asd writes
 components without the extension, so `src/package` means `src/package.lisp`.)
 The count is the asd's, so it moves as the tree grows: it read 23 when this
-paragraph was written and 50 after the cards module was split into `src/cards/`.
+paragraph was written, 50 after the cards module became `src/cards/`, and 144 after the
+rest of the tree was cut into directories by the same ruling.
 
 **It stops at the first failure**, and says so loudly, because the failure mode
 it guards is the quiet one: a half-pushed tree is a new `cards` beside an old
@@ -401,10 +403,10 @@ A head built without the contrib says so, and says how to fix it.
 
 ## `--file`: patch a running head from the source
 
-**This is the one that saves a restart.** Edit `src/head.lisp`, then:
+**This is the one that saves a restart.** Edit `src/head/frames.lisp`, then:
 
 ```sh
-tui-eval --file src/head.lisp
+tui-eval --file src/head/frames.lisp
 # {"ok":true,"value":"(:EVALUATED 25 :SKIPPED (\"in-package\" \"eval-when\" \"defstruct\") :FAILED NIL)"}
 ```
 
@@ -432,8 +434,13 @@ change layout or definitions the running image already copied:
 To push the whole tree (what a fresh image would have):
 
 ```sh
-for f in src/*.lisp; do tui-eval --file "$f"; done   # package.lisp skips to a no-op
+tui-eval --tree        # the asd's own list, in the asd's order — one file at a time
 ```
+
+The loop that used to be written out here globbed `src/*.lisp`, which is a lie twice
+now: the tree is directories as well as files, and a glob has no order while the asd
+is `:serial t`. `--tree` reads the asd, so it pushes what loads and in the order it
+loads — see the section above.
 
 Every `defun` redefinition is live on the next repaint: the eval marks the head
 dirty, and the loop repaints when dirty. **What genuinely needs a restart** is
@@ -457,7 +464,7 @@ is right for a fresh image and wrong for a live one. `defvar` assigns only when
 the variable is unbound, which is exactly the meaning a live push needs.
 
 This is not a style point. It has already cost an operator a session: a push of
-`src/head.lisp` ran `(defparameter *stdout* nil)`, and every frame afterwards
+`src/head/io.lisp` ran `(defparameter *stdout* nil)`, and every frame afterwards
 was written nowhere. The head stayed alive and answered evals while the screen
 tore, with nothing in any log.
 
@@ -517,7 +524,7 @@ paint. In order:
 A green run says so on stderr:
 
 ```
-$ tui-eval --file src/render.lisp
+$ tui-eval --file src/render/history-cache.lisp
 { "ok": true, "value": "(:EVALUATED 31 :SKIPPED (\"in-package\") :FAILED NIL)", "ms": 27 }
 gate: stdout=ok rows=61/61 cols=227/227 rows-n=61
 ```
@@ -601,7 +608,7 @@ with what it did to the operator and what changed because of it.
 
 ### A live `defparameter` clobbered the head's stream — the head died
 
-**How.** `tui-eval --file src/head.lisp`, pushing a whole file into a head that
+**How.** `tui-eval --file src/head/io.lisp`, pushing a whole file into a head that
 was mid-session. The file contains `(defparameter *stdout* nil)`, and
 `defparameter` assigns unconditionally, so the push re-initialised the running
 head's output stream to NIL at load time.
@@ -622,7 +629,7 @@ what the head did draw, so a torn screen can be read rather than described.
 
 ### Resetting the style table repainted the frame in wrong colours
 
-**How.** The same push, `src/cells.lisp`, whose `*styles*` was then a
+**How.** The same push, `src/cells/styles.lisp`, whose `*styles*` was then a
 `defparameter`.
 
 **What the operator saw.** Colour mangle across the whole render: cells hold

@@ -1,5 +1,11 @@
 # Panes, cards and head state — leticl against letibot
 
+
+**The `src/…` citations below name the PRE-SPLIT paths** — `src/session.lisp`,
+`src/editor.lisp`, `src/panes.lisp` — because that is what was read when the row was
+measured. The tree has since been cut into directories (`PLAN.md` §6 maps every one), and
+re-measuring these citations is a pass of its own, on the same terms as the repin: a
+citation is a record of what was read, never a claim about where it is now.
 **Surface:** the full-body screens, the cards, the head's own persisted state, the
 head's lifecycle and the instrumentation the operator reads. Not the key table, not
 the wire, not transcript row rendering — those are measured elsewhere.

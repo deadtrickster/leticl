@@ -1,5 +1,11 @@
 # keys.md — the operator's input
 
+
+**The `src/…` citations below name the PRE-SPLIT paths** — `src/session.lisp`,
+`src/editor.lisp`, `src/panes.lisp` — because that is what was read when the row was
+measured. The tree has since been cut into directories (`PLAN.md` §6 maps every one), and
+re-measuring these citations is a pass of its own, on the same terms as the repin: a
+citation is a record of what was read, never a claim about where it is now.
 **Reference: letibot `8af671e`.** Subject: leticl at `dc62ddf` (2026-09-20 22:19; the
 pass finished at `7c2c6fc`, 23:37). Every row below cites a file and a line on both
 sides — **measured at that pin, which has since moved to `149edf9` (2026-10-04): of the

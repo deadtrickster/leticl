@@ -151,7 +151,9 @@ assert "stdout=" not in r.stderr, "--no-verify must not run the gate"
 # --file: one balanced line naming the file, skipping the not-live forms.
 # Find the PUSH among the requests, not simply the last: the render gate runs
 # after it and sends its own forms (which is the point of the gate).
-target = os.path.abspath("src/head.lisp")
+# A path that still exists: `head` became `src/head/` when the module was cut into
+# files, and what this probe needs is any real file the socket will accept.
+target = os.path.abspath("src/head/loop.lisp")
 
 
 def last_push(path):
