@@ -669,139 +669,133 @@ turn as `(:total :cache :processed :time-ms)` and had no reader."
 
 A `defvar` so a push can introduce it on a running head, which is how this head is fixed.")
 
-(defun %git-branch (body)
-  "The branch out of a porcelain branch line's body, or NIL when it does not name one.
+(defun %git-oid (lines)
+  "The branch oid out of a v2 branch line, or NIL.
 
-BODY is everything after the `## `: `main...origin/main`, `HEAD (no branch)`,
-`No commits yet on main`. The last of those names no branch this can print, and inventing one
-would be the lie this field exists to avoid."
-  (let ((name (first (uiop:split-string body :separator "..."))))
-    (cond ((null name) nil)
-          ((and (>= (length name) 4) (string= "HEAD" name :end2 4)) "detached")
-          ((zerop (length name)) nil)
-          ((find #\space name) nil)
-          (t name))))
+LINES and not the raw output: `find-if` over a STRING walks its CHARACTERS, so the first lambda
+call gets `#\#` and every test after it is nonsense — measured here, as a type error naming the
+character. Every line-level reader in this section takes lines."
+  (let ((line (find-if (lambda (l) (and (>= (length l) 13)
+                                        (string= "# branch.oid " l :end2 13)))
+                       lines)))
+    (when line (subseq line 13))))
+
+(defun %git-action (dir)
+  "The action in progress, from the marker files GIT ITSELF leaves — gitstatus reads the same ones.
+
+`git status --porcelain` does not report this at all: the long format says *rebase in progress*
+and the porcelain does not, so the markers are the only source. A `.git` that is a FILE (a linked
+worktree) has these elsewhere and this returns NIL for it, which is an absence rather than a guess."
+  (when dir
+    (let ((git (merge-pathnames ".git/" (uiop:ensure-directory-pathname dir))))
+      (when (uiop:directory-exists-p git)
+        (cond ((or (uiop:directory-exists-p (merge-pathnames "rebase-merge/" git))
+                   (uiop:directory-exists-p (merge-pathnames "rebase-apply/" git))) "rebase")
+              ((probe-file (merge-pathnames "MERGE_HEAD" git)) "merge")
+              ((probe-file (merge-pathnames "CHERRY_PICK_HEAD" git)) "cherry-pick")
+              ((probe-file (merge-pathnames "REVERT_HEAD" git)) "revert")
+              ((probe-file (merge-pathnames "BISECT_LOG" git)) "bisect")
+              (t nil))))))
 
 (defun %git-count (body what)
-  "The number after WHAT in BODY (`ahead 2`), or NIL when BODY does not carry it."
-  (let ((at (search what body)))
+  "The number after WHAT in BODY, or NIL when BODY is absent or does not carry it.
+
+NIL for a missing body rather than an error: every caller here asks about a line that may not be
+in the output at all — no upstream, no stashes, a one-line reading."
+  (let ((at (and body (search what body))))
     (when at
       (let* ((rest (subseq body (+ at (length what))))
              (end (or (position-if-not #'digit-char-p rest) (length rest))))
         (when (plusp end) (parse-integer rest :end end))))))
 
-(defun %git-text (porcelain)
-  "Porcelain output as the header's text, or NIL for anything it cannot read.
+(defun %git-count-branch-ab (lines what)
+  "The number after WHAT in the v2 `# branch.ab +A -B` line, or NIL."
+  ;; `# branch.ab` is ELEVEN characters — the hash, the space, and nine more — and a prefix
+  ;; comparison with the wrong length silently finds no line at all, which is how this went from
+  ;; a wrong number to no number.
+  (let ((line (find-if (lambda (l) (and (>= (length l) 11) (string= "# branch.ab" l :end2 11))) lines)))
+    (when line (%git-count line what))))
 
-The first line is the branch line and every line after it is one changed entry — the count of
-those is what the `*` means, and the count itself is not printed. NIL covers a directory that is
-not a repository, a git that is not installed, and a version that answers differently: all three
-are ABSENT, and the slot draws a blank."
-  (let* ((lines (remove-if (lambda (l) (zerop (length l)))
-                           (mapcar (lambda (l) (string-right-trim '(#\Return #\Newline #\space) l))
-                                   (uiop:split-string (or porcelain "") :separator '(#\Newline)))))
-         (head (first lines)))
-    (when (and head (>= (length head) 3) (string= "## " head :end2 3))
-      (let ((branch (%git-branch (subseq head 3))))
-        (when branch
-          (format nil "~a~:[~;*~]~@[↑~d~]~@[↓~d~]"
-                  branch (plusp (length (rest lines)))
-                  (%git-count head "ahead ") (%git-count head "behind ")))))))
+(defun %git-parts (porcelain dir)
+  "PORCELAIN v2 output as gitstatus's prompt segments, in gitstatus's own order and glyphs:
 
-(defvar *git-dir* nil
-  "The workspace the reader is pointed at, set by the loop's `tick-git`.")
+    main  ⇣1 ⇡2  *5  merge  ~6  +7  !8  ?9
 
-(defvar *git-thread* nil
-  "The reader thread, or NIL. `dash-start`'s pattern, and for its reason.")
+branch or `@oid` when detached (gitstatus shows the commit and not the branch), behind and
+ahead of the upstream, the stash count, the action in progress, conflicts, staged, unstaged and
+untracked — the table in gitstatus's README, and the order it prints them in. NIL when the input
+does not even name a branch.
 
-(defvar *git-running* nil
-  "Does the reader keep reading? Cleared by `git-stop`, felt within a step.")
+**`⇠`/`⇢` are absent on purpose**: those are the PUSH remote, which `git status` does not know,
+and printing the upstream's numbers with the push remote's glyphs is the kind of lie a field on
+every screen must not tell."
+  (let ((lines (remove-if (lambda (l) (zerop (length l)))
+                          (mapcar (lambda (l) (string-right-trim '(#\Return #\Newline) l))
+                                  (uiop:split-string (or porcelain "") :separator '(#\Newline)))))
+        (parts nil) (staged 0) (unstaged 0) (untracked 0) (conflict 0))
+    (let* ((head (find-if (lambda (l) (and (>= (length l) 14)
+                                          ;; `# branch.head ` is FOURTEEN characters: the hash,
+                                          ;; the space, the word, the space
+                                          (string= "# branch.head " l :end2 14)))
+                          lines))
+           (name (if head (subseq head 14) nil))
+           (oid (%git-oid lines)))
+      (when head
+        (push (cond ((and name (string= name "(detached)"))
+                     (if oid (format nil "@~a" (subseq oid 0 (min 8 (length oid)))) "@"))
+                    (t name))
+              parts)
+        (when (null (string= name "(detached)"))
+          (let ((behind (%git-count-branch-ab lines "-")))
+            (when (and behind (plusp behind)) (push (format nil "⇣~d" behind) parts))))
+        (let ((ahead (%git-count-branch-ab lines "+")))
+          (when (and ahead (plusp ahead)) (push (format nil "⇡~d" ahead) parts)))
+        (dolist (l lines)
+          (cond ;; **THE GUARD IS THE PREFIX'S OWN LENGTH, EVERY TIME.** A `string=` bounded at N on a
+                ;; line shorter than N is a BOUNDS ERROR, not a false — measured here on a three-character
+                ;; `? h` line, which is the shape an untracked entry takes — and every prefix test in this
+                ;; function carries the length it compares.
+                ((and (>= (length l) 8) (string= "# stash " l :end2 8))
+                 (let ((n (%git-count l "# stash "))) (when (and n (plusp n)) (push (format nil "*~d" n) parts))))
+                ((and (plusp (length l)) (member (char l 0) '(#\1 #\2) :test #'char=))
+                 ;; `1 XY …` and `2 XY …` — X is index-vs-HEAD, Y is workdir-vs-index
+                 (when (and (>= (length l) 4) (char/= (char l 2) #\.)) (incf staged))
+                 (when (and (>= (length l) 4) (char/= (char l 3) #\.)) (incf unstaged)))
+                ((and (plusp (length l)) (char= (char l 0) #\u)) (incf conflict))
+                ((and (plusp (length l)) (char= (char l 0) #\?)) (incf untracked))))
+        (let ((action (%git-action dir)))
+          (when action (push action parts)))
+        (when (plusp conflict) (push (format nil "~~~d" conflict) parts))
+        (when (plusp staged) (push (format nil "+~d" staged) parts))
+        (when (plusp unstaged) (push (format nil "!~d" unstaged) parts))
+        (when (plusp untracked) (push (format nil "?~d" untracked) parts)))
+      (nreverse parts))))
 
-(defun %git-command (dir)
-  "The argv for one reading.
+(defun %git-text (porcelain &optional dir)
+  "PORCELAIN as one string, which is what the tests assert and the cache stores."
+  (let ((parts (%git-parts porcelain dir)))
+    (when parts (format nil "~{~a~}" parts))))
 
-**`--no-optional-locks` IS THE ONE FLAG THAT IS NOT ABOUT WHAT IS READ.** A plain `git status`
-may take the index lock and write the refreshed index back — a READER writing to the repository
-it is reporting on, which is exactly the thing an indicator must not do: the operator would see
-their repo touched by their own status line. With it, git touches nothing.
+(defun %git-fit (parts room)
+  "The longest PREFIX of PARTS that fits in ROOM columns, or NIL.
 
-The `timeout` cap is the dash collectors' rule, unchanged and not optional: `uiop:run-program`'s
-own `:timeout` was MEASURED accepting 1 against a `sleep 30` and taking 30 seconds, and a hung
-mount under a reader is the same wedge."
-  (list "timeout" "1" "git" "-C" dir "--no-optional-locks"
-        "status" "--porcelain=v1" "--branch"))
+**The field degrades by DELETION, like every other thing on this row** — the branch is the floor
+and the marks fall off its right in gitstatus's own order, so a narrow screen loses `?4` and not
+the branch. A field dropped whole is the behaviour this replaces."
+  (loop with out = nil and used = 3
+        for p in parts
+        while (<= (+ used (string-width p) 1) room)
+        do (push p out) (incf used (string-width p))
+        finally (return (nreverse out))))
 
 (defun %git-refresh (dir)
-  "Read DIR's repository and store the reading. Returns the text, or NIL.
-
-Runs on the reader thread and nowhere else — see `tick-git` for why that is load-bearing rather
-than tidy. The `setf` below publishes a fresh list rather than mutating one, so a paint reading
-`*git-cache*` sees the old reading or the new one and never half of either."
+  "Read DIR's repository and store the reading. Returns the parts, or NIL."
   (let ((text (ignore-errors
                 (uiop:run-program (%git-command dir)
                                   :output :string :error-output nil
                                   :ignore-error-status t))))
-    (setf *git-cache* (list :dir dir :text (%git-text text) :at (internal-real-time-ms)))
-    (getf *git-cache* :text)))
-
-(defun %git-collect-once ()
-  "One reading, if the interval has passed or the workspace has moved.
-
-**A repo nobody in this session touches still has to be read**, which is the whole reason this is
-a clock and not an event: the operator edits and commits in another terminal, the other agent
-commits in this one, an editor writes a file — none of those reach this head as anything it can
-subscribe to. The clock is what sees them. What must not happen is the clock running IN THE LOOP."
-  (let ((dir *git-dir*)
-        (cache *git-cache*))
-    (when (and dir (plusp (length dir))
-               (or (null cache)
-                   (not (equal dir (getf cache :dir)))
-                   (>= (- (internal-real-time-ms) (or (getf cache :at) 0)) +git-refresh-ms+)))
-      (%git-refresh dir))))
-
-(defun git-start ()
-  "Start the reader thread. Idempotent: calling it twice does not make two threads.
-
-`dash-start`'s shape, including the small-step sleep, and its reason: a stop felt only after a
-whole interval reads as a hang."
-  (setf *git-running* t)
-  (unless (and *git-thread* (sb-thread:thread-alive-p *git-thread*))
-    (setf *git-thread*
-          (sb-thread:make-thread
-           (lambda ()
-             (loop while *git-running*
-                   do (ignore-errors (%git-collect-once))
-                      (loop repeat 10 while *git-running* do (sleep 0.1))))
-           :name "leticl-git-reader")))
-  *git-refresh-ms+)
-
-(defun git-stop ()
-  "Stop the reader. Idempotent."
-  (setf *git-running* nil)
-  (when (and *git-thread* (sb-thread:thread-alive-p *git-thread*))
-    (ignore-errors (sb-thread:join-thread *git-thread* :timeout 2)))
-  (setf *git-thread* nil)
-  (values))
-
-(defun tick-git (head)
-  "Point the reader at this session's workspace and make sure it is running.
-
-**CALLED FROM THE LOOP, AND IT MUST NEVER RUN A PROCESS.** The first version did, every two
-seconds, wrapped in `timeout 1`: on this checkout that is nothing, and on a checkout where git is
-slow it is up to a second with no keys and no repaint — the loop is the one thing in this head
-that may not wait, which is why the dash collectors were moved onto a thread after being wedged
-by exactly this. So the loop sets a directory and starts a thread; the reading happens over
-there, and the paint reads whatever the last one left."
-  (let ((dir (getf (session-wiring (head-session head)) :workspace)))
-    (when (and dir (plusp (length dir)))
-      (unless (equal dir *git-dir*) (setf *git-dir* dir))
-      (git-start))))
-
-(defun %git-cached (dir)
-  "The last reading OF DIR, or NIL — and NIL for another directory's reading, so a stale branch
-cannot be drawn under a workspace that changed."
-  (let ((cache *git-cache*))
-    (when (and cache (equal dir (getf cache :dir))) (getf cache :text))))
+    (setf *git-cache* (list :dir dir :parts (%git-parts text dir) :at (internal-real-time-ms)))
+    (getf *git-cache* :parts)))
 
 (defun top-border (head cols)
   "The header: what this session IS on the left, what it is COSTING on the right.
@@ -889,15 +883,16 @@ its end, and a token count is not recoverable from anywhere else on the screen."
             (let ((shown (%ellipsise-left ws room)))
               (setf left (append left (list (cons (format nil "  ~a" shown) '(:dim t)))))
               (incf left-cols (+ 2 (string-width shown)))))))
-      ;; **AND THE WORKSPACE'S REPOSITORY**, beside the path it is a fact about. READ here, never
-      ;; RUN here: the reading is the loop's (`tick-git`), and a paint is not where a process goes.
-      (let ((git (%git-cached (getf (session-wiring s) :workspace))))
-        (when git
-          (let ((room (- cols left-cols tail-cols 2)))
-            ;; 3 for the parens and the space before them, 1 of air between this and the tail
-            (when (>= room (+ 4 (string-width git)))
-              (setf left (append left (list (cons (format nil " (~a)" git) '(:dim t)))))
-              (incf left-cols (+ 3 (string-width git)))))))
+      ;; **AND THE WORKSPACE'S REPOSITORY**, beside the path it is a fact about, in gitstatus's
+      ;; own segments. READ here, never RUN here: the reading is the reader thread's (`tick-git`),
+      ;; and a paint is not where a process goes. What is chosen here is only how MUCH of it fits.
+      (let* ((parts (getf *git-cache* :parts))
+             (room (- cols left-cols tail-cols 2))
+             (fit (and (equal (getf *git-cache* :dir) (getf (session-wiring s) :workspace))
+                       (%git-fit parts room))))
+        (when fit
+          (setf left (append left (list (cons (format nil " (~{~a~})" fit) '(:dim t)))))
+          (incf left-cols (+ 3 (string-width (format nil "~{~a~}" fit))))))
       (let* ((pad (max 0 (- cols left-cols tail-reserved)))
              ;; **AND THE RESERVED BUT UNUSED COLUMNS AFTER THE TAIL.** The block the fields sit in
              ;; is `tail-reserved` wide whatever happens to be in it, so `2/2` stands where `2/2`

@@ -5288,24 +5288,53 @@ whose act for the row under the cursor is nothing at all."
 ;;; working, clean on a fresh clone, a different branch on a worktree. The OUTPUT's shape is fixed,
 ;;; so the shape is what is pinned, and the process is pinned by the one thing that must never come
 ;;; out of it: an ABSENCE — a directory that is not a repository — read as a branch.
-(def-test the-git-field-reads-a-branch-and-says-when-it-is-dirty (:suite leticl)
-  "The header's git text: the branch, a `*` when anything is uncommitted, the counts, or NIL."
-  (is (equal "main" (leticl::%git-text "## main...origin/main")) "a clean branch")
-  (is (equal "main" (leticl::%git-text (format nil "## main...origin/main~%")))
-      "a trailing newline is not a change")
-  (is (equal "main*" (leticl::%git-text (format nil "## main...origin/main~% M src/head.lisp~%?? scratchpad/")))
-      "two entries are still one `*` — the count is not printed")
-  (is (equal "main↑2" (leticl::%git-text "## main...origin/main [ahead 2]")) "ahead")
-  (is (equal "main↓1" (leticl::%git-text "## main...origin/main [behind 1]")) "behind")
-  (is (equal "main*↑1↓3" (leticl::%git-text (format nil "## main...origin/main [ahead 1, behind 3]~% M x")))
-      "both, and dirty")
-  (is (equal "detached*" (leticl::%git-text (format nil "## HEAD (no branch)~% M x")))
-      "a detached head says so rather than saying nothing")
+(def-test the-git-field-speaks-gitstatuss-segments (:suite leticl)
+  "The header's git field is gitstatus's own table — branch or `@oid`, `⇣`/`⇡`, `*stashes`, the
+action, and `~`, `+`, `!`, `?` — parsed out of `--porcelain=v2`, in gitstatus's own order."
+  (is (equal "main" (leticl::%git-text "# branch.head main")) "a clean branch")
+  (is (equal "main⇡2" (leticl::%git-text (format nil "# branch.head main~%# branch.ab +2 -0"))) "ahead")
+  (is (equal "main⇣1" (leticl::%git-text (format nil "# branch.head main~%# branch.ab +0 -1"))) "behind")
+  (is (equal "main⇣1⇡2" (leticl::%git-text (format nil "# branch.head main~%# branch.ab +2 -1")))
+      "gitstatus's order: behind, then ahead")
+  (is (equal "main!1" (leticl::%git-text
+                       (format nil "# branch.head main~%1 .M N... 100644 100644 100644 a b f.txt")))
+      "an unstaged change — `Y` in the XY pair")
+  (is (equal "main+1" (leticl::%git-text
+                       (format nil "# branch.head main~%1 M. N... 100644 100644 100644 a b f.txt")))
+      "a staged one — `X`")
+  (is (equal "main+1!1" (leticl::%git-text
+                         (format nil "# branch.head main~%1 MM N... 100644 100644 100644 a b f.txt")))
+      "both, staged first — gitstatus's order, not the porcelain's")
+  (is (equal "main?1" (leticl::%git-text (format nil "# branch.head main~%? new.txt"))) "untracked")
+  (is (equal "main~1" (leticl::%git-text
+                       (format nil "# branch.head main~%u UU N... 100644 100644 100644 100644 a b c f.txt")))
+      "a conflict")
+  (is (equal "main*3" (leticl::%git-text (format nil "# branch.head main~%# stash 3"))) "stashes")
+  (is (equal "@96cad87a" (leticl::%git-text
+                          (format nil "# branch.oid 96cad87a1fa29cf05687d83e5503912e98b7739c~%# branch.head (detached)")))
+      "**a detached head shows the commit and hides the branch**, as gitstatus does")
+  (is (equal "main~1+1!1?1" (leticl::%git-text
+                             (format nil "# branch.head main~%u UU N... 100644 100644 100644 100644 a b c f.txt~%1 M. N... 100644 100644 100644 a b f~%1 .M N... 100644 100644 100644 a b g~%? h")))
+      "conflicts, then staged, then unstaged, then untracked — the table's order")
   (is (null (leticl::%git-text "fatal: not a git repository (or any parent up to mount point /)"))
       "**a non-repository is ABSENT** — not a branch named `fatal`")
-  (is (null (leticl::%git-text "## No commits yet on main")) "a branch line that names no branch")
   (is (null (leticl::%git-text "")) "an empty reading")
   (is (null (leticl::%git-text nil)) "and no reading at all"))
+
+;;; **THE FIELD DEGRADES BY DELETION, LIKE EVERY OTHER THING ON THIS ROW.** A narrow frame drops
+;;; the right-hand marks and never the branch: `?4` is recoverable by widening the window and the
+;;; branch is what the field is FOR. The old behaviour — the whole field or nothing — is what this
+;;; replaces, and the width it drops at is arithmetic that has to be pinned rather than eyeballed.
+(def-test the-git-field-drops-its-marks-and-keeps-its-branch (:suite leticl)
+  "The fitting: everything when there is room, the branch alone when there is not, absence below
+that — never a glyph cut in half."
+  (let ((parts (list "main" "⇡2" "*3" "merge" "~6" "+7" "!8" "?9")))
+    (is (equal parts (leticl::%git-fit parts 100)) "everything, with room to spare")
+    (let ((tight (leticl::%git-fit parts 12)))
+      (is (equal "main" (first tight)) "**the branch survives a narrow frame**")
+      (is (< (length tight) (length parts)) "and the right-hand marks fell off"))
+    (is (equal '("main") (leticl::%git-fit parts 8)) "with only room for the branch, the branch")
+    (is (null (leticl::%git-fit parts 3)) "and below that the field is ABSENT, not cut mid-glyph")))
 
 ;;; **AND THE READING REACHES THE ROW, KEYED BY THE DIRECTORY IT WAS TAKEN OF.** A head that
 ;;; switched projects must not keep the last one's branch on its header — that is the whole reason
