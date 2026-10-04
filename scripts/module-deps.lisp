@@ -105,9 +105,19 @@ Scans for `:` and takes the identifier on each side. A `:` with nothing before i
     text))
 
 (defun src-files ()
-  (sort (mapcar #'file-namestring
+  "Every src file, as a path RELATIVE to `src/` — `cards/rows.lisp`, `render/wrapping.lisp`.
+
+ **Two things this had to learn when the tree was cut into directories, and both were
+ silent.** The walk was one level deep, so 132 of the 144 files were invisible and the
+graph came out near-empty; and the names were BASENAMES, which no longer identify a
+file — `roles.lisp` is three different files now (`cards`, `markdown`, `highlight`) and
+a graph keyed on the basename would have merged them into one node with three owners.
+
+ `**` is SBCL's: any number of directory components, ZERO included, so top-level files
+and files in directories come back together (measured: 144 of 144)."
+  (sort (mapcar (lambda (p) (enough-namestring p *root*))
                 (remove-if-not (lambda (p) (equal (pathname-type p) "lisp"))
-                               (directory (merge-pathnames #p"*.lisp" *root*))))
+                               (directory (merge-pathnames #p"**/*.lisp" *root*))))
         #'string<))
 
 (defun read-forms (path)
