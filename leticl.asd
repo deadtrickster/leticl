@@ -15,22 +15,41 @@ through an eval socket and see the change on the next frame."
                #:yason)
   :serial t
   :components ((:file "src/package")
-               (:file "src/prefs")
+                              (:file "src/prefs/state")
+               (:file "src/prefs/bridge")
+               (:file "src/prefs/fold")
+               (:file "src/prefs/path")
+               (:file "src/prefs/operator-todos")
+               (:file "src/prefs/format")
+               (:file "src/prefs/notes")
                (:file "src/term")
-               (:file "src/width")
-               (:file "src/progress")
+                              (:file "src/width/clusters")
+               (:file "src/width/width")
+                              (:file "src/progress/scalars")
+               (:file "src/progress/clock")
+               (:file "src/progress/input")
+               (:file "src/progress/prefill")
+               (:file "src/progress/bar")
+               (:file "src/progress/lines")
                ;; **THE LINK LAYER, BEFORE THE CELLS.** `paint-diff` consults it while it walks the
                ;; grid, so loading it first is what keeps that call a call rather than a forward
                ;; reference — and the module has nothing to say about cells anyway: it is a table
                ;; of head-authored URLs and a per-frame map of integer spans.
                (:file "src/links")
-               (:file "src/cells")
+                              (:file "src/cells/styles")
+               (:file "src/cells/screen")
+               (:file "src/cells/paint")
                (:file "src/json")
                (:file "src/wire")
-               (:file "src/protocol")
+                              (:file "src/protocol/versions")
+               (:file "src/protocol/decoding")
+               (:file "src/protocol/the-wire")
+               (:file "src/protocol/the-operator-call-door")
+               (:file "src/protocol/the-oracle")
                ;; the head's own sqlite store (R46): the operator's ruling is that local
                ;; data lives in sqlite, and `store` is the only file that touches the C library
-               (:file "src/store")
+                              (:file "src/store/abi")
+               (:file "src/store/rows")
                (:file "src/socket")
                               (:file "src/session/state")
                (:file "src/session/events")
@@ -44,7 +63,12 @@ through an eval socket and see the change on the next frame."
                ;; styles a fence with `highlight-lines`, and a card diffs an edit
                ;; with `render-diff`. Order here is compile order, so a caller
                ;; before its callee is a style-warning per call site.
-               (:file "src/highlight")
+                              (:file "src/highlight/so")
+               (:file "src/highlight/language")
+               (:file "src/highlight/grid")
+               (:file "src/highlight/roles")
+               (:file "src/highlight/panels")
+               (:file "src/highlight/lines")
                (:file "src/diff")
                ;; the two-panel view; it diffs the excerpts with the engine above
                (:file "src/sidediff")
@@ -66,7 +90,11 @@ through an eval socket and see the change on the next frame."
                (:file "src/head/stop")
                (:file "src/head/op-call")
                (:file "src/head/lifecycle")
-               (:file "src/commands")
+                              (:file "src/commands/verbs")
+               (:file "src/commands/dispatch")
+               (:file "src/commands/op-call")
+               (:file "src/commands/the-operator-todos")
+               (:file "src/commands/the-api-key-card")
                (:file "src/cards/protocol")
                ;; **THE CARDS, ONE FILE PER CARD** — plus the machinery they share. This was one
                ;; 4,800-line `cards.lisp`, then a layer-named split; a reader looking for the
@@ -113,18 +141,25 @@ through an eval socket and see the change on the next frame."
                ;; loop's clock (`*now-ms*`) — a series stamped with a monotonic reading would
                ;; not survive the comparison that makes `stale` mean anything — and before the
                ;; panes, which are the only thing that draws it.
-               (:file "src/dash")
+                              (:file "src/dash/panels")
+               (:file "src/dash/flatness")
+               (:file "src/dash/window")
                ;; **THE FILES A DASHBOARD CAN BE** (R56): the panel vocabulary above rendered
                ;; from data on disk, so an agent in another project can write one without
                ;; editing this head's source at all. After `dash`, whose vocabulary it only
                ;; calls — it is a READER of that API and adds no drawing of its own.
-               (:file "src/dashfiles")
+                              (:file "src/dashfiles/format")
+               (:file "src/dashfiles/rows")
+               (:file "src/dashfiles/panels")
                ;; **AND WHAT PRODUCES THE NUMBERS, AND WHERE THEY GO** (R56): watchers — a command, a
                ;; file or a job's own output — and SINKS, a command the collector runs with the
                ;; reading on stdin. After `dashfiles`, whose directory convention and refusal rules
                ;; it reuses rather than restates. One file for both because a sink is a source
                ;; pointed the other way: same timeout, same failure discipline, same visibility.
-               (:file "src/dashwatch")
+                              (:file "src/dashwatch/watchers")
+               (:file "src/dashwatch/retain")
+               (:file "src/dashwatch/sinks")
+               (:file "src/dashwatch/jobs")
                ;; **EVERY FULL-BODY SCREEN, ONE FILE PER PANE.** This was one 3,578-line
                ;; `panes.lisp`; the ranges are consecutive, so every reference kept its
                ;; direction and the split moved no behaviour.
@@ -176,7 +211,9 @@ through an eval socket and see the change on the next frame."
                ;; puts the pane's dispatch in `render.lisp` one file EARLIER than this definition —
                ;; `lisp-pane-lines` is called forward, a runtime call that warns rather than fails,
                ;; which is the shape `make-composer` and `%handle-key` already have there.
-               (:file "src/repl")
+                              (:file "src/repl/printer")
+               (:file "src/repl/entry")
+               (:file "src/repl/pane")
                (:file "src/demo")
                ;; LAST, and it has to be: `replay` rebinds every global a frame
                ;; reads so two replays in one image cannot see each other's

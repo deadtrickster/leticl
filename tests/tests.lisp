@@ -607,7 +607,7 @@ safe when it was not.
 A source assertion, in the shape of `live-state-tables-are-defvar` above: the
 failure is a race, so there is no input that reproduces it on demand, and the
 only honest test is that the guard is lexically around the call."
-  (let* ((src (repo-file "src/highlight.lisp"))
+  (let* ((src (or (%src-text "highlight.lisp") ""))
          (pin (search "(sb-sys:with-pinned-objects" src))
          (sap (search "(sb-sys:vector-sap" src)))
     (is (not (null pin)) "the shim call pins its vectors")
@@ -1713,7 +1713,12 @@ is a fact about the caller's assumption and not about the tree."
                              (asdf:system-source-directory :leticl)))
                            (uiop:getcwd)))
          (root (find-if (lambda (dir)
-                          (and dir (probe-file (merge-pathnames "src/commands.lisp" dir))))
+                          ;; **A FILE THAT IS STILL A FILE.** This probed `src/commands.lisp`
+                          ;; until `commands` became a directory — the check then found no tree
+                          ;; at all and refused, which is the right failure said loudly rather
+                          ;; than a walk over nothing. `package.lisp` is the one src file with no
+                          ;; reason to ever be a module: it defines the package.
+                          (and dir (probe-file (merge-pathnames "src/package.lisp" dir))))
                         candidates)))
     (unless root
       (error "no source tree found: tried ~s — a check that walks no files checks nothing"
