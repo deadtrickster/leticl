@@ -53,130 +53,161 @@ two sides in circles."
           (%send head (make-read-job-output (getf view :job) offset))
           t)))))
 
+;;; ------------------------------------------- what Enter does, per pane ;;;
+;;;
+;;; The nine arms of the old `%pane-enter` `case`, one method each — the arms' own text,
+;;; scaffolding aside.
+;;;
+;;; **They live HERE and not in each pane's file under `src/panes/`, and that is a
+;;; dependency fact rather than a preference.** Every one of them but `:config` and
+;;; `:dash` calls into the editor (`%switch-to`, `%job-out-page`), the head (`%send`) or
+;;; the REPL (`lisp-eval-entry`), and `src/panes/` loads before all three: a method in
+;;; the pane's own file would be a forward reference per call site, which is the class
+;;; of thing the asd's comments say this tree turns into warnings rather than ordering.
+;;; The panes' LINES live in their own files; the panes' ENTER lives with the key map
+;;; that reaches it, and `pane-protocol.lisp` has the classes and the generic.
+
+(defmethod pane-enter ((pane lisp-pane) head)
+  ;; **THE ONE PANE WHOSE ENTER CONSUMES THE LINE, and that is the whole difference between it and
+  ;; every arm below.** They leave `composer-buffer` alone because the words are not theirs — the
+  ;; operator's sentence is held for when the pane closes (the rule the `:enter` arm states at
+  ;; length). Here the line IS the act: it is read, evaluated in this head's own image, and pushed
+  ;; to the SCROLLBACK, which is where the words went instead of being held.
+  ;;
+  ;; An evaluation that does not happen — a blank line — leaves the prompt exactly as it is, the
+  ;; rule `%submit-line` keeps for a blank Enter: there is nothing to clear and an entry saying so
+  ;; would be a row for nothing happening.
+  (let* ((c (head-composer head))
+         (typed (composer-buffer c)))
+    (when (lisp-eval-entry head (expand-pastes typed))
+      ;; **THE FORM GOES INTO THE COMPOSER'S OWN HISTORY**, which is what makes ↑ walk the forms
+      ;; you evaluated. One mechanism rather than two: the help row for this pane says *↑ walks
+      ;; what you have evaluated* and what actually walks is `composer-history-step`, the same
+      ;; function that walks the prompts you have sent — see `%pane-key`, which refuses the arrows
+      ;; for this pane so they arrive here.
+      (composer-push-history c typed)
+      (%undo-push c)
+      (setf (composer-buffer c) ""
+            (composer-cursor c) 0
+            *paste-ledger* nil
+            *history-recalled* nil
+            *redo-stack* nil
+            (get 'composer :draft) nil)))
+  t)
+
+(defmethod pane-enter ((pane config-pane) head)
+  ;; ENTER CHANGES IT. The pane lists the head's own choices and it
+  ;; can change them in place — which is what was asked for: a pane
+  ;; with runtime-editable configurations, not a list to read. The
+  ;; cursor walks EVERY row now, as the reference's does, and
+  ;; `config-change` says what each kind of row does on Enter.
+  (config-change head))
+
+(defmethod pane-enter ((pane subagents-pane) head)
+  ;; **ENTER READS; `o` ATTACHES.** The two heads agree on this, and the argument is letibot's:
+  ;; *attaching on Enter silently redirects the next prompt to the child, which is exactly the hazard
+  ;; the read exists to avoid* — an operator who pressed the key to LOOK must not find their next
+  ;; message in somebody else's session.
+  ;;
+  ;; **And reading is no longer a lesser view**, which is what changed today: the peek asks for
+  ;; `PeekShape::Rows`, so it draws the child with the renderer every other session uses, and
+  ;; `tick-peek` re-reads it once a second — a live tail, looking exactly like a conversation, which
+  ;; is the operator's own ask (*"i want it to tail as a normal conversation while i look at it"*).
+  ;; It cost one field on the frame, and it buys the key that cannot misfire a prompt.
+  ;;
+  ;; A child still `opening` has nothing to read and the daemon would refuse the peek by name, so
+  ;; the refusal is said here rather than bounced through the daemon (app.rs:3678-3689).
+  (let ((row (nth (head-picker-sel head) (subagent-rows head))))
+    (cond ((null row) nil)
+          ((equal (getf row :state) "opening")
+           (say head "that subagent is still opening — nothing to read yet"))
+          (t (awhen (getf row :session-id)
+                    ;; **ENTER IS THE CONVERSATION**, so it clears the narrow view (`p`) on its way in:
+                    ;; a flag that outlived the key that set it would draw a prompt for a reader who
+                    ;; asked for the answer.
+                    (setf *peek-prompt-only* nil)
+                    (%send head (make-peek it))
+                    (say head (format nil "reading ~a…" it)))))))
+
+(defmethod pane-enter ((pane peek-pane) head)
+  ;; The pane's hint bar says *"enter re-reads"* and it did not: `:peek` was
+  ;; not in this case at all. A running subagent has new output, which is the
+  ;; whole reason to press it again (app.rs:3272-3277).
+  (awhen *peeked-session*
+	 (%send head (make-peek it))
+	 (say head (format nil "re-reading ~a…" it))))
+
+(defmethod pane-enter ((pane jobs-pane) head)
+  ;; **Enter opens the job's output IN A PANE, not in the conversation.**
+  ;;
+  ;; This arm used to send `/job ID` as a slash line and close the pane. A
+  ;; slash reply is a `Warning` on the session log, so for a finished job the
+  ;; operator got a 16 KB build log scrolling past in the chat and the list
+  ;; they were reading gone. Their words, 2026-09-20: *"on the job pane when i
+  ;; press enter im not shown the tailed job output but brought back to the
+  ;; conversation with /job <id> sent"*, and the earlier narrowing that says
+  ;; which half was broken: *"entering the running job works fine - but
+  ;; finished does /job <id>"* — one path served both, and what differed was
+  ;; the size of the reply.
+  ;;
+  ;; Now it is a `ReadJobOutput`: the answer comes back as a `JobOutput` event
+  ;; with the offsets attached and the overlay draws it. The jobs list stays
+  ;; behind it — `head-mode` moves, `head-jobs` and `head-picker-sel` do not —
+  ;; so Esc returns to the row the operator chose (app.rs:3776-3805).
+  (let ((row (nth (head-picker-sel head) (head-jobs head))))
+    (awhen (and row (getf row :id))
+           ;; opened BEFORE the send: `apply-event` folds a window only into an
+           ;; overlay already open for that job
+           (open-job-out it)
+           (setf (head-mode head) :job-out)
+           (%send head (make-read-job-output it 0)))))
+
+(defmethod pane-enter ((pane job-out-pane) head)
+  ;; Enter takes the next page, or re-reads the last one when the end is
+  ;; already here — a running job appends, and that is how you see what it
+  ;; has written since (app.rs:3272-3277, the same key on the peek pane).
+  (%job-out-page head t))
+
+(defmethod pane-enter ((pane dash-pane) head)
+  ;; Enter opens or closes the panel under the cursor, through the same nav every other key
+  ;; goes through — so the key and the drawing cannot disagree about which panel is selected.
+  (setf *dash-nav* (dash-nav *dash-nav* "\r") (head-dirty head) t)
+  t)
+
+(defmethod pane-enter ((pane todos-pane) head)
+  ;; **Enter acts on WHAT THE CURSOR IS ON**, asked of the one enumeration rather than
+  ;; re-derived (R44): the add control opens the card — the operator's *"add todo item … a
+  ;; modal dialog"* — and a repo row unfolds, which is what they asked for directly (*"if a
+  ;; todo has some associated text? should i be able to expand it somehow?"*). The operator's
+  ;; own rows have nothing for Enter to do yet; the model's are not stops at all.
+  ;;
+  ;; `todo-stop-at` is the single answer to *which row is the cursor on*, with the clamp the
+  ;; pane makes when it draws — so a key pressed against a list that just changed acts on a real
+  ;; row rather than on an index that no longer exists.
+  (let ((stop (todo-stop-at head)))
+    (case (car stop)
+      (:add (%todo-draft-open head))
+      (:repo (setf *repo-todo-open* (not *repo-todo-open*)))
+      (t nil))))
+
+(defmethod pane-enter ((pane picker-pane) head)
+  (let ((hit (nth (head-picker-sel head)
+                  (picker-sessions (head-session head)))))
+    (when hit
+      (%switch-to head (getf hit :session-id)))))
+
 (defun %pane-enter (head)
-  "Enter on a full-body screen, per pane."
-  (case (head-mode head)
-    (:lisp
-     ;; **THE ONE PANE WHOSE ENTER CONSUMES THE LINE, and that is the whole difference between it and
-     ;; every arm below.** They leave `composer-buffer` alone because the words are not theirs — the
-     ;; operator's sentence is held for when the pane closes (the rule the `:enter` arm states at
-     ;; length). Here the line IS the act: it is read, evaluated in this head's own image, and pushed
-     ;; to the SCROLLBACK, which is where the words went instead of being held.
-     ;;
-     ;; An evaluation that does not happen — a blank line — leaves the prompt exactly as it is, the
-     ;; rule `%submit-line` keeps for a blank Enter: there is nothing to clear and an entry saying so
-     ;; would be a row for nothing happening.
-     (let* ((c (head-composer head))
-            (typed (composer-buffer c)))
-       (when (lisp-eval-entry head (expand-pastes typed))
-         ;; **THE FORM GOES INTO THE COMPOSER'S OWN HISTORY**, which is what makes ↑ walk the forms
-         ;; you evaluated. One mechanism rather than two: the help row for this pane says *↑ walks
-         ;; what you have evaluated* and what actually walks is `composer-history-step`, the same
-         ;; function that walks the prompts you have sent — see `%pane-key`, which refuses the arrows
-         ;; for this pane so they arrive here.
-         (composer-push-history c typed)
-         (%undo-push c)
-         (setf (composer-buffer c) ""
-               (composer-cursor c) 0
-               *paste-ledger* nil
-               *history-recalled* nil
-               *redo-stack* nil
-               (get 'composer :draft) nil)))
-     t)
-    (:config
-     ;; ENTER CHANGES IT. The pane lists the head's own choices and it
-     ;; can change them in place — which is what was asked for: a pane
-     ;; with runtime-editable configurations, not a list to read. The
-     ;; cursor walks EVERY row now, as the reference's does, and
-     ;; `config-change` says what each kind of row does on Enter.
-     (config-change head))
-    (:subagents
-     ;; **ENTER READS; `o` ATTACHES.** The two heads agree on this, and the argument is letibot's:
-     ;; *attaching on Enter silently redirects the next prompt to the child, which is exactly the hazard
-     ;; the read exists to avoid* — an operator who pressed the key to LOOK must not find their next
-     ;; message in somebody else's session.
-     ;;
-     ;; **And reading is no longer a lesser view**, which is what changed today: the peek asks for
-     ;; `PeekShape::Rows`, so it draws the child with the renderer every other session uses, and
-     ;; `tick-peek` re-reads it once a second — a live tail, looking exactly like a conversation, which
-     ;; is the operator's own ask (*"i want it to tail as a normal conversation while i look at it"*).
-     ;; It cost one field on the frame, and it buys the key that cannot misfire a prompt.
-     ;;
-     ;; A child still `opening` has nothing to read and the daemon would refuse the peek by name, so
-     ;; the refusal is said here rather than bounced through the daemon (app.rs:3678-3689).
-     (let ((row (nth (head-picker-sel head) (subagent-rows head))))
-       (cond ((null row) nil)
-             ((equal (getf row :state) "opening")
-              (say head "that subagent is still opening — nothing to read yet"))
-             (t (awhen (getf row :session-id)
-                  ;; **ENTER IS THE CONVERSATION**, so it clears the narrow view (`p`) on its way in:
-                  ;; a flag that outlived the key that set it would draw a prompt for a reader who
-                  ;; asked for the answer.
-                  (setf *peek-prompt-only* nil)
-                  (%send head (make-peek it))
-                  (say head (format nil "reading ~a…" it)))))))
-    (:peek
-     ;; The pane's hint bar says *"enter re-reads"* and it did not: `:peek` was
-     ;; not in this case at all. A running subagent has new output, which is the
-     ;; whole reason to press it again (app.rs:3272-3277).
-     (awhen *peeked-session*
-       (%send head (make-peek it))
-       (say head (format nil "re-reading ~a…" it))))
-    (:jobs
-     ;; **Enter opens the job's output IN A PANE, not in the conversation.**
-     ;;
-     ;; This arm used to send `/job ID` as a slash line and close the pane. A
-     ;; slash reply is a `Warning` on the session log, so for a finished job the
-     ;; operator got a 16 KB build log scrolling past in the chat and the list
-     ;; they were reading gone. Their words, 2026-09-20: *"on the job pane when i
-     ;; press enter im not shown the tailed job output but brought back to the
-     ;; conversation with /job <id> sent"*, and the earlier narrowing that says
-     ;; which half was broken: *"entering the running job works fine - but
-     ;; finished does /job <id>"* — one path served both, and what differed was
-     ;; the size of the reply.
-     ;;
-     ;; Now it is a `ReadJobOutput`: the answer comes back as a `JobOutput` event
-     ;; with the offsets attached and the overlay draws it. The jobs list stays
-     ;; behind it — `head-mode` moves, `head-jobs` and `head-picker-sel` do not —
-     ;; so Esc returns to the row the operator chose (app.rs:3776-3805).
-     (let ((row (nth (head-picker-sel head) (head-jobs head))))
-       (awhen (and row (getf row :id))
-         ;; opened BEFORE the send: `apply-event` folds a window only into an
-         ;; overlay already open for that job
-         (open-job-out it)
-         (setf (head-mode head) :job-out)
-         (%send head (make-read-job-output it 0)))))
-    (:job-out
-     ;; Enter takes the next page, or re-reads the last one when the end is
-     ;; already here — a running job appends, and that is how you see what it
-     ;; has written since (app.rs:3272-3277, the same key on the peek pane).
-     (%job-out-page head t))
-    (:dash
-     ;; Enter opens or closes the panel under the cursor, through the same nav every other key
-     ;; goes through — so the key and the drawing cannot disagree about which panel is selected.
-     (setf *dash-nav* (dash-nav *dash-nav* "\r") (head-dirty head) t)
-     t)
-    (:todos
-     ;; **Enter acts on WHAT THE CURSOR IS ON**, asked of the one enumeration rather than
-     ;; re-derived (R44): the add control opens the card — the operator's *"add todo item … a
-     ;; modal dialog"* — and a repo row unfolds, which is what they asked for directly (*"if a
-     ;; todo has some associated text? should i be able to expand it somehow?"*). The operator's
-     ;; own rows have nothing for Enter to do yet; the model's are not stops at all.
-     ;;
-     ;; `todo-stop-at` is the single answer to *which row is the cursor on*, with the clamp the
-     ;; pane makes when it draws — so a key pressed against a list that just changed acts on a real
-     ;; row rather than on an index that no longer exists.
-     (let ((stop (todo-stop-at head)))
-       (case (car stop)
-         (:add (%todo-draft-open head))
-         (:repo (setf *repo-todo-open* (not *repo-todo-open*)))
-         (t nil))))
-    (:picker
-     (let ((hit (nth (head-picker-sel head)
-                     (picker-sessions (head-session head)))))
-       (when hit
-         (%switch-to head (getf hit :session-id))))))
+  "Enter on a full-body screen: the PANE's own act, and the repaint it always cost.
+
+**Two lines, and one of them is shared.** The `case` that used to be here had exactly
+one thing every arm had in common — `(setf (head-dirty head) t)` — because where a
+pane's Enter lands the frame is not the pane's business. Each pane's Enter is its own
+act and is a `pane-enter` method; this is the door the key map calls, and it keeps the
+shared tail, so a pane that grows a method does not have to remember to repaint."
+  (pane-enter (current-pane head) head)
   (setf (head-dirty head) t))
+
+
 
 (defun shut-overlays ()
   "Close every overlay that is a SPECIAL rather than a mode flag.
