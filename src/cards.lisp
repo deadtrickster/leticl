@@ -2721,6 +2721,65 @@ group and each `- ` line under it is one settlement of that kind."
              (case kind (:job (incf jobs)) (:task (incf tasks)) (t nil)))))
     (values jobs tasks)))
 
+(defun %notice-card-lines (text)
+  "The notice as ROWS — the parts the operator asked to see, each on its own line.
+
+**Their words, twice over.** First the shape: *\"we wanted to have separate rows with parts of cmd and
+prompt and result visible.\"* Then the field that must not lead: *\"these j90 and s-* do not give me any
+information … like do you think i remember job ids?\"* — an id is a lookup key, and `/jobs` is where a
+key lives. So:
+
+    Job  sleep 3; echo done
+        result  exited 0 after 3.0s, wrote 5 bytes
+    Agent  Answer with one word: ready.
+        result  done: ready
+
+**The headline is WHAT IT WAS** — a job's own command, an agent's own task — and the result sits under
+it. Nothing is re-worded: the split is the DAEMON's own colon, because a job fact is
+`<id> <state> after <t>, wrote <b> bytes: <command>` (`harness.rs:668`) and a subagent's is
+`<id> done: <what it answered>`. The id is the first token of the head and is dropped; the report is
+the rest of it.
+
+**The kind is the FACT's own**, not the row's first heading: the daemon coalesces a job's notice and a
+subagent's into ONE row, so each fact is labelled by the heading it sits under.
+
+**An agent's TASK is not in the notice at all** — it carries what the child answered, not what it was
+asked — so it is looked up from the subagent row (`:prompt`, the same string the subagents pane draws
+as its title). A head that cannot see the child falls back to the id, since a headline with nothing in
+it is worse than a key."
+  (let ((out nil) (kind nil))
+    (dolist (line (uiop:split-string text :separator '(#\newline)))
+      (cond
+        ((uiop:string-prefix-p "[job] " line) (setf kind :job))
+        ((uiop:string-prefix-p "[task] " line) (setf kind :task))
+        ((uiop:string-prefix-p "- " (string-left-trim " " line))
+         (let* ((task-p (eq kind :task))
+                (fact (string-trim " " (remove #\` (string-trim " -" line))))
+                (at (search ": " fact))
+                (head (if at (subseq fact 0 at) fact))
+                (tail (and at (subseq fact (+ at 2))))
+                (id (subseq head 0 (or (position #\space head) (length head))))
+                (report (string-left-trim
+                         " " (subseq head (min (length head) (1+ (length id))))))
+                (task (and task-p (%notice-agent-task-for id))))
+           (push (format nil "~a~a" (if task-p "Agent " "Job ")
+                         (if task-p (or task id) (or tail report)))
+                 out)
+           (push (format nil "    result  ~a"
+                         (if task-p (format nil "~a~@[: ~a~]" report tail) report))
+                 out)))))
+    (nreverse out)))
+
+(defun %notice-agent-task-for (id)
+  "The subagent's own task, by the id a fact line carries — see `%notice-card-lines`.
+
+Split from `%notice-agent-task` because a coalesced row has several facts and each needs ITS child: a
+lookup keyed on the whole text would answer the first fact's task for every one of them."
+  (let ((row (and *payload-head*
+                  (find id (ignore-errors (subagent-rows *payload-head*))
+                        :key (lambda (r) (getf r :session-id)) :test #'string=))))
+    (and row (getf row :prompt))))
+
 (defun %job-notice-facts (text)
   "The settlement's facts as ONE line — `j152 killed by job_kill after 27.6s, wrote 15 bytes`.
 
@@ -2842,23 +2901,20 @@ unknown speaker can name itself in the same place."
                      ;; **the chord only on the row it acts on** (R40): the window opens on the
                      ;; NEWEST openable row, so a seam elsewhere would name a key that does
                      ;; nothing. Silence is the honest seam; a lie is not.
-                     (facts-segs (%truncate-segs
-                                  (list (cons
-                                         ;; **NO NOUN IS ADDED HERE**, and that is the fix:
-                                         ;; `%job-notice-facts` answers a COMPLETE sentence — `Job j83 …`
-                                         ;; for one settlement, `Agent … · <task> · …` for a subagent, and
-                                         ;; `1 job and 1 subagent finished (…)` for several — because two
-                                         ;; writers produced `Job 1 job and 1 subagent finished ended (…)`
-                                         ;; on the operator's screen.
-                                         (or (%job-notice-facts text)
-                                             (if (eq :task (%notice-kind text))
-                                                 "a subagent finished"
-                                                 "a job settled"))
-                                         nil))
-                                  room)))
-                (list (if named
-                          (append facts-segs (list (cons seam +role-faint+)))
-                          facts-segs))))
+                     ;; **THE PARTS ARE THEIR OWN ROWS.** See `%notice-card-lines`: the headline is
+                     ;; what it WAS — a job's command, an agent's task — and the result under it, with
+                     ;; the id dropped. The door goes on the LAST row, where a sentence ends.
+                     (card (%notice-card-lines text))
+                     (lines (loop for l in card
+                                  for i from 0
+                                  for last = (= i (1- (length card)))
+                                  collect (%truncate-segs
+                                           (append (list (cons l nil))
+                                                   (if (and named last)
+                                                       (list (cons seam +role-faint+))
+                                                       nil))
+                                           (if (and named last) room head-cols)))))
+                lines))
              ;; opened: the daemon's own message, whole, and the key that folds it back
              ((and settlement window)
               (append (%job-notice-rows text) (list "  … esc closes")))

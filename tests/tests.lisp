@@ -15690,8 +15690,8 @@ it was asked — the task being the one field the notice does not carry."
     (let* ((leticl::*payload-head* nil)
            (rows (item-lines item 200 nil))
            (text (segs-of rows)))
-      (is (= 1 (length rows))
-          (format nil "**ONE row for an agent settlement**, as for a job: ~s" rows))
+      (is (= 2 (length rows))
+          (format nil "**a CARD for an agent too**: its task above, what it answered below: ~s" rows))
       (is (search "Agent " text) "naming it as an agent rather than as a job: ~s" text)
       (is (search "done:" text) "with the daemon's own word for what it answered")
       (is (not (search "This is the completion arriving" text))
@@ -15738,21 +15738,27 @@ the name of one of them."
     (declare (ignore line))
     (let* ((leticl::*payload-head* nil)
            (text (segs-of (item-lines item 200 nil))))
-      (is (= 1 (length (item-lines item 200 nil))) "the coalesced row is still ONE line")
-      (is (search "1 job and 1 subagent finished" text)
-          (format nil "**the mixed row counts both kinds**: ~s" text))
-      (is (search "session · 1 job and 1 subagent finished (" text)
-          (format nil "**and the sentence is COMPLETE and ALONE** — no noun prepended and no second verb.\n This line read `Job 1 job and 1 subagent finished ended (…)` on the operator's screen, and a\n SUBSTRING assertion could not see it: the broken line contains the healthy words. ~s" text))
+      (is (= 4 (length (item-lines item 200 nil)))
+          "the coalesced row is TWO blocks — a headline and a result for each settlement")
+      (is (search "session · Job sleep 4" text)
+          (format nil "**the job's headline is its command** — one space, and no id: ~s" text))
+      (is (search "Agent s-1-sub-9" text)
+          (format nil "and the subagent's block names its own kind from ITS heading — here the id, because
+ this fixture has no child to look the task up from: ~s" text))
+      (is (not (search "Job 1 job and 1 subagent" text))
+          (format nil "**no garbled noun and no second verb** — each block names its own kind: ~s" text))
       (is (not (search "2 jobs ended" text))
           "and does not call a subagent a job, which is what it did on the glass")
-      (is (search "j66" text) "with the ids — what a reader scanning for one of them wants")))
+      (is (search "result  exited 0 after 4.0s" text)
+          "and each block's result is on its own row, which is what the reader is scanning for")))
   ;; and a batch that IS all jobs keeps the word
   (multiple-value-bind (item line) (%settlement-row "u12" +job-notice-many+)
     (declare (ignore line))
     (let* ((leticl::*payload-head* nil)
            (text (segs-of (item-lines item 200 nil))))
-      (is (search "3 jobs ended" text)
-          (format nil "a batch of jobs still says jobs: ~s" text)))))
+      (is (search "cargo build --release" text)
+          (format nil "**a batch is blocks too** — three commands, each with its own result: ~s" text))
+      (is (search "cargo test" text) "every one of them named by what it was"))))
 
 (def-test a-job-settlement-is-one-line-and-it-opens (:suite leticl)
   "**The operator, looking at two of their own screens: *\"we have to do something with this huge job
@@ -15770,16 +15776,21 @@ nothing and is true by construction. That is R37's ladder on a second surface, a
 model is in this path: *a model was offered and is not needed*, because a summary would be a
 slower, lossier spelling of what arrived spelled out.
 
-Three properties: **exactly one row at any width**, **the facts first and the command last** (so a
-cut eats the command's tail, not the exit code), and **the whole message one verb away**."
+Three properties: **the COMMAND leads and the id is gone**, **the result on its own row**, and **the
+whole message one verb away**. The row this replaces was one line, and the operator has since asked
+for the parts to be visible — *\"separate rows with parts of cmd and prompt and result\"* — which no
+single line can do."
   ;; --- one job: the daemon's facts, and the chord named where it acts
   (multiple-value-bind (item line) (%settlement-row "u1" +job-notice-one+)
     (let* ((leticl::*payload-head* nil)
            (rows (item-lines item 200 nil)))
-      (is (= 1 (length rows))
-          (format nil "**ONE row for a job settlement** — this was 22 rows of the daemon's message:\n ~s" rows))
-      (is (search "j152" (segs-of rows)) "with the job's id")
-      (is (search "killed by job_kill" (segs-of rows)) "how it ended")
+      (is (= 2 (length rows))
+          (format nil "**a CARD: the command, then the result** — this was 22 rows of the daemon's\n message: ~s" rows))
+      (is (search "tmux kill-session" (segs-of rows))
+          "**led by the COMMAND** — an id is a lookup key and `/jobs` is where it lives")
+      (is (not (search "j152" (segs-of rows))) "so the id is not on the row at all")
+      (is (search "result  killed by job_kill" (segs-of rows))
+          "how it ended, on its own row: ~s")
       (is (search "27.6s" (segs-of rows)) "how long it took")
       (is (search "15 bytes" (segs-of rows)) "and what it wrote")
       (is (not (search "you do not need to wait" (segs-of rows)))
@@ -15792,10 +15803,10 @@ cut eats the command's tail, not the exit code), and **the whole message one ver
                                                                  :parts (list (list :kind "text"
                                                                                     :text +job-notice-many+))))))
                                        (values it (item-lines it 200 nil))))
-    (is (= 1 (length rows))
-        (format nil "**a batch is ONE row too** — three settle at once and this was the worst case:\n ~s" rows))
-    (is (search "3 jobs ended" (segs-of rows)) "led by the count")
-    (is (search "j12" (segs-of rows)) "with the ids named, so a reader can find one"))
+    (is (= 6 (length rows))
+        (format nil "**three settlements, three blocks** — a headline and a result each: ~s" rows))
+    (is (search "cargo build --release" (segs-of rows)) "each led by its own command")
+    (is (search "cargo test" (segs-of rows)) "— not by an id nobody remembers"))
   ;; --- a NARROW frame truncates the command and never the facts
   (multiple-value-bind (item rows) (let ((*payload-head* nil))
                                      (let ((it (list :item-id "u3" :kind "user" :ts 0
@@ -15803,10 +15814,12 @@ cut eats the command's tail, not the exit code), and **the whole message one ver
                                                                  :parts (list (list :kind "text"
                                                                                     :text +job-notice-one+))))))
                                        (values it (item-lines it 70 nil))))
-    (is (= 1 (length rows)) "**still ONE row at 70 columns** — *a one-liner that becomes four is not
- a one-liner*")
-    (is (search "j152" (segs-of rows)) "the facts survive the cut")
-    (is (search "15 bytes" (segs-of rows)) "all of them, because they come first"))
+    (is (= 2 (length rows))
+        (format nil "**a card at 70 columns too** — the rule this replaces said a one-liner that becomes
+ four is not a one-liner, and the operator has since asked for the PARTS, which cannot be one row: ~s" rows))
+    (is (search "cd /home/dead/Projects/leticl" (segs-of rows))
+        "the command is on the row, cut where the frame ends rather than lost")
+    (is (search "15 bytes" (segs-of rows)) "and the result is whole, because it is on its own row"))
   ;; --- and the chord is named on the row it acts on, WITH A HEAD in scope
   (let ((h (%on-head :cols 120 :rows 30)))
     (let ((it (list :item-id "u1" :kind "user" :ts 0
