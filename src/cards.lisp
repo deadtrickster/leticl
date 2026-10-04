@@ -3178,7 +3178,74 @@ or says there is none and why) is unchanged."
         (%interrupt-idle-remedy)
         (cdr (assoc code +note-remedies+ :test #'string=)))))
 
+(defvar *item-lines-frame* nil
+  "`(:STAMP S :TABLE H)` — the memo for the render CONTEXT the walk is in, and its per-item lines.
+
+**Per frame and not per item, which is what the earlier versions got wrong.** `item-lines` reads the
+walk's dynamic context — `*call-started-ms*`, the two fact tables, `*call-targets*`,
+`*answered-calls*`, `*payload-view*`, `*payload-head*`, `*hidden-run-head*` — so its input is the
+CONTEXT and not the item, and that is the same for every item in a walk.")
+
+(defun %item-lines-stamp (cols prefs)
+  "The render context as one value: everything `item-lines` reads besides the item itself.
+
+**The tick is deliberately NOT here** — it moves ten times a second and changes exactly one row, so it
+belongs in that row's signature rather than in a stamp that would rebuild the frame.
+
+**And every entry above was MEASURED, not listed from memory**: the last two failures came from
+`*payload-view*`, which the tests for the payload seam and the long-payload window bind by name, and
+which no amount of reading the renderer had turned up. When a memo is wrong it is always a missing
+input, and the input is whatever the tests bind."
+  (list cols prefs *verbosity* *marker-seam* *payload-head* *hidden-run-head* *payload-view*
+        *call-facts* *item-facts* *answered-calls*
+        *call-started-ms*))
+
+(defun %item-live-p (item)
+  "Does this ITEM draw something that is a function of the CLOCK, or of a count that keeps moving?
+
+**Asked of the table the renderer itself asks** — `*call-started-ms*`, an alist of `(call-id .
+start-ms)` that `note-call-finished` empties — so the memo cannot disagree with the drawing: a row is
+live when one of the TOOL CALLS IT CARRIES has started and not finished, the row that counts from the
+moment a command starts.
+
+**And the newest item**, where the walk glues the `[n tool calls, m thinking lines]` counts."
+  (let ((body (item-body item)))
+    (or (some (lambda (c)
+                (let ((id (or (getf c :call-id) (getf c :id))))
+                  (and id *call-started-ms*
+                       (numberp (cdr (assoc id *call-started-ms* :test #'string=))))))
+              (getf body :tool-calls))
+        (let* ((v (and *head* (session-items (head-session *head*))))
+               (n (length v)))
+          (and (plusp n) (equal (getf item :item-id) (getf (aref v (1- n)) :item-id)))))))
+
 (defun item-lines (item cols prefs)
+  "ITEM as segment lines — and the one place the work is remembered.
+
+**The context is stamped once; the items are cached under it.** A walk then re-renders the rows that
+changed — a live row, a body filled in — and reuses every other line in a session of thousands, which
+is the operator's 90% of a core: while a call ran, ten frames a second re-rendered 2600 frozen rows to
+redraw one live duration."
+  (let* ((stamp (%item-lines-stamp cols prefs))
+         (frame (and (consp *item-lines-frame*)
+                     (equal (getf *item-lines-frame* :stamp) stamp)
+                     *item-lines-frame*)))
+    (unless frame
+      (setf frame (list :stamp stamp :table (make-hash-table :test #'equal))
+            *item-lines-frame* frame))
+    (let* ((table (getf frame :table))
+           (id (getf item :item-id))
+           (sig (list (and (%item-live-p item) (floor (internal-real-time-ms) +live-frame-ms+))
+                      (item-body item)))
+           (hit (and id (gethash id table))))
+      (if (and hit (equal (car hit) sig))
+          (cdr hit)
+          (let ((lines (%item-lines-render item cols prefs)))
+            (when id (setf (gethash id table) (cons sig lines)))
+            lines)))))
+
+(defun %item-lines-render (item cols prefs)
+
   "One transcript row to segment lines.
 
 The model's WORKING — reasoning and tool calls — is stepped in
@@ -3194,7 +3261,7 @@ a terminal-native palette."
   ;; function is handed an item and nothing else, and the session's set is what
   ;; keeps the two from disagreeing across a resync.
   (when (getf item :retired)
-    (return-from item-lines nil))
+    (return-from %item-lines-render nil))
   (let ((body (item-body item)))
     ;; **R37's rung, at the one place a row is turned into lines.** What goes is the head's
     ;; WORK — `+reading-hides+` — and everything else is drawn, including a body type this
@@ -3208,7 +3275,7 @@ a terminal-native palette."
     ;; own answer to exactly this, and `apply-event` already uses it for the same reason
     ;; (`"tool_call" must become :tool-call to match`).
     (when (reading-hides-p item)
-      (return-from item-lines nil))
+      (return-from %item-lines-render nil))
     (cond
       ;; **The announcement arrived and the body has not — so draw NOTHING**
       ;; (app.rs:9525-9542). This drew `[{kind} — content not loaded]` in red,
