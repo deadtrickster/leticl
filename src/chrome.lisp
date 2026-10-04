@@ -878,6 +878,27 @@ the branch. A field dropped whole is the behaviour this replaces."
         do (push p out) (incf used (string-width (car p)))
         finally (return (nreverse out))))
 
+(defun %project-dir (ws)
+  "The directory whose repository the header reports: the workspace, or the one repository below it.
+
+**The operator's layout is NESTED** — *Projects/letibot/letibot with the session living in
+Projects/letibot* — so the workspace is the PARENT of the repository and not the repository, and every
+consumer that assumed otherwise drew nothing rather than being wrong: no branch beside the header's
+path. Parity with letibot's `fde7f6e`, and one resolver rather than two for their reason — a branch from
+one repository and a TODO.md from another would each be true alone.
+
+The workspace itself wins when it IS a repository; otherwise a SINGLE repository one level below, and
+nothing when there is none or several, because guessing between two checkouts is how a header comes to
+name the wrong tree."
+  (when (and ws (plusp (length ws)))
+    (let ((w (uiop:ensure-directory-pathname ws)))
+      (cond ((uiop:directory-exists-p (merge-pathnames ".git/" w)) ws)
+            (t (let ((repos (ignore-errors
+                              (remove-if-not (lambda (d)
+                                               (uiop:directory-exists-p (merge-pathnames ".git/" d)))
+                                             (directory (merge-pathnames "*/" w))))))
+                 (and (= (length repos) 1) (namestring (first repos)))))))))
+
 (defun %git-command (dir)
   "The argv for one reading.
 
@@ -969,7 +990,8 @@ exactly this. So the loop sets a directory and starts a thread; the reading happ
 the paint reads whatever the last one left."
   (let ((dir (getf (session-wiring (head-session head)) :workspace)))
     (when (and dir (plusp (length dir)))
-      (unless (equal dir *git-dir*) (setf *git-dir* dir))
+      (let ((dir (%project-dir dir)))
+        (unless (equal dir *git-dir*) (setf *git-dir* dir)))
       (git-start))))
 
 (defun top-border (head cols)
@@ -1065,7 +1087,8 @@ its end, and a token count is not recoverable from anywhere else on the screen."
       ;; the row's own faint, so the field still reads as one thing.
       (let* ((pieces (getf *git-cache* :pieces))
              (room (- cols left-cols tail-cols 2))
-             (fit (and (equal (getf *git-cache* :dir) (getf (session-wiring s) :workspace))
+             (fit (and (equal (getf *git-cache* :dir)
+                               (%project-dir (getf (session-wiring s) :workspace)))
                        (%git-fit pieces room))))
         (when fit
           (setf left (append left (list (cons " (" '(:dim t))))

@@ -5512,8 +5512,11 @@ depends on whether the tree is dirty."
   "The branch is drawn beside the workspace path, and only for the workspace it was read from."
   (let* ((h (%on-head :cols 140 :rows 24))
          (s (head-session h)))
-    (setf (session-wiring s) (list* :workspace "/tmp" (session-wiring s)))
-    (let ((leticl::*git-cache* (list :dir "/tmp"
+    ;; **THE WORKSPACE IS THIS CHECKOUT, and that is the point of the fixture now**: the row asks the
+    ;; RESOLVER which project the workspace is, so a fixture pointing at a directory that is not a
+    ;; repository is a fixture asking for the absence — which is its own test, and not this one.
+    (setf (session-wiring s) (list* :workspace (namestring (uiop:getcwd)) (session-wiring s)))
+    (let ((leticl::*git-cache* (list :dir (namestring (uiop:getcwd))
                                     :pieces (list (cons "main" '(:fg :green))
                                                   (cons "!1" '(:fg :yellow))
                                                   (cons "?2" '(:dim t)))
