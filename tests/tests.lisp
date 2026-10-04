@@ -5351,6 +5351,19 @@ that — never a glyph cut in half."
 ;;; on. An indicator that touches the thing it reports is a defect the operator feels before they
 ;;; can see it. The third part is the loop: the reading is on a thread (`git-start`), which
 ;;; `tick-git` only starts — the loop is the one thing in this head that may not wait on git.
+;;; **A STARTUP PATH NOTHING EXERCISED.** The head died on startup with an unbound variable —
+;;; `*git-refresh-ms+`, a `defparameter` named with a star prefix and a plus suffix — from
+;;; `git-start`, which this suite never called: `%git-command`'s argv was tested and the function
+;;; that RETURNS the interval was not. The operator found it by running the head in `~` and reading
+;;; a stacktrace. One assertion on the constant is what would have caught it first.
+(def-test the-readers-interval-is-bound-and-its-loop-tick-exists (:suite leticl)
+  "The two things the head's own startup path needs, asserted where the suite can see them."
+  (is (and (boundp 'leticl::+git-refresh-ms+) (integerp leticl::+git-refresh-ms+)
+           (plusp leticl::+git-refresh-ms+))
+      "**the interval is BOUND** — an unbound one is a head that dies on its first loop pass")
+  (is (fboundp 'leticl::git-start) "the reader's start, which returns it")
+  (is (fboundp 'leticl::tick-git) "and the loop's tick, which head.lisp calls every pass"))
+
 (def-test the-git-reader-never-writes-to-the-repo-it-reads (:suite leticl)
   "The reading's argv: capped by coreutils' timeout, and locked out of the index."
   (let ((argv (leticl::%git-command "/tmp")))

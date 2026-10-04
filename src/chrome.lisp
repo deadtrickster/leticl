@@ -948,7 +948,7 @@ whole interval reads as a hang."
                    do (ignore-errors (%git-collect-once))
                       (loop repeat 10 while *git-running* do (sleep 0.1))))
            :name "leticl-git-reader")))
-  *git-refresh-ms+)
+  +git-refresh-ms+)
 
 (defun git-stop ()
   "Stop the reader. Idempotent."
