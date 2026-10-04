@@ -76,6 +76,13 @@ through an eval socket and see the change on the next frame."
                (:file "src/render")
                (:file "src/editor")
                (:file "src/hack")
+               ;; **THE EVAL SURFACE ON THE GLASS** (the `/lisp` pane): after `hack`, whose
+               ;; `hack-eval-form` it shares so the socket and the pane cannot drift about what an
+               ;; eval IS, and after `render`/`panes`, whose pane machinery it draws with. That
+               ;; puts the pane's dispatch in `render.lisp` one file EARLIER than this definition —
+               ;; `lisp-pane-lines` is called forward, a runtime call that warns rather than fails,
+               ;; which is the shape `make-composer` and `%handle-key` already have there.
+               (:file "src/repl")
                (:file "src/demo")
                ;; LAST, and it has to be: `replay` rebinds every global a frame
                ;; reads so two replays in one image cannot see each other's

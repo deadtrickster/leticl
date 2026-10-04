@@ -6233,11 +6233,12 @@ section. The two heads must teach the same keys the same way."
     ;; `/config` row (the operator's running binary predates it, so its screen
     ;; still shows 36 — the source is the reference here, the binary the evidence),
     ;; and R10 added `/notes`, which the reference teaches too (`app.rs:9793-9797`)
-    (is (= 41 (count-if (lambda (l) (plusp (length l))) text))
-        "41 non-blank rows at the capture's width: the reference's 36 plus /config and
+    (is (= 42 (count-if (lambda (l) (plusp (length l))) text))
+        "42 non-blank rows at the capture's width: the reference's 36 plus /config and
  /notes and, from R22, the `ctrl-n` row — which letibot lands too — and R24 part two's
- /run, the head's half of a door only the daemon names — and `/key`, which is this
- head's own: the reference has no key card, because its keys come from opencode")
+ /run, the head's half of a door only the daemon names — and `/key` and `/lisp`,
+ which are this head's own: letibot has no key card, because its keys come from
+ opencode, and no Lisp image to evaluate in, so there is nothing for it to teach there")
     (is (string= "  enter           send what you typed; while a turn runs it is queued as a follow-up"
                  (third text))
         "the first row, key sixteen wide after two")
@@ -25411,6 +25412,157 @@ suite that only checks what is drawn."
 (defun %a-prose (id)
   `(:item-id ,id :kind "assistant" :ts 0
              :item (:type "assistant" :text "a row with something to say")))
+;;; ------------------------------------------------- the live-lisp pane (repl.lisp) ;;;
+;;;
+;;; The eval socket's own surface, on the glass: `/lisp`, the composer as the prompt, and one shared
+;;; eval (`hack-eval-form`) with `tui-eval`. What is asserted here is what the pane ADDS — the
+;;; frame's budget on a printed value, the disclosures, and which key belongs to whom. The eval
+;;; itself is `hack-eval-form`'s and is not retested here.
+;;;
+;;; `*lisp-entries*` is bound in each of these: it is live state that outlives a test, and a
+;;; scrollback inherited from the test above would be a fixture whose rows nobody wrote.
+;;;
+;;; **The internals are reached as `leticl::` and not bare**, because this package `:use`s `leticl`
+;;; and `:use` brings in what is EXPORTED: `%command`, `%pane-key` and `%pane-enter` are the head's
+;;; own and three of these tests found that out the loud way.
+
+(defun %repl-head (&optional (buffer ""))
+  "A head in the REPL pane. **The scrollback is NOT bound here** — a `let` in this function is gone by
+  the time a test pushes anything, so each test that touches the entries binds `*lisp-entries*`
+  around its OWN body. A fixture that looked like it reset the scrollback and did not is the sort of
+  helper this file has been bitten by."
+  (let ((h (%on-head :cols 100 :rows 30 :buffer buffer)))
+    (setf (head-mode h) :lisp)
+    h))
+
+(def-test the-repl-pane-draws-what-was-evaluated (:suite leticl)
+  "**The pane's whole contract**: the form you typed, and what came back — in the two registers a
+person reads them in. A REPL that shows the answer but not the question is a log; one that shows the
+question and swallows the answer is a prompt."
+  (let* ((leticl::*lisp-entries* nil)
+         (leticl::*lisp-dropped* 0)
+         (h (%repl-head))
+         (empty (segs-text (leticl::lisp-pane-lines h 100))))
+    (is (search "nothing evaluated yet" empty)
+        "a pane opened before anything was evaluated says so rather than drawing a blank screen")
+    (is (leticl::lisp-eval-entry h "(+ 1 2)") "the form evaluated, and the entry is the return")
+    (let* ((entry (first leticl::*lisp-entries*))
+           (text (segs-text (leticl::lisp-pane-lines h 100))))
+      (is (string= "(+ 1 2)" (getf entry :form)) "the form is kept as typed")
+      (is (string= "3" (getf entry :value)) "**and the value is the printed one**")
+      (is (search "› (+ 1 2)" text) "the form is drawn as the operator's own line")
+      (is (search "=> 3" text) "the answer under it")
+      (is (not (search "!!" text)) "and nothing about a good eval reads as a failure")
+      (is (search "1 form evaluated" text) "the tally counts what is in the pane"))))
+
+(def-test a-failed-eval-is-the-failure-register (:suite leticl)
+  "**A condition drawn in the same style as a value is a REPL that lies about what happened** — and
+lying is the one thing this pane cannot afford, because the whole point of typing at a live image is
+finding out that something did not work."
+  (let* ((leticl::*lisp-entries* nil)
+         (leticl::*lisp-dropped* 0)
+         (h (%repl-head)))
+    (leticl::lisp-eval-entry h "(car 1)")
+    (let* ((lines (leticl::lisp-pane-lines h 100))
+           (bad (find-if (lambda (l) (search "!!" (segs-text (list l)))) lines)))
+      (is (not (null bad)) "the failure has a row of its own")
+      (is (member leticl::+role-failure+ (mapcar #'cdr bad) :test #'equal)
+          "**and it is drawn in the FAILURE register**")
+      (is (search (let ((said (or (getf (first leticl::*lisp-entries*) :error) "")))
+                    (subseq said 0 (min 40 (length said))))
+                  (segs-text (list bad)))
+          "**the CONDITION's own words**, drawn as `hack-eval-form` handed them over — a sentence this\n head composed instead would be a REPL narrating a failure rather than reporting one")
+      (is (search "1 failed" (segs-text (leticl::lisp-pane-lines h 100)))
+          "the tally counts failures separately — a pane of red rows with no number is a scrollback\n that reads as broken"))))
+
+(def-test the-repl-discloses-the-three-things-it-does-not-draw (:suite leticl)
+  "**R17, three times over, and each one is a place a bound could look like the whole truth.** A cut
+printed value, a cut scrollback, and a cut value in the pane — all three say how much went, because a
+reader who cannot tell *that is all of it* from *that is what fit* is being misled by the frame."
+  ;; (a) the printer: a 200-element list is bounded, and the language's own `...` says so
+  (is (search "..." (leticl::%lisp-print (loop for i below 200 collect i)))
+      "**the pane's printer is bounded** — `(session-items …)` is two thousand rows and the frame is\n not\n")
+  ;; (b) a value taller than the pane's budget names the row count that went
+  (let ((rows (leticl::lisp-value-lines
+               (format nil "~{~a~%~}" (loop repeat 40 collect "a line of a printed value")) 80)))
+    (is (= (1+ leticl::+lisp-value-max-lines+) (length rows))
+        "the cut is announced as a row of its own")
+    (is (search "+28 lines" (car (last rows)))
+        "**with the COUNT of what was not drawn** — 40 lines, 12 shown, 28 named"))
+  ;; (c) the scrollback: the cap is counted and the count is DRAWN
+  (let* ((leticl::*lisp-entries* nil)
+         (leticl::*lisp-dropped* 0)
+         (h (%repl-head))
+         (over 7))
+    (dotimes (i (+ leticl::+lisp-entries-max+ over))
+      (leticl::lisp-eval-entry h "1"))
+    (is (= leticl::+lisp-entries-max+ (length leticl::*lisp-entries*)) "the scrollback is bounded")
+    (is (= over leticl::*lisp-dropped*) "**and the drop is counted**")
+    (is (search (format nil "~d earlier forms no longer held" over)
+                (segs-text (leticl::lisp-pane-lines h 100)))
+        "…and the pane says so where the entries would have been")))
+
+(def-test enter-in-the-repl-evaluates-and-clears-with-nothing-eaten (:suite leticl)
+  "**Enter is the pane's, and the line IS the act** — which is the opposite of every other pane's arm
+in `%pane-enter`, where the operator's words are HELD for when the pane closes. Here they are
+consumed: read, evaluated, and pushed to the history. The distinction is the whole reason that
+function's arms are per-pane.
+
+And a blank line does nothing at all: no entry, no cleared prompt, and no row saying nothing happened."
+  (let* ((leticl::*lisp-entries* nil)
+         (*paste-ledger* nil)
+         (*history-recalled* nil)
+         (*redo-stack* nil)
+         (h (%repl-head "(+ 40 2)")))
+    (leticl::%pane-enter h)
+    (is (string= "42" (getf (first leticl::*lisp-entries*) :value)) "enter evaluated the prompt")
+    (is (zerop (length (composer-buffer (head-composer h))))
+        "**and the prompt is CLEARED** — the line was consumed, not held")
+    (is (plusp (length (leticl::composer-history (head-composer h))))
+        "**the words went into the history** (`composer-history` is where a sent line goes)")
+    (is (string= "(+ 40 2)" (aref (leticl::composer-history (head-composer h)) 0))
+        "…as the form, exactly as typed")
+    ;; a BLANK enter: nothing evaluated, nothing cleared
+    (setf (composer-buffer (head-composer h)) "   ")
+    (leticl::%pane-enter h)
+    (is (= 1 (length leticl::*lisp-entries*)) "a blank line is not an evaluation")
+    (is (string= "   " (composer-buffer (head-composer h)))
+        "and it is not cleared either — nothing happened, and the prompt still says so")))
+
+(def-test the-repls-arrows-are-the-composers-and-esc-leaves (:suite leticl)
+  "**One key, one meaning.** Every other pane's ↑↓ move ITS cursor or scroll ITS window; in the REPL
+they walk the forms you have evaluated — which is the composer's own history, already written. So the
+pane REFUSES them (NIL is the picker's own shape of *not mine*), and what does the walking is the one
+function that has always done it."
+  (let ((leticl::*lisp-entries* nil)
+        (leticl::*lisp-dropped* 0)
+        (h (%repl-head)))
+    (is (null (leticl::%pane-key h (list :type :up) :up))
+        "**↑ is not the pane's** — it falls to the composer")
+    (is (null (leticl::%pane-key h (list :type :down) :down)) "…and neither is ↓")
+    (is (zerop (leticl::pane-row-count h :lisp))
+        "**0 rows, by name** — the shared `move-cursor` can never walk a selection in this pane")
+    (is (eq :normal (pane-escape-target :lisp)) "esc goes back to the transcript, as everywhere else")
+    (is (null (leticl::lisp-eval-entry h "   "))
+        "and a blank line never becomes an entry")))
+
+(def-test the-lisp-verb-opens-the-pane-and-evaluates-a-form (:suite leticl)
+  "**The verb and the key are the same act**, which is R32's rule for this head's own rows: `/lisp`
+toggles the pane like every other pane verb here, and `/lisp FORM` evaluates FORM into it — so a
+reader who would rather type one line than open a screen is not a second implementation."
+  (let* ((leticl::*lisp-entries* nil)
+         (leticl::*lisp-dropped* 0)
+         (h (%on-head :cols 90 :rows 24)))
+    (leticl::%command h "lisp")
+    (is (eq :lisp (head-mode h)) "**`/lisp` opens the pane**")
+    (leticl::%command h "lisp")
+    (is (eq :normal (head-mode h)) "**and the second one closes it** — a toggle, like the rest")
+    (leticl::%command h "lisp (+ 1 2)")
+    (is (eq :lisp (head-mode h)) "`/lisp FORM` opens the pane it evaluates into")
+    (is (string= "3" (getf (first leticl::*lisp-entries*) :value))
+        "…and the answer is the pane's entry, not a notice beside it")
+    (is (zerop (length (composer-buffer (head-composer h))))
+        "the operator's own prompt is untouched by a verb — nothing was taken from it")))
 
 (def-test a-walks-two-contexts-do-not-evict-each-other (:suite leticl)
   "**The memo holds a frame per render CONTEXT, and that is the difference between the walk working

@@ -1413,6 +1413,11 @@ is worse than no hint at all."
                       "↑↓ moves · enter reads the output · d opens its dashboard · esc closes"
                       "↑↓ moves · enter reads the output · esc closes"))
                  ((eq (head-mode head) :jobs) "background jobs this session started · ↑↓ then enter reads one · esc closes")
+                 ;; **THE REPL NAMES ENTER, because enter IS the pane** — and it names the arrows
+                 ;; as the COMPOSER's, which is what they are here (`%pane-key` refuses them for
+                 ;; `:lisp` so they walk the forms you have evaluated). A hint bar that called them
+                 ;; "scroll" would be teaching a key this pane does not have.
+                 ((eq (head-mode head) :lisp) "enter evaluates the prompt · ↑↓ walks the forms you evaluated · pgup/pgdn scrolls · esc closes")
                  ((eq (head-mode head) :peek) "tails live · arrows scroll · esc back")
                  ;; the overlay's row names ESC BACK TO JOBS, not "closes": the
                  ;; jobs list never closed under it, and a bottom row that says

@@ -236,6 +236,11 @@ Second value is the cursor's LINE: two lines per session, after a two-line heade
     ("ctrl-x" . "show the raw <function=…> text of tool calls, as the model wrote it")
     ("ctrl-l" . "repaint the screen")
     ("/status" . "this head's counters — dropped, scrubbed, resync — and what each means")
+    ;; **THE EVAL SOCKET'S OWN SURFACE, ON THE GLASS.** HACKING.md's contract is that this head is
+    ;; a live image you can redefine while it runs; the socket was the only door to it, and this is
+    ;; the same door with the transcript behind it. The row says what Enter does because that is the
+    ;; whole pane, and it names the arrows because they are the composer's here and not the pane's.
+    ("/lisp" . "this head's own image, live — the REPL pane: enter evaluates the prompt, ↑ walks the forms you have evaluated, /lisp FORM evaluates one from the prompt")
     ("/verbosity" . "the card that picks what the transcript shows — conversation, terse, normal or loud; /status counts what has been filtered")
     ("/interrupt" . "interrupt, when a key is awkward")
     ("alt+r" . "run a tool the DAEMON names on this machine, as your act — it opens a composer for the tool's own JSON, and `/run NAME {…json…}` is the one-line form")

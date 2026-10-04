@@ -130,6 +130,11 @@
    ;; pane scrolling (P41): one offset for every pane, counting from the TOP
    #:pane-scroll-by #:pane-scroll-max #:pane-view #:reset-pane-scroll
    #:scroll-pane-into-view #:*pane-scroll* #:*pane-lines* #:*pane-room*
+   ;; **THE LIVE-LISP PANE** (repl.lisp): the eval socket's own surface on the glass. The state is
+   ;; exported because it is what a reader with `tui-eval` wants to look AT — `*lisp-entries*` is
+   ;; the scrollback the pane draws, and `lisp-eval-entry` is the one writer a probe can call.
+   #:lisp-pane-lines #:lisp-eval-entry #:lisp-value-lines #:*lisp-entries* #:*lisp-dropped*
+   #:+lisp-entries-max+ #:+lisp-value-max-lines+
    ;; the todos pane's unfold state (P42)
    #:*repo-todo-open* #:*repo-todo-cache* #:*repo-todo-stamp* #:repo-todo-stops
    #:*todos-hide-done* #:%todo-toggle-hide-done

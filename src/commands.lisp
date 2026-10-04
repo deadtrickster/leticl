@@ -38,6 +38,11 @@
     ("rename" . "NAME — name the session you are in")
     ("help" . "the key and command reference")
     ("status" . "telemetry, full screen")
+    ;; **THE REPL — the head's own image as a screen** (`repl.lisp`). It shares `hack-eval-form`
+    ;; with the eval socket, so a form that works at `tui-eval` works here, and the two cannot
+    ;; come to disagree about what an eval IS — what they differ on is the PAINT LOCK, which the
+    ;; pane must not take because it runs on the paint thread (see `hack-eval-form`).
+    ("lisp" . "this head's own image — the REPL pane; /lisp FORM evaluates one from the prompt")
     ("stats" . "this head's counters — the same as /status")
     ("notes" . "what this head has warned about — and retire one")
     ("dismiss" . "retire every warning on the screen (/notes has the rest)")
@@ -288,6 +293,23 @@ on ClientFrame::Slash)."
        (%toggle-pane head :help))
       ((member verb '("status" "stats") :test #'string=)
        (%toggle-pane head :status))
+      ((string= verb "lisp")
+       ;; **THE EVAL SURFACE ON THE GLASS.** `/lisp` alone toggles the pane like every other pane
+       ;; verb here; `/lisp FORM` evaluates FORM and shows the answer IN the pane, opening it when
+       ;; it is closed — so the verb is usable by somebody who would rather type one line than
+       ;; open a screen, and there is still exactly ONE place the entries live.
+       ;;
+       ;; **NOTHING IS SAID ABOUT THE ANSWER HERE.** The entry is the answer, and it is drawn
+       ;; where the reader is already looking; a note repeating the value would be a second
+       ;; surface for one fact, which is the drift this tree names everywhere. The one sentence
+       ;; this arm writes is the refusal to evaluate NOTHING (R29: a verb that does nothing says
+       ;; so).
+       (let ((form (string-trim " " rest)))
+         (cond
+           ((zerop (length form)) (%toggle-pane head :lisp))
+           (t (unless (eq (head-mode head) :lisp) (%open-pane head :lisp))
+              (unless (lisp-eval-entry head form)
+                (say head "/lisp FORM — nothing to evaluate"))))))
       ;; R10's reader: what this head has warned about, and how to retire one.
       ;; `/dismiss` is the same action under the word a person types at a red block.
       ((member verb '("notes" "dismiss") :test #'string=)

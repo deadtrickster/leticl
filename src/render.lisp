@@ -1746,7 +1746,7 @@ scrolls the transcript by a row every keystroke.
           (put-segments s 0 gutter (top-border head cols)))
         (cond
           ;; full-body screens replace the transcript
-          ((member (head-mode head) '(:help :status :config :jobs :subagents :peek :job-out :picker :todos :slash :dash))
+          ((member (head-mode head) '(:help :status :config :jobs :subagents :peek :job-out :picker :todos :slash :dash :lisp))
            (let ((room (max 1 (- body-bottom body-top)))
                  (lines nil)
                  (sel-line nil))
@@ -1788,7 +1788,12 @@ scrolls the transcript by a row every keystroke.
                  ;; a listing that ARRIVED, drawn from the TOP like a document —
                  ;; `*pane-lines*` below takes this list's length, so its scroll
                  ;; clamps against the whole thing and `pane-view` windows it
-                 (:slash (slash-out-lines head cols room))))
+                 (:slash (slash-out-lines head cols room))
+                 ;; **THE REPL (repl.lisp), and the SECOND value is NIL on purpose**: this pane
+                 ;; has no cursor — ↑↓ are the composer's own history there — and a cursor
+                 ;; would be a second meaning for one key. `pane-row-count` answers 0 for it
+                 ;; for the same reason, so the shared `move-cursor` can never touch it.
+                 (:lisp (lisp-pane-lines head cols))))
              ;; tell the KEY handler what it may scroll: it clamps without
              ;; re-rendering, and the cursor can then scroll itself into view
              (setf *pane-lines* (case (head-mode head)

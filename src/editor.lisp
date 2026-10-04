@@ -1117,6 +1117,33 @@ two sides in circles."
 (defun %pane-enter (head)
   "Enter on a full-body screen, per pane."
   (case (head-mode head)
+    (:lisp
+     ;; **THE ONE PANE WHOSE ENTER CONSUMES THE LINE, and that is the whole difference between it and
+     ;; every arm below.** They leave `composer-buffer` alone because the words are not theirs — the
+     ;; operator's sentence is held for when the pane closes (the rule the `:enter` arm states at
+     ;; length). Here the line IS the act: it is read, evaluated in this head's own image, and pushed
+     ;; to the SCROLLBACK, which is where the words went instead of being held.
+     ;;
+     ;; An evaluation that does not happen — a blank line — leaves the prompt exactly as it is, the
+     ;; rule `%submit-line` keeps for a blank Enter: there is nothing to clear and an entry saying so
+     ;; would be a row for nothing happening.
+     (let* ((c (head-composer head))
+            (typed (composer-buffer c)))
+       (when (lisp-eval-entry head (expand-pastes typed))
+         ;; **THE FORM GOES INTO THE COMPOSER'S OWN HISTORY**, which is what makes ↑ walk the forms
+         ;; you evaluated. One mechanism rather than two: the help row for this pane says *↑ walks
+         ;; what you have evaluated* and what actually walks is `composer-history-step`, the same
+         ;; function that walks the prompts you have sent — see `%pane-key`, which refuses the arrows
+         ;; for this pane so they arrive here.
+         (composer-push-history c typed)
+         (%undo-push c)
+         (setf (composer-buffer c) ""
+               (composer-cursor c) 0
+               *paste-ledger* nil
+               *history-recalled* nil
+               *redo-stack* nil
+               (get 'composer :draft) nil)))
+     t)
     (:config
      ;; ENTER CHANGES IT. The pane lists the head's own choices and it
      ;; can change them in place — which is what was asked for: a pane
@@ -1251,6 +1278,13 @@ per-pane cursor would be a `head` slot each, and a struct slot is a RESTART: the
 one thing this head must not need."
   (let ((mode (head-mode head))
         (empty (zerop (length (composer-buffer (head-composer head))))))
+    ;; **THE REPL KEEPS THE COMPOSER'S ARROWS, AND THIS IS THE ONE PLACE IT SAYS SO.** Every other
+    ;; pane's ↑↓ move ITS cursor or scroll ITS window; the `/lisp` pane's walk the FORMS you have
+    ;; evaluated, which is the composer's own history — one history, one mechanism, and no second
+    ;; answer to *what did ↑ mean here*. NIL is the picker's own shape of *not mine* (the arm below),
+    ;; and it is what hands the key back to `%normal-key` and the composer.
+    (when (and (eq mode :lisp) (member type '(:up :down)))
+      (return-from %pane-key nil))
     (flet ((rows () (pane-row-count head mode))
            ;; **Esc in the peek pane means back to the TREE**, not close
            ;; everything — the reference's `sub_out` arm sits ahead of the
@@ -1647,7 +1681,7 @@ for the lists)."
             (or *pick-open*
                 (member (head-mode head)
                         '(:help :status :config :jobs :subagents :peek :job-out :todos :picker
-                          :slash))))
+                          :slash :lisp))))
        (if *pick-open*
            (close-pick head)
            (progn
@@ -1701,7 +1735,7 @@ for the lists)."
       ;; can be typed under the card
       ((and *pick-open* (pick-key-event head key)))
       ((and (member (head-mode head)
-                    '(:help :status :jobs :subagents :todos :picker :slash :dash))
+                    '(:help :status :jobs :subagents :todos :picker :slash :dash :lisp))
             (%pane-key head key type)))
       (t (%normal-key head key)))))
 
@@ -2602,6 +2636,12 @@ the folded tree — each the same list the pane draws from."
     (:peek (peek-row-count head))
     ;; the job-output overlay is the same: a window of bytes, no selectable rows
     (:job-out (job-out-row-count head))
+    ;; **THE REPL HAS NO CURSOR, and 0 is a CLAIM rather than a default here.** ↑↓ are the
+    ;; composer's history in this pane (`%pane-key` refuses them for `:lisp`), so a count that
+    ;; answered anything else would let `move-cursor` walk a selection nobody can see — and would
+    ;; be a second meaning for the one key. Listed rather than left to the fallback so that a
+    ;; later arm cannot quietly make it selectable.
+    (:lisp 0)
     (t 0)))
 
 (defun %todo-toggle-hide-done (head)

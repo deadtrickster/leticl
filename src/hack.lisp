@@ -148,7 +148,16 @@ taking the whole channel with it).
 
 The fallback is deliberate and not tidiness: `grab-mutex`'s keyword set differs across SBCL
 versions, and a head that cannot time out should still be able to eval — the wedge is the
-lesser evil next to a live-modification surface that refuses to work at all."
+lesser evil next to a live-modification surface that refuses to work at all.
+
+**THE WEDGE THIS DEADLINE WAS ADDED FOR, MEASURED on the live head 2026-09-24.** One `%send`
+issued from inside a probe — which held this lock and was therefore waiting on the head's own
+loop to write — did exactly that. The channel was dead for an hour: the socket LISTENED but
+never ACCEPTED again (backlog full, `connect` returning EAGAIN), and every push in that hour was
+silently discarded while the head went on painting the screen, so the pushes looked applied.
+A deadline turns that permanent wedge into ONE bad eval that says so. It does not free the lock
+— nothing can, the thread is stuck — but the SURFACE survives: the next eval is told the channel
+is blocked rather than joining it."
   (let ((m (gensym "MUTEX")) (got (gensym "GOT")))
     `(let ((,m ,mutex)
            (,got nil))
@@ -172,91 +181,70 @@ lesser evil next to a live-modification surface that refuses to work at all."
        (unwind-protect (progn ,@body)
          (sb-thread:release-mutex ,m)))))
 
+(defun hack-eval-form (head form)
+  "FORM evaluated in this head's own image: `(values VALUE CONDITION MS)`.
+
+**ONE PATH, TWO SURFACES.** The eval socket (`hack-handle`) and the `/lisp` pane (`repl.lisp`) both
+ask THIS, so a form that works at one works at the other — and the two cannot come to disagree about
+what `*standard-output*` is, which conditions are muted, or whether an eval counts as a PUSH.
+
+**THE PAINT LOCK IS THE CALLER'S, and that asymmetry is the whole reason this is a function.** The
+socket takes it for the eval's duration, because its thread is not the paint thread and a `defun`
+landing mid-frame is an error in the MAIN thread — which with `--disable-debugger` is a dead head.
+The pane IS the paint thread, so it must not take it: taking `paint-lock` inside an eval deadlocks,
+which is what this file says at length two functions down. The lock lives with the caller; this is
+the part that must be identical.
+
+Output and warnings are swallowed for BOTH callers. The reply is what a reader reads, and a leak to
+`*standard-output*` corrupts the TUI it is standing on.
+
+**A PUSH INVALIDATES WHAT CODE DERIVED, FROM EITHER DOOR.** The generation bump is here rather than
+at the socket because `/lisp` can `defun` exactly as `tui-eval --file` can, and a cache that holds
+values the previous code produced does not know which door the redefinition came through — that is
+`*code-generation*`'s own paragraph, and it is why this is not the socket's private step. The bump is
+`boundp`-guarded for the reason recorded there: this file loads before `head.lisp`.
+
+**THE ERROR ARM DIRTIES THE HEAD TOO.** A condition is an entry in the pane and a fact on the
+screen; the socket's own reader gets it in the reply, but the head is the surface that draws it, and
+an eval that raised is the one an operator most needs to see."
+  (let ((start (get-internal-real-time)))
+    (flet ((ms () (round (* 1000 (- (get-internal-real-time) start))
+                         internal-time-units-per-second)))
+      (handler-case
+          (let ((value (let ((*standard-output* (make-string-output-stream))
+                             (*error-output* (make-string-output-stream)))
+                         (handler-bind ((style-warning #'hack-mute)
+                                        (warning #'hack-mute))
+                           (eval form)))))
+            (setf *code-generation*
+                  (1+ (if (boundp '*code-generation*) *code-generation* 0)))
+            (setf (head-dirty head) t)
+            (values value nil (ms)))
+        (error (e) (setf (head-dirty head) t) (values nil e (ms)))))))
+
 (defun hack-handle (head line)
   "One request, one JSON reply. `eval <form>` — the rest of the line is one
 s-expression, read and evaluated in :leticl with *head* bound. Compiler notes
 and print side-effects are swallowed: the reply goes to the socket, and a leak
 to *standard-output* would corrupt the TUI and desync it from the screen."
-  (let ((start (get-internal-real-time)))
-    (flet ((ms () (round (* 1000 (- (get-internal-real-time) start))
-                         internal-time-units-per-second)))
-      (handler-case
-          (progn
-            (unless (uiop:string-prefix-p "eval " line)
-              (error "only `eval <form>` is spoken here"))
-            (let* ((form (read-from-string (subseq line 5)))
-                   (value (let ((*standard-output* (make-string-output-stream))
-                                (*error-output* (make-string-output-stream)))
-                            (handler-bind ((style-warning #'hack-mute)
-                                           (warning #'hack-mute))
-                              ;; **Hold the paint lock for the whole eval.** The
-                              ;; push is what makes this surface usable, and
-                              ;; without serialisation it races the frame: a
-                              ;; `defun` can land while `%render-and-paint` is
-                              ;; halfway through, so an in-flight call reaches a
-                              ;; function whose definition just changed — an
-                              ;; error in the MAIN thread, which quits the head.
-                              ;; Measured twice, at a different file each time.
-                              ;;
-                              ;; **BUT NOT FOR EVER, AND THAT IS A CORRECTION.** An eval
-                              ;; must not paint — taking this lock again inside one
-                              ;; deadlocks — and there is a second way to deadlock it
-                              ;; that the sentence above did not cover: an eval that,
-                              ;; while holding the lock, blocks on something that needs
-                              ;; the LOOP (writing the session socket, waiting on the
-                              ;; daemon). The loop then waits for the lock, the eval
-                              ;; waits for the loop, and every later eval waits in
-                              ;; `with-mutex`.
-                              ;;
-                              ;; MEASURED on the live head, 2026-09-24: one `%send` from
-                              ;; a probe did exactly that. The channel was dead for an
-                              ;; hour — the socket LISTENED but never ACCEPTED again
-                              ;; (backlog full, `connect` returning EAGAIN) — and every
-                              ;; push in that hour was silently discarded while the head
-                              ;; went on painting the screen, so the pushes looked
-                              ;; applied.
-                              ;;
-                              ;; A deadline turns that permanent wedge into one bad
-                              ;; eval that says so. It does not free the lock — nothing
-                              ;; can, the thread is stuck — but the SURFACE survives:
-                              ;; the next eval is told the channel is blocked rather
-                              ;; than joining it. `grab-mutex` with a timeout is the
-                              ;; only way to ask, and the fallback keeps this working
-                              ;; on a Lisp where the keyword is absent.
-                              (%with-paint-lock ((paint-lock))
-                                (eval form))))))
-              ;; visible immediately is a property of the loop: the eval marks
-              ;; the head dirty, the loop repaints on its next tick
-              ;;
-              ;; **AND A PUSH INVALIDATES EVERY CACHE THAT HOLDS WHAT CODE DERIVED.**
-              ;; The dirty flag is not enough on its own: a cache validated against
-              ;; the FILE it was read from stays valid across a redefinition — the
-              ;; file did not move — so the head goes on showing values the previous
-              ;; code produced. MEASURED on the operator's head: a push that added
-              ;; `:line` to the todo rows left twenty rows drawn without one, and
-              ;; every repo row then refused the gesture that needs it. A cache that
-              ;; holds derived values keys on this counter (`*hist-generation*` is
-              ;; the DATA half of the same rule).
-              ;;
-              ;; **AND IT MUST NOT DEPEND ON `head.lisp` HAVING BEEN PUSHED FIRST.**
-              ;; The order is leticl.asd's, and measured, it lands THIS file before
-              ;; `head.lisp` — so the first `--tree` after this counter was added
-              ;; failed on the next file with `UNBOUND-VARIABLE *CODE-GENERATION*`,
-              ;; because every eval from that moment ran through this new
-              ;; `hack-handle` with the variable `head.lisp` defines still undefined.
-              ;; The eval itself had already run, so pushes kept landing while every
-              ;; reply said `ok:false`: a half-pushed tree that `--tree` correctly
-              ;; refused to call finished. `boundp` is what makes the bump independent
-              ;; of the order rather than of the tree.
-              (setf *code-generation*
-                    (1+ (if (boundp '*code-generation*) *code-generation* 0)))
-              (setf (head-dirty head) t)
-              (format nil "{\"ok\":true,\"value\":~a,\"ms\":~a}"
-                      (json-encode-to-string (prin1-to-string value))
-                      (ms))))
-        (error (e)
-          (format nil "{\"ok\":false,\"error\":~a}"
-                  (json-encode-to-string (prin1-to-string e))))))))
+  (handler-case
+      (progn
+        (unless (uiop:string-prefix-p "eval " line)
+          (error "only `eval <form>` is spoken here"))
+        (let ((form (read-from-string (subseq line 5))))
+          ;; the lock is TAKEN HERE and not in `hack-eval-form` — see its docstring: the pane, which
+          ;; shares the eval, is the paint thread and cannot take it
+          (multiple-value-bind (value condition ms)
+              (%with-paint-lock ((paint-lock)) (hack-eval-form head form))
+            (if condition
+                (format nil "{\"ok\":false,\"error\":~a}"
+                        (json-encode-to-string (prin1-to-string condition)))
+                (format nil "{\"ok\":true,\"value\":~a,\"ms\":~a}"
+                        (json-encode-to-string (prin1-to-string value))
+                        ms)))))
+    (error (e)
+      (format nil "{\"ok\":false,\"error\":~a}"
+              (json-encode-to-string (prin1-to-string e))))))
 
 (defun hack-stop (head)
   ;; **the slot is CLEARED, and that is what the accept loop watches for.** The loop

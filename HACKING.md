@@ -51,6 +51,31 @@ and would look in `/tmp/leticl-<uid>`. `scripts/tui-eval` searches both, and
 bound to the running head. The reply's `value` is the printed result, JSON-
 encoded; `ms` is the eval's wall time.
 
+## The other door: the `/lisp` pane
+
+The same surface is **in the head**, as a full-body screen: `/lisp` opens it (and
+toggles it shut), the composer is the prompt, Enter evaluates, ↑↓ walk the forms
+you have evaluated, and Esc goes back to the transcript. `/lisp FORM` is the
+one-line spelling — it evaluates FORM and shows the answer in the pane, opening
+it if it is closed.
+
+It is **the same eval, not a second one**: both doors call `hack-eval-form`
+(`src/hack.lisp`), so a form that works at `tui-eval` works here — same read, in
+`:leticl`; same muted output and warnings; same `*code-generation*` bump, so a
+`defun` typed at either door invalidates the caches that hold what the previous
+code derived. What differs is one line: **the pane does not take `paint-lock`**,
+because it runs ON the paint thread and taking the lock inside an eval deadlocks
+(`%with-paint-lock`'s docstring has the hour-long wedge that taught this).
+
+**The hazard below is the same and it is closer to the keyboard.** An eval that
+blocks — a `sleep`, a long walk, a big allocation — freezes the LOOP, because the
+loop is what is running it. At the socket that is a probe you sent; here it is a
+line you typed, on a screen that has stopped redrawing. `^C` in the pane's own
+composer will not rescue you: the head is inside your form. The pane's printer is
+bounded (`*print-length*`, `*print-level*`, and a row cap with the count of what
+went), so *echoing* a huge value is safe; *computing* one is not, and on SBCL that
+is what the interrupt key is for.
+
 ## Seeing both heads: `scripts/compare-heads`
 
 ```sh

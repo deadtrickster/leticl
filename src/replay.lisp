@@ -207,6 +207,12 @@ see this file's header."
          ;; the slash listing, which a replayed log can open
          (*slash-out* nil)
          (*pane-scroll* 0)
+         ;; **the REPL's scrollback** (repl.lisp). Live state like the pane's offset above it, and
+         ;; bound for the same reason: a replay must answer the same bytes twice, and a scrollback
+         ;; inherited from the last run would draw entries the FILE never asked for. `*lisp-dropped*`
+         ;; goes with it — the count is drawn, so it is part of the bytes.
+         (*lisp-entries* nil)
+         (*lisp-dropped* 0)
          (*pick-open* nil)
          (*pick-unseeded* nil)
          (*mode-confirm* nil)
