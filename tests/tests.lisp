@@ -1200,6 +1200,30 @@ through* is countable rather than eyeballed."
                 (funcall at 400)))
     (is (= 300 (funcall digits 400)) "and every one of the 300 characters is on the row")))
 
+(def-test the-tool-row-arithmetic-has-one-spelling (:suite leticl)
+  "**The tail is measured first, and *first* is arithmetic rather than an idea.**
+
+R25 is that a row's subject gives way to its TAIL, and two renderers implement it: the
+settled row (`%tool-result-lines`, `src/cards/tool-result-card.lisp`) and the live card
+(`call-lines`, `src/cards/live-call-card.lisp`). They spelled the arithmetic twice:
+
+    the settled row   (+ (length mark) 1 (length verb) 1)
+    the live card     (+ 2 (string-width verb) 1)      ; the 2 stands for mark + space
+
+The second is right only while a MARK IS ONE COLUMN, which every mark in this tree is
+(`▸ ▾` and `◐ ● ○`) — so the two agreed by coincidence, and a mark is a rendering
+decision rather than a constant. Both call `%subject-room` now.
+
+**Asserted on the SOURCE, because the defect is a MISSING CALL and there is no input
+that fails today**: a third renderer that spells the arithmetic again is the thing to
+catch, and it would pass any test that renders the two rows this tree happens to have."
+  (dolist (file '("tool-result-card" "live-call-card"))
+    (let ((src (%src-text (format nil "cards/~a.lisp" file))))
+      (is (and src (search "%subject-room" src))
+          (format nil "src/cards/~a.lisp calls the shared arithmetic" file))
+      (is (not (and src (search "(+ 2 (string-width verb" src)))
+          (format nil "and does not spell it again in src/cards/~a.lisp" file)))))
+
 (def-test a-resize-re-elides-the-subject-on-the-screen (:suite leticl)
   "**A wider window gets more of the subject BACK, and it is the SCREEN that says so.**
 

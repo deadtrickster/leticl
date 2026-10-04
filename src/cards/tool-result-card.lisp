@@ -146,7 +146,7 @@ header, also printed `· 1 line` — a count for a fold with nothing to fold."
          (tail-cols (+ 3 (string-width shown-word) (string-width took)
                        (string-width asked)
                        3 6 (length (format nil "~d" n))))
-         (lead (+ (length mark) 1 (length verb) 1))
+         (room (%subject-room w mark verb tail-cols))
          ;; **THE IMAGE PATH IS A LINK** (R55), computed from the subject BEFORE it is shortened —
          ;; so an elided `…/shots/chart.png` still opens the file it names rather than a path with
          ;; an ellipsis in it.
@@ -156,7 +156,7 @@ header, also printed `· 1 line` — a count for a fold with nothing to fold."
          ;; that exists — each renders as plain text, because a link that does nothing when clicked
          ;; is worse than no link, having told the reader it was clickable.
          (link (image-path-link subject))
-         (subject (%shorten-subject subject (max 8 (- w lead tail-cols))))
+         (subject (%shorten-subject subject room))
          ;; **the actor's segment is APPENDED, not always present**, so a row the model
          ;; proposed has the same SEGMENTS in the same order as it had before this field
          ;; existed — not merely the same text.

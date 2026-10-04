@@ -316,6 +316,26 @@ state and it is chrome's file, so it is noted rather than done."
                        (setf cut i)))
             (concatenate 'string "…" (subseq s cut))))))
 
+(defun %subject-room (cols mark verb tail-width)
+  "How many columns a tool row's SUBJECT may take — the row's arithmetic, in ONE place.
+
+ A tool row is `mark verb subject · tail`, and **the tail is measured FIRST** (R25): the
+subject gets what is left after the mark, a space, the verb, a space, and the tail as it
+will be DRAWN. `tail-width` is that drawing's own width — the settled row counts its
+parts, the live card measures the string it built — and 0 when there is no tail.
+
+ **Two renderers had this arithmetic spelled twice, and one spelling was a coincidence.**
+The settled row counted `(+ (length mark) 1 (length verb) 1)`; the live card wrote
+`(+ 2 (string-width verb) 1)` with the 2 standing for *mark and space*, which is true only
+while every mark is one column wide. The two agree today because every mark in this tree
+(`▸ ▾` and `◐ ● ○`) IS one column — which is the point: a number that agrees by accident
+is the one that stops agreeing when a mark is not, and the marks are a rendering decision
+rather than a constant.
+
+ The floor of 8 is the one the old inline calls used: below it a subject is an ellipsis
+with a letter in it, and the mark, the verb and the tail already say what the row is."
+  (max 8 (- cols (+ (length mark) 1 (length verb) 1 (or tail-width 0)))))
+
 (defun %shorten-subject (subject max)
   "SUBJECT cut to MAX columns the way a person reads it.
 

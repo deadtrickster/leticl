@@ -129,11 +129,16 @@ three colours, none of them the reference's."
          ;; What gives way is the SUBJECT, which is what `%shorten-subject` is for and what
          ;; `%tool-result-lines` already did. One rule, two rows: measured against letibot's
          ;; screen, a subject that runs to the edge is how the reference draws it too.
-         (fixed (+ 2 (string-width verb-str) 1))    ; mark, space, verb, space
+         ;; **THE SAME ARITHMETIC AS THE SETTLED ROW'S** (`%subject-room`): this card used
+         ;; to count its leading columns itself, with a literal 2 standing for the mark and
+         ;; its space — true only while a mark is one column wide, which is a rendering
+         ;; decision rather than a constant. **The old spelling is described here and not
+         ;; quoted**: a source assertion cannot tell code from the prose explaining it, and
+         ;; the test that pins this one reads this very file (`the-tool-row-arithmetic-has-
+         ;; one-spelling` — the lesson is `render.lisp`'s, learned the same way).
+         (room (%subject-room cols (car mark) verb-str (and joined (string-width joined))))
          (target (if (plusp (length target-raw))
-                     (%shorten-subject target-raw
-                                       (max 8 (- cols fixed
-                                                  (if joined (string-width joined) 0))))
+                     (%shorten-subject target-raw room)
                      ""))
          (head (list mark
                      (cons " " nil)
