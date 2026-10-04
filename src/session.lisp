@@ -630,7 +630,7 @@ of them on the screen for one keypress."
 **Two rungs answer yes** (`:reading` and `:read-edits`): they hide the same three kinds and differ
 in exactly one place — `reading-hides-p` keeps an edit card at `:read-edits` — so every other reader
 of this predicate (raw calls, the narration, the run markers) is asking the question they mean."
-  (member *verbosity* '(:reading :read-edits) :test #'eq))
+  (or (eq *verbosity* :reading) (eq *verbosity* :read-edits)))
 
 (defun read-edits-p ()
   "Is the `:read-edits` rung on? — reading, plus the cards that say what the head CHANGED."
