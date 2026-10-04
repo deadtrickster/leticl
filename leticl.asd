@@ -98,7 +98,27 @@ through an eval socket and see the change on the next frame."
                ;; it reuses rather than restates. One file for both because a sink is a source
                ;; pointed the other way: same timeout, same failure discipline, same visibility.
                (:file "src/dashwatch")
-               (:file "src/panes")
+               ;; **EVERY FULL-BODY SCREEN, ONE FILE PER PANE.** This was one 3,578-line
+               ;; `panes.lisp`; the ranges are consecutive, so every reference kept its
+               ;; direction and the split moved no behaviour.
+               (:file "src/panes/helpers")
+               (:file "src/panes/session-picker")
+               (:file "src/panes/help")
+               (:file "src/panes/status")
+               (:file "src/panes/config")
+               (:file "src/panes/jobs")
+               (:file "src/panes/subagents")
+               (:file "src/panes/todos")
+               (:file "src/panes/repo-todo")
+               (:file "src/panes/peek")
+               (:file "src/panes/slash")
+               (:file "src/panes/notes")
+               (:file "src/panes/job-out")
+               (:file "src/panes/pick")
+               (:file "src/panes/empty")
+               (:file "src/panes/permission")
+               (:file "src/panes/overlays")
+               (:file "src/panes/cursor")
                 ;; **THE PANE PROTOCOL** — one class per full-body screen. After `panes`,
                 ;; whose functions its methods delegate to, and BEFORE `render`/`editor`/
                 ;; `chrome`, which were the files dispatching on the mode keyword by hand.
