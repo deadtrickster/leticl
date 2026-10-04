@@ -420,6 +420,26 @@ fields matter.
 is DRAWN, not what the rows are, and bumping on them would rebuild the history
 every frame and lose the whole point.")
 
+(defun %hist-live-row-drawn-p (head)
+  "Is the row the LIVE turn is drawn on inside the window the last walk drew?
+
+**The whole of a fix for the operator's *\"scrolling is awfully laggy\"*, and the arithmetic is
+exact rather than a heuristic.** The tick exists because a RUNNING CALL's committed row draws a
+duration — and that row is the NEWEST one, which is to say the bottom of the transcript. So the
+tick can only change something the reader can see when the window reaches the end; when the reader
+has scrolled up, the row it redraws is off the screen ten times a second while the cache throws
+away every line in the session to redraw it.
+
+**Asked of the walk's own bounds rather than guessed at from an offset.** `*hist-bounds*` is what
+`%history-until` rendered last frame, oldest first, so *the last row it drew IS the newest item*
+means the window ended at the live end — and anything else means it did not. A count from the
+bottom would have to be right about arrivals between frames; this needs to know nothing about them."
+  (let* ((items (session-items (head-session head)))
+         (n (length items))
+         (newest (and (plusp n) (getf (aref items (1- n)) :item-id)))
+         (last-drawn (car (last *hist-bounds*))))
+    (and newest last-drawn (string= (first last-drawn) newest))))
+
 (defun %hist-live-tick (head cols)
   "A value that changes while a COMMITTED row's content is a function of the CLOCK.
 
@@ -446,10 +466,14 @@ when the viewport is full, so the cost is the window and not the session."
   (let ((turn (session-turn (head-session head))))
     (when turn
       (or
-       ;; a CALL RUNNING: the clock, because a committed row draws a live duration
-       (when (some (lambda (c)
-                     (string= (or (getf (getf c :state) :state) "") "running"))
-                   (getf turn :calls))
+       ;; a CALL RUNNING: the clock, because a committed row draws a live duration — **and ONLY
+       ;; while that row is on the screen.** This is the one that moves ten times a second, so this
+       ;; is the one that has to know whether anybody can see it: the row is the newest, and a
+       ;; reader who has scrolled up is looking at something else entirely.
+       (when (and (%hist-live-row-drawn-p head)
+                  (some (lambda (c)
+                          (string= (or (getf (getf c :state) :state) "") "running"))
+                        (getf turn :calls)))
          (floor (internal-real-time-ms) +live-frame-ms+))
        ;; **AND THE MODELS THINKING: the LINE COUNT, NOT the clock.** This is the other case where
        ;; a committed row text is a function of something that is not an event -- a marker reading
@@ -459,7 +483,10 @@ when the viewport is full, so the cost is the window and not the session."
        ;; and then the control that proved it: *"1 tool call saved it - the stats appeared
        ;; immediately after the prompt"* -- live while a call ran, backfilled while it thought.
        ;;
-       ;; **NOT the clock, and that is the whole point of using the count here.** Moving the tick to
+       ;; **NOT the clock, and that is the whole point of using the count here** — and NOT gated on
+       ;; the live row being drawn either: a count that moves a few times a minute costs a handful of
+       ;; misses, and the tree has a test that the counts are LIVE from the first delta. The gate
+       ;; belongs to the case that rebuilds ten times a second, not to the one that does not. Moving the tick to
        ;; the clock for this case was tried and reverted: the tick own docstring measures the cliff
        ;; it creates -- a HIT is 0.2 ms, a MISS is 11-13 ms -- and ten of those a second for the whole
        ;; of a long think is visibly an animation in the composer. A LINE COUNT changes only when a

@@ -5389,6 +5389,30 @@ that — never a glyph cut in half."
 ;;; the head CHANGED — with the raw payloads still gone. The difference from `:reading` is ONE
 ;;; predicate, so this asserts the matrix rather than a cell: an edit survives, a read does not, and
 ;;; at `:reading` the edit goes too — which is the whole of what the two rungs differ by.
+;;; **THE LAG THE OPERATOR FELT while scrolling, and the one arithmetic that fixes it.** The tick
+;;; that keeps a running call's DURATION live invalidates the whole line cache, and while a call runs
+;;; it moves ten times a second — so every frame is a miss that walks the session. But the row it
+;;; redraws is the NEWEST one: while the reader has scrolled up it is not on the screen at all, and
+;;; ten rebuilds a second are being spent on a row nobody can see.
+;;;
+;;; The answer is asked of the walk's own bounds — the last row it drew IS the newest item, or the
+;;; window did not reach the end — rather than of an offset, which would have to be right about
+;;; arrivals between frames.
+(def-test the-live-tick-only-answers-when-the-live-row-is-drawn (:suite leticl)
+  "Scrolled away, the tick is NIL and the cache can hit; at the bottom it is live."
+  (let* ((h (%make-head))
+         (s (head-session h)))
+    (setf (session-items s) (vector (list :item-id "a" :kind "assistant" :ts 0 :item (list :type "text"))
+                                    (list :item-id "b" :kind "assistant" :ts 0 :item (list :type "text"))))
+    (let ((leticl::*hist-bounds* (list (list "a" 0 10) (list "b" 10 20))))
+      (is (leticl::%hist-live-row-drawn-p h)
+          "**the walk reached the end, so the live row is on the screen**"))
+    (let ((leticl::*hist-bounds* (list (list "a" 0 10))))
+      (is (not (leticl::%hist-live-row-drawn-p h))
+          "**scrolled up: the window stops before the newest row, so nothing live is drawn**"))
+    (let ((leticl::*hist-bounds* nil))
+      (is (not (leticl::%hist-live-row-drawn-p h)) "and with no walk yet there is nothing to tick for"))))
+
 (def-test the-read-edits-rung-keeps-the-edits-and-drops-the-payloads (:suite leticl)
   "`:read-edits` draws an edit card and still hides the raw tool result beside it."
   (flet ((row (name &optional edit)
