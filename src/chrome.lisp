@@ -788,6 +788,20 @@ the branch. A field dropped whole is the behaviour this replaces."
         do (push p out) (incf used (string-width p))
         finally (return (nreverse out))))
 
+(defun %git-command (dir)
+  "The argv for one reading.
+
+**`--no-optional-locks` IS THE ONE FLAG THAT IS NOT ABOUT WHAT IS READ.** A plain `git status` may
+take the index lock and write the refreshed index back — a READER writing to the repository it is
+reporting on, which is exactly what an indicator must not do. With it, git touches nothing.
+
+`--porcelain=v2 --show-stash` because that is where gitstatus's segments come from: `branch.head`,
+`branch.oid`, `branch.ab`, the XY pair per entry, `u` for unmerged, `?` for untracked, and the
+stash count. The `timeout` cap is the dash collectors' rule: `uiop:run-program`'s own `:timeout`
+was MEASURED accepting 1 against a `sleep 30` and taking 30 seconds."
+  (list "timeout" "1" "git" "-C" dir "--no-optional-locks"
+        "status" "--porcelain=v2" "--branch" "--show-stash"))
+
 (defun %git-refresh (dir)
   "Read DIR's repository and store the reading. Returns the parts, or NIL."
   (let ((text (ignore-errors
