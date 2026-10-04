@@ -1277,16 +1277,57 @@ a function of the payload and the frame, and neither is known here."
                              (max 0 (+ (cdr *payload-view*) delta))))
     t))
 
-(defun %tool-payload-rows (body)
-  "The rows a tool result's payload draws as.
+(defvar *payload-rows* nil
+  "An `eq` hash of PAYLOAD STRING -> the rows it draws as, or NIL before the first ask.
 
-Sanitised FIRST and filtered second, the reference's order (app.rs:9712): a
-payload's bytes are the command's and not this terminal's (`%without-control`), and
-the envelope lines — the wrapper the harness adds around a result, addressed to the
-model — are not output."
+**Keyed on the payload's OWN OBJECT, and that is what makes handing the rows out safe.** The payload
+hangs off a body the session owns and is REPLACED rather than edited (`fill-item` sets `:item`
+whole), so two asks with the same string object are two asks about the same bytes — and
+`%tool-payload-rows` is a pure function of those bytes.
+
+**MEASURED, and this is the operator's in-turn 80% one layer down.** A `tool_result`'s payload was
+split, sanitised one character at a time (`%without-control`) and filtered on EVERY ask, and a frame
+asks for the same row's rows two or three times over: once to draw it, and once per
+`newest-payload-item-id` scan for the seam. At 300 payload lines (about 90 KB) one ask measured
+**1.45 ms** and a frame made dozens of them: **168 ms for a single frame** at 214x60 on a 2038-item
+session, against 3.2 ms for the same frame warm.
+
+A `defvar`, so a live push does not drop a running head's table — the shape every memo in this tree
+keeps — and bounded, because a session's payloads are not.")
+
+(defparameter +payload-rows-cache-max+ 512
+  "How many payloads the rows memo holds before it is emptied WHOLE.
+
+Emptying rather than evicting: the asks arrive row by row inside one frame, so choosing a victim
+would cost more than re-splitting the payload, and the case the bound exists for — a session with
+thousands of results — is served as correctly from an empty table as from a stale one.")
+
+(defun %payload-rows-of (payload)
+  "PAYLOAD as its rows: sanitised FIRST and filtered second, the reference's order (app.rs:9712) —
+a payload's bytes are the command's and not this terminal's (`%without-control`), and the envelope
+lines, the wrapper the harness adds around a result and addresses to the model, are not output."
   (remove-if #'%envelope-line-p
-             (mapcar #'%without-control
-                     (%payload-lines (or (getf body :payload) "")))))
+             (mapcar #'%without-control (%payload-lines payload))))
+
+(defun %tool-payload-rows (body)
+  "The rows a tool result's payload draws as — `%payload-rows-of`, remembered by PAYLOAD.
+
+See `*payload-rows*` for why the key is the string's identity and for the measurement that put the
+memo here. A body with no payload at all does not reach the table: it answers the empty payload's
+zero rows directly, because every such row sharing one `\"\"` would be one entry whose lookup costs
+more than the split it saved."
+  (let ((payload (getf body :payload)))
+    (if (not (stringp payload))
+        (%payload-rows-of "")
+        (let ((table (or *payload-rows* (setf *payload-rows* (make-hash-table :test #'eq)))))
+          (multiple-value-bind (rows hit) (gethash payload table)
+            (if hit
+                rows
+                (let ((rows (%payload-rows-of payload)))
+                  (when (> (hash-table-count table) +payload-rows-cache-max+)
+                    (clrhash table))
+                  (setf (gethash payload table) rows)
+                  rows)))))))
 
 (defparameter +payload-pageable-lines+ 2
   "A payload longer than this is worth a window.
@@ -1320,6 +1361,21 @@ one — the same rule `payload-view-seed` already keeps."
          (and (%notice-folds-p text) (%job-notice-rows text))))
       (t nil))))
 
+(defvar *newest-payload* nil
+  "`(:KEY (ITEMS GENERATION) :ID …)` — the last answer to `newest-payload-item-id`, and the state it
+was asked about.
+
+**ONE ANSWER PER FRAME, which is the whole of this memo.** The question is asked from a row's own
+seam (`newest-payload-row-p`), so it is asked once per folded tool row DRAWN — and the answer is a
+property of the session, so every one of those asks is asking the same thing. MEASURED at 2038
+items: **43-60 asks in a single cold frame**, and where no row in the session is pageable each ask
+walks the WHOLE transcript (`%row-openable-rows` -> `%tool-payload-rows` per candidate): **47 ms a
+frame, 94% of it** in an `sb-sprof` flat profile — for an answer that had not moved.
+
+The key is the items vector and the generation, and no narrower pair is enough: a row is openable
+when its BODY has rows, and a body arrives through `fill-item`, which bumps the generation without
+replacing the vector. `%row-openable-rows` reads the body and nothing else.")
+
 (defun newest-payload-item-id (session)
   "WHICH row a window would open on — the newest with something to page — or NIL.
 
@@ -1331,15 +1387,28 @@ window they never asked for.
 
 **The newest, because that is the row a reader is looking at**: rows are appended at the bottom,
 so the command just run is at the end. Only ONE row has a window at a time, and it is this one —
-which is also the whole limit of the mechanism, written down rather than implied."
-  (loop for i of-type fixnum from (1- (length (session-items session))) downto 0
-        for item = (aref (session-items session) i)
-        ;; **via `%row-openable-rows`, so a job settlement is openable too** (the operator: *"make
-        ;; them one liners for conversation and Ctrl-t'able otherwise"*). This asked for a
-        ;; `tool_result` by name, which is how the one row type that buries a conversation most
-        ;; was the one kind the chord could not open.
-        when (> (length (%row-openable-rows item)) +payload-pageable-lines+)
-          return (getf item :item-id)))
+which is also the whole limit of the mechanism, written down rather than implied.
+
+**The walk is the expensive half and it is paid ONCE PER FRAME** — `*newest-payload*` is the memo,
+and its docstring carries the measurement (43-60 asks a frame, 47 ms of them, for one answer)."
+  (let* ((items (session-items session))
+         (key (list items *hist-generation*))
+         (cached (and *newest-payload*
+                      (equal (getf *newest-payload* :key) key)
+                      *newest-payload*)))
+    (if cached
+        (getf cached :id)
+        (let ((id (loop for i of-type fixnum from (1- (length items)) downto 0
+                        for item = (aref items i)
+                        ;; **via `%row-openable-rows`, so a job settlement is openable too** (the
+                        ;; operator: *"make them one liners for conversation and Ctrl-t'able
+                        ;; otherwise"*). This asked for a `tool_result` by name, which is how the
+                        ;; one row type that buries a conversation most was the one kind the chord
+                        ;; could not open.
+                        when (> (length (%row-openable-rows item)) +payload-pageable-lines+)
+                          return (getf item :item-id))))
+          (setf *newest-payload* (list :key key :id id))
+          id))))
 
 (defun payload-view-seed (session)
   "Open the window on the newest row with something to page, at its first line.
@@ -3194,13 +3263,51 @@ or says there is none and why) is unchanged."
         (%interrupt-idle-remedy)
         (cdr (assoc code +note-remedies+ :test #'string=)))))
 
-(defvar *item-lines-frame* nil
-  "`(:STAMP S :TABLE H)` — the memo for the render CONTEXT the walk is in, and its per-item lines.
+(defvar *item-lines-frames* nil
+  "`((:STAMP S :TABLE H) …)` — the memo, ONE FRAME PER RENDER CONTEXT, newest first.
 
 **Per frame and not per item, which is what the earlier versions got wrong.** `item-lines` reads the
 walk's dynamic context — `*call-started-ms*`, the two fact tables, `*call-targets*`,
 `*answered-calls*`, `*payload-view*`, `*payload-head*`, `*hidden-run-head*` — so its input is the
-CONTEXT and not the item, and that is the same for every item in a walk.")
+CONTEXT and not the item, and that is the same for every item in a walk.
+
+**AND ONE SLOT IS NOT ENOUGH, WHICH IS THE BUG THIS LIST FIXES — MEASURED.** A single-slot memo
+under a context that has TWO live values inside one frame does not miss once; it misses on every
+call, because the second context's ask THROWS THE TABLE AWAY and the first context's ask then misses
+the line it just rendered. That is what one walk did here: `%history-until` asks `item-lines` twice
+per item — once itself with the head's prefs (`render.lisp`), and once through `%row-invisible-p`,
+which passes NIL (`cards.lisp`) — so the stamp's `prefs` element alternated and no call ever hit.
+
+    MEASURED, 2038 items, 214x60, a live turn, cold frame:
+      one slot       44-296 %ITEM-LINES-RENDER calls a frame, growing every frame — never a hit;
+      four slots      1-2  the row that changed, and the frame 5.3 ms -> 3.0 ms.
+
+The alternative fixes are to make the two call sites agree on `prefs` or to stop asking
+`item-lines` a blankness question at all; both change what a row DRAWS. A memo that holds the
+contexts it is asked about changes nothing but the arithmetic, which is why this is the fix.
+
+A `defvar`, so a live push does not drop a running head's tables.")
+
+(defparameter +item-lines-contexts+ 4
+  "How many render contexts the memo holds at once — more than the three this tree asks in.
+
+One walk has two (the head's prefs, and NIL through `%row-invisible-p`); `hidden-run-lines` adds
+`(head-prefs *hidden-run-head*)`, and a pane drawing a row of its own adds the head's again. Four
+leaves room for a `prefs` list that is rebuilt between two asks, which is the one shape that could
+otherwise evict the walk's own table. The oldest is dropped when the list is full — a NEARLY-filled
+walk table is worth less than the one in use, and a context that comes back pays one frame's render
+and then holds its lines again.")
+
+(defun %item-lines-frame (cols prefs)
+  "The table for this ask's render context, made — and the oldest context evicted — when it is new."
+  (let ((stamp (%item-lines-stamp cols prefs)))
+    (or (find stamp *item-lines-frames* :key (lambda (f) (getf f :stamp)) :test #'equal)
+        (let ((frame (list :stamp stamp :table (make-hash-table :test #'equal))))
+          (setf *item-lines-frames*
+                (cons frame (subseq *item-lines-frames* 0
+                                    (min (length *item-lines-frames*)
+                                         (1- +item-lines-contexts+)))))
+          frame))))
 
 (defun %item-lines-stamp (cols prefs)
   "The render context as one value: everything `item-lines` reads besides the item itself.
@@ -3213,8 +3320,14 @@ belongs in that row's signature rather than in a stamp that would rebuild the fr
 which no amount of reading the renderer had turned up. When a memo is wrong it is always a missing
 input, and the input is whatever the tests bind."
   (list cols prefs *verbosity* *marker-seam* *payload-head* *hidden-run-head* *payload-view*
-        *call-facts* *item-facts* *answered-calls*
-        *call-started-ms*))
+        *call-facts* *item-facts* *answered-calls* *call-started-ms*
+        ;; **`*bound-prompts*`, AND IT IS HERE BECAUSE THE RENDERER READS IT.** `bound-prompt-for`
+        ;; answers from this alist by item id, so an ANNOUNCED row draws its text the moment the
+        ;; prompt is bound — a row that re-renders to something else with no item and no body
+        ;; changing. It is the same class of input as `*payload-view*` below it, and it was found
+        ;; the same way: a memo that stops holding does not fail, and a memo that holds across an
+        ;; input it does not name draws the row as it was.
+        *bound-prompts*))
 
 (defun %item-live-p (item)
   "Does this ITEM draw something that is a function of the CLOCK, or of a count that keeps moving?
@@ -3235,30 +3348,46 @@ moment a command starts.
                (n (length v)))
           (and (plusp n) (equal (getf item :item-id) (getf (aref v (1- n)) :item-id)))))))
 
+(defun %item-lines-sig (item)
+  "What one item's rendered LINES depend on besides the render context.
+
+**THE ITEM'S OWN FIELDS, NOT THE ITEM.** `:retired` is set on the item IN PLACE
+(`(setf (getf item :retired) t)`), so a signature holding the item itself would compare it against
+ITSELF and answer *unchanged* for ever. That is not a hypothesis: the `retired-warning` tests are
+what said so — with the memo finally holding, *\"and gone from the screen\"* failed on a row that was
+still drawn, because `%item-lines-render` reads `(getf item :retired)` and nothing in the signature
+moved when it was set. One input, and the screen it was found on.
+
+The body is held by REFERENCE and that is correct: `fill-item` REPLACES `:item` with a new plist
+rather than editing the old one, so two bodies are two objects and a body that arrived is a
+signature that moved. `:ts` is here for the same reason `:retired` is — `%item-lines-render` draws
+the operator block's clock from it."
+  (list (and (%item-live-p item) (floor (internal-real-time-ms) +live-frame-ms+))
+        (getf item :retired)
+        (item-ts item)
+        (item-body item)))
+
 (defun item-lines (item cols prefs)
   "ITEM as segment lines — and the one place the work is remembered.
 
 **The context is stamped once; the items are cached under it.** A walk then re-renders the rows that
 changed — a live row, a body filled in — and reuses every other line in a session of thousands, which
 is the operator's 90% of a core: while a call ran, ten frames a second re-rendered 2600 frozen rows to
-redraw one live duration."
-  (let* ((stamp (%item-lines-stamp cols prefs))
-         (frame (and (consp *item-lines-frame*)
-                     (equal (getf *item-lines-frame* :stamp) stamp)
-                     *item-lines-frame*)))
-    (unless frame
-      (setf frame (list :stamp stamp :table (make-hash-table :test #'equal))
-            *item-lines-frame* frame))
-    (let* ((table (getf frame :table))
-           (id (getf item :item-id))
-           (sig (list (and (%item-live-p item) (floor (internal-real-time-ms) +live-frame-ms+))
-                      (item-body item)))
-           (hit (and id (gethash id table))))
-      (if (and hit (equal (car hit) sig))
-          (cdr hit)
-          (let ((lines (%item-lines-render item cols prefs)))
-            (when id (setf (gethash id table) (cons sig lines)))
-            lines)))))
+redraw one live duration.
+
+**THE CONTEXTS ARE A LIST, NOT A SLOT, and that is what makes the paragraph above true rather than
+intended** — see `*item-lines-frames*` for the measurement of the single slot that missed on every
+call, because two call sites inside one walk stamp two different contexts."
+  (let* ((frame (%item-lines-frame cols prefs))
+         (table (getf frame :table))
+         (id (getf item :item-id))
+         (sig (%item-lines-sig item))
+         (hit (and id (gethash id table))))
+    (if (and hit (equal (car hit) sig))
+        (cdr hit)
+        (let ((lines (%item-lines-render item cols prefs)))
+          (when id (setf (gethash id table) (cons sig lines)))
+          lines))))
 
 (defun %item-lines-render (item cols prefs)
 

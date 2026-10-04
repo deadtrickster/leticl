@@ -25368,3 +25368,150 @@ decoded as a wheel DOWN."
       (is (eq :wheel-up (getf (k (+ 64 mod)) :kind))
           (format nil "wheel-up with modifier ~D is still a wheel UP, never its opposite" mod)))))
 
+;;; ------------------------------------------------- the render memos (in-turn CPU) ;;;
+;;;
+;;; Three memos keep an in-turn frame from redoing work it has already done, and each one was
+;;; measured NOT to be working before it was fixed. MEASURED, 2038 items at 214x60 with a live turn:
+;;; a cold frame cost 3.5 ms with 2-line payloads and **168 ms** with 300-line ones, at ten frames a
+;;; second — the operator's 80% of a core — and it is now 2.2-2.9 ms whatever the payload.
+;;;
+;;; **What is asserted here is the ARITHMETIC those numbers are about**, because a memo that stops
+;;; holding does not fail. It gets slower, and the answer it gives is the one it gave before.
+
+(defun %counting-calls-to (name)
+  "Wrap NAME in a counter; return `(COUNT . ORIGINAL)`.
+
+The tree's own `(symbol-function …)` substitution, which `render-error-does-not-kill-the-head`
+already uses to break a renderer and put it back. A counter is the only way to see a MISS — the
+answer a memo gives is the same either way, which is exactly why this class of defect survives a
+suite that only checks what is drawn."
+  (let* ((cell (list 0 (symbol-function name))))
+    (setf (symbol-function name)
+          (lambda (&rest args) (incf (car cell)) (apply (second cell) args)))
+    cell))
+
+(defun %stop-counting (name cell)
+  (setf (symbol-function name) (second cell))
+  nil)
+
+(defun %a-memo-session (h items)
+  "H with SESSION's rows replaced by ITEMS, and the newest-pageable memo forgotten."
+  (setf leticl::*newest-payload* nil)
+  (ingest-snapshot (head-session h)
+                   (list :session-id "s-memo" :seq (length items) :dropped 0 :items-dropped 0
+                         :turn nil :open-decisions nil :settled-decisions nil
+                         :heads nil :warnings nil :items items))
+  h)
+
+(defun %a-tool-row (id payload)
+  `(:item-id ,id :kind "tool_result" :ts 0
+             :item (:type "tool_result" :call-id ,id :name "bash"
+                    :outcome (:outcome "ok") :payload ,payload)))
+
+(defun %a-prose (id)
+  `(:item-id ,id :kind "assistant" :ts 0
+             :item (:type "assistant" :text "a row with something to say")))
+
+(def-test a-walks-two-contexts-do-not-evict-each-other (:suite leticl)
+  "**The memo holds a frame per render CONTEXT, and that is the difference between the walk working
+and not.** `%history-until` asks `item-lines` twice per item — itself with the head's prefs, and
+`%row-invisible-p` with NIL — so ONE slot was thrown away by every second ask and no call ever hit:
+MEASURED 44-296 `%item-lines-render` calls per cold frame, growing every frame, against 1-2 after
+this fix. A single-frame memo is indistinguishable from a working one by the screen, which is why
+this is asserted by count."
+  (let* ((h (%on-head :cols 60 :rows 20))
+         (counter (%counting-calls-to 'leticl::%item-lines-render)))
+    (unwind-protect
+         (progn
+           ;; **TWO ROWS, AND THE FIRST IS THE ONE ASKED ABOUT.** `%item-live-p` puts the tick in the
+           ;; signature of the NEWEST row (the one the counts ride on), so a single-row fixture would
+           ;; make this test fail once every hundred runs — on a clock boundary, not on a defect.
+           (%a-memo-session h (list (%a-prose "m1") (%a-prose "m2")))
+           (setf leticl::*item-lines-frames* nil)
+           (let ((item (aref (session-items (head-session h)) 0)))
+             (leticl::item-lines item 60 (head-prefs h))
+             (leticl::item-lines item 60 nil)
+             (is (= 2 (car counter))
+                 "two contexts are two renders — neither ask can be answered from the other's lines")
+             ;; **THE ASSERTION THE BUG FAILS.** One slot evicted on the second call, so the third
+             ;; and fourth asks rendered again: four renders for two contexts.
+             (leticl::item-lines item 60 (head-prefs h))
+             (leticl::item-lines item 60 nil)
+             (is (= 2 (car counter))
+                 (format nil "**both contexts still hold their lines** — four asks across two
+ contexts rendered ~d rows, and a single frame made that four: two frames a second re-rendering
+ every row of a 2600-row session to redraw one live duration" (car counter)))))
+      (%stop-counting 'leticl::%item-lines-render counter))))
+
+(def-test a-fulfilled-memo-does-not-grow-without-bound (:suite leticl)
+  "The context list is BOUNDED, or a head that draws in twenty `prefs` lists holds twenty tables.
+
+The bound is not the point — the eviction is: the context in use must survive the contexts it is
+asked about beside, and four is more than the three this tree asks in."
+  (let ((leticl::*item-lines-frames* nil)
+        (h (%on-head :cols 60 :rows 20)))
+    (%a-memo-session h (list (%a-prose "m1")))
+    (let ((item (aref (session-items (head-session h)) 0)))
+      (loop for cols from 20 to 40
+            do (leticl::item-lines item cols (head-prefs h)))
+      (is (<= (length leticl::*item-lines-frames*) leticl::+item-lines-contexts+)
+          (format nil "**the contexts are bounded at ~d**, however many widths a live push draws\n at: ~d held" leticl::+item-lines-contexts+
+                  (length leticl::*item-lines-frames*)))
+      (is (>= (length leticl::*item-lines-frames*) 2) "and more than one, which is the fix"))))
+
+(def-test the-newest-pageable-row-is-asked-once-a-frame (:suite leticl)
+  "**A row's seam asks this question, so a frame asked it once per folded row — and the answer is a
+property of the session.** MEASURED at 2038 items: 43-60 asks in a single cold frame, and where no
+row in the session was pageable each ask walked the WHOLE transcript: 47 ms a frame, 94% of it in an
+`sb-sprof` flat profile, for an answer that had not moved.
+
+And the key is the ITEMS VECTOR AND THE GENERATION, not the vector alone: a row becomes pageable
+when its BODY arrives, and `fill-item` bumps the generation without replacing the vector."
+  (let* ((h (%on-head :cols 60 :rows 20))
+         (counter (%counting-calls-to 'leticl::%row-openable-rows)))
+    (unwind-protect
+         (progn
+           ;; newest = the SHORT row, so the walk has to reach past it for the long one
+           (%a-memo-session
+            h (list (%a-tool-row "p1" (format nil "one~%two~%three"))
+                    (%a-tool-row "p2" "one line only")))
+           (is (string= "p1" (leticl::newest-payload-item-id (head-session h)))
+               "the newest row WITH something to page")
+           (let ((asks (car counter)))
+             (dotimes (i 20) (leticl::newest-payload-item-id (head-session h)))
+             (is (= asks (car counter))
+                 (format nil "**twenty asks in one frame are ONE walk** — a frame makes one per\n folded row it draws, and at 2038 items that was 43-60 walks of a transcript that had not changed:\n ~d asks cost ~d walks" 20 (- (car counter) asks))))
+           ;; a BODY arriving is a new answer
+           (leticl::fill-item (head-session h) "p2" (list :type "tool_result" :call-id "p2" :name "bash"
+                                                   :outcome (list :outcome "ok")
+                                                   :payload (format nil "a~%b~%c")))
+           (is (string= "p2" (leticl::newest-payload-item-id (head-session h)))
+               "**a filled body is seen** — the newest row is pageable now, and a memo keyed on\n the vector alone would still be answering `p1`"))
+      (%stop-counting 'leticl::%row-openable-rows counter))))
+
+(def-test a-payload-is-split-once (:suite leticl)
+  "**Splitting, sanitising and filtering a payload is pure, and it was done two or three times a
+frame per row.** Once to draw the row, and once per `newest-payload-item-id` scan for the seam.
+MEASURED at 300 payload lines (about 90 KB): 1.45 ms an ask, dozens of asks a frame, 168 ms for a
+single frame at 2038 items."
+  (let ((counter (%counting-calls-to 'leticl::%payload-rows-of)))
+    (unwind-protect
+         (let* ((payload (format nil "one~%two~%three"))
+                (body (list :type "tool_result" :payload payload)))
+           (setf leticl::*payload-rows* nil)
+           (let ((first (leticl::%tool-payload-rows body))
+                 (again (leticl::%tool-payload-rows body)))
+             (is (eq first again) "the same body is the same rows — one list, handed out")
+             (is (= 1 (car counter))
+                 (format nil "**one split for two asks** — ~d splits for a payload the frame asks\n about more than once" (car counter)))
+             (is (= 3 (length first)) "and it is the payload's own rows, not a placeholder")
+             ;; a COPY is a different key: the memo is identity-keyed, so it may split again — and
+             ;; it must still answer the same rows
+             (is (equal first (leticl::%tool-payload-rows
+                               (list :type "tool_result" :payload (copy-seq payload))))
+                 "a payload that is a different object with the same bytes answers the same rows")
+             ;; and the empty/absent payload does not enter the table at all
+             (is (null (leticl::%tool-payload-rows (list :type "tool_result")))
+                 "a body with no payload draws no rows")))
+      (%stop-counting 'leticl::%payload-rows-of counter))))
+

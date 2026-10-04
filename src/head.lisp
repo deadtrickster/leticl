@@ -1843,6 +1843,17 @@ latency**, and it was 30 ms until the operator said scrolling *\"feels sluggish,
     0.001 ms**, i.e. below the timer's resolution — free;
   · the old `(sleep 0.03)`: **30 ms**, about 430 times the cost of the work it guarded.
 
+**RE-MEASURED 2026-10-04, AND THE FIRST AND SECOND NUMBERS WERE BOTH TOO KIND — the THIRD is what
+stands.** On a running head with a real terminal and a real daemon (pid 2536078, 257 items): 5158
+passes in 10 s at 30 ms of CPU, which is **about 6 us a pass** — 516 passes/s, ~0.3% of a core — and
+a frame is **2.1-2.6 ms** at 214x60 with anything live on it (the 0.07 ms reading was an 87-item
+transcript and nothing moving; `render.lisp`'s header carries the correction). So a pass is not free
+and a frame is not the resolution of a timer. **The number below is still right, and by the same
+argument at a smaller multiple:** 30 ms was ~5,000x the work it guarded, and 2 ms is ~330x, so the
+wait is still the largest thing in the loop and the thing to shrink. What the correction costs is the
+claim that a pass is free — a pass is cheap, and 500 of them a second is the price of the wake-up
+rate, not of the work.
+
 **WHY THE OLD NUMBER WAS SO BAD, and it is the second half of the diagnosis.** A paint CLEARS
 `head-dirty`, so the pass after a paint had nothing to do and slept again. That made the loop's
 event ceiling **one wheel event per 30 ms — 33 a second** — however fast input arrived. A trackpad
@@ -1856,11 +1867,12 @@ Two symptoms, one number.
 
 **POLLING IS THE RIGHT SHAPE HERE, and the measurement is why that is not a contradiction.** The
 usual objection to a polling loop is that it spends CPU discovering there is nothing to do; at 500
-wakeups/s of sub-microsecond work that is under 0.1% of a core, and the syscall overhead dominates
-the pass itself. An event-driven loop would have to wait on the KEYS mailbox, which cannot wake it
-for a daemon FRAME — so it would trade an *input* latency of 2 ms for a *frame* latency of whatever
-that wait was, and a frame latency is a streaming reply's responsiveness. Polling both queues at a
-rate above any input device's is simpler and strictly better while a pass is free.
+wakeups/s of ~6 us of work that is about 0.3% of a core, and the sleep's own syscall is most of the
+rest. An event-driven loop would have to wait on the KEYS mailbox, which cannot wake it for a daemon
+FRAME — so it would trade an *input* latency of 2 ms for a *frame* latency of whatever that wait was,
+and a frame latency is a streaming reply's responsiveness. Polling both queues at a rate above any
+input device's is simpler and strictly better while a pass costs microseconds; **the in-turn CPU the
+operator reported was never this loop** — see PERF.md.
 
 **A `defparameter` and not a `defconstant`**, for the reason every tunable in this tree is: the file
 pusher skips constants, so a `defconstant` could not be recompiled to a new value on a live image.
@@ -2109,13 +2121,13 @@ to be the bytes it was given."
              ;; `*now-ms*` and never asked for is a number drawn once (R13 — see
              ;; `live-frame-p`). An idle head has neither, so it waits.
              ;;
-             ;; **AND THE WAIT IS SHORT BECAUSE A PASS IS FREE, MEASURED.** This was
+             ;; **AND THE WAIT IS SHORT BECAUSE A PASS IS CHEAP — 6 us, MEASURED.** This was
              ;; `(sleep 0.03)`, and that single number was the whole of the head's input
-             ;; latency — see `*idle-poll-ms*` for the three measurements. The short
-             ;; version: a pass costs under a microsecond and a full frame 0.07 ms, so a
-             ;; 30 ms sleep was ~430x the cost of the work it guarded, and because a paint
-             ;; CLEARS `head-dirty` the next pass slept again — capping the head at one
-             ;; wheel event per 30 ms whatever rate the trackpad sent at.
+             ;; latency — see `*idle-poll-ms*` for the three measurements, re-taken 2026-10-04.
+             ;; The short version: a pass costs ~6 us and a full frame 2.1-2.6 ms at 214x60, so a
+             ;; 30 ms sleep was ~5,000x the cost of the work it guarded and the 2 ms one is ~330x;
+             ;; and because a paint CLEARS `head-dirty` the next pass slept again — capping the head
+             ;; at one wheel event per 30 ms whatever rate the trackpad sent at.
              (if (paint-wanted-p head)
                  (%render-and-paint head)
                  ;; **AND THE SLEEP IS TAKEN WHENEVER NOTHING WANTS A FRAME — including while the

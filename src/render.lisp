@@ -9,12 +9,21 @@
 ;;;; Everything here is a plain function so a model can redefine any layer of
 ;;;; it live (PLAN.md §1).
 ;;;;
-;;;; Optimisation policy (measured, 2026-09-20): the per-word loop in
-;;;; `wrap-segments` and its helpers are typed; `%render`, `%viewport-lines` and
-;;;; `%place-lines` run ONCE a frame over a few dozen lines and are left at the
-;;;; default policy on purpose — under (speed 3) they raise notes about generic
-;;;; arithmetic on per-frame scalars (`head-scroll`, list lengths), and the whole
-;;;; of `%render` outside the leaves measures under 0.1 ms a frame.
+;;;; Optimisation policy (measured, 2026-09-20; the FRAME's own cost re-measured
+;;;; 2026-10-04): the per-word loop in `wrap-segments` and its helpers are typed;
+;;;; `%render`, `%viewport-lines` and `%place-lines` run ONCE a frame over a few
+;;;; dozen lines and are left at the default policy on purpose — under (speed 3)
+;;;; they raise notes about generic arithmetic on per-frame scalars
+;;;; (`head-scroll`, list lengths).
+;;;;
+;;;; **THE 0.07 ms FRAME THIS POLICY USED TO QUOTE WAS WRONG, and the correction is
+;;;; worth more than the number.** MEASURED on a 214x60 frame: 2.1-2.6 ms warm and
+;;;; cold alike, on sessions of 200-4000 rows and payloads from 2 to 300 lines —
+;;;; and 0.1 ms for the same frame with nothing live and small rows on it. So
+;;;; `%render` is not a constant at all: it is a function of WHAT IS ON THE SCREEN,
+;;;; and the old reading was taken on a 63x210 head with an 87-item transcript —
+;;;; the one session a head never spends a turn in. Two digits out, on the file whose
+;;;; job is to say where a frame goes; see PERF.md.
 
 (in-package #:leticl)
 
@@ -487,11 +496,11 @@ when the viewport is full, so the cost is the window and not the session."
        ;; the live row being drawn either: a count that moves a few times a minute costs a handful of
        ;; misses, and the tree has a test that the counts are LIVE from the first delta. The gate
        ;; belongs to the case that rebuilds ten times a second, not to the one that does not. Moving the tick to
-       ;; the clock for this case was tried and reverted: the tick own docstring measures the cliff
-       ;; it creates -- a HIT is 0.2 ms, a MISS is 11-13 ms -- and ten of those a second for the whole
-       ;; of a long think is visibly an animation in the composer. A LINE COUNT changes only when a
-       ;; screen line wraps, which is a handful of times a minute rather than ten times a second, so
-       ;; the count stays live for a fraction of that cost. Keying on counts was recorded as wrong
+       ;; the clock for this case was tried and reverted, and the reason SURVIVES the item memo that
+       ;; made a history-cache miss cheap (0.90 ms against a hit's 0.93 at 2038 items): a clock here
+       ;; asks for ten frames a second through a whole long think to redraw the same NUMBER, while a
+       ;; LINE COUNT moves only when a screen line wraps -- a handful of times a minute. Fewer frames
+       ;; is the point, not cheaper ones. Keying on counts was recorded as wrong
        ;; one screen up, and it was: for the CALL case, where the row draws a duration. It is exactly
        ;; right for this one, where the row draws a number.
        (let ((r (getf turn :reasoning)))
@@ -520,10 +529,17 @@ place leaves the vector and its count identical, and that case is the generation
 all** — see `%hist-live-tick`, which is NIL whenever nothing is running and so costs the
 ordinary frame nothing.
 
-**THE TICK IS A MEASURED 50x CLIFF, AND IT HAS TO STAY UNTIL THE CACHE SPLITS.** At the operator's
-2075-item session: a cache HIT is 0.2 ms per render and a MISS is 11-13 ms, walking ~2017 lines — and
-while a call runs the tick changes ten times a second, so EVERY frame is a miss. That is the remaining
-sluggishness.
+**THE TICK IS STILL THE FOURTH INPUT, AND WHAT IT COSTS HAS CHANGED.** Once the item memo actually
+held (`*item-lines-frames*`, `cards.lisp`), the clock in this key stopped being a cliff: MEASURED on
+a 2038-item session at 214x60, `%history-until` is now **0.93 ms on a hit and 0.90 ms on a miss** —
+the walk re-asks `item-lines` for about fifty rows and every one of them is answered from the memo,
+so the miss IS the hit. This docstring used to record the opposite — a hit at 0.2 ms against a miss
+of 11-13 ms, ~2017 lines walked, *every frame a miss* — and to prescribe the SPLIT as the cure. The
+memo was the cure; the split is no longer what stands between this head and its frames.
+
+**THE TICK ITSELF STAYS**, for the reason below: a committed row draws a live duration, and a key that
+does not move with the clock freezes it at whatever tenth it was built on. What changed is only what
+a moved key costs.
 
 I tried keying on the in-flight COUNTS instead of the clock — which is what the marker's own text is
 made of (`[2 tool calls, 43 thinking lines]`), so it looked like the honest key — and it is WRONG, for
