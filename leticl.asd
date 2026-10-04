@@ -32,7 +32,14 @@ through an eval socket and see the change on the next frame."
                ;; data lives in sqlite, and `store` is the only file that touches the C library
                (:file "src/store")
                (:file "src/socket")
-               (:file "src/session")
+                              (:file "src/session/state")
+               (:file "src/session/events")
+               (:file "src/session/own-rows")
+               (:file "src/session/warnings")
+               (:file "src/session/compaction")
+               (:file "src/session/carry")
+               (:file "src/session/fetch")
+               (:file "src/session/seq-gap")
                ;; The ENGINES come before the things that call them: markdown
                ;; styles a fence with `highlight-lines`, and a card diffs an edit
                ;; with `render-diff`. Order here is compile order, so a caller
@@ -41,14 +48,24 @@ through an eval socket and see the change on the next frame."
                (:file "src/diff")
                ;; the two-panel view; it diffs the excerpts with the engine above
                (:file "src/sidediff")
-               (:file "src/markdown")
+                              (:file "src/markdown/roles")
+               (:file "src/markdown/inline")
+               (:file "src/markdown/fences")
+               (:file "src/markdown/lexer")
+               (:file "src/markdown/rendering")
                (:file "src/keys")
                ;; `head` defines the head STRUCT and the loop. It comes before
                ;; everything that reaches through it, so accessors resolve at
                ;; compile time; the few functions it calls forward
                ;; (%render-and-paint, %handle-key, make-composer) are runtime
                ;; calls and warn rather than fail.
-               (:file "src/head")
+                              (:file "src/head/io")
+               (:file "src/head/frames")
+               (:file "src/head/fetch-row")
+               (:file "src/head/loop")
+               (:file "src/head/stop")
+               (:file "src/head/op-call")
+               (:file "src/head/lifecycle")
                (:file "src/commands")
                (:file "src/cards/protocol")
                ;; **THE CARDS, ONE FILE PER CARD** — plus the machinery they share. This was one
@@ -80,7 +97,17 @@ through an eval socket and see the change on the next frame."
                (:file "src/cards/tool-result-card")
                (:file "src/cards/item-lines")
                (:file "src/cards/turn")
-               (:file "src/chrome")
+                              (:file "src/chrome/counters")
+               (:file "src/chrome/border")
+               (:file "src/chrome/git")
+               (:file "src/chrome/alarm")
+               (:file "src/chrome/status")
+               (:file "src/chrome/hint")
+               (:file "src/chrome/composer")
+               (:file "src/chrome/notice")
+               (:file "src/chrome/frame")
+               (:file "src/chrome/attach")
+               (:file "src/chrome/carry")
                ;; **THE DASHBOARD VOCABULARY** (serenedash's philosophy, composed at runtime):
                ;; values, series, panels and the keys. After `chrome` because it reads the
                ;; loop's clock (`*now-ms*`) — a series stamped with a monotonic reading would
@@ -131,7 +158,17 @@ through an eval socket and see the change on the next frame."
                (:file "src/render/wrapping")
                (:file "src/render/rendering")
                (:file "src/render/history-cache")
-               (:file "src/editor")
+                              (:file "src/editor/s4")
+               (:file "src/editor/answer")
+               (:file "src/editor/submit")
+               (:file "src/editor/completion")
+               (:file "src/editor/chords")
+               (:file "src/editor/click-actions")
+               (:file "src/editor/pane-keys")
+               (:file "src/editor/overlay-keys")
+               (:file "src/editor/dispatch")
+               (:file "src/editor/motion")
+               (:file "src/editor/click")
                (:file "src/hack")
                ;; **THE EVAL SURFACE ON THE GLASS** (the `/lisp` pane): after `hack`, whose
                ;; `hack-eval-form` it shares so the socket and the pane cannot drift about what an
