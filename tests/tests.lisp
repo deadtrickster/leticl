@@ -9737,15 +9737,17 @@ because it depended on how far the compiler had got.")
     (values outcome payload)))
 
 (defun %src-text (name)
-  "The text of one file under `src/`, found the way `%lisp-source-files` finds them.
+  "The text of one file under `src/` — or of one src MODULE, which is what `render`
+and `cards` are now.
 
-`%repo-file` merges a relative path onto `*load-truename*` and then falls back to a
-hard-coded repo root; this asks the directory walk instead, so a test that greps a source
-names the file by its own name and does not care where the image was loaded from."
-  (let* ((pair (find-if (lambda (p) (search (format nil "src/~a" name) (namestring (car p))))
-                        (%lisp-source-files)))
-         (path (and pair (car pair))))
-    (and path (probe-file path) (uiop:read-file-string path))))
+**`source-of` does exactly this**, so this is that function with the extension
+allowed: a caller written before the modules existed says `\"render.lisp\"` and means
+the file that was there. The extension is stripped rather than special-cased, so the
+caller does not have to know whether its subject is a file or a directory."
+  (source-of (if (and (> (length name) 5)
+                      (string= ".lisp" name :start2 (- (length name) 5)))
+                 (subseq name 0 (- (length name) 5))
+                 name)))
 
 (def-test the-chord-opens-a-composer-for-the-arguments (:suite leticl)
   "**The chord, and the field it opens.** R24 part two is a chord and a composer, not a
@@ -15392,7 +15394,7 @@ running, AND this must be the live edge — the newest run, or the row live work
                             (>= (length x) 7))
                    (push (seventh x) colour-args))
                  (mapc #'scan x))))
-      (with-open-file (s "src/render.lisp")
+      (with-input-from-string (s (or (%src-text "render.lisp") ""))   ; the MODULE, not one file
         (loop for f = (read s nil :eof) until (eq f :eof) do (scan f))))
     (setf colour-args (nreverse colour-args))
     (is (>= (length colour-args) 3) "the marker's call sites are found at all: ~s" colour-args)

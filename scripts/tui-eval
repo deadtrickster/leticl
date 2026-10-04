@@ -411,10 +411,12 @@ def asd_files(root):
 # operator's head, at a different file each time — cells.lisp once, json.lisp
 # the next, a signature of timing rather than of a bad file.
 #
-# So these two are pushed ahead of the rest, in this order: `render` defines the
-# lock and the guarded paint, `hack` makes an eval hold it. After them the rest
-# of the tree is safe to push in the order it was built.
-SAFETY_FIRST = ("src/render.lisp", "src/hack.lisp")
+# So these are pushed ahead of the rest, in this order: `render` (the lock is in
+# `history-cache.lisp`, which is why it leads) defines the lock and the guarded paint,
+# `hack` makes an eval hold it. After them the rest of the tree is safe to push in the
+# order it was built.
+SAFETY_FIRST = ("src/render/history-cache.lisp", "src/render/wrapping.lisp",
+                "src/render/rendering.lisp", "src/hack.lisp")
 
 
 def asd_files_safely_first(root):

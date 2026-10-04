@@ -125,8 +125,12 @@ through an eval socket and see the change on the next frame."
                 (:file "src/pane-protocol")
                ;; `render` is the frame engine: it composes the screen out of
                ;; the cards, chrome and panes above, and owns the segment and
-               ;; viewport machinery.
-               (:file "src/render")
+               ;; viewport machinery. Three files now: `wrapping` how a row is wrapped
+               ;; to the columns it has, `rendering` the frame itself, `history-cache`
+               ;; the line cache and the paint lock.
+               (:file "src/render/wrapping")
+               (:file "src/render/rendering")
+               (:file "src/render/history-cache")
                (:file "src/editor")
                (:file "src/hack")
                ;; **THE EVAL SURFACE ON THE GLASS** (the `/lisp` pane): after `hack`, whose
