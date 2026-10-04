@@ -1,11 +1,14 @@
 # Wire and session state — leticl against letibot
 
+**The `src/…` citations below were RE-POINTED when this tree was cut into directories**,
+by `scripts/repoint-citations` — which reads the cited line from the pre-split tree
+(`git show b72df84:src/<file>.lisp`), finds that text under `src/<file>/`, and rewrites
+the citation to the file and line it is NOW. It is measured, not guessed: a text that
+matches two places is left alone, a range divided by a cut is written as BOTH ends, and
+what could not be found is left as the record it was. 3 citations re-pointed. The tool re-points the LINE a
+citation names; whether the row's own prose describes that line is this document's
+question, measured against the reference pin above.
 
-**The `src/…` citations below name the PRE-SPLIT paths** — `src/session.lisp`,
-`src/editor.lisp`, `src/panes.lisp` — because that is what was read when the row was
-measured. The tree has since been cut into directories (`PLAN.md` §6 maps every one), and
-re-measuring these citations is a pass of its own, on the same terms as the repin: a
-citation is a record of what was read, never a claim about where it is now.
 **Reference** `/home/dead/Projects/letibot/letibot` at `8af671e3467ce0a139ba25d99a18378ba39c910b`
 (verified with `git -C … rev-parse HEAD`). **The pin is now `149edf91b9740ac7775a0a875abfcd562c8fd3e6`
 (2026-10-04), and of the 201 `file.rs:NNN` citations below 3 are still exact against it —
@@ -163,7 +166,7 @@ where it changes what the ack reports.
 
 | reference | citation | leticl | citation | verdict |
 |---|---|---|---|---|
-| `Filling{what,unit,done,total}` | `event.rs:964-974`, published at `harness.rs:2768` | `note-filling` — the four fields folded and the line drawn from them, the daemon's words verbatim | `src/session.lisp:546-566`, `src/chrome.lisp:1195-1215` | **SAME**, and this is R9's second half: the head draws the daemon's `what` and `unit` rather than naming an operation it inferred, and the count is the daemon's rather than a rendering of it. Added at protocol 23 (letibot `4d01aca`), which **replaced** `ImportProgress` — the same event under a narrower name, so the head's fold carried a compatibility arm for one commit and deleted it when the rename landed |
+| `Filling{what,unit,done,total}` | `event.rs:964-974`, published at `harness.rs:2768` | `note-filling` — the four fields folded and the line drawn from them, the daemon's words verbatim | `src/session/events.lisp:12-32`, `src/chrome/alarm.lisp:91-111` | **SAME**, and this is R9's second half: the head draws the daemon's `what` and `unit` rather than naming an operation it inferred, and the count is the daemon's rather than a rendering of it. Added at protocol 23 (letibot `4d01aca`), which **replaced** `ImportProgress` — the same event under a narrower name, so the head's fold carried a compatibility arm for one commit and deleted it when the rename landed |
 | `TurnStarted{turn_id,model,ledger_head}` | `event.rs:396` | new turn plist; `*turn-started-ms*` set | `session.lisp:178-194` | DIFFERS — `(getf env :snapshot)` at `session.lisp:183` tests a key an `Envelope` never carries (`event.rs:983-990`), so the guard is always true and the clock is always set. And `ingest-snapshot` never *clears* `*turn-started-ms*`, so a switch or resync leaves the previous session's start time running. The reference stores `started_ms` per `TurnPane` (`app.rs:2251`) and drops the pane on a session change (`app.rs:1914`) |
 | `PromptProgress{turn_id,…}` | `event.rs:403` | sets `turn.progress` | `session.lisp:218-224` | DIFFERS — no `turn_id` check. The reference and the view both require the id to match (`app.rs:2265`, `view.rs:404-410`) |
 | `TokensGenerated{turn_id,tokens}` | `event.rs:415` | `setf turn.tokens` | `session.lisp:195-202` | DIFFERS — no `turn_id` check and no `max`. `probe:` two frames `50` then `10` leave `tokens = 10`; the reference and the view both use `max` so a reordered or duplicated frame cannot move it backwards (`app.rs:2281`, `view.rs:419`) |
@@ -225,7 +228,7 @@ where it changes what the ack reports.
 | `resumed_from` | `session.lisp:104-108` | SAME |
 | `scrubbed` | `session.lisp:89`, `%scrub-total` | SAME — `ScrubReport` is five `u64` counts and nothing else (`scrub.rs:134-150`), so summing every integer in the plist equals `total()` (`scrub.rs:153-159`) |
 | `wiring` | `session.lisp:93` | SAME — all four of `SessionWiring` (`registry.rs:255-260`) kept raw |
-| `sessions` | `session.lisp:92`, title lookup at 100-103 | DIFFERS — kept unfiltered. The reference drops rows with a `parent_session_id` before storing, twice (`app.rs:1668-1671`, `1732-1735`), because subagents are not sessions a picker lists. **`context_tokens`/`context_cached` are READ now** (`src/chrome.lisp:216-253`, R8): the header's `ctx` comes from the session's own row when the head has no turn of its own — a restart, a reattach, a resume. That closes the second half of this row; the missing `parent_session_id` filter is still open |
+| `sessions` | `session.lisp:92`, title lookup at 100-103 | DIFFERS — kept unfiltered. The reference drops rows with a `parent_session_id` before storing, twice (`app.rs:1668-1671`, `1732-1735`), because subagents are not sessions a picker lists. **`context_tokens`/`context_cached` are READ now** (`src/chrome/counters.lisp:216-253`, R8): the header's `ctx` comes from the session's own row when the head has no turn of its own — a restart, a reattach, a resume. That closes the second half of this row; the missing `parent_session_id` filter is still open |
 
 **What `ingest-snapshot` does not do that `load` does:** clear the session-scoped
 state that is not in the snapshot. `app.rs:1902-1934` clears call tables, usage,

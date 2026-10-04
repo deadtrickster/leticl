@@ -1,11 +1,16 @@
 # keys.md — the operator's input
 
+**The `src/…` citations below were RE-POINTED when this tree was cut into directories**,
+by `scripts/repoint-citations` — which reads the cited line from the pre-split tree
+(`git show b72df84:src/<file>.lisp`), finds that text under `src/<file>/`, and rewrites
+the citation to the file and line it is NOW. It is measured, not guessed: a text that
+matches two places is left alone, a range divided by a cut is written as BOTH ends, and
+what could not be found is left as the record it was. **This document cites no
+`src/…:NNN` lines** — its `src/` mentions are paths, and those are the directories now.
+The tool re-points the LINE a
+citation names; whether the row's own prose describes that line is this document's
+question, measured against the reference pin above.
 
-**The `src/…` citations below name the PRE-SPLIT paths** — `src/session.lisp`,
-`src/editor.lisp`, `src/panes.lisp` — because that is what was read when the row was
-measured. The tree has since been cut into directories (`PLAN.md` §6 maps every one), and
-re-measuring these citations is a pass of its own, on the same terms as the repin: a
-citation is a record of what was read, never a claim about where it is now.
 **Reference: letibot `8af671e`.** Subject: leticl at `dc62ddf` (2026-09-20 22:19; the
 pass finished at `7c2c6fc`, 23:37). Every row below cites a file and a line on both
 sides — **measured at that pin, which has since moved to `149edf9` (2026-10-04): of the
@@ -15,7 +20,7 @@ section of TODO.md for what the move was).** Nothing here was run: the reference
 was read at `crates/tui/src/term.rs` (the decoder), `crates/tui/src/app.rs`
 (`enum Key`, `App::key`, `command`, `SLASH_COMMANDS`) and
 `crates/ui/src/editor.rs` (the composer); leticl at `src/keys.lisp`,
-`src/editor.lisp`, `src/commands.lisp` and the picker arms in `src/panes.lisp`.
+`src/editor/`, `src/commands/` and the picker arms in `src/panes/`.
 
 **A SNAPSHOT, NOT THE TREE — and on 2026-09-22 that cost a day's work.** Twenty-three
 minutes after this pass closed, `b7a2620` landed (**Enter on a jobs row opens the
@@ -257,7 +262,7 @@ Char fall through and gates only Enter on an empty line.
 **Why it matters.** The session picker's own hint bar says *"type a number to
 switch · /new [title]"* (chrome.lisp:363) and neither works. A pane open means a
 head you cannot talk to — the operator has to Esc out, type, and lose the list.
-**Reference:** app.rs:3370-3394, 3508-3548, 3963-3975. **Change:** `src/editor.lisp`
+**Reference:** app.rs:3370-3394, 3508-3548, 3963-3975. **Change:** `src/editor/`
 (the pane arm) — pass unclaimed keys down to `%normal-key`, and gate the pane's
 Enter on an empty composer as the reference does.
 
@@ -269,7 +274,7 @@ operator's own words attached: a permission arrives while you are typing, and th
 only way into the menu is to empty the composer first. Also: a submitted line that
 names no option should answer the **marked row** and hold the words
 (app.rs:3983-4000) — leticl answers nothing (editor.lisp:109-113).
-**Reference:** app.rs:3447-3498. **Change:** `src/editor.lisp`.
+**Reference:** app.rs:3447-3498. **Change:** `src/editor/`.
 
 ### G10 — `ctrl-c` means the wrong thing three ways · **S**
 **What.** It does not clear a non-empty composer, it opens the quit card on the
@@ -279,7 +284,7 @@ tap counter at all (editor.lisp:422-434).
 currently offers to quit; `/help` and the hint bar both promise the reference's
 behaviour (panes.lisp:164, chrome.lisp:358).
 **Reference:** editor.rs:466-484, `QUIT_WINDOW_MS` editor.rs:213. **Change:**
-`src/editor.lisp`, plus a `*ctrlc-at*` beside `*esc-at*` in `src/chrome.lisp`.
+`src/editor/`, plus a `*ctrlc-at*` beside `*esc-at*` in `src/chrome/`.
 
 ### G11 — `ctrl-c` does not close a pane, a picker or the secret card · **S**
 **What.** The pane arm (editor.lisp:241-325), `pick-key-event` (panes.lisp:1275-1302)
@@ -287,15 +292,15 @@ and the secret arm (editor.lisp:149-168) have no `:ctrl` case, so `ctrl-c` falls
 through and opens the quit card instead.
 **Why it matters.** With a password prompt up there is **no way to refuse it** —
 Esc works (editor.lisp:163) but Ctrl+C, the key a person reaches for, does not.
-**Reference:** app.rs:3003-3011, 3273, 3306, 3321, 3379. **Change:** `src/editor.lisp`,
-`src/panes.lisp`.
+**Reference:** app.rs:3003-3011, 3273, 3306, 3321, 3379. **Change:** `src/editor/`,
+`src/panes/`.
 
 ### G14 — the pane chords open but never close · **S**
 **What.** `ctrl-s/p/g/q`, `/help`, `/status`, `/config`, `/jobs` all open; pressing
 the same chord again does nothing, because the pane arm never sees a `:ctrl` key.
 **Why it matters.** Every one of these is a toggle in the reference and reads as a
 toggle. Closing by Esc only is a second thing to remember per pane.
-**Reference:** app.rs:3071-3137, 4503-4566. **Change:** `src/editor.lisp` (let the
+**Reference:** app.rs:3071-3137, 4503-4566. **Change:** `src/editor/` (let the
 global chords run ahead of the pane arm — which also closes **G18**).
 
 ### G18 — the global chords are unreachable under a pane · **S**
@@ -304,7 +309,7 @@ any view (app.rs:3017-3245). leticl runs them last, inside `%normal-key`, so a
 pane swallows them (editor.lisp:232-325).
 **Why it matters.** `ctrl-l` cannot repaint a torn screen while a pane is up, and
 `ctrl-o` cannot background a command while you are reading the jobs list.
-**Change:** `src/editor.lisp` — hoist the `:ctrl` global arm above the pane cond.
+**Change:** `src/editor/` — hoist the `:ctrl` global arm above the pane cond.
 Fixes G14 in the same move.
 
 ### G3 — paste markers are not unique and the ledger is immortal · **S**
@@ -316,7 +321,7 @@ is never cleared (editor.lisp:580-586).
 large text faithfully. Two stack traces pasted into one prompt become the same
 stack trace twice.
 **Reference:** editor.rs:564-566 (`#N`), 475 and 596 (cleared). **Change:**
-`src/editor.lisp` — number the markers, clear the ledger in `%submit-line`. Add the
+`src/editor/` — number the markers, clear the ledger in `%submit-line`. Add the
 byte threshold (`PASTE_BYTES` = 800, editor.rs:217) while there.
 
 ### G5 / G7 / G8 — the composer's motion and redo · **M**
@@ -330,7 +335,7 @@ multi-line prompt you cannot navigate is a prompt you retype. `/help` promises
 *"↑ ↓ move inside the prompt"* (panes.lisp:164).
 **Reference:** editor.rs:362-371, 382-389, 441-454, 500-516, 687-758; decode at
 term.rs:738-742, 773-780. **Change:** `src/keys.lisp` (read the CSI modifier
-parameter; map `alt+b/f/z` and `alt+backspace`), `src/editor.lisp`.
+parameter; map `alt+b/f/z` and `alt+backspace`), `src/editor/`.
 
 ### G19 — the peek pane's arrows and Enter do nothing · **S**
 **What.** `:peek` is in the generic pane list but `pane-row-count` returns 0 for it
@@ -339,7 +344,7 @@ parameter; map `alt+b/f/z` and `alt+backspace`), `src/editor.lisp`.
 (chrome.lisp:369).
 **Why it matters.** A hint bar that names two keys and means neither. PgUp/PgDn and
 the wheel do scroll it, so the feature is one arm away.
-**Reference:** app.rs:3255-3280. **Change:** `src/editor.lisp`.
+**Reference:** app.rs:3255-3280. **Change:** `src/editor/`.
 
 ### G20 — Enter on the jobs pane posts `/job ID` into the conversation · **M** · CLOSED in `b7a2620`
 **What.** `editor.lisp:848-854` opens the `:job-out` overlay and sends
@@ -358,8 +363,8 @@ the table above; that is G2's shape, not this row's.)*
 past its first screenful stays unreachable and the seam's `… +N lines` points at
 nothing.
 **Reference:** app.rs:3023-3046 (the fold opens the newest payload row) and
-3412-3445 (Esc closes, ↑/↓/PgUp/PgDn page by 10). **Change:** `src/editor.lisp`,
-`src/cards.lisp`.
+3412-3445 (Esc closes, ↑/↓/PgUp/PgDn page by 10). **Change:** `src/editor/`,
+`src/cards/`.
 
 ### G15 — Tab does not cycle and there is no completion row · **S**
 **What.** `%complete` inserts only on a unique prefix and otherwise writes the
@@ -367,8 +372,8 @@ candidates to the status line (editor.lisp:118-134); it has no whitespace guard,
 `/mode x` + Tab silently does nothing; and leticl draws no live completion row.
 **Why it matters.** `/help` says *"more tabs walk the matches"* (panes.lisp:164).
 **Reference:** app.rs:4292-4324 (cycle, `completion` triple, the `no /command
-starts with` message), 4342-4358 and 5078 (the row). **Change:** `src/editor.lisp`,
-`src/chrome.lisp` or `src/render.lisp`.
+starts with` message), 4342-4358 and 5078 (the row). **Change:** `src/editor/`,
+`src/chrome/` or `src/render/`.
 
 ### G9 — the esc-interrupt arming is never disarmed · **S**
 **What.** `*esc-at*` is set by Esc and cleared only by a second Esc
@@ -377,7 +382,7 @@ starts with` message), 4342-4358 and 5078 (the row). **Change:** `src/editor.lis
 **Why it matters.** Press Esc, type a paragraph, press Esc four seconds later — the
 turn is interrupted. And the hint bar shows *"esc again to interrupt"* the whole
 time (chrome.lisp:351-355).
-**Change:** `src/editor.lisp` — clear `*esc-at*` at the top of `%normal-key` for
+**Change:** `src/editor/` — clear `*esc-at*` at the top of `%normal-key` for
 every non-`:esc` type.
 
 ### G1 — a fast `esc esc` decodes as Alt+Esc and is eaten · **S**
@@ -393,7 +398,7 @@ the second byte to the next `read-key`.
 ### G12 — `ctrl-d` quits with text in the composer · **S**
 **What.** editor.lisp:435 sets `head-running` to nil unconditionally.
 **Reference:** editor.rs:485-491 — quit only on an empty composer.
-**Change:** `src/editor.lisp`.
+**Change:** `src/editor/`.
 
 ### G23 — `/reseat summarise` silently re-seats without summarising · **S**
 **What.** `%command` splits the verb, binds `rest` and then ignores it; the frame
@@ -401,13 +406,13 @@ carries no `summarise` (commands.lisp:145-148).
 **Why it matters.** The operator asks for the destructive variant by name and gets
 the other one, with no word either way. The reference says which one ran
 (app.rs:4596-4607).
-**Change:** `src/commands.lisp`, and the frame in `src/protocol.lisp` (see
+**Change:** `src/commands/`, and the frame in `src/protocol/` (see
 `wire.md`).
 
 ### G24 — `/s` and `/i` reach the daemon instead of the head · **S**
 **What.** commands.lisp has `quit|q`, `help|h|?`, `status|stats`, `think|r`,
 `verbosity|v` but not `sessions|s` or `interrupt|i`; the catch-all forwards them.
-**Reference:** app.rs:4443, 4567. **Change:** `src/commands.lisp` — two `member`
+**Reference:** app.rs:4443, 4567. **Change:** `src/commands/` — two `member`
 clauses. While there: the reference **names** an unknown verb
 (app.rs:4671) where leticl forwards everything, so `/hlep` becomes a daemon
 round-trip instead of a sentence.
@@ -418,14 +423,14 @@ also means kill-to-start; the reference puts it on `↑` with an empty composer 
 tail (app.rs:3851-3861).
 **Why it matters.** Two meanings on one chord, and the one key readline taught for
 "the previous entry" does not do it.
-**Change:** `src/editor.lisp`. Depends on G5 (vertical motion) landing first, so
+**Change:** `src/editor/`. Depends on G5 (vertical motion) landing first, so
 `↑` has a defined fall-through order.
 
 ### G22 — `o` does not switch into a subagent · **S**
 **What.** The subagent pane's `:char` arm reads only `q` (editor.lisp:323-324), and
 its Enter has no `opening` guard (editor.lisp:283-291) — the pane's own text says
 *"o switches into it"* in the reference (app.rs:6835).
-**Reference:** app.rs:3677-3706. **Change:** `src/editor.lisp`. Subsumed by G2.
+**Reference:** app.rs:3677-3706. **Change:** `src/editor/`. Subsumed by G2.
 
 ### G25 — history is uncapped, undeduplicated and does not stop on an edit · **S**
 **What.** editor.lisp:533-550. No cap, no consecutive-duplicate drop, no
@@ -433,20 +438,20 @@ its Enter has no `opening` guard (editor.lisp:283-291) — the pane's own text s
 pushed (editor.lisp:87 runs before the empty check at 94).
 **Why it matters.** The edit-stops rule is the one that prevents losing an edit to a
 keystroke; the rest is hygiene that shows up after an hour of use.
-**Reference:** editor.rs:519-548, 591-593, 606-610, 219. **Change:** `src/editor.lisp`.
+**Reference:** editor.rs:519-548, 591-593, 606-610, 219. **Change:** `src/editor/`.
 
 ### G16 — Tab on a non-todos pane clears `head-dirty` · **S**
 **What.** editor.lisp:263-270: `(when (not (eq mode :todos)) (setf (head-dirty head) nil))`.
 The comment above it says Tab "does what enter does" on every other pane; the code
 suppresses the next repaint instead.
-**Change:** `src/editor.lisp` — one line.
+**Change:** `src/editor/` — one line.
 
 ### G17 — no click on the mode/model picker card · **S**
 **What.** The click arm tests `head-mode` (editor.lisp:209-211) but the mode/model
 picker runs with `head-mode` = `:normal` and `*pick-open*` set (panes.lisp:1149-1158),
 so a click falls through to `%normal-key` and is dropped.
-**Reference:** app.rs:3639-3651. **Change:** `src/editor.lisp` or
-`pick-key-event` in `src/panes.lisp`.
+**Reference:** app.rs:3639-3651. **Change:** `src/editor/` or
+`pick-key-event` in `src/panes/`.
 
 ---
 

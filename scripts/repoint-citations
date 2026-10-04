@@ -1,0 +1,196 @@
+#!/usr/bin/env python3
+"""repoint-citations — where did that line of OUR tree go?
+
+    scripts/repoint-citations [--rev SHA] [--write] DOC ...
+
+The subject side of what `repin-check` does to the reference side. A parity document
+cites `src/<file>.lisp:NNN` for what THIS head does; the tree has since been cut into
+directories (`PLAN.md` §6), so those paths are dead — and a dead path is worse than a
+stale line, because the reader cannot even look.
+
+The answer is MEASURED, never guessed, and it works because every split was a set of
+CONSECUTIVE ranges of the file it came from: the cited text still exists somewhere, so
+find it.
+
+  repointed  the cited text is in exactly one place under the module, at line N —
+             the citation is rewritten to `src/<module>/<file>.lisp:N`
+  split      the text is in two files of the module, so the RANGE crossed a cut:
+             left alone and reported, because picking one of them is a judgement
+  ambig      the text matches more than one place — SKIPPED, not guessed, the same
+             rule `repin-check` keeps for a basename that matches two paths
+  gone       the text is not in the module at all (it was rewritten by hand, or the
+             citation was already stale when it was written)
+  file       the module is still one file; the citation is checked for EXACT (the same
+             text at the same line) and left alone either way — its staleness is the
+             document's own, and measurable with `--rev`
+
+`--rev` defaults to `b72df84` — **the tree as it stood when the cuts began** — and
+that is a measured choice, not the documents' own header claim of `dc62ddf`: several
+citations run PAST THE END of their file at `dc62ddf` (`src/chrome.lisp:1195`,
+`src/session.lisp:546`), so those rows were written after that revision. The
+pre-split tree is what every citation was last consistent with, which is exactly the
+state a question about a MOVE needs. Reading the cited lines from a revision rather
+than from the current tree is the whole trick: it is what the citation MEANT.
+"""
+import argparse
+import io
+import os
+import re
+import subprocess
+import sys
+
+CITE = re.compile(r"src/([A-Za-z0-9_/-]+)\.lisp:(\d+)(?:-(\d+))?")
+
+# A mention with NO line number: `src/editor.lisp` as prose. There is no text to search
+# for, so the honest rewrite is the DIRECTORY the module became — the reader gets a path
+# that exists, and the line question does not arise. The lookahead keeps this off the
+# citations the pass above already re-pointed (those are `src/x/y.lisp:NNN`).
+BARE = re.compile(r"src/([A-Za-z0-9_-]+)\.lisp(?![\w/:])")
+
+
+def git_show(rev, path, cache):
+    if (rev, path) not in cache:
+        try:
+            blob = subprocess.run(["git", "show", "%s:%s" % (rev, path)],
+                                  capture_output=True, text=True, check=True).stdout
+        except subprocess.CalledProcessError:
+            blob = None
+        cache[(rev, path)] = blob.split("\n") if blob is not None else None
+    return cache[(rev, path)]
+
+
+def module_files(root, module):
+    """Every file under `src/<module>/`, sorted — or NIL when it is not a directory."""
+    d = os.path.join(root, "src", module)
+    if not os.path.isdir(d):
+        return None
+    return sorted(os.path.join(d, f) for f in os.listdir(d) if f.endswith(".lisp"))
+
+
+def find_text(files, wanted, cache):
+    """Where WANTED (a list of stripped lines) sits, as (path, first-line) matches.
+
+    **Both ends are stripped, and the leading end is the one that matters.** The
+    citation was written against the file's old indentation and every split reindented
+    the code it moved (`indent-region`, and the new nesting of a method body), so a
+    match that kept leading spaces found almost nothing: MEASURED on the first run,
+    301 of 538 citations read as *gone* with `rstrip` alone and the same corpus reads
+    far better once the indentation stops being part of the text. What a citation
+    points at is the LINE, and a Lisp line's indentation is not its content.
+    """
+    hits = []
+    for p in files:
+        if p not in cache:
+            cache[p] = [l.strip() for l in io.open(p, encoding="utf-8").read().split("\n")]
+        lines = cache[p]
+        n = len(wanted)
+        for i in range(len(lines) - n + 1):
+            if lines[i:i + n] == wanted:
+                hits.append((p, i + 1))
+    return hits
+
+
+def rel_cite(root, hit):
+    """A hit as a citation: `src/<module>/<file>.lisp:<line>`."""
+    p, line = hit
+    return "src/%s:%d" % (os.path.relpath(p, os.path.join(root, "src")), line)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--rev", default="b72df84")
+    ap.add_argument("--write", action="store_true")
+    ap.add_argument("--report", action="store_true",
+                    help="print the citations that could not be repointed, with the "
+                         "line they cite — the queue for a reader, and how the residue "
+                         "was judged rather than assumed")
+    ap.add_argument("docs", nargs="+")
+    a = ap.parse_args()
+
+    root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+    blob_cache, file_cache = {}, {}
+    totals = {}
+    bare_totals = 0
+    for doc in a.docs:
+        text = io.open(doc, encoding="utf-8").read()
+        out, cursor, counts = [], 0, {}
+        for m in CITE.finditer(text):
+            module, a_line = m.group(1), int(m.group(2))
+            b_line = int(m.group(3)) if m.group(3) else a_line
+            files = module_files(root, module)
+            verdict, new = "file", m.group(0)
+            if files is not None:
+                old = git_show(a.rev, "src/%s.lisp" % module, blob_cache)
+                if old is None:
+                    verdict = "gone"
+                else:
+                    sub = module if "/" not in module else module.split("/")[0]
+                    wanted = [l.strip() for l in old[a_line - 1:min(b_line, len(old))]]
+                    while wanted and not wanted[-1]:
+                        wanted.pop()          # a trailing blank is not part of the quote
+                    hits = find_text(files, wanted, file_cache) if wanted else []
+                    if len(hits) == 1:
+                        p, first = hits[0]
+                        rel = os.path.relpath(p, os.path.join(root, "src"))
+                        new = "src/%s:%d" % (rel, first)
+                        if b_line > a_line:
+                            new += "-%d" % (first + len(wanted) - 1)
+                        verdict = "repointed"
+                    elif len(hits) > 1:
+                        spreads = {h[0] for h in hits}
+                        verdict = "split" if len(spreads) > 1 else "ambig"
+                    else:
+                        # **A RANGE THAT CROSSES A CUT MATCHES NOWHERE AS A WHOLE.**
+                        # Asking where its two ENDS live is what distinguishes that from
+                        # a citation whose text was rewritten: the ends landing in two
+                        # files is a range this tree's cuts divided, and the reader
+                        # wants both names — the first version called every one of
+                        # these *gone*, which is how a range divided by MY cuts came out
+                        # looking like the document's own staleness.
+                        s_hits = (find_text(files, [wanted[0]], file_cache)
+                                  if wanted and wanted[0] else [])
+                        e_hits = (find_text(files, [wanted[-1]], file_cache)
+                                  if len(wanted) > 1 and wanted[-1] else [])
+                        if (len(s_hits) == 1 and len(e_hits) == 1
+                                and s_hits[0][0] != e_hits[0][0]):
+                            verdict = "split"
+                            new = ("%s .. %s"
+                                   % (rel_cite(root, s_hits[0]), rel_cite(root, e_hits[0])))
+                        else:
+                            verdict = "gone"
+            if a.report and verdict in ("gone", "split", "ambig"):
+                first = (wanted[0][:88] if files is not None and old and a_line <= len(old)
+                         else "<past the end at %s>" % a.rev)
+                print("   %-10s %-34s %s" % (verdict, m.group(0), first))
+            counts[verdict] = counts.get(verdict, 0) + 1
+            totals[verdict] = totals.get(verdict, 0) + 1
+            out.append(text[cursor:m.start()])
+            out.append(new)
+            cursor = m.end()
+        out.append(text[cursor:])
+        print("%-28s %s" % (os.path.basename(doc),
+                            "  ".join("%s %d" % (k, counts[k]) for k in sorted(counts))))
+        text = "".join(out)
+        # path-only mentions: the module became a directory
+        changed = []
+
+        def bare_sub(m):
+            # **COUNT WHAT CHANGED, not what matched**: a module that is still one file
+            # returns its own text, and counting that as a rewrite made the tool report
+            # work it had not done (the second run said *8* and wrote an identical file).
+            if module_files(root, m.group(1)) is not None:
+                changed.append(m.group(0))
+                return "src/%s/" % m.group(1)
+            return m.group(0)
+        text = BARE.sub(bare_sub, text)
+        n_bare = len(changed)
+        bare_totals += n_bare
+        if a.write and (any(k == "repointed" for k in counts) or n_bare):
+            io.open(doc, "w", encoding="utf-8").write(text)
+    print("%-28s %s" % ("TOTAL", "  ".join("%s %d" % (k, totals[k]) for k in sorted(totals))))
+    print("%-28s %d" % ("path-only mentions ->", bare_totals))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

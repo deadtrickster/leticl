@@ -51,7 +51,7 @@ slower.
 1. **The clock.** Folding a `turn_started` read a wall clock, so the composer's
    edge answered `· 0ms` on one run and `· 1ms` on the next.
    `--no-tty` now binds `*fixed-clock-ms*` to 0 for the whole fold and the whole
-   frame (`src/progress.lisp`). The reference has the same property for free: its
+   frame (`src/progress/`). The reference has the same property for free: its
    `now_ms` is never set under `--no-tty` and its `started_ms` comes off the
    envelope's `ts`, so its duration is `0.saturating_sub(ts)` every time.
 2. **The prefs.** The two heads read *different* files —
@@ -156,9 +156,9 @@ frame, and the turn status's `⠋ Responding · 0ms · 39 chars`.
 
 ## The worklist, ranked by how often the shape occurs in a real session
 
-Nothing below was fixed. `src/cards.lisp`, `src/markdown.lisp`, `src/width.lisp`
-and `src/cells.lisp` belong to another strand right now, and so do
-`src/chrome.lisp` and `src/render.lisp`.
+Nothing below was fixed. `src/cards/`, `src/markdown/`, `src/width/`
+and `src/cells/` belong to another strand right now, and so do
+`src/chrome/` and `src/render/`.
 
 ### 1. The hint bar opens with keys that change — every frame, all 10 fixtures
 
@@ -183,7 +183,7 @@ The reference deleted exactly this, and says why (`app.rs:5000`, `Editor::hint`)
 
 Ours still has the shape the reference moved away from. It is the last row of
 every frame in every state, so it is the most-seen difference in the tree.
-`src/chrome.lisp`.
+`src/chrome/`.
 
 ### 2. A user row's timestamp is an hour wrong under summer time — every prompt
 
@@ -192,7 +192,7 @@ every frame in every state, so it is the most-seen difference in the tree.
  lc:   ^[[0;34m▌^[[0m ^[[0;7msay hello                                                                             14:00:08^[[0m
 ```
 
-`src/cards.lisp:1261`:
+`src/cards/payload.lisp:47`:
 
 ```lisp
 (multiple-value-bind (s m h) (decode-universal-time (floor ts 1000))
@@ -217,7 +217,7 @@ already records one timezone bug found this way — should record this one.
 
 The two heads take this number from different places. The reference stamps a
 call with the **envelope's `ts`** (`app.rs:2364`, `c.started_ms = ts`); ours
-measures it on the **head's own clock** (`note-call-started`, `src/cards.lisp`).
+measures it on the **head's own clock** (`note-call-started`, `src/cards/`).
 Under a frozen replay clock ours is 0 and the field disappears; live, both show a
 number and they are different numbers — ours is "how long this head watched",
 the reference's is "how long it took". The same split is behind `▸ Thought for
@@ -238,7 +238,7 @@ The source is `` `--drop-constant`). ``. The reference treats the code span and
 the `).` after it as one wrap token and moves the whole thing down; ours breaks
 between them and starts the next line with a bare `)`. Every line below it is
 then offset, which is why `reasoning` and `multi-round` lose four rows each to
-one wrap decision. `src/markdown.lisp` / `src/width.lisp`.
+one wrap decision. `src/markdown/` / `src/width/`.
 
 **FIXED by the one-rule merge**, and not by touching this file: the wrapper used to
 split each SEGMENT into words, so the inline-code span `--drop-constant` and the
@@ -257,7 +257,7 @@ measurement that this is the same defect the reference's own comment describes.
 
 Same on `tool-short` (`… +5 lines`). `ctrl-t` alone reads as a toggle; the
 reference's word says the key *pages* through a payload too big for one screen.
-`src/cards.lisp`.
+`src/cards/`.
 
 ### 6. A call that has not finished is reported as finished — every running turn
 
@@ -277,7 +277,7 @@ Three differences in one row: the **verb** (`Running` against `Ran` — ours say
 a call finished when it has not), the **glyph** for a started call (`◐` yellow
 against `→` dim; the *proposed* glyph `○` already matches), and the **weight**
 (the reference paints the verb bold and the target plain; ours paints the whole
-prefix dim). `src/cards.lisp`.
+prefix dim). `src/cards/`.
 
 ### 7. The live reasoning quote is not drawn at all — every turn that thinks
 
@@ -324,7 +324,7 @@ two is counting a row the other does not.
 
 Ours maps the shim's roles to 96/93 (bright cyan, bright yellow) where the
 reference uses 34/33 (blue, yellow). Every fenced block in every answer.
-`src/highlight.lisp` roles → `src/cells.lisp` palette.
+`src/highlight/` roles → `src/cells/` palette.
 
 ### 11. A fence's language label is not normalised
 
@@ -380,8 +380,8 @@ text, different style on the ninth column of a continued diff row.
 **The header row.** Under `--replay` the reference draws **no** header, ever: it
 gates it on `h >= 6 && !self.session_id.is_empty()` (`app.rs:5231`) and a replay
 has no `Hello` to learn a session id from. Ours takes only the height half, on
-purpose — `src/render.lisp:437` says so, and gives the reason: `click-row->sel`
-(`src/editor.lisp:213`) converts a click with `(- row 1)`, so the pane's origin
+purpose — `src/render/history-cache.lisp:58` says so, and gives the reason: `click-row->sel`
+(`src/editor/answer.lisp:128`) converts a click with `(- row 1)`, so the pane's origin
 is written down in a second file and moving one of the two would put every click
 in a pane one row out.
 
@@ -418,7 +418,7 @@ leticl: The value "PARITY.md" is not of type SIMPLE-STRING when binding STRING
 binds its argument as a `simple-string`; a string out of the JSON parser is the
 adjustable buffer the parser filled. Every path a head renders an edit card for
 arrives that way, and it is a MAIN-thread error, so with `--disable-debugger` it
-is not a wrong card — it is a head that exits. `src/highlight.lisp` now coerces.
+is not a wrong card — it is a head that exits. `src/highlight/` now coerces.
 
 Nothing in this tree had ever fed a real `ToolEditExcerpt` to the card before
 there were fixtures. That is the argument for the fixtures.
