@@ -5193,6 +5193,51 @@ empty segment where the blank belongs."
       (is (member :reverse (cdr (second (nth 4 lines)))) "the picked row is reversed")
       (is (= 4 sel-line) "two lines per row: the second row is line 4"))))
 
+(def-test p-shows-the-childs-own-prompt-in-a-scrollable-popup (:suite leticl)
+  "**The operator:** when i select an agent and press p it should show me prompt in a scrollable popup.
+
+**And the cut they were seeing is the DAEMON's, not the pane's.** `harness.rs:6890`: the task's first
+non-empty line, its first SIX WORDS, capped at 48 characters, *long enough to recognise, short enough for
+a picker row and a header* — a picker row's budget on a pane hundreds of columns wide. The pane draws
+that field; nothing head-side can widen it.
+
+The whole task survives in one place: the child's own transcript, whose first row is the `user` row the
+daemon gave it at spawn — and `PeekShape::Rows` is what makes a child's rows readable by a head at all.
+So `p` sends the same peek Enter sends, and a flag makes the pane draw the TASK instead of the
+conversation."
+
+  (let* ((leticl::*peek-prompt-only* nil)
+         (leticl::*peeked-snapshot*
+          (list :session-id "s-child" :seq 3 :dropped 0 :items-dropped 0
+                :items (list (list :item-id "u1" :kind "user" :ts 0
+                                   :item (list :type "user"
+                                               :parts (list (list :text "the whole task, in full, and longer than any excerpt would carry"))))
+                             (list :item-id "a1" :kind "assistant" :ts 0
+                                   :item (list :type "assistant" :text "the answer")))))
+         (h (%on-head :cols 100 :rows 30)))
+    (setf (session-subagents (head-session h))
+          (list (list :subagent-id "s-child" :session-id "s-child" :state "done"
+                      :prompt "the whole task" :answer "the answer" :role "coder"))
+          (head-mode h) :subagents
+          (head-picker-sel h) 0)
+    (let ((wire (%wire h)))
+      (leticl::%handle-key h (list :type :char :ch #\p))
+      (is (not (null leticl::*peek-prompt-only*))
+          "p flags the read as the child's PROMPT rather than its conversation")
+      (let ((sent (%sent wire)))
+        (is (equal "peek" (getf (first sent) :frame)) "and asks the daemon for that child")
+        (is (equal "Rows" (getf (first sent) :shape)) "as rows, which is where the task survives")))
+    (let ((text (format nil "~{~a~}"
+                        (mapcar (lambda (l)
+                                  (if (consp l) (format nil "~{~a~}" (mapcar #'car l)) ""))
+                                (leticl::peek-lines h 100 30)))))
+      (is (search "prompt — " text) (format nil "the popup is titled as the prompt: ~s" text))
+      (is (search "longer than any excerpt" text)
+          (format nil "**and carries the WHOLE task**, past any excerpt: ~s" text))
+      (is (not (search "the answer" text)) "and not the conversation it belongs to"))
+    (leticl::%handle-key h (list :type :enter))
+    (is (not leticl::*peek-prompt-only*) "enter is the conversation again, so it clears the flag")))
+
 (def-test the-subagents-pane-says-none-the-way-the-reference-does (:suite leticl)
   "letibot's subagents pane: `subagents`, a blank, `none spawned yet…`, a blank,
 `arrows move, Enter reads…`. Ours had never drawn (the same nested header as the
