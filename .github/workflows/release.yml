@@ -102,7 +102,14 @@ env:
   # unpacked: the fetch fails by name with `-f` if the file moves, where relying on it would
   # fall through to the check below. Both are keyed on the one tag.
   LETIBOT_REPO: deadtrickster/letibot
-  LETIBOT_REF: v0.2.1
+  LETIBOT_REF: v0.2.2
+  # **v0.2.2, and its own commit is the reason it is safe**: *"0.2.2, because the daemon moved and
+  # the pairing did not"* — no `PROTOCOL_VERSION` bump, so the ordering the comment above states still
+  # holds (letibot tags, this pin follows, this repository tags third). What it carries that this head
+  # has already implemented parity for: the subagent id minted so two children cannot share one
+  # (`79d1165`, found from here), a completion notice of one line per settlement (`1f0146a`), the
+  # folded agent line naming the task (`be5f74a`), and the daemon publishing which providers this box
+  # holds a key for.
   # **v0.2.1, AND THE TAG'S OWN COMMIT IS THE REASON IT IS SAFE**: it reads *"0.2.1, because nothing
   # in the pairing changed"* — no `PROTOCOL_VERSION` bump, so the ordering above still holds and a
   # head tagged after it speaks what the daemon speaks. What the release carries is what this head has
