@@ -792,17 +792,29 @@ with the same id so `running` becomes `done` rather than a second line
 (app.rs:1846). This is that fold, done at draw time so the wire state stays what
 the daemon sent. The id is the event's `subagent_id` — the envelope's own
 `session_id` is the PARENT's (event.rs:841), and a fold keyed on that counted every
-child of one session as one subagent. Rows are `(:session-id :state :prompt :role)`."
+child of one session as one subagent. Rows are `(:session-id :state :prompt :answer :role)` — and **`:prompt` and `:answer` are two things
+because the daemon sends them in one field**: the task's first line while the child runs, its answer's
+first line once it is done. The fold keeps the FIRST as the prompt and the LAST as the answer, so a
+finished child's row can still say what it was asked."
   (let ((rows nil))
     (dolist (env (reverse (session-subagents (head-session head))))
       (let* ((id (or (getf env :subagent-id) (getf env :session-id)))
              (row (find id rows :key (lambda (r) (getf r :session-id)) :test #'equal)))
         (if row
             (setf (getf row :state) (getf env :state)
-                  (getf row :prompt) (getf env :prompt)
+                  ;; **THE PROMPT IS THE FIRST THING THE DAEMON SAID; THE ANSWER IS THE LAST.**
+                  ;; The daemon publishes `derive_title(prompt)` — the task's first line — on `opening`
+                  ;; and `running`, and the child's ANSWER's first line on `done`, into the SAME field
+                  ;; (`harness.rs:7177`, `:7322`). Last-wins therefore replaced the task with the answer:
+                  ;; measured on the operator's head, four finished children whose `:prompt` read
+                  ;; `ready`, `4191 lines.`, … — which is why the pane could not show what a child was
+                  ;; asked, and why the operator asked for it. A later value is the answer; the prompt
+                  ;; is whatever the FIRST event carried. The residual is stated rather than hidden: a
+                  ;; child whose first event is `done` never had a prompt here, so its row has none.
+                  (getf row :answer) (getf env :prompt)
                   (getf row :role) (getf env :role))
             (push (list :session-id id :state (getf env :state)
-                        :prompt (getf env :prompt) :role (getf env :role))
+                        :prompt (getf env :prompt) :answer nil :role (getf env :role))
                   rows))))
     (nreverse rows)))
 
@@ -853,11 +865,18 @@ the wrong place, which is how the reference found this in its own test."
                            (cons (format nil " ~a" (or (getf s :prompt) ""))
                                  (and picked '(:reverse t))))
                      out)
+               ;; **THE SECOND LINE IS THE CHILD'S ANSWER, NOT ITS ID.** The operator: *"right now each
+               ;; agent takes two lines on the agents pane and they are underutilized. so the first line
+               ;; can gain a prompt excerpt and the second line - response excerpt."* The first line
+               ;; already carries the prompt (which the fold now keeps as the TASK rather than letting
+               ;; `done` overwrite it with this very answer), the id is a lookup key, and the state is
+               ;; already the mark on the first row — so this line carries what the child SAID.
                (push (list (cons (truncate-to-width
-                                  (format nil "       ~a · role ~a · ~a~a"
-                                          (short-id (or (getf s :session-id) ""))
-                                          (or (getf s :role) "") state
-                                          (if (string= state "opening") " — not attachable yet" ""))
+                                  (format nil "       ~@[→ ~a~]~@[~a~]"
+                                          (getf s :answer)
+                                          (if (string= state "opening")
+                                              "not attachable yet — it is still opening"
+                                              (if (getf s :answer) "" state)))
                                   w)
                                  '(:dim t)))
                      out)))

@@ -5222,7 +5222,9 @@ envelope's `session_id`, which is the parent's."
     (setf (head-picker-sel h) 0)
     (let ((text (lines-text (subagent-lines h 210))))
       (is (search "▸ [x] first" (nth 2 text)) "the picked row, its mark by state")
-      (is (search "       …11111111 · role worker · done" (nth 3 text)) "the short id, role and state under it")
+      (is (search "       → first" (nth 3 text))
+          (format nil "**the second line is the child's ANSWER** — the id was a lookup key and the
+ state is the mark on the row above, so this line carries what the child said: ~s" (nth 3 text)))
       (is (search "  [~] second" (nth 4 text)) "the other row"))
     ;; **THE COUNT IS ON THE ROW ABOVE THE BOX NOW, BESIDE THE JOBS** — the operator: *"also a funny
     ;; note - subagents count shown in one place and jobs count in another"*. The top edge answers NIL
