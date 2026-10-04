@@ -5310,6 +5310,25 @@ whose act for the row under the cursor is nothing at all."
 ;;; **AND THE READING REACHES THE ROW, KEYED BY THE DIRECTORY IT WAS TAKEN OF.** A head that
 ;;; switched projects must not keep the last one's branch on its header — that is the whole reason
 ;;; the cache carries a directory instead of being one string.
+;;; **THE ARGV IS TESTED BECAUSE TWO OF ITS PARTS ARE LOAD-BEARING AND NEITHER IS VISIBLE.**
+;;; `timeout` is the cap that keeps a hung mount from wedging the reader (`uiop:run-program`'s own
+;;; `:timeout` was MEASURED doing nothing), and `--no-optional-locks` is what stops a READER from
+;;; taking the index lock and writing the refreshed index back to the repository it is reporting
+;;; on. An indicator that touches the thing it reports is a defect the operator feels before they
+;;; can see it. The third part is the loop: the reading is on a thread (`git-start`), which
+;;; `tick-git` only starts — the loop is the one thing in this head that may not wait on git.
+(def-test the-git-reader-never-writes-to-the-repo-it-reads (:suite leticl)
+  "The reading's argv: capped by coreutils' timeout, and locked out of the index."
+  (let ((argv (leticl::%git-command "/tmp")))
+    (is (equal "timeout" (first argv)) "the cap is coreutils' own, and it comes first")
+    (is (equal "1" (second argv)) "one second of it")
+    (is (member "--no-optional-locks" argv :test #'equal)
+        "**a reading may not take the index lock**")
+    (is (member "--porcelain=v1" argv :test #'equal) "the shape the parser reads")
+    (is (equal "-C" (nth 3 argv)) "the directory is passed to git, not to a shell")
+    (is (equal "/tmp" (nth 4 argv)) "…and `-C` takes an argument, which is why this is nth 4")
+    (is (equal "status" (nth 6 argv)) "and it is a status, not a log")))
+
 (def-test the-header-shows-the-workspaces-repository (:suite leticl)
   "The branch is drawn beside the workspace path, and only for the workspace it was read from."
   (let* ((h (%on-head :cols 140 :rows 24))

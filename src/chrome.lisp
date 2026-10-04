@@ -708,28 +708,94 @@ are ABSENT, and the slot draws a blank."
                   branch (plusp (length (rest lines)))
                   (%git-count head "ahead ") (%git-count head "behind ")))))))
 
+(defvar *git-dir* nil
+  "The workspace the reader is pointed at, set by the loop's `tick-git`.")
+
+(defvar *git-thread* nil
+  "The reader thread, or NIL. `dash-start`'s pattern, and for its reason.")
+
+(defvar *git-running* nil
+  "Does the reader keep reading? Cleared by `git-stop`, felt within a step.")
+
+(defun %git-command (dir)
+  "The argv for one reading.
+
+**`--no-optional-locks` IS THE ONE FLAG THAT IS NOT ABOUT WHAT IS READ.** A plain `git status`
+may take the index lock and write the refreshed index back — a READER writing to the repository
+it is reporting on, which is exactly the thing an indicator must not do: the operator would see
+their repo touched by their own status line. With it, git touches nothing.
+
+The `timeout` cap is the dash collectors' rule, unchanged and not optional: `uiop:run-program`'s
+own `:timeout` was MEASURED accepting 1 against a `sleep 30` and taking 30 seconds, and a hung
+mount under a reader is the same wedge."
+  (list "timeout" "1" "git" "-C" dir "--no-optional-locks"
+        "status" "--porcelain=v1" "--branch"))
+
 (defun %git-refresh (dir)
-  "Read DIR's repository and store the reading. Returns the text, or NIL."
+  "Read DIR's repository and store the reading. Returns the text, or NIL.
+
+Runs on the reader thread and nowhere else — see `tick-git` for why that is load-bearing rather
+than tidy. The `setf` below publishes a fresh list rather than mutating one, so a paint reading
+`*git-cache*` sees the old reading or the new one and never half of either."
   (let ((text (ignore-errors
-                (uiop:run-program (list "timeout" "1" "git" "-C" dir
-                                        "status" "--porcelain=v1" "--branch")
+                (uiop:run-program (%git-command dir)
                                   :output :string :error-output nil
                                   :ignore-error-status t))))
     (setf *git-cache* (list :dir dir :text (%git-text text) :at (internal-real-time-ms)))
     (getf *git-cache* :text)))
 
-(defun tick-git (head)
-  "One pass of the header's git field. Called from the LOOP, never from a paint.
+(defun %git-collect-once ()
+  "One reading, if the interval has passed or the workspace has moved.
 
-Re-reads when the interval has passed, or when the session's workspace has MOVED: a head that
-switched projects must not keep the last one's branch on its header."
-  (let* ((dir (getf (session-wiring (head-session head)) :workspace))
-         (cache *git-cache*))
+**A repo nobody in this session touches still has to be read**, which is the whole reason this is
+a clock and not an event: the operator edits and commits in another terminal, the other agent
+commits in this one, an editor writes a file — none of those reach this head as anything it can
+subscribe to. The clock is what sees them. What must not happen is the clock running IN THE LOOP."
+  (let ((dir *git-dir*)
+        (cache *git-cache*))
     (when (and dir (plusp (length dir))
                (or (null cache)
                    (not (equal dir (getf cache :dir)))
                    (>= (- (internal-real-time-ms) (or (getf cache :at) 0)) +git-refresh-ms+)))
       (%git-refresh dir))))
+
+(defun git-start ()
+  "Start the reader thread. Idempotent: calling it twice does not make two threads.
+
+`dash-start`'s shape, including the small-step sleep, and its reason: a stop felt only after a
+whole interval reads as a hang."
+  (setf *git-running* t)
+  (unless (and *git-thread* (sb-thread:thread-alive-p *git-thread*))
+    (setf *git-thread*
+          (sb-thread:make-thread
+           (lambda ()
+             (loop while *git-running*
+                   do (ignore-errors (%git-collect-once))
+                      (loop repeat 10 while *git-running* do (sleep 0.1))))
+           :name "leticl-git-reader")))
+  *git-refresh-ms+)
+
+(defun git-stop ()
+  "Stop the reader. Idempotent."
+  (setf *git-running* nil)
+  (when (and *git-thread* (sb-thread:thread-alive-p *git-thread*))
+    (ignore-errors (sb-thread:join-thread *git-thread* :timeout 2)))
+  (setf *git-thread* nil)
+  (values))
+
+(defun tick-git (head)
+  "Point the reader at this session's workspace and make sure it is running.
+
+**CALLED FROM THE LOOP, AND IT MUST NEVER RUN A PROCESS.** The first version did, every two
+seconds, wrapped in `timeout 1`: on this checkout that is nothing, and on a checkout where git is
+slow it is up to a second with no keys and no repaint — the loop is the one thing in this head
+that may not wait, which is why the dash collectors were moved onto a thread after being wedged
+by exactly this. So the loop sets a directory and starts a thread; the reading happens over
+there, and the paint reads whatever the last one left."
+  (let ((dir (getf (session-wiring (head-session head)) :workspace)))
+    (when (and dir (plusp (length dir)))
+      (unless (equal dir *git-dir*) (setf *git-dir* dir))
+      (git-start))))
 
 (defun %git-cached (dir)
   "The last reading OF DIR, or NIL — and NIL for another directory's reading, so a stale branch
