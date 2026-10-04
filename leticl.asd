@@ -99,6 +99,10 @@ through an eval socket and see the change on the next frame."
                ;; pointed the other way: same timeout, same failure discipline, same visibility.
                (:file "src/dashwatch")
                (:file "src/panes")
+                ;; **THE PANE PROTOCOL** — one class per full-body screen. After `panes`,
+                ;; whose functions its methods delegate to, and BEFORE `render`/`editor`/
+                ;; `chrome`, which were the files dispatching on the mode keyword by hand.
+                (:file "src/pane-protocol")
                ;; `render` is the frame engine: it composes the screen out of
                ;; the cards, chrome and panes above, and owns the segment and
                ;; viewport machinery.

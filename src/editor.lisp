@@ -2623,26 +2623,7 @@ the last row is.
 The picker's count is the FILTERED list (`picker-sessions`), the config pane's is
 every row (`config-rows`), the todos pane's is the repo's rows, the subagents' is
 the folded tree — each the same list the pane draws from."
-  (case mode
-    (:subagents (length (subagent-rows head)))
-    (:jobs (length (head-jobs head)))
-    (:todos (length (repo-todo-rows-cached
-                     (getf (session-wiring (head-session head)) :workspace))))
-    (:picker (length (picker-sessions (head-session head))))
-    (:config (length (config-rows head)))
-    ;; the peek pane's rows are its BODY lines, and answering 0 was the whole of
-    ;; its arrow keys: `move-cursor` clamped to `(1- 0)` while the pane's own
-    ;; last line advertised that they scroll
-    (:peek (peek-row-count head))
-    ;; the job-output overlay is the same: a window of bytes, no selectable rows
-    (:job-out (job-out-row-count head))
-    ;; **THE REPL HAS NO CURSOR, and 0 is a CLAIM rather than a default here.** ↑↓ are the
-    ;; composer's history in this pane (`%pane-key` refuses them for `:lisp`), so a count that
-    ;; answered anything else would let `move-cursor` walk a selection nobody can see — and would
-    ;; be a second meaning for the one key. Listed rather than left to the fallback so that a
-    ;; later arm cannot quietly make it selectable.
-    (:lisp 0)
-    (t 0)))
+  (pane-cursor-rows (pane-for mode) head))
 
 (defun %todo-toggle-hide-done (head)
   "Show or hide the DONE rows in the todos pane. T when a key was taken.

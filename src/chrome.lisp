@@ -1391,54 +1391,19 @@ is worse than no hint at all."
                   (t nil)))
          (tail (cond
                  ((head-quit-open head) "1/2 or ↑↓ then enter · esc stays")
-                 ((member (head-mode head) '(:help :status)) "esc closes this")
-                 ;; a listing arrived, it is not a screen you opened from a list of
-                 ;; keys: `esc closes` alone would not say that the arrows do anything
-                 ((eq (head-mode head) :slash) "↑↓ and the wheel scroll · esc closes")
-                 ((eq (head-mode head) :picker) "type a number to switch · /new [title] · esc closes")
-                 (*pick-open* "a row number switches · ↑↓ then enter · or type a name · esc closes")
-                 ((eq (head-mode head) :todos) "↑↓ moves · enter or tab unfolds · pgup/pgdn and the wheel scroll · esc closes")
-                 ;; **THE DASHBOARD'S HINT IS GENERATED FROM ITS OWN BINDING TABLE** (dash.lisp),
-                 ;; so a pane that offers a key it does not have cannot describe itself that way
-                 ;; — serenedash's rule, and the same reason the key bar there is built from
-                 ;; `BINDINGS` rather than typed.
-                 ((eq (head-mode head) :dash) (format nil "~a · esc closes" (dash-bindings)))
-                 ((eq (head-mode head) :config) "arrows move · enter changes a row marked ✎ · esc closes")
-                 ((eq (head-mode head) :subagents) "subagents this session spawned · enter reads one (live) · p its prompt · o attaches to it · esc closes")
-                 ;; **THE JOBS PANE NAMES `d` ONLY WHEN THERE IS SOMETHING TO OPEN**, and the
-                 ;; count comes from the panels rather than from a guess: a hint that offers a key
-                 ;; which does nothing on this job is worse than a shorter hint.
-                 ((eq (head-mode head) :jobs)
-                  (if (dash-panel-for-job (nth (head-picker-sel head) (head-jobs head)))
-                      "↑↓ moves · enter reads the output · d opens its dashboard · esc closes"
-                      "↑↓ moves · enter reads the output · esc closes"))
-                 ((eq (head-mode head) :jobs) "background jobs this session started · ↑↓ then enter reads one · esc closes")
-                 ;; **THE REPL NAMES ENTER, because enter IS the pane** — and it names the arrows
-                 ;; as the COMPOSER's, which is what they are here (`%pane-key` refuses them for
-                 ;; `:lisp` so they walk the forms you have evaluated). A hint bar that called them
-                 ;; "scroll" would be teaching a key this pane does not have.
-                 ((eq (head-mode head) :lisp) "enter evaluates the prompt · ↑↓ walks the forms you evaluated · pgup/pgdn scrolls · esc closes")
-                 ((eq (head-mode head) :peek) "tails live · arrows scroll · esc back")
-                 ;; the overlay's row names ESC BACK TO JOBS, not "closes": the
-                 ;; jobs list never closed under it, and a bottom row that says
-                 ;; `esc closes` on a pane that goes back one level teaches the
-                 ;; wrong thing about the key (app.rs:5424)
-                 ;;
-                 ;; **And it names the PAGE keys only where they act** (R41), through
-                 ;; `job-out-pages` — the same function the pane's own footer uses. A
-                 ;; mode is not a job: on a build whose output went to a file there is
-                 ;; nothing to page to, and this row promised `→ next page · ← back`
-                 ;; while the pane above it correctly said `Esc to jobs` alone. R40's
-                 ;; rule, on the one surface that is not a row's own seam.
-                 ((eq (head-mode head) :job-out)
-                  (let ((pages (job-out-pages)))
-                    ;; **Two plain conditionals, not two `~@[ … ~]`.** Measured on this SBCL:
-                    ;; `(format nil "|~@[A~]~@[B~]|" 1 nil)` answers `"|AB|"` — the clause
-                    ;; after a NIL argument is processed and not skipped — so the compressed
-                    ;; spelling promised the very keys this change exists to drop.
-                    (format nil "↑↓ scroll~a~a · enter re-reads · esc back to jobs"
-                            (if (getf pages :next) " · → next page" "")
-                            (if (getf pages :back) " · ← back" ""))))
+                 ;; **ONE ARM FOR EVERY PANE** — the words are the pane's own now (`pane-hint`),
+                  ;; so a pane that names a key it does not have cannot describe itself
+                  ;; that way. The bar's own order around them is unchanged: the quit
+                  ;; prompt above outranks any hint, and `*pick-open*` below keeps its
+                  ;; place after the modes.
+                 ;; **A LIST THE PICKER PUT UP IS NOT A MODE, and its PRECEDENCE is kept** —
+                 ;; the old `cond` had this arm after `:slash` and `:picker` and before every
+                 ;; other pane, so a pick's keys won over the pane you were in — except in the
+                 ;; two panes whose own words already describe it. One clause rather than a
+                 ;; position, because the panes share one arm now.
+                 ((and *pick-open* (not (member (head-mode head) '(:slash :picker))))
+                  "a row number switches · ↑↓ then enter · or type a name · esc closes")
+                  ((pane-hint (current-pane head) head))
                  ((head-secret-req head) "enter submits · esc refuses the password")
                  ;; **the operator-call composer** (R24 part two). The two keys it owns,
                  ;; said in the register the secret card's own row uses — and this arm is

@@ -1774,7 +1774,7 @@ scrolls the transcript by a row every keystroke.
           (put-segments s 0 gutter (top-border head cols)))
         (cond
           ;; full-body screens replace the transcript
-          ((member (head-mode head) '(:help :status :config :jobs :subagents :peek :job-out :picker :todos :slash :dash :lisp))
+          ((pane-replaces-transcript-p (current-pane head))
            (let ((room (max 1 (- body-bottom body-top)))
                  (lines nil)
                  (sel-line nil))
@@ -1782,55 +1782,13 @@ scrolls the transcript by a row every keystroke.
              ;; value, because its cursor counts ROWS and this offset counts
              ;; LINES — the two differ by every header above the list.
              (multiple-value-setq (lines sel-line)
-               (case (head-mode head)
-                 (:help (help-lines cols))
-                 (:status (status-screen-lines head cols))
-                 (:config (config-lines head (head-settings head) cols))
-                 (:jobs (jobs-lines head cols))
-                 (:subagents (subagent-lines head cols))
-                 ;; the peek pane windows ITSELF, tail-first, because the tail is
-                 ;; where a subagent's answer is and the clamp needs the height
-                 (:peek (peek-lines head cols room))
-                 ;; and the job-output overlay windows itself for the same
-                 ;; reason: the tail is where a running job's newest bytes are,
-                 ;; and the clamp needs the height
-                 (:job-out (job-out-lines head cols room))
-                 (:picker (picker-lines (head-session head)
-                                        (head-picker-sel head) cols))
-                 (:todos (todos-lines head cols))
-                 ;; **THE DASHBOARD (dash.lisp).** Composed from whatever panels are
-                 ;; REGISTERED, so this line does not change when a panel is added — which is
-                 ;; the whole point of a panel being data.
-                 ;; **ONE VALUE, and that is a REQUIREMENT rather than a style.** This `case`
-                 ;; feeds a `multiple-value-setq (lines sel-line)`, so a pane function's SECOND
-                 ;; value becomes the cursor's LINE — `dash-frame-lines` returns the line each
-                 ;; panel starts on as its second, and the frame then handed that vector to
-                 ;; `scroll-pane-into-view`, which died with `#(2 9) is not of type REAL`.
-                 ;; MEASURED, on the operator's head: `render failed — the head is alive`.
-                 ;;
-                 ;; The starts vector is not wasted — `dash-click-sel` asks for it at click time,
-                 ;; which is the same re-ask `todos-click-sel` does. **`:todos` has always returned
-                 ;; three values here and gets away with it only because its second IS a line
-                 ;; number**, which is exactly the kind of luck a one-value rule removes.
-                 (:dash (values (dash-frame-lines cols :nav *dash-nav*)))
-                 ;; a listing that ARRIVED, drawn from the TOP like a document —
-                 ;; `*pane-lines*` below takes this list's length, so its scroll
-                 ;; clamps against the whole thing and `pane-view` windows it
-                 (:slash (slash-out-lines head cols room))
-                 ;; **THE REPL (repl.lisp), and the SECOND value is NIL on purpose**: this pane
-                 ;; has no cursor — ↑↓ are the composer's own history there — and a cursor
-                 ;; would be a second meaning for one key. `pane-row-count` answers 0 for it
-                 ;; for the same reason, so the shared `move-cursor` can never touch it.
-                 (:lisp (lisp-pane-lines head cols))))
+                (pane-lines (current-pane head) head cols room))
              ;; tell the KEY handler what it may scroll: it clamps without
              ;; re-rendering, and the cursor can then scroll itself into view
-             (setf *pane-lines* (case (head-mode head)
-                                  (:peek *peek-total*)
-                                  (:job-out *job-out-total*)
-                                  (t (length lines)))
+             (setf *pane-lines* (pane-total (current-pane head) head lines)
                    *pane-room* room)
              (when sel-line (scroll-pane-into-view sel-line))
-             (%place-lines s (if (member (head-mode head) '(:peek :job-out))
+             (%place-lines s (if (pane-self-windows-p (current-pane head))
                                  lines
                                  (pane-view lines))
                            body-top (1- (+ body-top room)) cols gutter)))

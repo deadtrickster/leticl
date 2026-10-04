@@ -2069,10 +2069,7 @@ row was chosen from — *\"and Esc returns to the jobs list, which never closed\
 
 The key itself is dispatched in `src/editor.lisp:242`, which sends every pane to
 `:normal`; this is the fact that arm needs and the one line it is missing."
-  (case mode
-    (:peek :subagents)
-    (:job-out :jobs)
-    (t :normal)))
+  (pane-esc-target (pane-for mode)))
 
 ;;; ---------------------------------------------------- the slash listing ;;;
 ;;;
@@ -3551,7 +3548,7 @@ its own, and so the seeding lives beside the pane that defines what a row is.
 Every pane but the session picker opens at the top, which is the honest place
 when one cursor is shared: a position left by the last pane means nothing to the
 next (`src/commands.lisp:181-186`)."
-  (if (eq mode :picker) (picker-initial-sel head) 0))
+  (pane-opens-at (pane-for mode) head))
 
 ;;; ------------------------------------------ `o` on a subagent row ;;;
 
