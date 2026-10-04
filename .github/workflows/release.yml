@@ -102,7 +102,13 @@ env:
   # unpacked: the fetch fails by name with `-f` if the file moves, where relying on it would
   # fall through to the check below. Both are keyed on the one tag.
   LETIBOT_REPO: deadtrickster/letibot
-  LETIBOT_REF: v0.2.0
+  LETIBOT_REF: v0.2.1
+  # **v0.2.1, AND THE TAG'S OWN COMMIT IS THE REASON IT IS SAFE**: it reads *"0.2.1, because nothing
+  # in the pairing changed"* — no `PROTOCOL_VERSION` bump, so the ordering above still holds and a
+  # head tagged after it speaks what the daemon speaks. What the release carries is what this head has
+  # already implemented parity for: the `Subagent` event's TASK (`83be154`), a peek that answers with the
+  # session's ROWS (`1520bb5`), sub-sessions nested rather than filtered away (`c840aee`), the held view
+  # (`2b49304`), and the wake's partition lifted out where a test can reach it (`85f890b`).
   # **rano IS PINNED BY TAG, in the manifests that need it** — `native/hl/Cargo.toml`
   # and letibot's three. Not an env var here, because a dependency's version belongs
   # where the dependency is declared; this comment exists so a reader looking for
