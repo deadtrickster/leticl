@@ -20381,6 +20381,23 @@ out, so `/proc/<pid_max>` is absent by construction rather than by luck."
   (or (ignore-errors (parse-integer (uiop:read-file-string "/proc/sys/kernel/pid_max")))
       999999))
 
+;;; **A ZOMBIE, WHICH IS THE CASE THE OPERATOR'S OWN LAUNCHER PRODUCES.** *"i still wait full 5
+;;; seconds when ask for daemon stop"* — 2026-10-04, on their head. The launcher starts the daemon
+;;; and stays alive running the head, so the daemon it started is NEVER reaped: its socket is gone,
+;;; its process runs nothing, and `/proc/<pid>` is still there in state `Z`. A pid that exists is
+;;; therefore not a daemon that is running, and `%dead-pid` above cannot see this — its entry is
+;;; absent by construction, which is the case that already worked.
+;;;
+;;; `sb-unix:unix-exit` and NOT `sb-posix:exit`, measured rather than preferred: the child must
+;;; leave without running any of this image's exit hooks, because a forked SBCL that flushes its
+;;; streams on the way out writes into the PARENT's terminal — and this image's terminal is the
+;;; operator's. (`sb-unix:unix-fork` does not exist, so the fork itself is `sb-posix:fork`.)
+(defun %zombie-pid ()
+  "A pid that EXISTS and runs NOTHING: a child this image forked and never collected."
+  (let ((pid (sb-posix:fork)))
+    (when (zerop pid) (sb-unix:unix-exit 0))
+    pid))
+
 (defun %stop-request-for (&key socket pid (asked-ago 0) (deadline-in 5000))
   "A request plist shaped exactly as `begin-stop-request` leaves one — every key
 present, including the two the tick writes through."
@@ -20424,6 +20441,49 @@ the daemon being gone — and it is the second that the operator asked for."
     (leticl::%render h)
     (is (null (leticl::stop-wait-row h 100)) "with nothing pending the row is absent")
     (is (not (search "asked to stop" (%screen-text h))) "and nothing is drawn for it")))
+
+;;; **A PID THAT EXISTS IS NOT A DAEMON THAT IS RUNNING.** The stop wait's first ending is
+;;; `daemon-gone-p`, and it asked the proc entry only whether it EXISTED — so a daemon its parent
+;;; never reaped read as alive for the whole five-second deadline while its socket was already gone
+;;; and its process was running nothing. The operator waited it out, twice.
+;;;
+;;; The child here is a REAL zombie — forked, exited, uncollected — because a stubbed pid would
+;;; test the case that already worked. Its state is polled for rather than slept for, and it is
+;;; collected at the end so the rest of this image is not followed around by a corpse.
+(def-test a-zombie-pid-is-a-daemon-that-is-gone (:suite leticl)
+  "The wait ends on the FIRST pass when the daemon is a zombie, not at the deadline."
+  (let ((zombie (%zombie-pid)))
+    (unwind-protect
+         (progn
+           (loop repeat 300 until (equal "Z" (leticl::%pid-state zombie)) do (sleep 0.01))
+           (is (probe-file (format nil "/proc/~d" zombie)) "the pid's proc entry is still there")
+           (is (equal "Z" (leticl::%pid-state zombie)) "and its state is a zombie's")
+           (is (leticl::daemon-gone-p "/tmp/leticl-zombie.sock" zombie)
+               "so the daemon is GONE — not a five-second wait")
+           ;; and the tick, not only the predicate: the wait ends and says the OUTCOME rather
+           ;; than the timeout, which is the half the operator actually watches
+           (let* ((leticl::*stop-request* (%stop-request-for :socket "/tmp/leticl-zombie.sock"
+                                                             :pid zombie))
+                  (h (%make-head)))
+             (is (leticl::tick-stop-request h) "the tick ends the wait on its first pass")
+             (is (not (leticl::head-running h)) "and the head may leave")
+             (is (search "the daemon has stopped" (head-farewell h))
+                 "with the outcome said, not that it has NOT stopped")))
+      (ignore-errors (sb-posix:waitpid zombie 0)))))
+
+;;; **AND THE STATE READ IS THE ONE PLACE A PARSER CAN LIE SILENTLY.** `/proc/<pid>/stat`'s second
+;;; field is the executable's name in parentheses and it may contain spaces AND parentheses, so a
+;;; reader that splits on whitespace or on the FIRST `)` shifts every field after it. Read from the
+;;; last `)` and the shape stops mattering; read from the first and a process named `a b)` reports
+;;; somebody else's state — in a liveness test, which is how a wait becomes five seconds long.
+(def-test a-pids-state-is-taken-from-after-the-last-paren (:suite leticl)
+  "This image's own entry yields a state letter, and an absent entry yields nothing at all."
+  (let ((mine (leticl::%pid-state (sb-unix:unix-getpid))))
+    (is (and mine (plusp (length mine)) (alpha-char-p (char mine 0)))
+        "this process's own state is a letter")
+    (is (not (equal "Z" mine)) "and it is not a zombie — it is running the test"))
+  (is (null (leticl::%pid-state (%dead-pid)))
+      "a pid with no entry has no state, which the caller reads as gone"))
 
 (def-test a-stop-is-over-when-the-daemon-is-gone (:suite leticl)
   "**The fact waited on is the daemon's ABSENCE.** It takes its pid and its socket

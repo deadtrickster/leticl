@@ -1428,6 +1428,32 @@ a pid from. A daemon started by hand has no record: then the pid is unknown and
       (when (probe-file json)
         (getf (ignore-errors (json-decode (uiop:read-file-string json))) :pid)))))
 
+;;; **THE OPERATOR'S FIVE SECONDS, AND WHY `%pid-state` EXISTS.** Their words, 2026-10-04:
+;;; *"i still wait full 5 seconds when ask for daemon stop"*. The launcher starts the daemon and
+;;; then stays alive running the head, so the daemon it started is never reaped — its socket is
+;;; gone, its process runs nothing, and `/proc/<pid>` is STILL THERE in state `Z`. This function's
+;;; caller read the entry's EXISTENCE as "not gone", so the tick never saw its first ending and
+;;; waited out the whole `+stop-wait-ms+`: five seconds, twenty times the 232 ms shutdown the
+;;; daemon's own measurement records. A zombie is gone; what is left is a corpse nobody collected.
+;;;
+;;; **The parsing detail is the one that punishes splitting on whitespace**: `/proc/<pid>/stat`'s
+;;; SECOND field is the executable's name in parentheses and it may contain spaces AND parentheses,
+;;; so the fields are read from AFTER THE LAST `)` rather than split — a process named `a b)` would
+;;; otherwise shift every field by one and this would return the wrong letter, silently, in a
+;;; liveness test.
+(defun %pid-state (pid)
+  "PID's single-letter state from the proc entry's stat line, or NIL when it has no entry.
+
+NIL is the REAPED case as well as the never-existed one: the entry can vanish between the read
+and the parse, and the caller's answer for both is the same, so they are the same here."
+  (let ((line (ignore-errors (uiop:read-file-string (format nil "/proc/~d/stat" pid)))))
+    (when line
+      (let ((close (position #\) line :from-end t)))
+        (when close
+          (let* ((rest (string-left-trim '(#\space) (subseq line (1+ close))))
+                 (space (position #\space rest)))
+            (subseq rest 0 (or space (length rest)))))))))
+
 (defun daemon-gone-p (socket-path pid)
   "Has the daemon actually gone?
 
@@ -1437,7 +1463,8 @@ answering \"not gone\" for a process that is not there is the same lie the other
 round. With no pid (a daemon nobody wrote a record for) the socket is all there is,
 and \"nothing is listening there\" is the honest reading of it."
   (cond ((and (integerp pid) (plusp pid))
-         (not (probe-file (format nil "/proc/~d" pid))))
+         (let ((state (%pid-state pid)))
+           (or (null state) (string= "Z" state))))
         (t (not (and socket-path (probe-file socket-path))))))
 
 (defun begin-stop-request (head)
