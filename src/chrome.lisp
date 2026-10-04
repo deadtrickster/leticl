@@ -1218,14 +1218,16 @@ would be a second announcement of one fact. Kept as a stub only long enough to s
 image still holds it.")
 
 (defun composer-title (head)
-  "The right-hand label of the box's TOP edge — **which is now NONE, and the count it used to draw is
-on the bottom edge beside the jobs.**
+  "The right-hand legend of the box's TOP edge: what is RUNNING — subagents and jobs.
 
-**MOVED 2026-10-04, on the operator's note:** *\"also a funny note - subagents count shown in one place
-and jobs count in another\"*. Two `N running` counts on two edges of one box is the same defect this tree
-keeps finding under other names — a count drawn twice, two file lists, a detector and a renderer with
-nothing between them — and the bottom edge is where that box's live facts already are: the alarm, the
-turn's status and the jobs. One surface for *what is running*.
+**MOVED BACK HERE 2026-10-04, on the operator's word:** *\"ok, so please bring counters back to the input
+box border top right.\"* `9954b2c` had moved the SUBAGENT count down to the row above the box (and the
+jobs count was already on that row), which answered *\"subagents count shown in one place and jobs count
+in another\"* — this answers the same question the other way: one place for both, and the place is the
+border, right-hand side, which is where the reference puts its `N subagents running`.
+
+**Nothing is nothing**, on both halves: a zero is not drawn rather than drawn as `0 jobs running`, so a
+quiet head has a bare top edge and the border is the border.
 
 The history below stands as written: it is the reverted-pointer decision, and it is still the reason no
 announcement of a count reaching zero is drawn on an edge.
@@ -1255,11 +1257,13 @@ away — but the reader is told by the transcript row that follows, not by a lab
 **What stays is the running half**, unchanged: `N subagents running` while any are, and nothing
 otherwise. If the finish still needs saying on the edge once the wake lands and can be looked at,
 that is a decision to take against a screen, which is the only place it can be taken."
-  ;; **NOTHING, and that is the point**: the count moved to the bottom edge, beside the jobs. See the
-  ;; docstring — the body that drew it is in `turn-report-row` now, and the reference's arg for the top
-  ;; edge (a `N subagents running` label) is argued against there.
-  (declare (ignore head))
-  nil)
+  (let ((subagents (count "running" (subagent-rows head)
+                         :key (lambda (r) (or (getf r :state) "")) :test #'string=))
+        (jobs (running-jobs head)))
+    (format nil "~{~a~^ · ~}"
+            (remove nil
+                    (list (and (plusp subagents) (format nil "~d subagent~:p running" subagents))
+                          (and (plusp jobs) (format nil "~d job~:p running" jobs)))))))
 
 (defun composer-wiring (head &optional (cols 40))
   "The right-hand label of the box's BOTTOM edge: the alarm and the turn's status.
@@ -1384,7 +1388,7 @@ already in, and ours painted it bold, which is the header's register."
   (box-edge cols #\╭ #\╮ "" (composer-title head) '(:fg :yellow)))
 
 (defun running-jobs (head)
-  "How many background jobs have not settled — the number `turn-report-row` reports.
+  "How many background jobs have not settled — the number `composer-title` draws on the box's top edge.
 
 **`:running` is the daemon's own flag** on a `JobEntry`, the same one the jobs pane draws as its
 yellow `[~]` mark, so this count and that pane cannot disagree about a job: the pane lists them and
@@ -1437,32 +1441,18 @@ form cannot both be true at once."
     ;; while the text is dim, so the trail of spaces carries no colour — the same choice the box's
     ;; own fill makes.
     ;;
-    ;; **AND THE BACKGROUND JOBS SIT AT THE RIGHT EDGE.** They are RIGHT-anchored and the turn's
-    ;; status is LEFT-anchored, and that is not decoration: the left text is `Responding · 1.2s ·
-    ;; 3 tok` on one frame and `Responded in 12.4s at 21:07` on the next, so anything placed after
-    ;; it would move with it. Anchored from the right edge, neither can move the other — which is
-    ;; the same reason the spinner is anchored left in the first place.
-    (let* ((jobs (running-jobs head))
-           ;; **THE SUBAGENT COUNT LIVES HERE, BESIDE THE JOBS.** See `composer-title`: two `N running`
-           ;; counts on two edges of one box is the defect the operator's note names, and this edge is
-           ;; where the box's live facts already are. Counted by `subagent-rows`, the same fold the
-           ;; subagents pane draws, so the edge and the pane cannot disagree — and "nothing is nothing"
-           ;; on both halves.
-           (subagents (count "running" (subagent-rows head)
-                             :key (lambda (r) (or (getf r :state) "")) :test #'string=))
-           (said (format nil "~{~a~^ · ~}"
-                         (remove nil
-                                 (list (and (plusp subagents)
-                                            (format nil "~d subagent~:p running" subagents))
-                                       (and (plusp jobs) (format nil "~d job~:p running" jobs))))))
-           (room (- cols (if (plusp (length said)) (1+ (string-width said)) 0)))
-           (status (truncate-to-width (or (turn-status head cols) (turn-report-text))
-                                      (max 1 room)))
-           (pad (max 0 (- cols (string-width status) (string-width said)))))
+    ;; **AND NO COUNTS SIT AT THE RIGHT EDGE ANY MORE** — see the body: both are on the box's TOP edge,
+    ;; which is where the operator asked for them. This comment used to explain the jobs count's
+    ;; right-anchoring here; that argument moved with the count, and a layout argument left behind on a
+    ;; row it no longer describes is the kind of stale claim this file keeps finding.
+    (let* (;; **NO COUNTS ON THIS ROW ANY MORE.** Both are on the box's TOP edge (`composer-title`), on
+           ;; the operator's word: *"ok, so please bring counters back to the input box border top
+           ;; right."* This row is the TURN's — `Responding · 1.2s` or `Responded in 12.4s at 21:07` —
+           ;; and a count of anything else here would be the second place the same question is answered.
+           (status (truncate-to-width (or (turn-status head cols) (turn-report-text)) (max 1 cols)))
+           (pad (max 0 (- cols (string-width status)))))
       (list (append (list (cons status '(:dim t))
-                          (cons (make-string pad :initial-element #\space) nil))
-                    (when (plusp (length said))
-                      (list (cons said '(:dim t)))))))))
+                          (cons (make-string pad :initial-element #\space) nil)))))))
 
 (defun turn-report-text ()
   "`Responded in 12.4s at 21:07` for the last turn this head watched finish, or empty.

@@ -5226,13 +5226,14 @@ envelope's `session_id`, which is the parent's."
           (format nil "**the second line is the child's ANSWER** — the id was a lookup key and the
  state is the mark on the row above, so this line carries what the child said: ~s" (nth 3 text)))
       (is (search "  [~] second" (nth 4 text)) "the other row"))
-    ;; **THE COUNT IS ON THE ROW ABOVE THE BOX NOW, BESIDE THE JOBS** — the operator: *"also a funny
-    ;; note - subagents count shown in one place and jobs count in another"*. The top edge answers NIL
-    ;; and the two running counts are one surface (see `composer-title`'s docstring).
-    (is (null (leticl::composer-title h)) "the top edge draws no count any more")
+    ;; **THE COUNTS ARE ON THE BOX'S TOP EDGE**, where the operator asked for them back:
+    ;; *"ok, so please bring counters back to the input box border top right."* The subagent count had been
+    ;; moved to the row above the box (`9954b2c`); both are on the border again.
+    (is (search "1 subagent running" (leticl::composer-title h))
+        "**the box's top edge counts the running children** — where the reference puts it")
     (let ((edge (lines-text (list (leticl::composer-box-top h 60)))))
-      (is (not (search "subagent running" (format nil "~{~a~}" edge)))
-          "and the box's top edge is bare — the count is on the row above it now, with the jobs\n (see `composer-title`'s docstring and `turn-report-row`, which draws both)"))))
+      (is (search "1 subagent running ─╮" (format nil "~{~a~}" edge))
+          "and the edge pins it RIGHT and frames it, not hard against the ╭"))))
 
 (def-test the-subagent-pane-draws-the-task-in-full-and-follows-the-rung (:suite leticl)
   "**The operator, on the subagents pane, two asks of four:** *\"the first prompt is truncated too
