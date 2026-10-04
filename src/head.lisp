@@ -2024,6 +2024,9 @@ to be the bytes it was given."
              ;; **AND A SUBAGENT'S SCROLLBACK, WHILE ITS PANE IS OPEN** — the same shape of absence as
              ;; the job feed above: the daemon has no subscription for a session this head is not
              ;; attached to, so a peek is a read and the pane tails by asking again.
+             ;; the header's git reading, on the same beat as the peek's tail — both are
+             ;; measurements this head takes for itself, and neither belongs in a paint
+             (tick-git head)
              (tick-peek head)
              ;; **AND THE WATCHERS' LIFECYCLE** (R56), on the same thread for the same reason: it asks
              ;; for the job list while something is waiting, and asking is `%send`. It is also where a

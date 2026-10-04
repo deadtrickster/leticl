@@ -641,6 +641,102 @@ turn as `(:total :cache :processed :time-ms)` and had no reader."
     (loop for key in '(:ctx :cached :rate :elapsed :out)
           collect (cons key (cdr (assoc key by-key))))))
 
+;;; ------------------------------------------------------------------- git ;;;
+;;;
+;;; **WHAT THE WORKSPACE'S OWN REPOSITORY SAYS, ON THE ROW THE OPERATOR CROSSES.** The ask is
+;;; theirs, 2026-10-04: *"I want to see git status in the head."* It goes beside the workspace
+;;; path, because that is the thing it is a fact about, and it is ONE field: the branch, a `*`
+;;; when there is anything uncommitted, and a count when the branch is ahead or behind.
+;;;
+;;; **IT IS REFRESHED FROM THE LOOP AND NEVER FROM A PAINT.** `git status` is a process, and this
+;;; head paints a frame out of a loop that has one to spare; the rule is the dash collectors' own
+;;; (`dashwatch.lisp`: a measurement never runs where the frame is drawn). MEASURED on this
+;;; checkout: `git status --porcelain=v1 --branch` takes 0.00 s and prints one line, so two
+;;; seconds between readings is chosen to keep the PROCESS rate low rather than because a frame
+;;; could not afford it. It is wrapped in coreutils' `timeout` for the checkout where it is not
+;;; free, because `uiop:run-program`'s own `:timeout` was MEASURED accepting 1 against a `sleep 30`
+;;; and taking 30 seconds.
+;;;
+;;; **A repository this cannot read is ABSENT, not empty.** The field is NIL and the reservation
+;;; draws its blank slot — the same honesty the numbers beside it keep. A header that said `main`
+;;; over a directory that is not a repository would be a lie in the one row nobody checks.
+
+(defparameter +git-refresh-ms+ 2000
+  "How long a reading is trusted before the loop takes another.")
+
+(defvar *git-cache* nil
+  "`(:dir D :text T :at MS)` — the last reading, and which directory it was OF.
+
+A `defvar` so a push can introduce it on a running head, which is how this head is fixed.")
+
+(defun %git-branch (body)
+  "The branch out of a porcelain branch line's body, or NIL when it does not name one.
+
+BODY is everything after the `## `: `main...origin/main`, `HEAD (no branch)`,
+`No commits yet on main`. The last of those names no branch this can print, and inventing one
+would be the lie this field exists to avoid."
+  (let ((name (first (uiop:split-string body :separator "..."))))
+    (cond ((null name) nil)
+          ((and (>= (length name) 4) (string= "HEAD" name :end2 4)) "detached")
+          ((zerop (length name)) nil)
+          ((find #\space name) nil)
+          (t name))))
+
+(defun %git-count (body what)
+  "The number after WHAT in BODY (`ahead 2`), or NIL when BODY does not carry it."
+  (let ((at (search what body)))
+    (when at
+      (let* ((rest (subseq body (+ at (length what))))
+             (end (or (position-if-not #'digit-char-p rest) (length rest))))
+        (when (plusp end) (parse-integer rest :end end))))))
+
+(defun %git-text (porcelain)
+  "Porcelain output as the header's text, or NIL for anything it cannot read.
+
+The first line is the branch line and every line after it is one changed entry — the count of
+those is what the `*` means, and the count itself is not printed. NIL covers a directory that is
+not a repository, a git that is not installed, and a version that answers differently: all three
+are ABSENT, and the slot draws a blank."
+  (let* ((lines (remove-if (lambda (l) (zerop (length l)))
+                           (mapcar (lambda (l) (string-right-trim '(#\Return #\Newline #\space) l))
+                                   (uiop:split-string (or porcelain "") :separator '(#\Newline)))))
+         (head (first lines)))
+    (when (and head (>= (length head) 3) (string= "## " head :end2 3))
+      (let ((branch (%git-branch (subseq head 3))))
+        (when branch
+          (format nil "~a~:[~;*~]~@[↑~d~]~@[↓~d~]"
+                  branch (plusp (length (rest lines)))
+                  (%git-count head "ahead ") (%git-count head "behind ")))))))
+
+(defun %git-refresh (dir)
+  "Read DIR's repository and store the reading. Returns the text, or NIL."
+  (let ((text (ignore-errors
+                (uiop:run-program (list "timeout" "1" "git" "-C" dir
+                                        "status" "--porcelain=v1" "--branch")
+                                  :output :string :error-output nil
+                                  :ignore-error-status t))))
+    (setf *git-cache* (list :dir dir :text (%git-text text) :at (internal-real-time-ms)))
+    (getf *git-cache* :text)))
+
+(defun tick-git (head)
+  "One pass of the header's git field. Called from the LOOP, never from a paint.
+
+Re-reads when the interval has passed, or when the session's workspace has MOVED: a head that
+switched projects must not keep the last one's branch on its header."
+  (let* ((dir (getf (session-wiring (head-session head)) :workspace))
+         (cache *git-cache*))
+    (when (and dir (plusp (length dir))
+               (or (null cache)
+                   (not (equal dir (getf cache :dir)))
+                   (>= (- (internal-real-time-ms) (or (getf cache :at) 0)) +git-refresh-ms+)))
+      (%git-refresh dir))))
+
+(defun %git-cached (dir)
+  "The last reading OF DIR, or NIL — and NIL for another directory's reading, so a stale branch
+cannot be drawn under a workspace that changed."
+  (let ((cache *git-cache*))
+    (when (and cache (equal dir (getf cache :dir))) (getf cache :text))))
+
 (defun top-border (head cols)
   "The header: what this session IS on the left, what it is COSTING on the right.
 
@@ -727,6 +823,15 @@ its end, and a token count is not recoverable from anywhere else on the screen."
             (let ((shown (%ellipsise-left ws room)))
               (setf left (append left (list (cons (format nil "  ~a" shown) '(:dim t)))))
               (incf left-cols (+ 2 (string-width shown)))))))
+      ;; **AND THE WORKSPACE'S REPOSITORY**, beside the path it is a fact about. READ here, never
+      ;; RUN here: the reading is the loop's (`tick-git`), and a paint is not where a process goes.
+      (let ((git (%git-cached (getf (session-wiring s) :workspace))))
+        (when git
+          (let ((room (- cols left-cols tail-cols 2)))
+            ;; 3 for the parens and the space before them, 1 of air between this and the tail
+            (when (>= room (+ 4 (string-width git)))
+              (setf left (append left (list (cons (format nil " (~a)" git) '(:dim t)))))
+              (incf left-cols (+ 3 (string-width git)))))))
       (let* ((pad (max 0 (- cols left-cols tail-reserved)))
              ;; **AND THE RESERVED BUT UNUSED COLUMNS AFTER THE TAIL.** The block the fields sit in
              ;; is `tail-reserved` wide whatever happens to be in it, so `2/2` stands where `2/2`

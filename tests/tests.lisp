@@ -5282,6 +5282,50 @@ whose act for the row under the cursor is nothing at all."
       (is (not (equal before leticl::*dash-nav*)) "and its own act ran")
       (is (string= "half written" (composer-buffer (head-composer h))) "with the line still held"))))
 
+;;; **THE GIT FIELD'S PARSER IS A FUNCTION OF ITS INPUT, WHICH IS WHY IT CAN BE TESTED AT ALL.**
+;;; The reading itself is a process (`timeout 1 git status --porcelain=v1 --branch`), and a test
+;;; that ran it would assert whatever this checkout happens to be — dirty while somebody is
+;;; working, clean on a fresh clone, a different branch on a worktree. The OUTPUT's shape is fixed,
+;;; so the shape is what is pinned, and the process is pinned by the one thing that must never come
+;;; out of it: an ABSENCE — a directory that is not a repository — read as a branch.
+(def-test the-git-field-reads-a-branch-and-says-when-it-is-dirty (:suite leticl)
+  "The header's git text: the branch, a `*` when anything is uncommitted, the counts, or NIL."
+  (is (equal "main" (leticl::%git-text "## main...origin/main")) "a clean branch")
+  (is (equal "main" (leticl::%git-text (format nil "## main...origin/main~%")))
+      "a trailing newline is not a change")
+  (is (equal "main*" (leticl::%git-text (format nil "## main...origin/main~% M src/head.lisp~%?? scratchpad/")))
+      "two entries are still one `*` — the count is not printed")
+  (is (equal "main↑2" (leticl::%git-text "## main...origin/main [ahead 2]")) "ahead")
+  (is (equal "main↓1" (leticl::%git-text "## main...origin/main [behind 1]")) "behind")
+  (is (equal "main*↑1↓3" (leticl::%git-text (format nil "## main...origin/main [ahead 1, behind 3]~% M x")))
+      "both, and dirty")
+  (is (equal "detached*" (leticl::%git-text (format nil "## HEAD (no branch)~% M x")))
+      "a detached head says so rather than saying nothing")
+  (is (null (leticl::%git-text "fatal: not a git repository (or any parent up to mount point /)"))
+      "**a non-repository is ABSENT** — not a branch named `fatal`")
+  (is (null (leticl::%git-text "## No commits yet on main")) "a branch line that names no branch")
+  (is (null (leticl::%git-text "")) "an empty reading")
+  (is (null (leticl::%git-text nil)) "and no reading at all"))
+
+;;; **AND THE READING REACHES THE ROW, KEYED BY THE DIRECTORY IT WAS TAKEN OF.** A head that
+;;; switched projects must not keep the last one's branch on its header — that is the whole reason
+;;; the cache carries a directory instead of being one string.
+(def-test the-header-shows-the-workspaces-repository (:suite leticl)
+  "The branch is drawn beside the workspace path, and only for the workspace it was read from."
+  (let* ((h (%on-head :cols 140 :rows 24))
+         (s (head-session h)))
+    (setf (session-wiring s) (list* :workspace "/tmp" (session-wiring s)))
+    (let ((leticl::*git-cache* (list :dir "/tmp" :text "main*" :at 0)))
+      (leticl::%render h)
+      (is (search "(main*)" (%screen-text h)) "the branch is drawn beside the workspace")
+      (setf leticl::*git-cache* (list :dir "/somewhere/else" :text "trunk*" :at 0))
+      (leticl::%render h)
+      (is (not (search "trunk*" (%screen-text h)))
+          "another directory's reading is NOT drawn under this workspace"))
+    (let ((leticl::*git-cache* nil))
+      (leticl::%render h)
+      (is (not (search "(main*)" (%screen-text h))) "and with no reading the field is absent"))))
+
 (def-test the-subagents-pane-says-none-the-way-the-reference-does (:suite leticl)
   "letibot's subagents pane: `subagents`, a blank, `none spawned yet…`, a blank,
 `arrows move, Enter reads…`. Ours had never drawn (the same nested header as the
