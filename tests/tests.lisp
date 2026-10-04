@@ -5385,6 +5385,38 @@ that — never a glyph cut in half."
 ;;; **A PREFERENCE THE PANE DOES NOT SHOW IS A PREFERENCE NOBODY FINDS** — and this one was invisible
 ;;; for a reason worth keeping: `*head-setting-rows*` is a list of KEYS and the labels beside it are
 ;;; a PARALLEL list walked by the same loop, so a key added without a label draws no row at all.
+;;; **THE RUNG THE OPERATOR ASKED FOR** (2026-10-04): the conversation, and the cards that say what
+;;; the head CHANGED — with the raw payloads still gone. The difference from `:reading` is ONE
+;;; predicate, so this asserts the matrix rather than a cell: an edit survives, a read does not, and
+;;; at `:reading` the edit goes too — which is the whole of what the two rungs differ by.
+(def-test the-read-edits-rung-keeps-the-edits-and-drops-the-payloads (:suite leticl)
+  "`:read-edits` draws an edit card and still hides the raw tool result beside it."
+  (flet ((row (name &optional edit)
+           (list :item-id "x" :kind "tool_result" :ts 0
+                 :item (list* :type "tool_result" :name name
+                              (when edit (list :edit edit))))))
+    (let ((edit (row "edit"))
+          (diff (row "some_unknown_tool" (list :path "/tmp/x" :before "a" :after "b")))
+          (read (row "read"))
+          (bash (row "bash")))
+      (let ((leticl::*verbosity* :read-edits))
+        (is (not (leticl::reading-hides-p edit)) "**the `edit` tool's card survives**")
+        (is (not (leticl::reading-hides-p diff))
+            "**and so does a card carrying a diff** — the heredoc case needs no second rule here")
+        (is (leticl::reading-hides-p read) "while a plain read is hidden")
+        (is (leticl::reading-hides-p bash) "and a bash call that changed nothing is hidden"))
+      (let ((leticl::*verbosity* :reading))
+        (is (leticl::reading-hides-p edit) "at `:reading` the edit card is hidden, as it always was")
+        (is (leticl::reading-hides-p diff) "and so is the diff"))
+      (let ((leticl::*verbosity* :normal))
+        (is (not (leticl::reading-hides-p read)) "and above the reading rungs nothing is hidden")))
+    (is (equal '(:reading :read-edits :terse :normal :loud) leticl::+verbosity-ladder+)
+        "the rung sits between the two it is between")
+    (is (eq :read-edits (leticl::verbosity-for-word "read-edits"))
+        "**and the file can name it** — `verbosity-name` spells the rung from the ladder")
+    (is (eq :read-edits (leticl::next-verbosity :reading))
+        "the ring knows it, or `next-verbosity`'s `ecase` would ERROR on the rung")))
+
 (def-test the-config-pane-lists-the-git-format-and-cycles-it (:suite leticl)
   "The row is on the pane, it names what is in force, and Enter rings three shapes."
   (let ((h (%make-head)))
@@ -18541,16 +18573,17 @@ working, so what follows it is the model speaking again, and it gets prose's own
 
 (def-test the-ladder-is-one-ring-including-the-new-rung (:suite leticl)
   "The rung is a rung of the SAME ladder, so the order must be one list and the cycle must close.
-Four presses of `/verbosity` return the reader where they started, and `verbosity-at-least` still
+Five presses of `/verbosity` return the reader where they started, and `verbosity-at-least` still
 means what it meant for the three rungs that were there before — which is the assertion that
 adding a rung BELOW `:terse` moved nothing above it."
-  (is (equal '(:reading :terse :normal :loud) leticl::+verbosity-ladder+)
+  (is (equal '(:reading :read-edits :terse :normal :loud) leticl::+verbosity-ladder+)
       "least-drawn first, which is the order every gate is written against")
   (let ((v :normal))
-    (dotimes (i 4) (setf v (leticl::next-verbosity v)))
-    (is (eq :normal v) "four presses close the ring"))
+    (dotimes (i 5) (setf v (leticl::next-verbosity v)))
+    (is (eq :normal v) "**five presses close the ring** — one per rung, and there are five"))
   (is (eq :reading (leticl::next-verbosity :loud)) "loud wraps to reading, one rung further down")
-  (is (eq :terse (leticl::next-verbosity :reading)) "and reading climbs to terse")
+  (is (eq :read-edits (leticl::next-verbosity :reading))
+      "and reading climbs to `read-edits`, the rung that shows what the head changed")
   ;; the order did not move for the rungs that existed before
   (let ((leticl::*verbosity* :terse))
     (is (not (leticl::verbosity-at-least :loud)) ":terse is still below :loud")
@@ -19066,9 +19099,9 @@ Four claims, each a way the card could be wrong:
         (dolist (rung '("reading" "terse" "normal" "loud"))
           (is (search rung text) (format nil "~a is on the card" rung)))
         (is (search "← now" text) (format nil "the current one is MARKED: ~s" text))
-        (is (= 2 (leticl::head-picker-sel h))
+        (is (= 3 (leticl::head-picker-sel h))
             (format nil "**seeded on what answers now**, so enter on an untouched list is a
- no-op — `normal` is the third rung: ~d" (leticl::head-picker-sel h)))
+ no-op — `normal` is the fourth rung: ~d" (leticl::head-picker-sel h)))
         ;; every value carries its MEANING, not just its name
         (is (search "nothing the head did to produce it" text) "reading says what it hides")
         (is (search "and every tool row" text) "terse says what it keeps")
@@ -19114,7 +19147,7 @@ the rung hides — and it must be there before, gone after, and there again on t
           "**a row ALREADY DRAWN is gone** — the rung applies to the whole transcript")
       ;; --- and back, which is the other direction and the one a cache gets wrong
       (leticl::%command h "verbosity")
-      (setf (leticl::head-picker-sel h) 2)
+      (setf (leticl::head-picker-sel h) 3)
       (leticl::%handle-key h (list :type :enter))
       (is (eq :normal leticl::*verbosity*) "the rung goes back")
       (is (search "file contents" (%transcript-text h))
@@ -19144,13 +19177,13 @@ the rung hides — and it must be there before, gone after, and there again on t
  what this function is for, and a test that only asked `item-lines` could not see it")
         ;; and back, again with the cache warm
         (leticl::%command h "verbosity")
-        (setf (leticl::head-picker-sel h) 2)
+        (setf (leticl::head-picker-sel h) 3)
         (leticl::%handle-key h (list :type :enter))
         (is (search "file contents" (glass))
             "**and the row comes back through the cache too** — the redraw is retroactive in both
  directions, which is what *it applies to the whole transcript* means")))))
 
-(def-test a-rung-can-be-typed-and-an-unknown-one-names-the-four (:suite leticl)
+(def-test a-rung-can-be-typed-and-an-unknown-one-names-the-five (:suite leticl)
   "**The typed path, and it has to exist**: the card's own hint row says *or type a name or the
 number on the left*, and `/mode NAME` already works that way here — two paths to one setting that
 disagree about what a word means is the drift this document keeps finding.

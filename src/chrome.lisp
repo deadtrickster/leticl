@@ -1094,6 +1094,12 @@ its end, and a token count is not recoverable from anywhere else on the screen."
 ;;; means — reachable, which is the obligation, and not resident, which was never
 ;;; part of it.
 
+(defparameter +read-edits-marker+ "reading + the edits — every change it made, and nothing else"
+  "What the `:read-edits` rung calls itself.
+
+**It must not say \"the conversation only\"**: this rung shows the head's changes on purpose, and a
+marker that names the rung below it is the one sentence on the row that would be false.")
+
 (defparameter +reading-marker+ "reading — the conversation only"
   "What the `:reading` rung calls itself on the screen, ONE string in ONE place.
 
@@ -1124,7 +1130,7 @@ things about that placement, and each is why it is here rather than on a row of 
 The mode alone is DIM: it is a state, not a fault, and R19's whole rule is that red and
 yellow are spent on something going wrong."
   (let ((counts (alarm-counts head))
-        (reading (and (reading-p) +reading-marker+)))
+        (reading (and (reading-p) (if (read-edits-p) +read-edits-marker+ +reading-marker+))))
     (cond
       ((not (head-connected head))
        (list (cons (format nil " ⚠ detached — retrying~@[ · ~a~]" reading)

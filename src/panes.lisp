@@ -2718,6 +2718,10 @@ this head draws is its own business, so its choices are its own list."
 
 (defparameter +verbosity-said+
   '(("reading" . "the conversation only — nothing the head did to produce it")
+    ;; **OURS, not letibot's**: it names a rung this head has and that one does not (yet), so
+    ;; there is no reference sentence to borrow — and it has to say the one thing that separates it
+    ;; from the row above it, because that difference IS the setting.
+    ("read-edits" . "the conversation and the cards that say what the head changed")
     ("terse" . "the conversation and every tool row")
     ("normal" . "terse, plus the model's reasoning")
     ("loud" . "normal, plus head arrivals and who issued each command"))

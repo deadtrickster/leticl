@@ -625,21 +625,33 @@ of them on the screen for one keypress."
   level)
 
 (defun reading-p ()
-  "Is the `:reading` rung on? — the conversation, and nothing the head did to produce it."
-  (eq *verbosity* :reading))
+  "Is a READING rung on? — the conversation, and only so much of the head's work as it keeps.
+
+**Two rungs answer yes** (`:reading` and `:read-edits`): they hide the same three kinds and differ
+in exactly one place — `reading-hides-p` keeps an edit card at `:read-edits` — so every other reader
+of this predicate (raw calls, the narration, the run markers) is asking the question they mean."
+  (member *verbosity* '(:reading :read-edits) :test #'eq))
+
+(defun read-edits-p ()
+  "Is the `:read-edits` rung on? — reading, plus the cards that say what the head CHANGED."
+  (eq *verbosity* :read-edits))
 
 (defun next-verbosity (v)
-  "The next rung UP the ladder, wrapping: `reading` → `terse` → `normal` → `loud` → `reading`.
+  "The next rung UP the ladder, wrapping: `reading` → `read-edits` → `terse` → `normal` → `loud` → `reading`.
 
 **NO LONGER A USER-FACING CYCLE, and that is R38's ruling** (`.verbosity` opens a card now):
 *a setting with more than two values is chosen from a card that shows all of them; only a true
 toggle may cycle.* What survives is the ORDER — the ring is how `+verbosity-ladder+` is stated, and
 this function is the ring written down once so the two cannot disagree about which rung is next."
-  (ecase v (:reading :terse) (:terse :normal) (:normal :loud) (:loud :reading)))
+  (ecase v (:reading :read-edits) (:read-edits :terse) (:terse :normal) (:normal :loud) (:loud :reading)))
 
-(defparameter +verbosity-ladder+ '(:reading :terse :normal :loud)
+(defparameter +verbosity-ladder+ '(:reading :read-edits :terse :normal :loud)
   "The rungs, least-drawn first. One list, read by `next-verbosity`, `verbosity-at-least`
-and the status row, so the order cannot be written down twice.")
+and the status row, so the order cannot be written down twice.
+
+**`:read-edits` SITS BETWEEN `:reading` AND `:terse`**, which is where it belongs rather than
+beside `:reading`: it draws everything `:reading` draws PLUS the cards that say what the head
+CHANGED, and less than `:terse` does. The operator asked for it by name, 2026-10-04.")
 
 (defun verbosity-at-least (level)
   "Is `*verbosity*` at or above LEVEL, in the order reading < terse < normal < loud?

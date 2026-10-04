@@ -1473,7 +1473,33 @@ beside a row that is still on the screen, or collapse a run that is not one."
   (let ((body (item-body item)))
     (and (reading-p)
          body
-         (member (%key-from-wire (getf body :type)) +reading-hides+))))
+         (member (%key-from-wire (getf body :type)) +reading-hides+)
+         ;; **`read-edits` KEEPS THE EDITS, AND THIS IS THE ONLY PLACE THAT DECIDES IT.** Every hide
+         ;; in this head goes through this predicate — `item-lines` before drawing a row and
+         ;; `%history-until` when it finds the run — so the exception lives here or it does not exist.
+         ;;
+         ;; **THE EDIT CARD SURVIVES AND THE PAYLOAD BESIDE IT DOES NOT**, which is the whole
+         ;; difference between this rung and `:reading`: the reader sees what the head changed and
+         ;; not what the call returned. The operator's rule (2026-10-04) is that edits are the
+         ;; `edit` tool *plus* the heredoc-shaped writes, and both are `item-shows-an-edit-p`'s.
+         (not (and (read-edits-p) (item-shows-an-edit-p item))))))
+
+(defun item-shows-an-edit-p (item)
+  "Does ITEM show an EDIT — what the `:read-edits` rung exists to keep on the screen?
+
+**Two signals, both the tree's own rather than a rule invented here.** The daemon sends `:edit` on
+a finished call (`session.lisp` folds both sides of the file it changed) — and that is the signal a
+bash command carries when the file changed under it, which is why the heredoc case needs no second
+rule here. The other is the call's NAME through `*verb-map*`: `edit`, `patch`, `apply_patch` and
+`str_replace` are `:edit`, `write`, `write_file` and `create` are `:write`.
+
+**An unknown tool name is NOT an edit.** `*verb-map*` keeps a name it does not know rather than
+inventing a verb for it, and inventing a KIND here would be the same guess one layer up — this
+predicate is allowed to be wrong in the direction of hiding, never in the direction of claiming."
+  (let ((body (item-body item)))
+    (and body
+         (or (getf body :edit)
+             (member (%verb-kind (getf body :name)) '(:edit :write) :test #'eq)))))
 
 (defun %hidden-run-id (items)
   "A stable id for a run of ITEMS, and stability is the whole requirement.
