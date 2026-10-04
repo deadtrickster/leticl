@@ -437,6 +437,60 @@ reaches no arm in either decoder, and `Key::CtrlN` does not exist).
 
 ## Open, in the order they would stop the operator
 
+- [ ] **a pane's Enter belongs to the pane, and this head still gates it on `empty`**
+  (from letibot — `ee33732`; **no `T`-number, yours to number**, but it goes first
+  because it is a keystroke loss the operator has already hit once on the other head).
+
+  **Measured on your side, not inferred**: `src/editor.lisp:1382` is
+
+      ((:enter) (when empty (%pane-enter head)) empty)
+
+  with `empty` the composer's buffer at zero (`:1251`). So on every screen that HAS an
+  Enter act — `:config`, `:subagents`, `:peek`, `:jobs`, `:job-out`, `:dash` — and on
+  the screens with no act at all, **one character in the composer turns the pane's own
+  advertised key into `submit`**: `%pane-enter` is never called, the key falls through
+  the ladder, and the half-written line is sent to the session. The pane does nothing
+  and nothing on the screen says why. That is the operator's report from the jobs pane
+  on the reference head, 2026-10-03 — *"i went to jobs pane and hit enter"*, and what
+  reached the model was a stray `\` — and their ruling is the whole of the fix:
+  *"the pane own keyboard in a way, so enter is a pane thing."*
+
+  **The rule, and it is narrower than *the composer is dead***: **Enter in a pane is the
+  pane's, unconditionally.** The words are **held, never eaten** — a pane that consumes
+  the half-written line to keep the key trades one silent loss for another, so
+  `%pane-enter` must leave the buffer exactly as it was, whatever the pane's act is.
+
+  **Three things must NOT be swept into it**, and each is in the reference for a reason:
+
+  · **the cursor keys keep the gate.** `:left`/`:right` on `:job-out` (`:1352`) is
+    already right and must stay as it is: a cursor key is the composer's first, and a
+    half-typed line keeps its motion (letibot `app.rs:5963`).
+  · **the screens where a typed line IS the answer keep it**: `:todos` (with its `:tab`
+    unfold at `:1368`) and `:picker` — a row number, a prefix, a name is what the reader
+    is typing and `submit` routes it. The reference gates exactly those, with the same
+    condition (`app.rs:6493`, which is also where Tab and Enter are one arm and not the
+    pane's). This file's line 8 states the rule as *Enter and the digits*; **the digits
+    half stands** (`app.rs:6283`) — **this amends the Enter half only, and line 8 is
+    amended in the same commit**, because it is the rule as stated and it is the
+    sentence being overturned.
+  · **and one arm must close Enter for the screens whose block never runs over an empty
+    list** — the jobs list and the subagent tree over no rows, plus `help`, `stats` and
+    the slash listing, which have no Enter act at all. Without it, Enter in an EMPTY
+    jobs pane is still a submit: the same defect with one row fewer on the screen
+    (letibot `app.rs:6697`).
+
+  **What "done" is**: on the live head, with a character in the composer — Enter on a
+  jobs row opens that job's output, on a subagent row reads it, on `:config` changes the
+  row, on `:peek` re-reads it, on `:dash` opens the panel under the cursor — **and the
+  character is still in the composer afterwards**; Enter on an empty jobs pane submits
+  nothing; and Enter in `:todos` with a line typed is still the line's. The suite half is
+  the PAIR of assertions, because either alone passes on the broken code: that the pane's
+  act happened, and that the words survived. The reference's test is
+  `a_panes_enter_is_the_panes_even_with_words_in_the_composer` (`app.rs:39303`), and it
+  was verified fail-first by restoring the guard on the jobs arm — which is how the
+  reference found that **no test had ever asserted the old behaviour**, and that a
+  keystroke aimed at a pane came to be sent to a model for a day.
+
 - [~] **T1 · the payload window** (`keys.md` G13/G20, `wire.md` W2,
   `panes.md` G4/G10). **Two of its three parts are closed and the third is a BOUND
   rather than a defect** — so what keeps this row open is a daemon-side half and a
