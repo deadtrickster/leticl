@@ -437,7 +437,7 @@ reaches no arm in either decoder, and `Key::CtrlN` does not exist).
 
 ## Open, in the order they would stop the operator
 
-- [ ] **a pane's Enter belongs to the pane, and this head still gates it on `empty`**
+- [x] **a pane's Enter belongs to the pane — landed, and the `empty` gate is gone.** `8aa347e`.
   (from letibot — `ee33732`; **no `T`-number, yours to number**, but it goes first
   because it is a keystroke loss the operator has already hit once on the other head).
 
