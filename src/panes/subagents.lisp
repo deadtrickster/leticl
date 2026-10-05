@@ -72,7 +72,15 @@ the wrong place, which is how the reference found this in its own test."
       (push (list (cons "    none spawned yet. The model spawns them with the task tool."
                         '(:dim t)))
             out))
-    (loop for s in rows
+    (flet ((group-of (state)
+              (cond ((string= state "running") 0)
+                    ((string= state "opening") 1)
+                    ((string= state "done") 2)
+                    ((string= state "failed") 3)
+                    (t 4))))
+       (let ((sorted (sort (copy-list rows) #'<
+                           :key (lambda (s) (group-of (or (getf s :state) ""))))))
+    (loop for s in sorted
           for i from 0
           do (let* ((state (or (getf s :state) ""))
                     (mark (cond ((string= state "opening") "[…]")
@@ -104,12 +112,12 @@ the wrong place, which is how the reference found this in its own test."
                                               (if (getf s :answer) "" state)))
                                   w)
                                  '(:dim t)))
-                     out)))
-    (push nil out)
+                     out))))
+     (push nil out)
     (push (list (cons "    arrows move, Enter or o switches into it, p reads its prompt — subagents are hidden from ctrl-s."
                       '(:dim t)))
           out)
-    (values (nreverse out) (+ 2 (* 2 sel)))))
+    (values (nreverse out) (+ 2 (* 2 sel))))))
 
 ;;;; The repo's TODO.md, read the way org reads it.
 ;;;;

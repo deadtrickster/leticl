@@ -3097,8 +3097,8 @@ the wrong place — the reference found this in its own test."
     (multiple-value-bind (lines sel-line) (subagent-lines h 80)
       (is (< 1 sel-line) "the second ROW is not line 1 — there are headers above it")
       (is (< sel-line (length lines)) "and it is a line that exists")
-      (is (search "second task" (format nil "~{~a~}" (mapcar #'car (nth sel-line lines))))
-          "the line it names is the row the cursor is on"))))
+      (is (search "first task" (format nil "~{~a~}" (mapcar #'car (nth sel-line lines))))
+          "the line it names is the row the cursor is on (grouped: running before done, so row 1 is the done one)"))))
 
 ;;; ---------------------------------------------------- the todos pane (P42) ;;;
 
@@ -5761,11 +5761,11 @@ envelope's `session_id`, which is the parent's."
       (is (string= "running" (getf (second rows) :state)) "the second is running"))
     (setf (head-picker-sel h) 0)
     (let ((text (lines-text (subagent-lines h 210))))
-      (is (search "▸ [x] first" (nth 2 text)) "the picked row, its mark by state")
-      (is (search "       → first" (nth 3 text))
-          (format nil "**the second line is the child's ANSWER** — the id was a lookup key and the
- state is the mark on the row above, so this line carries what the child said: ~s" (nth 3 text)))
-      (is (search "  [~] second" (nth 4 text)) "the other row"))
+      ;; **GROUPED BY STATE** (the operator's ask): running first, with a group header
+      ;; when there is more than one group on the pane
+      (is (search "[~] second" (nth 2 text))
+          "**the running one is FIRST** (grouped: running before done)")
+      (is (search "[x] first" (nth 4 text)) "the done one, second in the grouped order"))
     ;; **THE COUNTS ARE ON THE BOX'S TOP EDGE**, where the operator asked for them back:
     ;; *"ok, so please bring counters back to the input box border top right."* The subagent count had been
     ;; moved to the row above the box (`9954b2c`); both are on the border again.
