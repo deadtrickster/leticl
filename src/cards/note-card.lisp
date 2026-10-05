@@ -149,6 +149,7 @@
      ;; that the ENTRY exists and names the reason; `nothing to do — …` satisfies it, and
      ;; inventing a verb here to look useful would be the failure that test is written against.
      ("operator_call_ran" . "nothing to do — the call you asked for ran; the row under this note holds what it returned")
+     ("message_idle" . "nothing to do — the daemon is idling a message that is waiting on something else")
      ;; **AND A SLOW PROVIDER NAMES AN ACT, WHICH IS THE POINT OF THE CODE.** letibot's
      ;; `e54b48a` landed it because DeepSeek was measured at 12.4 s to first byte while its
      ;; `/models` answered in 0.28 s — the failure it prevents is a person concluding the model is

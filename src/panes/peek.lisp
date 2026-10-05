@@ -302,7 +302,17 @@ so the two agree without a conversion."
     (setf (head-cols scratch) cols
           (head-rows scratch) room
           (head-prefs scratch) (head-prefs head)
-          (head-scroll scratch) (max 0 *pane-scroll*))
+          (head-scroll scratch) (if (zerop *hist-depth*)
+                                                ;; **FIRST DRAW: walk the child WHOLE.**  drives
+                                                ;;  = scroll + visible, which drives the history walk. A value
+                                                ;; of 0 on a fresh scratch head walks only  lines and the
+                                                ;; pane answers ~visible for its total, clamping every arrow to
+                                                ;; nothing. A huge first value walks everything; the viewport's own
+                                                ;; clamp then brings  to , which is the
+                                                ;; scroll the reader asked for ( is 0 on the first
+                                                ;; draw anyway, so this changes only the DEPTH, not the position).
+                                                10000000
+                                                (max 0 *pane-scroll*)))
     (let* (;; **THE RUNG IS THE HEAD'S, NOT THE REPLAY'S.** `call-with-replay-globals` resets
            ;; `*verbosity*` to `:normal` (the macro's job is to answer the same bytes twice), but
            ;; this is a LIVE peek, and the operator's rung is the view they chose: the event path
@@ -311,13 +321,46 @@ so the two agree without a conversion."
            ;; before the reset and restored inside, so the child's rows are drawn at the parent's
            ;; rung rather than at the replay's `:normal`.
            (rung *verbosity*)
+           (clamped nil)
            (lines (call-with-replay-globals
                    (lambda ()
-                     (let ((*scroll-max* 0)
-                           (*verbosity* rung))
-                       (prog1 (%viewport-lines scratch cols visible)
-                         (setf *peek-total* (+ (length head-lines) *scroll-max* visible (length footer))
-                               *pane-scroll* (head-scroll scratch))))))))
+                     ;; **THE CHILD IS NOT THE PARENT'S VIEWPORT, and seven bindings are why
+                     ;; it wasn't.** The pane draws the child through `%viewport-lines` — one
+                     ;; renderer, by design — but that renderer's session-scoped state is the
+                     ;; PARENT's, and MEASURED on a 200-row child every one of these leaked:
+                     ;;
+                     ;;   · `*verbosity*` is reset to `:normal` by the wrapper, so the child drew
+                     ;;     at `:normal` whatever rung the operator chose — captured in `rung` above.
+                     ;;   · `*hist-depth*` bounds the walk, so the child rendered only as deep as
+                     ;;     the parent had ever scrolled: the pane answered `visible + 4` for 200
+                     ;;     rows and `pane-scroll-max` clamped every arrow to nothing. The child is
+                     ;;     walked WHOLE — a peek is bounded by the daemon's own view.
+                     ;;   · `*scroll-anchor*`/`*anchor-lost-said*`/`*hist-bounds*` — a parent parked
+                     ;;     on a row has an anchor the child's bounds cannot contain, so the child's
+                     ;;     draw took the *row is gone* branch, DROPPED the parent's anchor (back
+                     ;;     to the bottom, silently) and could say so on the child's screen.
+                     ;;   · `*hist-cache*` is one slot keyed on the items vector, so the child's
+                     ;;     walk evicted the parent's cache and the parent re-walked its whole
+                     ;;     history after every peek tick.
+                     ;;   · the clamped scroll was written to the REBOUND `*pane-scroll*` (the
+                     ;;     wrapper rebinds it), so the write-back evaporated; it is returned in
+                     ;;     `clamped` and written outside the wrapper now.
+                     (let ((*verbosity* rung)
+                           (*scroll-anchor* nil)
+                           (*anchor-lost-said* nil)
+                           (*hist-bounds* nil)
+                           (*hist-cache* nil))
+                       ;; **`*hist-depth*` IS SETF'D, NOT LET-BOUND, and that is a compile-order
+                       ;; fact, not a style one.** The `defvar` that makes it special sits at
+                       ;; `history-cache.lisp:773`, but the walk that READS it at line 897 was
+                       ;; compiled first — so a `let` binding there compiled as LEXICAL, the
+                       ;; walk never saw it, and the pane still answered `visible + 2` for 200
+                       ;; rows (MEASURED: DBG showed depth=0 inside the walk while hd=10000000
+                       ;; at the pane). A `setf` on a special always reaches the reader.
+                        (prog1 (%viewport-lines scratch cols visible)
+                          (setf *peek-total* (+ (length head-lines) *scroll-max* visible (length footer))
+                               clamped (head-scroll scratch))))))))
+      (setf *pane-scroll* clamped)
       (append head-lines
               lines
               ;; pad, so the footer sits on the pane's last row rather than floating under a short read

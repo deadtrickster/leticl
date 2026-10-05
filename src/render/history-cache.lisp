@@ -6,6 +6,44 @@
 
 (in-package #:leticl)
 
+
+(defvar *hist-depth* 0
+  "How many SCREEN LINES of history the last frame asked the walk for.
+
+**A GENERATION BUMP MUST NOT MATERIALISE LESS THAN THE LAST FRAME DID.** `n` — the line count that
+`*scroll-max*`, the scroll clamp and the window are all taken from — is not the length of the
+conversation. It is the length of what has been MATERIALISED: `%history-until` returns at least
+`need` lines and stops, so on a CACHE HIT `lines` carries everything this session accumulated from
+deeper walks, and on a CACHE MISS it starts empty and stops at `need`.
+
+Measured on the operator's head, 2026-10-02, sampling `*scroll-max*` and `*hist-generation*` from
+outside at 3 Hz across a settle:
+
+    sample   scroll-max   hist-generation
+        1        27          4007      steady
+       43        19          4009      DROP of 8, generation +2
+       85        27          4026      recovered
+      155        34          4040
+      157        48          4040      content GROWING, generation FLAT
+      161        40          4044      DROP of 30, generation +4
+      200      4605          4044      settled, full history
+
+Growth does not bump; the drop does. Samples 155-160 are a reply streaming in — `scroll-max` climbs
+34 to 70 with the generation flat at 4040 — and the only move in that window is the drop at 161,
+exactly where the generation jumps 4040 to 4044. So the invalidation is the TRIGGER and the collapse
+is that a frame rebuilt from scratch reports a transcript two or three lines long.
+
+**The dips bottom at 2-3 because that is the tail plus the air row**, with a one-line tail.
+Arithmetic, not a half-rebuilt cache: the walk is CORRECT, and was asked only for a viewport.
+
+So this holds the DEPTH, not the content: after an invalidation the walk re-renders to the depth it
+had, and `n` does not fall. It is a high-water mark for how much to ASK for, which is what keeps it
+bounded — a cache HIT costs nothing, so a deep depth is paid for only on the frame after a bump,
+which is the frame the reader is already looking at. Asking for less than the reader is looking at
+is the defect this exists to stop.
+
+A `defvar`, so a push can introduce it, and because it is a rendering hint rather than session state.")
+
 ;;; ------------------------------------------- the history line cache ;;;
 ;;;
 ;;; **Scroll cost nothing to find the lines and everything to build them.** The
@@ -285,7 +323,7 @@ thirty rows appended, and the view jumped to `row-62`."
           ;; `live` made it flicker off mid-turn — *"running tool is no longer yellow the counter,
           ;; wtf why it regressed."*
           (busy (and (session-turn s) (turn-busy-p (session-turn s)))))
-    (loop while (and (>= next-i 0)
+     (loop while (and (>= next-i 0)
                      (or (< (length lines) (1+ need))
                          ;; **the anchor's row has not been reached yet: keep walking down to it.**
                          ;;
@@ -770,42 +808,7 @@ two of them drift.
 A `defvar`, so a push can introduce it, and it is read by `editor.lisp`'s scroll arms
 to decide when the reader has asked for the rows above the window (`fetch-row-above`).")
 
-(defvar *hist-depth* 0
-  "How many SCREEN LINES of history the last frame asked the walk for.
 
-**A GENERATION BUMP MUST NOT MATERIALISE LESS THAN THE LAST FRAME DID.** `n` — the line count that
-`*scroll-max*`, the scroll clamp and the window are all taken from — is not the length of the
-conversation. It is the length of what has been MATERIALISED: `%history-until` returns at least
-`need` lines and stops, so on a CACHE HIT `lines` carries everything this session accumulated from
-deeper walks, and on a CACHE MISS it starts empty and stops at `need`.
-
-Measured on the operator's head, 2026-10-02, sampling `*scroll-max*` and `*hist-generation*` from
-outside at 3 Hz across a settle:
-
-    sample   scroll-max   hist-generation
-        1        27          4007      steady
-       43        19          4009      DROP of 8, generation +2
-       85        27          4026      recovered
-      155        34          4040
-      157        48          4040      content GROWING, generation FLAT
-      161        40          4044      DROP of 30, generation +4
-      200      4605          4044      settled, full history
-
-Growth does not bump; the drop does. Samples 155-160 are a reply streaming in — `scroll-max` climbs
-34 to 70 with the generation flat at 4040 — and the only move in that window is the drop at 161,
-exactly where the generation jumps 4040 to 4044. So the invalidation is the TRIGGER and the collapse
-is that a frame rebuilt from scratch reports a transcript two or three lines long.
-
-**The dips bottom at 2-3 because that is the tail plus the air row**, with a one-line tail.
-Arithmetic, not a half-rebuilt cache: the walk is CORRECT, and was asked only for a viewport.
-
-So this holds the DEPTH, not the content: after an invalidation the walk re-renders to the depth it
-had, and `n` does not fall. It is a high-water mark for how much to ASK for, which is what keeps it
-bounded — a cache HIT costs nothing, so a deep depth is paid for only on the frame after a bump,
-which is the frame the reader is already looking at. Asking for less than the reader is looking at
-is the defect this exists to stop.
-
-A `defvar`, so a push can introduce it, and because it is a rendering hint rather than session state.")
 
 (defun %viewport-lines (head cols want)
   "The conversation's last WANT lines (scrolled up by head-scroll), as
@@ -940,7 +943,7 @@ A `defvar`, so a push can introduce it, and because it is a rendering hint rathe
            (n (if empty (length empty-lines) all-len)))
       ;; the scroll is clamped to what exists: past the top there is nothing to
       ;; show, and a wheel that kept counting would need as many turns back
-      (setf *scroll-max* (max 0 (- n want))
+       (setf *scroll-max* (max 0 (- n want))
             (head-scroll head) (max 0 (min (head-scroll head) *scroll-max*)))
       ;; **R36: A SCROLLED VIEWPORT IS ANCHORED TO A ROW, NOT TO A COUNT.**
       ;;

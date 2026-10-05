@@ -218,6 +218,10 @@ answered in the same place or not at all.")
     ;; fail-safe drew it RED — an alarm for the door working as designed, which is R19 itself
     ;; and exactly the direction the guard exists for.
     "operator_call_ran"
+    ;; **`message_idle`, from letibot `272acb2`** ("job_list shows the ACTIVE jobs by
+    ;; default"): the daemon's own housekeeping when a message has been idle. Caught by
+    ;; the guard, which is the guard working.
+    "message_idle"
     ;; **AGAIN FROM THE OTHER TREE, AND THE SAME GUARD CAUGHT IT.** letibot's `e54b48a` — *a
     ;; provider that is slow says so, instead of looking like one that is gone* — added
     ;; `model_slow_first_byte`, because DeepSeek was measured at 12.4 s to first byte on a
