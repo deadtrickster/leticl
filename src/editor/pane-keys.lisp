@@ -7,12 +7,15 @@
 (in-package #:leticl)
 
 (defun %subagent-switch (head)
-  "`o` on the subagent tree: open that subagent's session for good.
+  "The switch into the subagent under the cursor — what Enter and `o` both do
+on the subagents pane.
 
-Enter READS a subagent without leaving this session and `o` MOVES — two keys,
-one apart, and the pane's own last line says so (`o switches into it`). The key
-did not exist here, because the pane arm read only `q` out of a printable
-character (app.rs:3696-3706)."
+The ruling moved at letibot `0c841de`: Enter used to READ (a peek that left the
+head where it was) and `o` SWITCHED, and the operator measured that they wanted
+Enter to be the switch. Now the two keys are one act — `switch_to(id)`, the
+switch into that subagent's session, and the pane closes behind it. Enter is
+unconditional (a pane owns Enter); `o` keeps the empty-composer guard, because
+a pane is not allowed to eat half a typed word. The read moved to `p`."
   (let ((row (nth (head-picker-sel head) (subagent-rows head))))
     (cond ((null row) nil)
           ((equal (getf row :state) "opening")
@@ -104,30 +107,23 @@ two sides in circles."
   (config-change head))
 
 (defmethod pane-enter ((pane subagents-pane) head)
-  ;; **ENTER READS; `o` ATTACHES.** The two heads agree on this, and the argument is letibot's:
-  ;; *attaching on Enter silently redirects the next prompt to the child, which is exactly the hazard
-  ;; the read exists to avoid* — an operator who pressed the key to LOOK must not find their next
-  ;; message in somebody else's session.
+  ;; **ENTER IS THE SWITCH; `o` IS THE SAME ACT.** The ruling moved at letibot `0c841de`
+  ;; ("subagents: enter is the switch, one esc is the way up, and the pane stops going empty").
+  ;; The operator, in three messages, measured that Enter on a subagent row "is like completely
+  ;; switching session", and that after `o` they "couldnt just Esc from the subagent — had to
+  ;; switch back here via session". So Enter now does what `o` has always done — the switch into
+  ;; that subagent's session, and the pane closes behind it — and `o` is unchanged, the same act
+  ;; on the key this pane has always used, so a hand that learned it keeps it.
   ;;
-  ;; **And reading is no longer a lesser view**, which is what changed today: the peek asks for
-  ;; `PeekShape::Rows`, so it draws the child with the renderer every other session uses, and
-  ;; `tick-peek` re-reads it once a second — a live tail, looking exactly like a conversation, which
-  ;; is the operator's own ask (*"i want it to tail as a normal conversation while i look at it"*).
-  ;; It cost one field on the frame, and it buys the key that cannot misfire a prompt.
+  ;; **The read is not lost; it moved to `p`.** Reading a child's output without leaving the
+  ;; session is what `ClientFrame::Peek` exists for (R20), and `p` is `/peek ID`'s own key —
+  ;; neither Enter nor Esc, which is what the two gestures had to be kept apart from.
   ;;
-  ;; A child still `opening` has nothing to read and the daemon would refuse the peek by name, so
-  ;; the refusal is said here rather than bounced through the daemon (app.rs:3678-3689).
-  (let ((row (nth (head-picker-sel head) (subagent-rows head))))
-    (cond ((null row) nil)
-          ((equal (getf row :state) "opening")
-           (say head "that subagent is still opening — nothing to read yet"))
-          (t (awhen (getf row :session-id)
-                    ;; **ENTER IS THE CONVERSATION**, so it clears the narrow view (`p`) on its way in:
-                    ;; a flag that outlived the key that set it would draw a prompt for a reader who
-                    ;; asked for the answer.
-                    (setf *peek-prompt-only* nil)
-                    (%send head (make-peek it))
-                    (say head (format nil "reading ~a…" it)))))))
+  ;; Enter is unconditional (a pane owns Enter); `o` and `p` keep the empty-composer guard,
+  ;; because a pane is not allowed to eat half a typed word. A child still `opening` has no
+  ;; session to switch to yet, and the refusal is said here rather than bounced through the
+  ;; daemon (app.rs:6648).
+  (%subagent-switch head))
 
 (defmethod pane-enter ((pane peek-pane) head)
   ;; The pane's hint bar says *"enter re-reads"* and it did not: `:peek` was

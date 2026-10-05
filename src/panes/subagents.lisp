@@ -106,7 +106,7 @@ the wrong place, which is how the reference found this in its own test."
                                  '(:dim t)))
                      out)))
     (push nil out)
-    (push (list (cons "    arrows move, Enter reads the subagent's output, o switches into it — subagents are hidden from ctrl-s."
+    (push (list (cons "    arrows move, Enter or o switches into it, p reads its prompt — subagents are hidden from ctrl-s."
                       '(:dim t)))
           out)
     (values (nreverse out) (+ 2 (* 2 sel)))))

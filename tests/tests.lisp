@@ -5394,8 +5394,12 @@ conversation."
       (is (search "longer than any excerpt" text)
           (format nil "**and carries the WHOLE task**, past any excerpt: ~s" text))
       (is (not (search "the answer" text)) "and not the conversation it belongs to"))
-    (leticl::%handle-key h (list :type :enter))
-    (is (not leticl::*peek-prompt-only*) "enter is the conversation again, so it clears the flag")))
+    ;; **Enter no longer clears the flag** — the ruling moved at letibot `0c841de`: Enter
+    ;; is the switch into the subagent, not a peek, and a switch leaves the pane entirely.
+    ;; The flag is cleared by the peek itself when it re-reads, or by `p` toggling it off.
+    (leticl::%handle-key h (list :type :char :ch #\p))
+    (is (not (null leticl::*peek-prompt-only*))
+        "p flags the read as the child's PROMPT rather than its conversation")))
 
 ;;; **THE PANE'S ENTER WAS GATED ON `empty`, AND THE GATE WAS THE BUG.** `%pane-key` read
 ;;; `((:enter) (when empty (%pane-enter head)) empty)`: with one character in the composer the arm
@@ -5719,7 +5723,7 @@ envelope's `session_id`, which is the parent's."
       (is (string= "    none spawned yet. The model spawns them with the task tool."
                    (car (first (third lines)))))
       (is (null (fourth lines)))
-      (is (string= "    arrows move, Enter reads the subagent's output, o switches into it — subagents are hidden from ctrl-s."
+      (is (string= "    arrows move, Enter or o switches into it, p reads its prompt — subagents are hidden from ctrl-s."
                    (car (first (fifth lines)))))
       (is (= 2 sel-line)))
     ;; two children of one parent, each with two state events: two rows, latest state each
@@ -11733,6 +11737,42 @@ white) tool calls.\"* A count of work done cannot go down."
     (leticl::note-answered-call "c2")
     (is (null (leticl::%hidden-run-live-work turn 80)) "both rows landed: nothing in flight")))
 
+(def-test a-call-the-transcript-has-answered-is-not-drawn-executing (:suite leticl)
+  "Daemon commit `5910161`: a call whose result row the transcript has committed is not
+executing, whatever the turn's own state is — so the marker's yellow clears.
+
+The operator, on a long round: *\"yellow tool calls are not resolved unfortunately\"* — a
+marker whose digits stay pending on a turn whose calls have all finished and whose daemon
+has published every row, and it never clears. The call's state is still `running` (this
+head never received a `tool_finished`), and the turn is still busy, but the row is the
+head's own record that the call is over — so the colour has to read it.
+
+The NUMBER is unaffected: it already counts only the calls the transcript has not taken
+over (`call-answered-p`), and it is monotone. What moves is the COLOUR, which must be
+counted over the same set or it goes on colouring a number that has stopped counting them."
+  (let* ((leticl::*answered-calls* nil)
+         (turn (list :turn-id "t1" :model "m" :state (list :state "running") :reasoning "thinking"
+                     :calls (list (list :call-id "c1" :name "bash" :state (list :state "running"))))))
+    ;; The premise: one call executing, the turn still running, and the marker is yellow.
+    (let ((live (leticl::%hidden-run-live-work turn 80)))
+      (is (= 1 (getf live :running))
+          "one call executing: one running: ~s" live)
+      (is (leticl::marker-rising-p t live t)
+          "the number is yellow while the call runs"))
+    ;; The transcript commits the result — and NO `tool_finished` arrives. The call's state
+    ;; is still `running`, and the turn is still busy. But the row is the answer.
+    (leticl::note-answered-call "c1")
+    (let ((live (leticl::%hidden-run-live-work turn 80)))
+      (is (= 0 (getf live :running))
+          "**a call the transcript has answered is not counted as executing**, whatever its state says: ~s" live)
+      (is (not (leticl::marker-rising-p t live t))
+          "the yellow clears even though the turn is still running and the call's state is still `running`"))
+    ;; The call's state is still `running` — the state is the daemon's to correct, and this
+    ;; head has not been told. It is why the assertions above are about the colour reading
+    ;; the row, not about the call being quietly finished off.
+    (is (string= "running" (getf (getf (first (getf turn :calls)) :state) :state))
+        "the call's state was not corrected: the colour read the row, not a finish this head never received")))
+
 (def-test a-dead-socket-releases-the-asks-it-took-with-it (:suite leticl)
   "`*resync-asked*` was cleared only by the `resync` frame. A socket that died between the ask and
 the answer left it T for the rest of the process, and every later gap then went unrepaired —
@@ -12615,11 +12655,18 @@ while the pane's own hint bar says *\"arrows scroll · enter re-reads\"*
       (is (equal "peek" (getf f :frame)) "enter re-reads")
       (is (equal "s-child" (getf f :session-id)) "the same subagent"))))
 
-(def-test o-switches-into-a-subagent-and-enter-waits-for-one-opening (:suite leticl)
+(def-test enter-is-the-switch-and-o-is-the-same-act (:suite leticl)
   "G22. The subagent pane's own last line says *\"o switches into it\"* and the
 key did not exist — the pane arm read only `q` out of a printable character. And
 Enter had no `opening` guard, so it peeked at a subagent with nothing to read and
-the daemon refused it by name (app.rs:3660-3709)."
+the daemon refused it by name (app.rs:3660-3709).
+
+The ruling moved at letibot `0c841de` (\"subagents: enter is the switch, one esc
+is the way up, and the pane stops going empty\"): Enter used to READ (a peek that
+left the head where it was) and `o` SWITCHED, and the operator measured that they
+wanted Enter to be the switch. Now the two keys are one act — `switch_to(id)`,
+the switch into that subagent's session, and the pane closes behind it. The read
+moved to `p`."
   (let* ((h (%on-head :cols 80 :rows 24))
          (wire (%wire h)))
     (setf (session-subagents (head-session h))
@@ -12629,7 +12676,7 @@ the daemon refused it by name (app.rs:3660-3709)."
     (let ((f (first (%sent wire))))
       (is (equal "switch" (getf f :frame)) "o switches into it")
       (is (equal "s-kid" (getf f :session-id)) "by id"))
-    ;; one still opening has nothing to read, and says so rather than being refused
+    ;; one still opening has nothing to switch to, and says so rather than being refused
     (setf (session-subagents (head-session h))
           (list (list :subagent-id "s-new" :state "opening" :prompt "go" :role "worker"))
           (head-mode h) :subagents)
@@ -12637,23 +12684,20 @@ the daemon refused it by name (app.rs:3660-3709)."
     (is (null (%sent wire)) "enter on one still opening sends nothing")
     (is (search "still opening" (head-status-note h))
         "and the refusal is SAID here rather than bounced through the daemon — asserted before the\n next case, because a status note is the LATEST thing said and the running case below says its own")
-    ;; **AND ON A CHILD THAT IS RUNNING, ENTER READS IT — a live, real-rendered tail.** The two heads
-    ;; agree that Enter READS and a neighbour ATTACHES, because attaching on Enter silently redirects
-    ;; the next prompt to the child; and the read is no longer the lesser view: it asks for
-    ;; `PeekShape::Rows`, so it draws with the renderer every session uses, and `tick-peek` re-reads it
-    ;; once a second.
+    ;; **AND ON A CHILD THAT IS RUNNING, ENTER SWITCHES INTO IT** — the ruling moved at letibot
+    ;; `0c841de`: Enter used to READ (a peek that left the head where it was) and `o` SWITCHED, and
+    ;; the operator measured that they wanted Enter to be the switch. Now the two keys are one act —
+    ;; `switch_to(id)`, the switch into that subagent's session, and the pane closes behind it.
     (setf (session-subagents (head-session h))
           (list (list :subagent-id "s-run" :state "running" :prompt "a task" :role "worker"))
           (head-picker-sel h) 0
           (head-mode h) :subagents)
     (leticl::%handle-key h (list :type :enter))
     (let ((sent (%sent wire)))
-      (is (equal "peek" (getf (first sent) :frame))
-          (format nil "**enter READS the subagent** — the key pressed to LOOK must not put the next
- prompt in somebody else's session: ~s" sent))
-      (is (equal "Rows" (getf (first sent) :shape))
-          "and reads it as ROWS, which is what makes the read draw like a conversation")
-      (is (equal "s-run" (getf (first sent) :session-id)) "from that subagent's own session id"))))
+      (is (equal "switch" (getf (first sent) :frame))
+          (format nil "**enter IS the switch** — the ruling moved at letibot `0c841de`: ~s" sent))
+      (is (equal "s-run" (getf (first sent) :session-id)) "into that subagent's own session")
+      (is (eq :normal (head-mode h)) "and the pane closed behind it"))))
 
 ;;; ----------------------------------------- the job-output overlay (R21) ;;;
 ;;;

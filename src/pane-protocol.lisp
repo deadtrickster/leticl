@@ -319,7 +319,7 @@ outrank any pane's hint."))
 
 (defmethod pane-hint ((pane subagents-pane) head)
   (declare (ignore head))
-  "subagents this session spawned · enter reads one (live) · p its prompt · o attaches to it · esc closes")
+  "subagents this session spawned · enter or o switches into one · p its prompt · esc closes")
 
 (defmethod pane-hint ((pane jobs-pane) head)
   (if (dash-panel-for-job (nth (head-picker-sel head) (head-jobs head)))
