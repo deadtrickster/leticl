@@ -1,0 +1,17 @@
+panes: the peeked snapshot follows the head's rung, not the replay's :normal
+
+The snapshot path (%peek-snapshot-pane) drew the child's rows through
+call-with-replay-globals, which resets *verbosity* to :normal (the macro's
+job is to answer the same bytes twice). But a LIVE peek is the operator's
+view, and the operator's rung is the view they chose: the event path already
+follows it (subagent-out-lines's :payloads (not (reading-p))), and the
+snapshot path's own docstring claims "the rung ... is all its, by
+construction". Before the fix, a :reading head peeked a child and saw its
+tool payloads in full — the opposite of the view the operator chose.
+
+The fix captures the head's rung before the reset and restores it inside the
+thunk, so the child's rows are drawn at the parent's rung.
+
+GATES: 7386 checks, 7386 pass, 0 fail (3 new checks from the new test
+a-peeked-snapshot-follows-the-heads-rung). Warnings unchanged (the change
+introduces no new undefined variables or functions).
