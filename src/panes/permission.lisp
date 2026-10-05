@@ -149,6 +149,37 @@ never scrolled. The content becomes a viewport that SHRINKS to whatever room is 
                  (dolist (l (wrap-text text w))
                    (push (list (cons l style)) lad))))
           (wrapped (format nil "? ~a [~a]" headline kind) '(:fg :yellow))
+          ;; **Whose call this is, when it is not this session's own.** The
+          ;; daemon's own card (app.rs:14682-14706), line for line: a subagent's
+          ;; gate posts its card to the tree's ROOT, because a child has no head
+          ;; of its own (R58), and **a card that arrived at the root unlabelled
+          ;; would be answered for the wrong thing** (event.rs:746) — the
+          ;; question and the ladder are the same either way, and this clause is
+          ;; the only thing that says whose call it is.
+          ;;
+          ;; Directly under the question, not below the evidence: it changes
+          ;; what is being decided, so it is read on the same pass of the eye as
+          ;; the question; under a wall of layer A's prose it would be read after
+          ;; the answer was already chosen. The dim register, like every other
+          ;; clause on this card — it is attribution, not a second question.
+          ;;
+          ;; The HANDLE is what `task_result` collects by and what a head
+          ;; attaches to; the TASK is the child's first line, so two children of
+          ;; one session are told apart. An empty task draws the handle alone —
+          ;; a dangling separator after it would be a task nobody sent.
+          ;;
+          ;; Sanitised before it is wrapped, the reference's order
+          ;; (`without_control_lines`): the task is the child's own words, and a
+          ;; control character in them must not reconfigure the operator's
+          ;; terminal.
+          (let ((s (getf d :subagent)))
+            (when s
+              (let* ((handle (%without-control (or (getf s :handle) "")))
+                     (task (%without-control (or (getf s :task) ""))))
+                (wrapped (if (plusp (length task))
+                             (format nil "    a subagent's call — ~a · ~a" handle task)
+                             (format nil "    a subagent's call — ~a" handle))
+                         '(:dim t)))))
           (when (plusp (length target))
             ;; bold rather than yellow: the question is yellow, and the thing
             ;; being asked about is not a second question

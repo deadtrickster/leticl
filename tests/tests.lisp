@@ -17386,6 +17386,83 @@ made checkable."
     (is (search "cargo test" text) "an exec card still names its command")
     (is (not (search "could not be read" text)) "and claims no write it was not told about"))))
 
+(def-test a-card-that-is-a-subagents-call-says-so-and-names-the-child (:suite leticl)
+  "**R58's ask route, and the daemon's ruling (event.rs:746): a subagent's gate
+posts its card to the tree's ROOT, because a child has no head of its own — and
+**a card that arrived at the root unlabelled would be answered for the wrong
+thing**: the question and the ladder are the same either way, and the clause is
+the only thing that says whose call it is.
+
+The daemon's own card (app.rs:14682-14706) is the wording: `a subagent's call
+— HANDLE · TASK`, the handle being what `task_result` collects by and what a
+head attaches to, and the task the child's first line, so two children of one
+session are told apart. It sits directly under the question, in the dim
+register, and an empty task draws the handle alone rather than a dangling
+separator. The fold is asserted too, because the field is read off the frame
+there and a fold that dropped it would leave the card with nothing to draw."
+  ;; (1) this session's own call: no clause at all. A `nil` that still drew a
+  ;; line would be furniture on every ordinary card.
+  (let ((own (%card-all-text (list :access "exec" :target "cargo test") 100)))
+    (is (not (search "a subagent's call" own))
+        (format nil "an own card draws no attribution: ~s" own)))
+  ;; (2) a child's call: the clause names the handle AND the task
+  (let ((child (%card-all-text (list :access "exec" :target "cargo test"
+                                     :subagent (list :handle "s-sub-3"
+                                                     :task "count the rows the store never reads"
+                                                     :root "s-root"))
+                               100)))
+    (is (search "a subagent's call — s-sub-3 · count the rows the store never reads"
+                child)
+        (format nil "the clause names the child: ~s" child)))
+  ;; (3) the clause sits ABOVE the ladder — read on the same pass of the eye as
+  ;; the question, not after the answer was already chosen
+  (let ((child (%card-all-text (list :access "exec" :target "cargo test"
+                                     :subagent (list :handle "s-sub-3"
+                                                     :task "count the rows the store never reads"
+                                                     :root "s-root"))
+                               100)))
+    (is (< (search "a subagent's call" child) (search "Allow once" child))
+        (format nil "the attribution is read before the choices: ~s" child)))
+  ;; (4) the clause is in the dim register, like every other clause on the card
+  (let ((lines (car (%write-card (list :access "exec" :target "cargo test"
+                                       :subagent (list :handle "s-sub-3"
+                                                       :task "count the rows the store never reads"
+                                                       :root "s-root"))
+                                  100))))
+    (let ((line (find-if (lambda (l) (search "a subagent's call"
+                                             (format nil "~{~a~}" (mapcar #'car l))))
+                         lines)))
+      (is (not (null line)) "the clause is on the card")
+      (is (equal '(:dim t) (cdar line))
+          (format nil "attribution is dim, not a second question: ~s" (cdar line)))))
+  ;; (5) an empty task draws the handle alone — a dangling separator would be a
+  ;; task nobody sent
+  (let ((bare (%card-all-text (list :access "exec" :target "cargo test"
+                                    :subagent (list :handle "s-sub-4" :task "" :root "s-root"))
+                              100)))
+    (is (search "a subagent's call — s-sub-4" bare)
+        (format nil "the handle alone: ~s" bare))
+    (is (not (search "— s-sub-4 ·" bare))
+        (format nil "no separator after a task nobody sent: ~s" bare)))
+  ;; (6) the fold: a `decision_requested` frame with the field carries it onto
+  ;; the open decision, and one without leaves it absent
+  (let ((s (make-session)))
+    (apply-event s (list :seq 1 :event "decision_requested" :req-id "r1"
+                         :kind "permission" :summary "s"
+                         :subagent (list :handle "s-sub-3"
+                                         :task "count the rows the store never reads"
+                                         :root "s-root")
+                         :options nil))
+    (is (equal (list :handle "s-sub-3"
+                     :task "count the rows the store never reads"
+                     :root "s-root")
+               (getf (first (session-open-decisions s)) :subagent))
+        "the live fold carries the field onto the open decision")
+    (apply-event s (list :seq 2 :event "decision_requested" :req-id "r2"
+                         :kind "permission" :summary "s" :options nil))
+    (is (null (getf (first (session-open-decisions s)) :subagent))
+        "and an own ask folds with the field absent")))
+
 (def-test an-unresolved-write-is-its-own-sentence-and-not-an-absence (:suite leticl)
   "**R35's second requirement, and it is the one the operator said he most needs to see.**
 

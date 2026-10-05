@@ -398,6 +398,17 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
                (list :req-id (getf env :req-id)
                      :kind (getf env :kind)
                      :call-id (getf env :call-id)
+                     ;; **Whose call this is, when it is not this session's own.**
+                     ;; Present on the wire for exactly one case (event.rs:826-842,
+                     ;; R58): a subagent's gate reached an `ask`, and the card was
+                     ;; posted to the tree's ROOT, because a child has no head of its
+                     ;; own — and **a card that arrived at the root unlabelled would
+                     ;; be answered for the wrong thing** (event.rs:746). The decoder
+                     ;; passes the plist through untouched (`:handle`, `:task`,
+                     ;; `:root`); the card draws it — see `permission-card-lines`.
+                     ;; Absent is this session's own call, which is every card from a
+                     ;; daemon older than the field, and draws nothing new.
+                     :subagent (getf env :subagent)
                      :summary (getf env :summary)
                      :target (getf env :target)
                      :detail (getf env :detail)
