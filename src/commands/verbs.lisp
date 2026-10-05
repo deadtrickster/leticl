@@ -231,6 +231,48 @@ other side: they belong together and were drawn apart."
         (push text (head-queued head))))
   (%send head (make-prompt (session-expected-seq (head-session head)) text)))
 
+(defun %parse-switch-level (text)
+  "TEXT as `SWITCH=LEVEL` → (VALUES preference-key boolean level-word), or NIL.
+
+ The switch names are the ones the daemon's `Show::ALL` spells, mapped onto the
+ preference keys this head already reads. `toggle` flips, `on`/`open` sets true,
+ `off`/`folded`/`closed` sets false. An unknown switch or level answers NIL —
+ the caller owns the refusal sentence, which names what IS available."
+  (let* ((eq (position #\= text))
+         (switch-str (string-downcase (subseq text 0 eq)))
+         (level-str (string-downcase (string-trim " " (subseq text (1+ eq)))))
+         (switch (cond ((string= switch-str "thinking") :show-reasoning)
+                       ((string= switch-str "tools") :show-tools)
+                       ((string= switch-str "raw-calls") :raw-calls)
+                       ((string= switch-str "diff") :diff)
+                       (t nil)))
+         (level (cond ((string= level-str "toggle") :toggle)
+                      ((or (string= level-str "on") (string= level-str "open")) t)
+                      ((or (string= level-str "off") (string= level-str "folded")
+                           (string= level-str "closed")) nil)
+                      (t :unknown))))
+    (if (and switch (or (eq level :toggle) (member level '(t nil))))
+        (values switch level
+                (cond ((eq level :toggle) "toggled")
+                      (level "open")
+                      (t "off")))
+        nil)))
+
+(defun %set-switch (head switch level)
+  "Set one SWITCH (a preference key) to LEVEL, through the ONE writer.
+
+ This is the same path a chord takes (daemon `78177f3`): the chord and the verb
+ are one act, because they go through one function. `%flip-fold` already
+ invalidates the cache and writes the file — this just computes the value and
+ hands it over, because a second `save-head-prefs` on top of the one inside
+ `%flip-fold` is a double write that reports a failure the first one already
+ swallowed (or a success the first one already had)."
+  (let ((value (if (eq level :toggle)
+                   (not (head-pref head switch))
+                   level)))
+    (%flip-fold head switch value)
+    nil))
+
 (defun %choose-verbosity (head level)
   "Set the rung AND write it down — the ONE interactive writer (R42's sibling).
 

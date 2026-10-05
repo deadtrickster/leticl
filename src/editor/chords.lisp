@@ -138,7 +138,7 @@ Esc was a second thing to remember per pane."
                  (%command head verb))
              t))
       (case (getf key :ch)
-        ((#\r) (%flip-fold head :show-reasoning) t)   ; the reasoning fold
+        ((#\r) (%set-switch head :show-reasoning :toggle) t)  ; the thinking fold — same writer as `/verbosity thinking=toggle` (daemon `78177f3`)
         ((#\t) (pane :todos "todos"))                 ; the todos pane (was ctrl-p)
          ;; **THE COMMENTS BELOW ARE THE RECORD OF THE ARM AS IT WAS**, and they are kept because
          ;; they are WHY the per-row window moved off a chord and onto a verb: the seam under a long
@@ -232,8 +232,9 @@ Esc was a second thing to remember per pane."
          ;; something the reader knows is there, while this reveals markup the
          ;; default view is required never to show. Off by default and behind a
          ;; chord, both halves of what was asked for.
-         (setf (head-pref head :raw-calls)
-               (not (head-pref head :raw-calls)))
+         ;; **AND IT IS THE VERB'S WRITER NOW** (daemon `78177f3`): `/verbosity
+         ;; raw-calls=toggle` is this key under a longer spelling.
+         (%set-switch head :raw-calls :toggle)
          t)
         (t nil))))))
 

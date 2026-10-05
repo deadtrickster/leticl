@@ -35,15 +35,22 @@ are read by `item-lines` — so the cache is stale the moment one moves."
   "HEAD's preference WHICH."
   (getf (head-prefs head) which))
 
-(defun %flip-fold (head which)
-  "Toggle one fold in the live plist AND persist it.
+(defun %flip-fold (head which &optional (value :toggle))
+  "Set one fold in the live plist AND persist it.
 
 Saving here rather than at each call site is the point: a fold the operator set
 should outlive the process, and the reference's header records exactly the
 defect this fixes — the choices *\"used to live in the process and die with it,
-and was moved by slash commands nobody remembered\"*."
-  (let ((now (not (head-pref head which))))
+and was moved by slash commands nobody remembered\"*.
+
+**VALUE, when given, sets rather than toggles** — `/verbosity thinking=off`
+sets `nil` where a chord toggles. The default `:toggle` keeps every existing
+caller's behaviour unchanged."
+  (let ((now (if (eq value :toggle)
+                 (not (head-pref head which))
+                 (and value t))))
     (setf (head-pref head which) now)
+    (incf *hist-generation*)
     (ignore-errors (save-head-prefs head))
     now))
 

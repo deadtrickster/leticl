@@ -1200,6 +1200,29 @@ through* is countable rather than eyeballed."
                 (funcall at 400)))
     (is (= 300 (funcall digits 400)) "and every one of the 300 characters is on the row")))
 
+(def-test verbosity-accepts-switch-level (:suite leticl)
+  "**A chord and a verb are one act** (daemon `78177f3`): `/verbosity thinking=toggle`
+  is `ctrl-r` under a longer spelling, and they cannot drift because they go through
+  one writer.
+
+  The operator's own ask: *\"some toggled by shortcuts some by /commands\"* — the
+  normalization is that both spellings answer to the same function, not that one
+  of them is taken away."
+  (let ((h (%on-head)))
+    ;; a switch=level sets the preference
+    (leticl::%command h "verbosity thinking=off")
+    (is (null (head-pref h :show-reasoning)) "thinking=off sets :show-reasoning to nil")
+    (leticl::%command h "verbosity thinking=on")
+    (is (head-pref h :show-reasoning) "thinking=on sets :show-reasoning to t")
+    (leticl::%command h "verbosity thinking=toggle")
+    (is (null (head-pref h :show-reasoning)) "thinking=toggle flips it back")
+    ;; the other switches
+    (leticl::%command h "verbosity raw-calls=on")
+    (is (head-pref h :raw-calls) "raw-calls=on sets :raw-calls")
+    ;; an unknown switch is a sentence, not a silence
+    (leticl::%command h "verbosity bogus=on")
+    (is (search "not a switch" (or (head-status-note h) "")) "an unknown switch names itself")))
+
 (def-test the-tool-row-arithmetic-has-one-spelling (:suite leticl)
   "**The tail is measured first, and *first* is arithmetic rather than an idea.**
 

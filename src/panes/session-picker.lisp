@@ -83,7 +83,15 @@ Second value is the cursor's LINE: two lines per session, after a two-line heade
       (push (list (cons "  none listed yet — the daemon has not answered, or this head is replaying a recorded log and has no daemon to ask."
                         '(:dim t)))
             lines))
-    (loop for s in rows
+    (let ((depth-map
+            (let ((table (make-hash-table :test #'equal)))
+              (dolist (s rows table)
+                (setf (gethash (getf s :session-id) table)
+                      (loop for id = (getf s :parent-session-id) then (getf p :parent-session-id)
+                       for p = (and id (find-if (lambda (r) (equal (getf r :session-id) id)) rows))
+                       while p
+                       count p))))))
+      (loop for s in rows
           for i from 0
           do (let* ((here (equal (getf s :session-id) (session-session-id session)))
                     (picked (= i sel))
@@ -126,15 +134,25 @@ Second value is the cursor's LINE: two lines per session, after a two-line heade
                     ;; the reference reverses the WHOLE left half, mark and name
                     ;; alike, and the name's bold rides inside it
                     (child (and (getf s :parent-session-id) t))
+                    ;; **THE DEPTH, precomputed once** — a hash of session-id → depth,
+                    ;; built before the row loop, because walking the parent chain
+                    ;; per-row is O(n·d) and the picker is rendered every frame.
+                    (depth (gethash (getf s :session-id) depth-map 0))
                     (number (1+ (count-if-not (lambda (b) (getf b :parent-session-id))
                                               (subseq rows 0 i))))
+                    ;; **AND THE NUMBER FIELD FITS THE LIST** (same commit): `~2d`
+                    ;; is right for nine sessions and wrong for a hundred — row 100
+                    ;; in a two-wide field pushes every name one column right of
+                    ;; every row above it.
+                    (numw (max 2 (length (format nil "~d" (length rows)))))
                     (left (list (cons (if child
                                          ;; **UNNUMBERED, and the number is what makes a row a CONVERSATION.**
                                          ;; The header counts the same rows this numbers, so twenty
                                          ;; subagents cannot turn it into `1/21`: a child sits under its
                                          ;; parent, where it is both visible and quiet.
-                                         (format nil "~a   ↳ " (if picked "▸" " "))
-                                         (format nil "~a ~2d  " (if picked "▸" " ") number))
+                                         (format nil "~a~a↳ " (if picked "▸" " ")
+                                                    (make-string (+ 3 (* 2 (max 0 (1- depth)))) :initial-element #\space))
+                                         (format nil "~a ~vd  " (if picked "▸" " ") numw number))
                                        (and picked '(:reverse t)))
                                 (cons name (cond ((and picked here) '(:reverse t :bold t))
                                                  (picked '(:reverse t))
@@ -157,5 +175,5 @@ Second value is the cursor's LINE: two lines per session, after a two-line heade
                       '(:dim t)))
           lines)
     (values (append header (nreverse lines))
-            (+ (length header) (* 2 sel)))))
+            (+ (length header) (* 2 sel))))))
 

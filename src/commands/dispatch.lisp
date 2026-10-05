@@ -98,6 +98,23 @@ on ClientFrame::Slash)."
              (rung nil))
          (cond
            ((zerop (length name)) (open-pick head :verbosity))
+           ;; **A SWITCH=LEVEL is the chord's own spelling** (daemon `78177f3`):
+           ;; `thinking=toggle`, `raw-calls=off`, `tools=open`. The switch names are
+           ;; the preference keys this head already reads — `thinking` is
+           ;; `:show-reasoning`, `raw-calls` is `:raw-calls`, `tools` is `:show-tools`
+           ;; — and the ONE WRITER is the same function a chord calls, so a shortcut
+           ;; and a verb cannot drift. `toggle` flips, `on`/`open` sets true,
+           ;; `off`/`folded`/`closed` sets false.
+           ((find #\= name :test #'char=)
+            (multiple-value-bind (switch level word)
+                (%parse-switch-level name)
+              (if switch
+                  (let ((note (%set-switch head switch level)))
+                    (say head (format nil "verbosity ~a → ~a~@[~a~]"
+                                    (string-downcase (symbol-name switch)) word note)))
+                  (say head (format nil "`~a` is not a switch — the switches are ~{~a~^, ~}; a rung name, or SWITCH=LEVEL"
+                                   name
+                                   '("thinking" "tools" "raw-calls" "diff"))))))
            ;; **A WORD either head spells is read here** (`verbosity-for-word`), and it writes
            ;; THIS head's spelling back: letibot's name for R37's rung is `conversation` and
            ;; this head's is `reading`, so a reader who typed the other head's word gets the
