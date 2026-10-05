@@ -169,11 +169,22 @@ a genuinely quiet turn stays quiet. A state name is not evidence about a call."
   ;; The colour is a different fact — *is a call still executing* — and that is `:running`, which
   ;; `marker-rising-p` reads. A finished call whose row is still in flight keeps the number and
   ;; drops the yellow, which is what the screen should say about it.
+  ;;
+  ;; **AND `:running` EXCLUDES THE CALLS THE TRANSCRIPT HAS ANSWERED** — daemon commit `5910161`
+  ;; ("tui: a call the transcript has answered is not executing, so the yellow clears"). A call
+  ;; whose result row has landed is over, whatever its state says: nothing else clears a call this
+  ;; head never received a `tool_finished` for, so the colour has to read the row. `:calls` already
+  ;; excludes those calls (`call-answered-p`), and the colour must be counted over the SAME set or
+  ;; it goes on colouring a number that has stopped counting them — the stuck yellow, exactly: the
+  ;; operator's *"yellow tool calls are not resolved unfortunately"*, a marker whose digits stay
+  ;; pending on a turn whose calls have all finished and whose daemon has published every row.
   (when turn
     (let* ((all (getf turn :calls))
            (calls (count-if-not (lambda (c) (call-answered-p (getf c :call-id))) all))
            (running (count-if (lambda (c) (let ((st (getf c :state)))
-                                            (and st (not (string= (or (getf st :state) "") "finished")))))
+                                            (and st
+                                                 (not (string= (or (getf st :state) "") "finished"))
+                                                 (not (call-answered-p (getf c :call-id))))))
                               all))
            (reasoning (or (getf turn :reasoning) ""))
            (thinking (if (plusp (length reasoning))
