@@ -39,10 +39,36 @@ stops being indistinguishable from an answer that never came."
 
 (defun job-out-body (&optional (view *job-out*))
   "The overlay's BODY lines — the window the daemon sent, control characters
-neutralised (`%without-control`): a job's output is whatever the command wrote,
-escape sequences included, and a pane that repaints one hands the operator's
-terminal to a build log."
-  (mapcar #'%without-control (getf view :lines)))
+neutralised (`%without-control`) and PROGRESS LINES COLLAPSED (`%collapse-progress`).
+
+ A job's output is whatever the command wrote, escape sequences included, and a
+pane that repaints one hands the operator's terminal to a build log. And a
+CAPTURED STREAM is a terminal RECORDING: `cargo`, `docker` and `npm` redraw ONE
+row with `\r` and never a newline, so splitting on `\n` alone puts every update
+on one row — `2%23%47%100%` — which is exactly what was being read before. The
+terminal's own rule: `\r` returns to column 0 and what is written after it
+overwrites, so a SHORTER final segment leaves the tail of a longer earlier one
+standing (daemon `c37947d`)."
+  (mapcar #'%without-control (%collapse-progress (getf view :lines))))
+
+(defun %collapse-progress (lines)
+  "LINES with `\r`-separated progress collapsed to what the terminal would show.
+
+ A line like `\"  2%\r 23%\r 47%\r100%\"` is four redraws of ONE row; the
+ terminal shows `100%` (the last write wins per column, and `100%` is long
+ enough to cover ` 47%`). The rule is the terminal's: after the LAST `\r`, what
+ remains overwrites from column 0, and the tail of a longer earlier segment
+ stands. This is NOT \"take after the last \r\" — `\"longer\rshort\"` shows
+ `shorter` on the terminal, and so it does here."
+  (loop for l in lines
+        for cr = (position #\return l)
+        collect (if cr
+                    (let* ((after (subseq l (1+ cr)))
+                           (before (subseq l 0 cr)))
+                      (if (>= (length after) (length before))
+                          after
+                          (concatenate 'string after (subseq before (length after)))))
+                    l)))
 
 (defun job-out-row-count (head)
   "How many lines the overlay has for its arrows to walk — what `pane-row-count`

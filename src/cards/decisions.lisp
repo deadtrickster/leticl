@@ -24,7 +24,7 @@ reference shouts (§8.2: abstention must not read like success)."
     ("abstained" "ABSTAINED")
     ("denied" "REFUSED")
     ("not_run" "not run")
-    ("backgrounded" "STILL RUNNING")
+    ("backgrounded" "backgrounded")
     (t word)))
 
 (defparameter +unsure-said+

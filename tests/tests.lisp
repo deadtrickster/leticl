@@ -16621,9 +16621,11 @@ them together — abstained and denied were plain yellow, backgrounded was
       "Pending is plain yellow")
   (is (not (equal leticl::+role-attention+ leticl::+role-pending+)) "and they are two roles")
   ;; the outcomes the reference maps onto each
-  (dolist (word '("abstained" "denied" "backgrounded"))
+  (dolist (word '("abstained" "denied"))
     (is (equal leticl::+role-attention+ (leticl::%outcome-style (list :outcome word)))
         (format nil "~a needs a person, so it is Attention" word)))
+  (is (equal leticl::+role-faint+ (leticl::%outcome-style (list :outcome "backgrounded")))
+      "**backgrounded is Faint** (daemon `d65eb5c`): the call is over, the job continues, and a colour that changes on a settlement is a redraw paid for a fact the operator already has twice")
   (dolist (word '("failed" "timeout" "not_run"))
     (is (equal leticl::+role-failure+ (leticl::%outcome-style (list :outcome word)))
         (format nil "~a is Failure — `display_outcome` maps it onto Failed" word)))
@@ -16670,8 +16672,8 @@ working, and not `Ok`, which would read as a finish.\"*"
              ;; that carries the outcome's role onto the row
              (cdr (find-if (lambda (s) (member (car s) '("▸" "▾") :test #'string=))
                            (first lines))))))
-    (is (equal leticl::+role-attention+ (mark-style "backgrounded"))
-        "a process that is still working needs a person's eye, not a retry: Attention")
+    (is (equal leticl::+role-faint+ (mark-style "backgrounded"))
+        "**FAINT, not Attention** (daemon `d65eb5c`): the call is OVER, and what continues is a JOB — a process that is still working needs a person's eye, not a retry, but a CALL that has already returned and handed its work to a job is done, and drawing it lit keeps three facts disagreeing on one frame")
     (is (not (equal leticl::+role-failure+ (mark-style "backgrounded")))
         "and it is emphatically NOT Failure — that is what the operator saw")
     ;; the other half, so the fix cannot be 'paint everything yellow': a real failure is
@@ -23663,7 +23665,8 @@ batch of ten — the batching would be invisible."
     (is (= (* 5 *scroll-notch*) (head-scroll h))
         "**five notches in one event move five notches**")
     (leticl::%handle-key h (list :type :mouse :kind :wheel-down :notches 2 :x 0 :y 0))
-    (is (= (* 3 *scroll-notch*) (head-scroll h)) "and back down by two")
+    (is (zerop (head-scroll h))
+        "**and wheel-down returns to the TAIL** (daemon `1e4461b`) — not a step: a live stream keeps adding rows, so a step toward a target that runs away is not a way back")
     ;; a pane
     (let ((*pane-scroll* 0) (*pane-lines* 100) (*pane-room* 10)
           (h2 (%on-head)))

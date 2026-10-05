@@ -118,6 +118,10 @@ Second value is the cursor's LINE: two lines per session, after a two-line heade
                                          (and (plusp rows-n) (format nil "~d rows" rows-n))
                                          (and (plusp heads)
                                               (format nil "~d head~:p" heads))
+                                         (let ((ctx (or (getf s :context-tokens)
+                                                        (getf s :context-cached))))
+                                           (and (numberp ctx) (plusp ctx)
+                                                (format nil "~a ctx" (prefill-human ctx))))
                                          (and (plusp (length model)) model))))
                     ;; the reference reverses the WHOLE left half, mark and name
                     ;; alike, and the name's bold rides inside it

@@ -178,6 +178,20 @@ of R36 keeps — the anchor is a record of the top row of the last frame, never 
         (head-scroll head) (max 0 (+ (head-scroll head) delta))
         (head-dirty head) t))
 
+(defun %follow-tail (head)
+  "Return to the TAIL in one act — scroll to 0, drop the anchor, follow again.
+
+ **A notch DOWN is this, not a step** (daemon `1e4461b`). The old arm called
+ `%scroll-view` with `-notches * scroll-notch*`, which walks toward 0 three lines at a
+ time — but against a live stream, which keeps adding rows, the target moves away as
+ fast as the reader chases it, and the only way back was Esc. The daemon's ruling: a
+ wheel-down notch IS the same act as the parked ↓ and Esc — clear the anchor, clear the
+ count, follow the stream again. `wheel-up` keeps its step: nothing races the reader in
+ that direction."
+  (setf *scroll-anchor* nil
+        (head-scroll head) 0
+        (head-dirty head) t))
+
 (defun %normal-key (head key)
   (let ((c (head-composer head))
         ;; a wheel is its KIND, as `%handle-key` reads it — see there
@@ -298,7 +312,7 @@ of R36 keeps — the anchor is a record of the top row of the last frame, never 
       ((:wheel-up) (when (>= (head-scroll head) *scroll-max*)
                      (fetch-row-above head))
                    (%scroll-view head (* (%wheel-notches key) *scroll-notch*)))
-      ((:wheel-down) (%scroll-view head (- (* (%wheel-notches key) *scroll-notch*))))
+      ((:wheel-down) (%follow-tail head))
       ((:ctrl)
        (case (getf key :ch)
          ((#\c) (%ctrl-c head))

@@ -102,7 +102,7 @@ wrong about a process that is still working.\"*"
     ("denied" +role-attention+)
     ("timeout" +role-failure+)
     ("not_run" +role-failure+)
-    ("backgrounded" +role-attention+)
+    ("backgrounded" +role-faint+)
     ("interrupted" +role-failure+)
     (t nil)))
 
