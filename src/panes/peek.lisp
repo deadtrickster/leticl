@@ -303,12 +303,21 @@ so the two agree without a conversion."
           (head-rows scratch) room
           (head-prefs scratch) (head-prefs head)
           (head-scroll scratch) (max 0 *pane-scroll*))
-    (let ((lines (call-with-replay-globals
-                  (lambda ()
-                    (let ((*scroll-max* 0))
-                      (prog1 (%viewport-lines scratch cols visible)
-                        (setf *peek-total* (+ (length head-lines) *scroll-max* visible (length footer))
-                              *pane-scroll* (head-scroll scratch))))))))
+    (let* (;; **THE RUNG IS THE HEAD'S, NOT THE REPLAY'S.** `call-with-replay-globals` resets
+           ;; `*verbosity*` to `:normal` (the macro's job is to answer the same bytes twice), but
+           ;; this is a LIVE peek, and the operator's rung is the view they chose: the event path
+           ;; already follows it (`subagent-out-lines`'s `:payloads (not (reading-p))`), and this
+           ;; path's own docstring claims *the rung … is all its, by construction*. Captured
+           ;; before the reset and restored inside, so the child's rows are drawn at the parent's
+           ;; rung rather than at the replay's `:normal`.
+           (rung *verbosity*)
+           (lines (call-with-replay-globals
+                   (lambda ()
+                     (let ((*scroll-max* 0)
+                           (*verbosity* rung))
+                       (prog1 (%viewport-lines scratch cols visible)
+                         (setf *peek-total* (+ (length head-lines) *scroll-max* visible (length footer))
+                               *pane-scroll* (head-scroll scratch))))))))
       (append head-lines
               lines
               ;; pad, so the footer sits on the pane's last row rather than floating under a short read

@@ -5879,6 +5879,46 @@ which now SAYS so under the title, so a degraded render cannot pass for a plain 
         (is (search "drawn from the event list" text)
             (format nil "**and it SAYS it was** — a degraded render must not pass for a plain one: ~s" text))))))
 
+(def-test a-peeked-snapshot-follows-the-heads-rung (:suite leticl)
+  "**The rung is the head's, not the replay's.** `call-with-replay-globals` resets `*verbosity*` to
+`:normal` (the macro's job is to answer the same bytes twice), but a LIVE peek is the operator's
+view, and the operator's rung is the view they chose. The event path already follows it
+(`subagent-out-lines`'s `:payloads (not (reading-p))`), and the snapshot path's own docstring claims
+*the rung … is all its, by construction*. Before the fix, the snapshot path drew the child at
+`:normal` regardless of the head's rung, so a `:reading` head peeked a child and saw its tool
+payloads in full — the opposite of the view the operator chose."
+  (let ((leticl::*peeked-session* "s-child")
+        (leticl::*peeked-dropped* 0)
+        (leticl::*peek-render-head* nil)
+        (leticl::*peek-total* 0) (leticl::*pane-scroll* 0)
+        (leticl::*hist-cache* nil) (leticl::*hist-depth* 0) (leticl::*hist-bounds* nil)
+        (leticl::*payload-view* nil) (leticl::*hidden-run-open* nil)
+        (leticl::*frozen* nil) (leticl::*frozen-frame* nil)
+        (leticl::*verbosity* :reading)
+        (leticl::*peeked-snapshot*
+         (list :session-id "s-child" :seq 9 :dropped 0 :items-dropped 0
+               :turn nil :open-decisions nil :settled-decisions nil :heads nil :warnings nil
+               :items (list (list :item-id "u1" :kind "user" :ts 0
+                                  :item (list :type "user"
+                                              :parts (list (list :text "the task the child was given"))))
+                            (list :item-id "t1" :kind "tool_result" :ts 0
+                                  :item (list :type "tool_result" :call-id "c1" :name "bash"
+                                              :verb "Ran" :subject "\"ls\""
+                                              :outcome (list :outcome "ok")
+                                              :payload (format nil "secret-payload-line"))))))
+        (h (%on-head :cols 100 :rows 30)))
+    (flet ((pane ()
+             (format nil "~{~a~^~%~}"
+                     (mapcar (lambda (l) (if (consp l) (format nil "~{~a~}" (mapcar #'car l)) ""))
+                             (leticl::peek-lines h 100 30)))))
+      (is (leticl::peeked-rows-p) "the reply carried rows, so the pane takes the real renderer")
+      (let ((text (pane)))
+        (is (search "the task the child was given" text)
+            "**the child's task is drawn** — the conversation is still there at `:reading`")
+        (is (not (search "secret-payload-line" text))
+            (format nil "**and the tool payload is held back** — the head's `:reading` rung governs
+the child's rows, not the replay's `:normal`: ~s" text))))))
+
 (def-test the-config-pane-renders-every-row-with-its-source-under-the-cursor (:suite leticl)
   "The screen showed `UNBOUND-VARIABLE / The variable ANAPHORA:IT is unbound.`:
 an `awhen` whose TEST used `it` — `(and (getf r :editable) (plusp (length it)))` —
