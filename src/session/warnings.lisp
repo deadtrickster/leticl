@@ -231,6 +231,15 @@ answered in the same place or not at all.")
     ;; daemon stopped a session's tree and this is the receipt. A sentence about
     ;; something the operator asked for that worked.
     "subagents_stopped"
+    ;; **`merge_queued`** — from the merge queue (daemon `0d870ce`): the branch is
+    ;; in the queue, said to the parent that started it. A sentence about something
+    ;; the operator asked for that worked.
+    "merge_queued"
+    ;; **`merge_not_queued`** — the same act's refusal, but it is a FAILURE (the
+    ;; daemon's own `Class::Failure`), so it is NOT in this list: codes not here
+    ;; default to the failure register, which is where the operator needs to see
+    ;; it. The routine-warning guard caught this: putting it here drew a refused
+    ;; queue entry in the quiet register.
     ;; **AGAIN FROM THE OTHER TREE, AND THE SAME GUARD CAUGHT IT.** letibot's `e54b48a` — *a
     ;; provider that is slow says so, instead of looking like one that is gone* — added
     ;; `model_slow_first_byte`, because DeepSeek was measured at 12.4 s to first byte on a
