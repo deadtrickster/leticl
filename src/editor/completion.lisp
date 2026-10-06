@@ -206,6 +206,79 @@ two positions cannot drift into two feels."
        (setf (head-dirty head) t)
        t))))
 
+(defvar *shell-suggestions* nil
+  "The model's proposed `!` completions, from the last `shell_suggestions` frame.
+ NIL when none has arrived, or when the operator has typed past the prefix they
+ were for. Read by `%complete-bang` on the Tab after the history has nothing.")
+
+(defvar *shell-suggestions-for* nil
+  "The prefix the last `suggest_shell` frame was sent for. The daemon echoes it
+ back on the answer, and this is what the comparison drops a stale answer with.")
+
+(defun %bang-candidates (head)
+  "The lines a `!` completion offers, newest first, deduped.
+
+ Two sources, the operator's own and the model's: the operator's `!` rows are
+ found by their text (a `User` row whose text starts with `!`, the words verbatim,
+ bang included), and the model's `bash` calls are found by their `ToolResult`
+ rows (a tool result named `bash`, whose subject is the command it ran, prefixed
+ with `!` to make it the same shape as the operator's own). DEDUPED because the
+ same command run twice is one candidate, not two."
+  (let ((seen (make-hash-table :test #'equal))
+        (out nil))
+    (loop for item across (session-items (head-session head))
+          for body = (item-body item)
+          when (and body (string= (getf body :type) "user")
+                    (plusp (length (or (getf body :text) "")))
+                    (char= (char (getf body :text) 0) #\!))
+            do (let ((line (getf body :text)))
+                 (unless (gethash line seen)
+                   (setf (gethash line seen) t)
+                   (push line out))))
+    (loop for item across (session-items (head-session head))
+          for body = (item-body item)
+          when (and body (string= (getf body :type) "tool_result")
+                    (string= (or (getf body :name) "") "bash"))
+            do (let* ((subject (or (getf body :subject) ""))
+                      (line (format nil "! ~a" subject)))
+                 (unless (gethash line seen)
+                   (setf (gethash line seen) t)
+                   (push line out))))
+    out))
+
+(defun %complete-bang (head buf)
+  "Tab on a `!` line — complete from the commands this session has run, and when
+the history has nothing, ask the local model once (protocol 30).
+
+ The candidates are the whole lines from `%bang-candidates`, newest first. A
+ prefix nothing matches SAYS SO and sends a `suggest_shell` frame — the daemon
+ asks the local model (never a metered provider), and the answer arrives as a
+ `shell_suggestions` frame that fills `*shell-suggestions*` for the NEXT Tab.
+ A suggestion only fills the composer; Enter is still the operator's."
+  (let ((candidates (append
+                           ;; **THE MODEL'S SUGGESTIONS, when they are for this prefix** (protocol 30).
+                           ;; Appended AFTER the history because the operator's own commands are the
+                           ;; better answer — the model's are a guess, and the history is a fact.
+                           (and *shell-suggestions*
+                                (string= buf (or *shell-suggestions-for* ""))
+                                (remove-if-not
+                                 (lambda (line) (uiop:string-prefix-p buf line))
+                                 *shell-suggestions*))
+                           (remove-if-not
+                            (lambda (line) (uiop:string-prefix-p buf line))
+                            (%bang-candidates head)))))
+    (cond
+      (candidates
+       (%set-composer head (first candidates))
+       (setf (head-dirty head) t))
+      (t
+       ;; **THE HISTORY HAS NOTHING — ASK THE MODEL, ONCE** (daemon `8c9a7b0`).
+       ;; The answer arrives later, on a frame the key handler doesn't wait for;
+       ;; this Tab says it asked, and the NEXT Tab reads what came back.
+       (setf *shell-suggestions-for* buf)
+       (%send head (make-suggest-shell buf))
+       (say head (format nil "asking the model for a completion…"))))))
+
 (defun %complete (head)
   "Tab on a `/command` — or, when the line starts with `!`, on the commands this
 session has run (daemon `b269a36`).

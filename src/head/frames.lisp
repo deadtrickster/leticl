@@ -882,6 +882,18 @@ and a `hello` with a snapshot). Returns T when the queue moved."
              (or (position (pick-current head) (pick-choices head) :test #'string=) 0)
              *pick-unseeded* nil))
      :control)
+    ((string= (frame-name frame) "shell_suggestions")
+     ;; **THE MODEL'S PROPOSED `!` COMPLETIONS** (protocol 30). The head sent a
+     ;; `suggest_shell` frame with the typed prefix; this is the daemon's answer —
+     ;; candidate lines, `!` first, in the order the model offered them. **Nothing
+     ;; here is a command**: a suggestion only fills the composer, and Enter is
+     ;; still the operator's. Stored in `*shell-suggestions*` for the completion
+     ;; to read on the next Tab, keyed by the echoed prefix so a stale answer for
+     ;; a prefix the operator has already typed past is dropped on the floor.
+     (when (and *shell-suggestions-for*
+                (string= (getf frame :prefix) *shell-suggestions-for*))
+       (setf *shell-suggestions* (getf frame :lines)))
+     :control)
     ((string= (frame-name frame) "row_fetched")
      ;; **THE ANSWER ARRIVES ON THE SAME STREAM AS THE SESSION'S OWN TRAFFIC**, which is
      ;; why it is folded here and not awaited: a head that blocked on this would stop

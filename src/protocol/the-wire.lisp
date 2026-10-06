@@ -330,6 +330,22 @@ involved. `Events` stays reachable for a caller that wants the ring; nothing sen
         :expected-seq (session-expected-seq *session*)
         :line line))
 
+(defun make-suggest-shell (prefix)
+  "The model's proposed `!` completions — a new client frame at protocol 30.
+
+ The daemon builds the prompt from the conversation and asks the LOCAL model
+ (the `[gatekeeper]` endpoint, never a metered provider — a suggestion must not
+ cost money per keystroke). The answer is a `shell_suggestions` server frame
+ with a list of candidate lines; **nothing in the path submits** — a suggestion
+ only fills the composer, and Enter is still the operator's.
+
+ Empty when the model said nothing usable; the daemon always answers rather
+ than staying silent, so the head can tell *no suggestion* from *no answer*."
+  (list :frame "suggest_shell"
+        :client-request-id (next-request-id)
+        :expected-seq (session-expected-seq *session*)
+        :prefix prefix))
+
 (defun make-settings ()
   (list :frame "settings"))
 

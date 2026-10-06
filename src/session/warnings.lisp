@@ -227,6 +227,10 @@ answered in the same place or not at all.")
     ;; operator typed at the `!` prompt and the daemon ran; the same class as
     ;; `operator_call_ran` — a sentence about something that worked.
     "operator_shell_ran"
+    ;; **`subagents_stopped`** — from the supervision tree (daemon `fb479d8`): the
+    ;; daemon stopped a session's tree and this is the receipt. A sentence about
+    ;; something the operator asked for that worked.
+    "subagents_stopped"
     ;; **AGAIN FROM THE OTHER TREE, AND THE SAME GUARD CAUGHT IT.** letibot's `e54b48a` — *a
     ;; provider that is slow says so, instead of looking like one that is gone* — added
     ;; `model_slow_first_byte`, because DeepSeek was measured at 12.4 s to first byte on a

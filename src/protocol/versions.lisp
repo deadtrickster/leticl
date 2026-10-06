@@ -1,4 +1,4 @@
-;;;; protocol.lisp — the head frame vocabulary, protocol version 28.
+;;;; protocol.lisp — the head frame vocabulary, protocol version 30.
 ;;;; Source of truth: crates/sessionlog/src/protocol.rs. Frames are plists in
 ;;;; the image (PLAN.md §7, D4); the constructors below are the only place
 ;;;; that knows what a frame looks like on the wire.
@@ -11,7 +11,7 @@
 
 (in-package #:leticl)
 
-(defparameter +protocol-version+ 28
+(defparameter +protocol-version+ 30
   "The version this head announces at ATTACH, and the number is a CLAIM rather than a flag.
 
 The protocol's only compatibility check is EQUALITY at ATTACH, so a head that announces a
