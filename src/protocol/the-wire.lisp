@@ -310,6 +310,26 @@ answers with, so `%peek-snapshot-pane` draws it with `%viewport-lines` and no he
 involved. `Events` stays reachable for a caller that wants the ring; nothing sends it today."
   (list :frame "peek" :session-id session-id :shape "Rows"))
 
+(defun make-operator-shell (line)
+  "The operator's own shell command — a new client frame at protocol 28.
+
+ LINE is the submitted line VERBATIM, `!` first (`! ls .`). The daemon strips the
+ `!` at the execution site and runs the rest through the same path `bash` takes —
+ the same confinement, the same scratch directory, the same `SUDO_ASKPASS`
+ environment. No gate is consulted: the operator typed the line. The result lands
+ as a `ToolResult` named `bash` with `origin: Operator`, which is what every head
+ already draws with the tool-output treatment.
+
+ A separate frame rather than the operator-call door, because the door RECORDS a
+ tool call with a tool's own name and JSON arguments — and a raw shell line has
+ neither. Widening the door's list to `bash` would make the list's recorded
+ reason false and grow a permission-shaped admission row the feature is
+ explicitly required not to have."
+  (list :frame "operator_shell"
+        :client-request-id (next-request-id)
+        :expected-seq (session-expected-seq *session*)
+        :line line))
+
 (defun make-settings ()
   (list :frame "settings"))
 

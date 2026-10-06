@@ -207,7 +207,8 @@ two positions cannot drift into two feels."
        t))))
 
 (defun %complete (head)
-  "Tab on a `/command` — the reference's `complete_slash` (app.rs:4292-4324).
+  "Tab on a `/command` — or, when the line starts with `!`, on the commands this
+session has run (daemon `b269a36`).
 
 A fresh prefix completes to its FIRST match and MORE TABS WALK THE REST, which is
 what `/help` already promised and what the old one could not do: it inserted only
@@ -226,6 +227,13 @@ take paths; that fact arrives on the tool's own row like every other fact about 
 daemon has not sent, or one this build has never met, completes nothing and says so** rather
 than guessing, which is the same rule an absent descriptor row gets."
   (let ((buf (composer-buffer (head-composer head))))
+    ;; **A `!` LINE IS THE SHELL COMPLETION'S OWN QUESTION** (daemon `b269a36`): the
+    ;; candidates are the session's own `!` rows and `bash` calls, newest first. Checked
+    ;; BEFORE the slash arm because a `!` line is not a command and must not fall through
+    ;; to the slash matcher. A bang with nothing after it does nothing, the same refusal
+    ;; the submit keeps.
+    (if (and (plusp (length buf)) (char= (char buf 0) #\!))
+        (%complete-bang head buf)
     (when (uiop:string-prefix-p "/" buf)
       (multiple-value-bind (verb arg) (%argument-position head buf)
         (if verb
@@ -260,5 +268,4 @@ than guessing, which is the same rule an absent descriptor row gets."
                            (%set-composer head (format nil "/~a" (first names))))
                           (t (setf *completion* nil)
                              (say head (format nil "no /command starts with ~s" buf)))))))
-              (setf (head-dirty head) t)))))))
-
+              (setf (head-dirty head) t))))))))

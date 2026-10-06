@@ -40,6 +40,24 @@ text — which is what makes the ledger safe to forget about."
       ;; itself advertises was read as the name of a session to switch to.
       ((and (plusp (length line)) (char= (char line 0) #\/))
        (%command head (subseq line 1)))
+      ;; **AN `!` LINE IS THE OPERATOR'S OWN SHELL COMMAND** (daemon `7dca40f`,
+      ;; protocol 28). The line is sent VERBATIM, bang included — the daemon strips the
+      ;; `!` at the execution site, one rule, applied once. A line that is nothing but
+      ;; the bang and whitespace is refused HERE, because a blank shell command is not
+      ;; an act; the daemon re-checks for the same reason (a hand-written socket must
+      ;; not be able to file an arbitrary sentence as the operator's).
+      ;;
+      ;; The result lands as two rows the head already draws: the operator's line as a
+      ;; `User` row (speaker: Operator) and the output as a `ToolResult` named `bash`
+      ;; with `origin: Operator` — the same folded, paged, sanitised treatment every
+      ;; tool result gets. And `sudo` works, because the daemon runs it through the
+      ;; same path `bash` takes, with the same `SUDO_ASKPASS` environment that raises
+      ;; `SecretRequested` to a head.
+      ((and (plusp (length line))
+            (char= (char line 0) #\!)
+            ;; nothing but the bang and whitespace is refused — the daemon's own check
+            (plusp (length (string-trim " !" line))))
+       (%send head (make-operator-shell line)))
       ;; A PICKER IS UP: the line is a row's number or a name, as the card says
       (*pick-open* (pick-by-text head line))
       ((zerop (length line)))
