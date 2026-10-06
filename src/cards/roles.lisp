@@ -185,6 +185,89 @@ row at the bottom of every open card, against letibot's screen."
   "How many lines PAYLOAD is, which is the number the fold marker counts."
   (length (%payload-lines payload)))
 
+(defun %sgr-to-style (params)
+  "SGR parameter string → a style plist, or NIL for the reset (no style).
+
+ The reference's `painted` (app.rs) interprets SGR into the palette's own roles;
+ this maps the common parameters onto this head's style vocabulary:
+ 0 → reset (NIL), 1 → bold, 2 → dim, 3 → italic, 4 → underline,
+ 30-37 and 90-97 → fg colours, 39 → default fg.
+ Parameters this mapping does not know are dropped rather than guessed — the same
+ rule the reference keeps for a code nobody classified."
+  (let ((codes (mapcar #'parse-integer
+                       (remove "" (uiop:split-string (or params "")
+                                                     :separator '(#\;))
+                               :test #'string=)))
+        (style nil))
+    (dolist (c codes)
+      (case c
+        ((0) (setf style nil))
+        ((1) (push :bold style))
+        ((2) (push :dim style))
+        ((3) (push :italic style))
+        ((4) (push :underline style))
+        ;; fg colours: 30-37 standard, 90-97 bright
+        ((30) (push '(:fg :black) style))
+        ((31) (push '(:fg :red) style))
+        ((32) (push '(:fg :green) style))
+        ((33) (push '(:fg :yellow) style))
+        ((34) (push '(:fg :blue) style))
+        ((35) (push '(:fg :magenta) style))
+        ((36) (push '(:fg :cyan) style))
+        ((37) (push '(:fg :white) style))
+        ((90) (push '(:fg :bright-black) style))
+        ((91) (push '(:fg :bright-red) style))
+        ((92) (push '(:fg :bright-green) style))
+        ((93) (push '(:fg :bright-yellow) style))
+        ((94) (push '(:fg :bright-blue) style))
+        ((95) (push '(:fg :bright-magenta) style))
+        ((96) (push '(:fg :bright-cyan) style))
+        ((97) (push '(:fg :bright-white) style))
+        ((39) (setf style (remove '(:fg) style :key #'car :test #'eq)))
+        ;; everything else: dropped
+        (t nil)))
+    (apply #'append (nreverse style))))
+
+(defun %paint-line (line)
+  "LINE with SGR sequences interpreted into style plists → a SEGMENT LINE.
+
+ Returns a list of `(TEXT . STYLE)` conses, the same shape every other segment
+ line in this head uses. SGR sequences (`ESC [ … m`) are consumed and become
+ the style of the text that follows; everything else that is a control character
+ is still replaced by a space (§3.1 for everything that is not SGR). A line with
+ no escapes comes back as one segment with NIL style, which the caller can merge
+ with the row's own base style."
+  (let ((segs nil)
+        (text (make-array 0 :element-type 'character :fill-pointer 0 :adjustable t))
+        (style nil)
+        (i 0)
+        (n (length line)))
+    (flet ((flush ()
+             (when (plusp (length text))
+               (push (cons (copy-seq text) style) segs)
+               (setf (fill-pointer text) 0))))
+      (loop while (< i n)
+            do (let ((c (char line i)))
+                 (cond
+                   ;; SGR: ESC [ ... m — consume and interpret
+                   ((and (eql c #\escape) (< (+ i 2) n)
+                         (char= (char line (1+ i)) #\[))
+                    (flush)
+                    (let* ((end (position #\m line :start (+ i 2)))
+                           (params (and end (subseq line (+ i 2) end)))
+                           (skip (if end (1+ (- end i)) 2)))
+                      (when params (setf style (%sgr-to-style params)))
+                      (incf i (or skip 2))))
+                   ;; other control characters: space, the old rule
+                   ((%c1-control-p (char-code c))
+                    (vector-push-extend #\space text)
+                    (incf i))
+                   (t
+                    (vector-push-extend c text)
+                    (incf i)))))
+      (flush)
+      (nreverse segs))))
+
 (defun %without-control (line)
   "LINE with every control character replaced by a SPACE — the reference's
 `without_control` (app.rs:369), applied where it applies it (app.rs:9712).

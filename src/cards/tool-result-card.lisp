@@ -175,6 +175,27 @@ header, also printed `· 1 line` — a count for a fold with nothing to fold."
              (dim-line (text)
                (list (cons "  " faint)
                      (cons (truncate-to-width (or text "") (max 4 (- w 2))) faint)))
+             ;; **A PAINTED LINE — the operator's own run carries its colour** (daemon
+             ;; `8a033cc`). The origin field says who READS the bytes: a person on a
+             ;; screen gets SGR interpreted into the palette's roles; a model reading
+             ;; tokens keeps the old sanitiser. The painted segments are merged with
+             ;; the row's dim base — the colour is an ADDITION to the quiet register,
+             ;; not a replacement for it.
+             (body-line (text)
+               (if (%operator-origin-p body)
+                   (let ((segs (%paint-line text)))
+                     (if (and segs (cdr segs))
+                         ;; multiple segments: SGR is present — merge each with dim
+                         (cons (cons "  " faint)
+                               (mapcar (lambda (s)
+                                         (cons (car s)
+                                               (if (cdr s)
+                                                   (append (cdr s) faint)
+                                                   faint)))
+                                       segs))
+                         ;; one segment: no SGR — the plain dim line
+                         (dim-line text)))
+                   (dim-line text)))
              (decision-lines ()
                ;; the approval this call was gated by, in the dim register —
                ;; `%decision-card-lines`, the ONE spelling the live card draws too
@@ -287,7 +308,7 @@ header, also printed `· 1 line` — a count for a fold with nothing to fold."
           (when above
             (emit (list (cons (format nil "  ↑ ~d more lines above · ↑ scrolls up" page)
                               faint))))
-          (dolist (l (subseq rows page end)) (emit (dim-line l)))
+          (dolist (l (subseq rows page end)) (emit (body-line l)))
           (cond
             (below
              (emit (list (cons (format nil "  … +~d lines · ~a" (- n end)
@@ -369,6 +390,18 @@ owned."
               (string-downcase (string kind)))
           +call-origin-cols+)))
       (t nil))))
+
+(defun %operator-origin-p (body)
+  "Did the OPERATOR run this call — the `!` line, the door, or a chord?
+
+ The origin field on a `ToolResult` is `None` for the model's own call and
+ `Some(who)` for the operator's. This answers T only when the origin names the
+ operator specifically — a shape this build cannot read still NAMES somebody and
+ is NOT the operator until it says so."
+  (let ((origin (getf body :origin)))
+    (and (consp origin)
+         (getf origin :operator)
+         t)))
 
 (defun %tool-row-verb (body)
   "The word a tool result draws first — its own, or the tool's name through `verb-label`.
