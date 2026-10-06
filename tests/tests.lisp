@@ -23688,8 +23688,8 @@ batch of ten — the batching would be invisible."
     (is (= (* 5 *scroll-notch*) (head-scroll h))
         "**five notches in one event move five notches**")
     (leticl::%handle-key h (list :type :mouse :kind :wheel-down :notches 2 :x 0 :y 0))
-    (is (zerop (head-scroll h))
-        "**and wheel-down returns to the TAIL** (daemon `1e4461b`) — not a step: a live stream keeps adding rows, so a step toward a target that runs away is not a way back")
+    (is (= (* 3 *scroll-notch*) (head-scroll h))
+        "**and wheel-down walks, not jumps** (daemon `8adc2c6` reversed `1e4461b`): two notches down from five is three notches from the bottom — the reader can walk DOWN through a conversation, and a run of notches still arrives at the tail")
     ;; a pane
     (let ((*pane-scroll* 0) (*pane-lines* 100) (*pane-room* 10)
           (h2 (%on-head)))

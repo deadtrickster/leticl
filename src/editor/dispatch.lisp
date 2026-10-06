@@ -179,15 +179,16 @@ of R36 keeps — the anchor is a record of the top row of the last frame, never 
         (head-dirty head) t))
 
 (defun %follow-tail (head)
-  "Return to the TAIL in one act — scroll to 0, drop the anchor, follow again.
+  "Return to the TAIL — scroll to 0, drop the anchor, follow again.
 
- **A notch DOWN is this, not a step** (daemon `1e4461b`). The old arm called
- `%scroll-view` with `-notches * scroll-notch*`, which walks toward 0 three lines at a
- time — but against a live stream, which keeps adding rows, the target moves away as
- fast as the reader chases it, and the only way back was Esc. The daemon's ruling: a
- wheel-down notch IS the same act as the parked ↓ and Esc — clear the anchor, clear the
- count, follow the stream again. `wheel-up` keeps its step: nothing races the reader in
- that direction."
+ **NOT the wheel-down arm anymore** (daemon 8adc2c6 reversed the 1e4461b ruling).
+ The cure for the October report — a reader who could not reach the bottom — made a single
+ notch a JUMP, so
+ the reader cannot walk down through a conversation at all. The reconciliation:
+ wheel-down walks like wheel-up (`hold(+3)`), and following resumes when the walk
+ actually arrives at the tail — so a run of notches still returns the reader to
+ the bottom, which answers the original need without the one-notch jump. This
+ function stays for the ↓ at the bottom and Esc, which ARE the jump-to-tail acts."
   (setf *scroll-anchor* nil
         (head-scroll head) 0
         (head-dirty head) t))
@@ -312,7 +313,7 @@ of R36 keeps — the anchor is a record of the top row of the last frame, never 
       ((:wheel-up) (when (>= (head-scroll head) *scroll-max*)
                      (fetch-row-above head))
                    (%scroll-view head (* (%wheel-notches key) *scroll-notch*)))
-      ((:wheel-down) (%follow-tail head))
+      ((:wheel-down) (%scroll-view head (- (* (%wheel-notches key) *scroll-notch*))))
       ((:ctrl)
        (case (getf key :ch)
          ((#\c) (%ctrl-c head))
