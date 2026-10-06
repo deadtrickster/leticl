@@ -474,6 +474,26 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
        ;; envelope would be keeping every frame's shape — but a new field then has to be carried
        ;; BY NAME or it is dropped on the way in. Measured: the record was on the wire, the row
        ;; drew the sentence, and the only thing missing was this line.
+       ;;
+       ;; **AND `mode_set` UPDATES THE SETTINGS CACHE** — the daemon confirms a mode change with
+       ;; this warning but does not push a fresh settings frame, so `head-settings` still holds
+       ;; the OLD mode and the picker reads from it. The operator: *"allow-all selection doesnt
+       ;; survive anymore"*. The detail is the daemon's own sentence (`"<said>. <summary>"`),
+       ;; and the new mode name is the FIRST WORD before the first `.` — parsed from the detail
+       ;; because that is the only place the daemon says it on this event. The `head-settings`
+       ;; row's `:value` is set to the whole detail (it is the most honest rendering of what the
+       ;; daemon said), and `pick-current` takes the first word as the mode name.
+       (when (and (string= (or (getf env :code) "") "mode_set")
+                  *payload-head*
+                  (head-settings *payload-head*))
+         (let* ((detail (or (getf env :detail) ""))
+                (dot (position #\. detail))
+                (mode (if dot (subseq detail 0 dot) detail)))
+           (when (plusp (length mode))
+             (let ((row (find "mode" (head-settings *payload-head*)
+                             :key (lambda (r) (getf r :key)) :test #'string=)))
+               (when row
+                 (setf (getf row :value) detail))))))
        (let ((w (list :code (getf env :code) :detail (getf env :detail)
                       :ts (getf env :ts)
                       :compaction (getf env :compaction))))

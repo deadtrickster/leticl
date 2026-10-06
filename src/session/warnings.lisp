@@ -222,6 +222,11 @@ answered in the same place or not at all.")
     ;; default"): the daemon's own housekeeping when a message has been idle. Caught by
     ;; the guard, which is the guard working.
     "message_idle"
+    ;; **`operator_shell_ran`** — daemon `7dca40f` ("a line that starts with ! is the
+    ;; operator's own shell command"). The daemon's own housekeeping for a command the
+    ;; operator typed at the `!` prompt and the daemon ran; the same class as
+    ;; `operator_call_ran` — a sentence about something that worked.
+    "operator_shell_ran"
     ;; **AGAIN FROM THE OTHER TREE, AND THE SAME GUARD CAUGHT IT.** letibot's `e54b48a` — *a
     ;; provider that is slow says so, instead of looking like one that is gone* — added
     ;; `model_slow_first_byte`, because DeepSeek was measured at 12.4 s to first byte on a
