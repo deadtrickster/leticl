@@ -55,6 +55,14 @@ text — which is what makes the ledger safe to forget about."
       ;; `SecretRequested` to a head.
       ((and (plusp (length line))
             (char= (char line 0) #\!)
+            ;; **A `!send` LINE IS THE MANUAL ANSWER** (protocol 33) — one line to
+            ;; the running command, on demand, no card needed.
+            (> (length line) 5) (string= (subseq line 0 5) "!send"))
+       (let ((rest (string-trim " " (subseq line 5))))
+         (%send head (make-send-line rest))
+         (say head (format nil "sent: ~s" rest))))
+      ((and (plusp (length line))
+            (char= (char line 0) #\!)
             ;; nothing but the bang and whitespace is refused — the daemon's own check
             (plusp (length (string-trim " !" line))))
        (%send head (make-operator-shell line)))

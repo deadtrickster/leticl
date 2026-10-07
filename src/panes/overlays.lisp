@@ -162,6 +162,24 @@ keypress, saying `reading…`, rather than showing an empty screen for the answe
                           (diagnostic-listing-lines diag)))
   t)
 
+(defun prompt-card-lines (head cols)
+  "The card for a run that is asking: the question and the two ways in. The
+composer IS the field (in the open — not masked, not a secret). Enter sends
+`PromptAnswer`; `!send LINE` always works (protocol 33)."
+  (let ((req (head-prompt-req head)))
+    (when req
+      (let ((w (pane-width cols)))
+        (list nil
+              (list (cons "  the command is asking" '(:bold t)))
+              nil
+              (list (cons (format nil "  ~a"
+                                  (truncate-to-width (or (getf req :question) "")
+                                                     (max 8 (- w 4))))
+                          '(:fg :yellow)))
+              nil
+              (list (cons "  type the answer and press enter · !send LINE always works"
+                          '(:dim t))))))))
+
 (defun secret-ask-lines (head cols)
   "The password card — the reference's `secret_lines` (app.rs:7305-7327):
 

@@ -1294,6 +1294,12 @@ scrolls the transcript by a row every keystroke.
     ;; keyboard has to be the thing on the screen.
     (cond ((head-secret-req head)
            (setf card-lines (secret-ask-lines head cols)))
+          ;; **THE PROMPT CARD** (protocol 33): the operator's run is asking, the card
+          ;; names the question and the two ways in. Drawn like the secret card but
+          ;; AFTER it: a password is the head's own urgency and a prompt is the
+          ;; command's. Both are ephemeral state — the settlement clears them.
+          ((head-prompt-req head)
+           (setf card-lines (prompt-card-lines head cols)))
           ((%open-decision head)
            ;; **TWO VALUES, and the second is the LADDER** (R20). The scroll offset
            ;; is keyed to THIS ask, so a new card opens at its own top rather than

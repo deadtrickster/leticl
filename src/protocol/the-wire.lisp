@@ -346,6 +346,38 @@ involved. `Events` stays reachable for a caller that wants the ring; nothing sen
         :expected-seq (session-expected-seq *session*)
         :prefix prefix))
 
+(defun make-prompt-answer (req-id line)
+  "The operator's answer to a command that asked them something.
+
+ A LINE, not a keystroke: the run's stdin is a pipe, so there are no arrow keys —
+ what a person types is a line and a newline makes it one. An empty LINE is a
+ bare Enter and is a real answer (`Continue? [Y/n]` takes Enter as its default).
+
+ NOT a secret and never one: the field is drawn in the open, and a password has
+ its own path (`SUDO_ASKPASS`, the secret card) whose rules this must not borrow.
+ Not a command: it is never queued, never announced and never logged with its
+ payload — the session worker is BLOCKED inside the very command that is asking,
+ so an answer queued behind that turn would be drained by the thread waiting for
+ it, which is never."
+  (list :frame "prompt_answer"
+        :req-id req-id
+        :line line))
+
+(defun make-send-line (line)
+  "One line to the running command, on demand — the manual way in.
+
+ The card is raised by a heuristic, and a heuristic has misses (a program blocked
+ on something other than its stdin, a program that asks and keeps drawing, a
+ /proc this daemon may not read). This is the floor under it: a person watching
+ the stream can answer whether or not anything looked like a question.
+
+ No req-id and no job-id: it addresses whatever operator command this session is
+ running right now, which the daemon knows and the head does not, so there is
+ nothing for a head to get wrong. A session with nothing running gets a sentence
+ saying so rather than silence."
+  (list :frame "send_line"
+        :line line))
+
 (defun make-settings ()
   (list :frame "settings"))
 

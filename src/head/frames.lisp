@@ -535,6 +535,30 @@ and a `hello` with a snapshot). Returns T when the queue moved."
                 (list* :deadline (wire-deadline->monotonic (getf env :deadline)) env)
                 (head-secret-buf head) ""
                 (head-dirty head) t))
+         ;; **A RUN OF THE OPERATOR'S OWN IS WAITING FOR AN ANSWER** (protocol 33).
+         ;; The daemon reads /proc/<pid>/fd/0 against the write end's inode and /proc/<pid>/task/*/wchan
+         ;; for a pipe read — THAT is what raises this, not a text match on "Continue?" (which is
+         ;; per-program, per-locale, per-version and fails silently on the next program).
+         ;;
+         ;; Stored like the secret ask but drawn DIFFERENTLY: the field is not masked,
+         ;; the card is in the open, and the answer goes back as `PromptAnswer` (a line,
+         ;; never a password — those have their own path through `SecretRequested`).
+         ((:prompt-requested)
+          (setf (head-prompt-req head) env
+                (head-dirty head) t))
+         ;; **AND ITS SETTLEMENT CLOSES THE CARD.** `sent` says whether a line reached the
+         ;; run; `by` is a person's identity or a sentence (the run ended with the card up,
+         ;; or the send failed — two facts told apart by who). The record stays; the card
+         ;; does not. Like the secret settlement, only OUR ask is dismissed.
+         ((:prompt-settled)
+          (when (and (head-prompt-req head)
+                     (equal (getf (head-prompt-req head) :req-id)
+                            (getf env :req-id)))
+            (setf (head-prompt-req head) nil
+                  (head-dirty head) t)
+            (say head (if (getf env :sent)
+                          (format nil "answer sent by ~a" (getf env :by))
+                          (format nil "no answer sent (~a)" (getf env :by))))))
          ((:secret-settled)
           ;; SOMEBODY ELSE ANSWERED. Without this the masked field stayed up
           ;; over a `sudo` that was already through, and the daemon's own

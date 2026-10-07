@@ -22,6 +22,21 @@ for the lists)."
       ;; the secret card owns everything while it is up: a password field is
       ;; not a composer and must never leak into one
       ((head-secret-req head) (%secret-key head key type))
+      ;; **THE PROMPT CARD ALSO OWNS ENTER** — when the operator's run is asking, Enter
+      ;; sends the composer's content as `PromptAnswer` (protocol 33). Unlike the secret
+      ;; card, the prompt does NOT own every key: the field is the composer itself, drawn
+      ;; in the open, so typing, editing, and every other chord still work. Only Enter is
+      ;; claimed, because that is the act of answering.
+      ((and (head-prompt-req head) (eq type :enter))
+       (let* ((req (head-prompt-req head))
+              (line (composer-buffer (head-composer head))))
+         (setf (head-prompt-req head) nil)
+         (%send head (make-prompt-answer (getf req :req-id) line))
+         (setf (composer-buffer (head-composer head)) ""
+               (composer-cursor (head-composer head)) 0)
+         (say head (format nil "sent: ~s" line))
+         (setf (head-dirty head) t)
+         t))
       ;; the `allow-all` question owns every key while it is up
       (*mode-confirm* (mode-confirm-key head key))
       ;; the quit card: leave, or leave and stop the daemon (v20)
