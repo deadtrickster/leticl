@@ -154,6 +154,12 @@
      ("subagents_stopped" . "nothing to do — the session and its children are stopped")
      ("merge_queued" . "the branch is in the queue; the pane lists its place")
      ("merge_not_queued" . "the branch is not in the queue — read the note beside this row for the reason")
+     ("daemon_stopping_runs" . "the daemon is stopping and there are runs in flight — wait for them to end")
+     ("operator_shell_failed" . "the command failed — read the row for its exit status and output")
+     ("operator_run_unreadable" . "the daemon cannot read this run's state — it may still be running")
+     ("prompt" . "the command is asking a question — type the answer and press enter, or !send LINE")
+     ("prompt_late" . "an answer was sent after the question was gone — the command may have exited")
+     ("sudo" . "sudo was refused — the daemon may not have the askpass helper configured")
      ;; **AND A SLOW PROVIDER NAMES AN ACT, WHICH IS THE POINT OF THE CODE.** letibot's
      ;; `e54b48a` landed it because DeepSeek was measured at 12.4 s to first byte while its
      ;; `/models` answered in 0.28 s — the failure it prevents is a person concluding the model is

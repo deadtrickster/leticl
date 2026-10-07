@@ -235,6 +235,21 @@ answered in the same place or not at all.")
     ;; in the queue, said to the parent that started it. A sentence about something
     ;; the operator asked for that worked.
     "merge_queued"
+    ;; **`daemon_stopping_runs`** — the daemon is stopping and there are runs in
+    ;; flight; a receipt for the wait. Routine because the daemon said it would
+    ;; stop and did.
+    "daemon_stopping_runs"
+    ;; **`operator_shell_failed`** — the operator's own `!` command failed.
+    ;; FAILURE because the operator needs to know.
+    ;; **`operator_run_unreadable`** — a run this daemon cannot look at.
+    ;; FAILURE because the inability to tell is a fact that matters.
+    ;; **`prompt`** — the operator's run is asking a question (protocol 33).
+    ;; FAILURE because it is a request that needs an answer.
+    ;; **`prompt_late`** — an answer arrived after the question was gone.
+    ;; FAILURE because something was sent that nothing was waiting for.
+    ;; **`sudo`** — a sudo run was refused. FAILURE.
+    ;; These four are NOT in this list (the failure register is the default for
+    ;; codes not here), but they ARE in the remedies table below.
     ;; **`merge_not_queued`** — the same act's refusal, but it is a FAILURE (the
     ;; daemon's own `Class::Failure`), so it is NOT in this list: codes not here
     ;; default to the failure register, which is where the operator needs to see
