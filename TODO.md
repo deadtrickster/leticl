@@ -391,6 +391,54 @@ carry.
   Dead intra-line emphasis; SAPs passed unpinned across the FFI; every visible
   fence re-parsed through the shim on every frame.
 
+## Filed for their own sessions — two projects, deferred on purpose
+
+Both were measured against the reference's current tree before filing, so the next
+session starts from facts and not from a summary's memory. Neither is parity debt:
+the wire half of each is additive (protocol 31+ frames; leticl is 36) and nothing a
+head runs today breaks without them.
+
+- [ ] **the `!term` pane + a VT renderer** — a program that owns the conversation's
+  rectangle. **The wire half is the small half**: client `TermOpen` / `TermInput` /
+  `TermResize {cols rows}` / `TermClose`; server `TermAttached {command}` /
+  `TermStatus {command}` / `TermOutput {bytes}` / `TermEnded {reason}` (protocol 31;
+  `TermAttached` is a new server frame, which is why 31 was a bump). **The renderer
+  is the project.** The reference's pane is `letibot-vt`'s `Screen` — a rectangle of
+  cells, a cursor, a pen, an alternate buffer — plus `letibot_ui::ansi::pane_rows`,
+  and the contract that matters is THE RECTANGLE: `pane_rows` answers EXACTLY
+  `room` rows, so the composer, header and status never move by a line when the
+  pane opens and never lose one when it closes. For this head the renderer is
+  either a Lisp cell-grid VT emulator (cells, cursor, pen, alternate buffer, SGR,
+  CUP/ED/EL, scroll regions) or an FFI to `letibot-vt` — the highlight shim
+  (`native/libleticl_hl.so`) is the existing pattern for the second, and the same
+  trade it made (a native dependency against a live-patchable image) is the first
+  decision to argue. **The way out is `ctrl-\` (0x1c), intercepted on the raw byte
+  stream BEFORE anything is forwarded** — the program never receives it and cannot
+  trap it; Esc is wrong on purpose (it is `cancel` in vi/mc/nano/less and the first
+  byte of every meta sequence). Detach ends NOTHING: the program keeps running on
+  the daemon's pty and nothing is sent at all. This head's input layer reads decoded
+  characters, not raw bytes — where 0x1c arrives and whether the interception can
+  live in the driver is the first thing to measure.
+
+- [ ] **the merge queue pane** — the queue is DAEMON-LEVEL, not the session's: the
+  snapshot carries none of it by design, and a head that wants the queue asks with
+  `ListMergeQueue` and is answered by `MergeQueue` (the whole queue as of now);
+  from then on `MergeEntryAdded {entry}` and `MergeEntryMoved {id, state, evidence}`
+  carry every change — a head that attaches late and does not ask draws nothing,
+  which is the same bootstrap rule `/todos` already keeps. `MergeEntry`: id,
+  branch, priority, `needs`, state, evidence — and **the evidence is the reason for
+  the state in the queue's own words** (the unmet dependencies while Waiting, the
+  gate's failure while Failed, the conflict while Conflict, the dead job while
+  Stale, the landed tip while Landed): a move without its reason is a row the pane
+  draws and the operator cannot read. States: Waiting / Taken / Landed / Failed /
+  Conflict / Stale. The reference's pane is `ui/panes/queue.rs` (129 lines — the
+  SMALL pane of the two projects). The warning codes `merge_queued` and
+  `merge_not_queued` are already ported with remedies; this pane is where their
+  rows point. Leticl needs: `make-list-merge-queue`, the `merge_queue` frame arm,
+  the two event arms in `apply-event`, a `:queue` pane (grouped by state, the
+  evidence under the row), and the pane's own cursor/stops plumbing — the pattern
+  every existing pane already keeps.
+
 ## §11 of the requirements doc — the six that were MINE, all closed
 
 **Filed 2026-09-22 on the operator's instruction and worked the same night.**
