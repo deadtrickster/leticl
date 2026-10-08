@@ -194,6 +194,13 @@ on ClientFrame::Slash)."
                                    n wn (length all)
                                    (mapcar (lambda (e) (file-namestring (car e))) all))
                            (format nil "~d panel~:p · ~d watcher~:p from a file" n wn)))))))
+      ((string= verb "todo")
+       ;; **`/todo postpone N` / `/todo resume N` — the state the operator owns, over the same
+       ;; numbers the pane prints on their rows.** The daemon's verb family is wider on its side
+       ;; (`TEXT`, `done N`, `rm N`); this head's doors for those are the card, the space key and
+       ;; the delete key, so what travels as a typed verb here is the pair that has no key —
+       ;; which is the reference's own ruling for exactly this act.
+       (todo-postpone-command head rest))
       ((string= verb "todos")
        ;; **`/todos add` opens the card without opening the pane** (R44): the verb is the
        ;; keystroke-saving spelling of the pane's own first row, and `add` is a word this verb

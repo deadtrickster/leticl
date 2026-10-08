@@ -378,6 +378,76 @@ and so the identity is minted in the one place that owns the list, not by whoeve
         ;; ever be about something the MODEL wrote. `push-operator-todos` is the one sender.
         (push-operator-todos head)
         item))))
+(defun todo-postpone-command (head rest)
+  "`/todo postpone N` and `/todo resume N` — set one of the OPERATOR's rows aside, and lift it
+again. T when the line was taken.
+
+The operator's ask (the reference's own, commands.rs): *\"can we handle postponed todo item
+properly? i.e. they persist but without nag and with some counter visible to me\"*. The state is
+THEIRS and this is the door: on the daemon's side the ruling is that a model that could set its
+own row aside would have a way to silence the check that exists to stop it abandoning a plan —
+`todo_write` still takes three words, and the two that are missing are typed ones. On this head
+the boundary is already the shape of the code: `*operator-todos*` is the operator's half and no
+key or card of the model's reaches it, so the verb is the operator's by construction.
+
+**The verb pair and not a key on the row.** Enter on one of these rows already means *toggle
+done* — the pane's own act since R44 — and a second row key would be a second thing to learn for
+an act that has a typed door; the two are in the verb table (which is what `/help` and tab read)
+and named in the pane's own hint lines.
+
+**`resume` and not a second spelling of `done`**, because the two answers are different
+questions: `done` is *this is finished*, `resume` is *ask me about this again*. Lifting a row
+puts it back as open work — which is what the queue and the idle check read. The daemon keeps
+whatever CONDITION the row was carrying across both verbs; this head has no conditions on rows
+yet, so there is nothing to keep and nothing to drop — said here so the difference is a recorded
+fact and not a silent gap.
+
+Numbered over the operator's half exactly as the pane numbers it (`mine-at`, 1-based), and
+refused by name when the number is not one of theirs — so a typo cannot set aside a row nobody
+named. A bare `/todo postpone` with no number is a USAGE note rather than the daemon's
+*new row's text* reading, because on this head the add door is the card (`/todos add`) and a
+line that silently created a row titled `postpone` would be a row nobody meant to add."
+  (let* ((words (uiop:split-string (string-trim " " (or rest "")) :separator " "))
+         (verb (first words))
+         (n (second words)))
+    (cond
+      ((not (member verb '("postpone" "resume") :test #'string=))
+       (say head "usage: /todo postpone N · /todo resume N — the pane numbers your rows")
+       t)
+      ((null n)
+       (say head (format nil "which row? /todo ~a N — the todos pane numbers your rows" verb))
+       t)
+      (t
+       (let ((at (ignore-errors (parse-integer n :junk-allowed t))))
+         (cond
+           ((null at)
+            (say head (format nil "`~a` is not a row number — the todos pane numbers your rows" n))
+            t)
+           ((or (< at 1) (> at (length *operator-todos*)))
+            (say head (format nil "there is no row ~d of yours — you have ~d"
+                              at (length *operator-todos*)))
+            t)
+           (t
+            (let* ((item (nth (1- at) *operator-todos*))
+                   (now (if (string= verb "postpone") "postponed" "open")))
+              (setf (getf item :status) now)
+              ;; **ONE ROW, not the whole list** — the same store discipline as the add and the
+              ;; toggle: a transaction per keystroke is what the store's own docstring refuses.
+              (when *write-prefs*
+                (store-save-todo item at (operator-todos-workspace head)))
+              ;; **AND THE DAEMON'S BOARD, which is the whole point of the state**: the idle check
+              ;; reads that board, so a row set aside only in this head would keep being asked
+              ;; about — the exact nag the operator asked to stop. `make-set-operator-todos`
+              ;; carries `postponed` through to the wire, and the next board snapshot folds it
+              ;; back unchanged.
+              (push-operator-todos head)
+              (setf (head-dirty head) t)
+              (say head (if (string= verb "postpone")
+                            (format nil "row ~d is set aside — it stays on your list and the model ~
+                                         still sees it, and nothing is reminded of it until you ~
+                                         lift it with /todo resume ~d" at at)
+                            (format nil "row ~d is back in the list — the check may ask about it again" at)))
+              t))))))))
 
 (defvar *todo-draft* nil
   "The new-todo card: `(:title TEXT :detail TEXT :field :title)`, or NIL when it is closed.

@@ -472,14 +472,24 @@ change is a restart.")
   "A mark's colour: done green, doing yellow, OPEN LEFT ALONE.
 
 An open item is the default state and the majority of any list, and colouring the
-majority spends the signal the other two carry."
+majority spends the signal the other two carry.
+
+**`[p]` is DIM and not a fourth hue** — the reference's own ruling (todos.rs,
+`TodoMark::painted`): a postponed row is not a fourth kind of thing on the list,
+it is the same thing turned down, and the attribute de-emphasises whatever
+foreground the reader's theme chose. A fourth colour would be a fourth thing to
+learn, on the one row whose whole meaning is *this one is not shouting*."
   (case mark
     (:done '(:fg :green))
     (:doing '(:fg :yellow))
+    (:postponed '(:dim t))
     (t nil)))
 
 (defun %todo-mark-text (mark)
-  (case mark (:done "[x]") (:doing "[~]") (:open "[ ]") (t "   ")))
+  "The mark's own text. `[p]` is the one mark `TODO.md` has no syntax for — a file
+cannot say *still owed, and not being asked for* — so the reader the pane teaches
+it to is taught HERE and not in org (see the hint lines at the pane's foot)."
+  (case mark (:done "[x]") (:doing "[~]") (:open "[ ]") (:postponed "[p]") (t "   ")))
 
 (defun %todo-row-lines (row &key here open)
   "One repo todo row to segment lines — the mark PAINTED, the indent separate.
@@ -539,7 +549,7 @@ Headings roll up the rows beneath them and have nothing to unfold, so the cursor
 skips them: the reference's `stops` (app.rs:3268)."
   (loop for r in rows for i from 0 when (getf r :item) collect i))
 
-(defun %todo-item-lines (item author show-detail &optional here)
+(defun %todo-item-lines (item author show-detail &optional here (number nil))
   "ITEM as the pane's lines: the mark, the words, and whose they are — plus the description under
 them when SHOW-DETAIL and the item has one.
 
@@ -548,10 +558,21 @@ list and a reader scanning it needs to know which is which per line, not per sec
 `  — model` is the whole of the distinction the operator asked for: *\"it should be marked as
 created by me, and created by model as created by model.\"*
 
-The description hangs under the title at six columns, which is two past the mark, so the item's
-words and its detail read as a block rather than as two entries."
+**NUMBER is the row's number on the operator's half** — drawn so the verb that names it
+(`/todo postpone N`) names a row the reader can count to. It is right-aligned in two columns
+with two after, the reference's own `{mine_at:>2}  `, and BLANK (four spaces, the same width)
+on the model's rows — the model's rows are not the operator's to edit by number, and a number on
+them would be an affordance for an act that does not exist. NIL blanks it the same way.
+
+`postponed` is read here and nowhere in `TODO.md`: the parser's `+todo-marks+` stays three
+marks wide on purpose, because a file has no way to say *still owed, and not being asked for*.
+
+The description hangs under the title at ten columns — two past the mark, which sits at eight
+once the number column is in — so the item's words and its detail read as a block rather than as
+two entries."
   (let ((st (cond ((string= (or (getf item :status) "") "in_progress") :doing)
                   ((string= (or (getf item :status) "") "completed") :done)
+                  ((string= (or (getf item :status) "") "postponed") :postponed)
                   (t :open))))
     (append
      ;; **the cursor mark, in the pane's own column** — `▸ ` or two spaces, like every other
@@ -559,12 +580,18 @@ words and its detail read as a block rather than as two entries."
      ;; session item too. The row is reversed when it is the one the cursor is on, which is
      ;; what every other pane does and what makes `delete` mean *this row*.
      (list (list (cons (if here "  ▸ " "    ") (and here '(:reverse t)))
+                 ;; **the row's NUMBER on the operator's half** — right-aligned in two columns
+                 ;; with two after, exactly the reference's `{mine_at:>2}  `, and blank on the
+                 ;; model's rows: a number is a door for `/todo postpone N`, and the model's
+                 ;; rows are not the operator's to edit by number.
+                 (cons (if number (format nil "~2d  " number) "    ") nil)
                  (cons (%todo-mark-text st) (%todo-mark-style st))
                  (cons (format nil " ~a" (getf item :content)) (and here '(:reverse t)))
                  (cons (format nil "  — ~a" author) (if here '(:reverse t) '(:dim t)))))
      (let ((detail (getf item :detail)))
        (when (and show-detail detail (plusp (length detail)))
-         (list (list (cons "      " nil)
+         ;; ten columns — two past the mark, which sits at eight once the number column is in
+         (list (list (cons "          " nil)
                      (cons detail '(:dim t)))))))))
 
 (defvar *todos-hide-done* nil
@@ -706,7 +733,32 @@ stops: the recorded index was the length before some pushes and after others."
            (this (tag id) (and (< at n) (= at sel) (nth at stops)
                                (eq (car (nth at stops)) tag)
                                (equal (cdr (nth at stops)) id))))
-      (emit (list (cons "todos" '(:bold t))))
+      ;; **THE HEADER COUNTS THE BOARD, AND `postponed` ONLY WHEN THERE IS ONE.** The reference's
+      ;; own ruling (todos.rs, `todos_lines`): `open` is always drawn — an empty plan is exactly
+      ;; the fact a reader opens this pane to confirm, and `0 open` is the answer — while
+      ;; `postponed` is drawn only when there is one, because a permanent `· 0 postponed` would
+      ;; be a word about a feature rather than about the work, on a header that is read at a
+      ;; glance.
+      ;;
+      ;; Counted over the list AS DRAWN — this head's operator rows plus the model's from the
+      ;; wire, which is exactly the board the daemon counts — and not over `todos` alone,
+      ;; because on this head the two halves of that board live in two places (see the
+      ;; double-draw note below). `open` is every row still owed — open, pending or in progress,
+      ;; which is precisely the set the idle check may ask about — and a done row counts in
+      ;; neither number.
+      (let* ((model-half (remove-if (lambda (i) (string= (or (getf i :by) "") "operator"))
+                                    todos))
+             (board (append *operator-todos* model-half))
+             (open (count-if (lambda (i)
+                               (not (member (or (getf i :status) "") '("completed" "postponed")
+                                             :test #'string=)))
+                             board))
+             (postponed (count-if (lambda (i) (string= (or (getf i :status) "") "postponed"))
+                                  board)))
+        (emit (list (cons (if (zerop postponed)
+                              (format nil "todos — ~d open" open)
+                              (format nil "todos — ~d open · ~d postponed" open postponed))
+                        '(:bold t)))))
       (emit nil)
       (emit (list (cons "  this session — the plan, and who wrote each line:" '(:dim t))))
       ;; **the add control**, at the head of the session's list because that is where an addition
@@ -720,19 +772,25 @@ stops: the recorded index was the length before some pushes and after others."
                     (cons "add todo item" '(:bold t)))
               t))
       (incf at)
-      ;; the operator's items and the model's, one list with the author on every row
-      (dolist (item *operator-todos*)
-        (unless (%todo-hidden-p item)
-        (let ((here (this :mine (getf item :id)))
-              (first t))
-          (dolist (line (%todo-item-lines item "you" t here))
-            ;; **EVERY item records its line, not only the cursor's** — `stop-lines` is parallel to
-            ;; `todos-stops`, and its whole job is to say where each stop is DRAWN. Recording only
-            ;; the selected row left a vector with one entry in it and made `(aref stop-lines sel)`
-            ;; an out-of-bounds read for every cursor position but the first.
-            (emit line first)
-            (setf first nil)))
-        (incf at)))
+      ;; the operator's items and the model's, one list with the author on every row — and the
+      ;; operator's NUMBERED, 1-based over their half, which is the number `/todo postpone N`
+      ;; names. Advanced for every row of the half (hidden ones too, when the hide-done mode is
+      ;; on): the number is the row's place in `*operator-todos*`, which the mode does not
+      ;; change, exactly as `:repo` stops keep their file index under the same mode.
+      (let ((mine-at 0))
+        (dolist (item *operator-todos*)
+          (incf mine-at)
+          (unless (%todo-hidden-p item)
+          (let ((here (this :mine (getf item :id)))
+                (first t))
+            (dolist (line (%todo-item-lines item "you" t here mine-at))
+              ;; **EVERY item records its line, not only the cursor's** — `stop-lines` is parallel to
+              ;; `todos-stops`, and its whole job is to say where each stop is DRAWN. Recording only
+              ;; the selected row left a vector with one entry in it and made `(aref stop-lines sel)`
+              ;; an out-of-bounds read for every cursor position but the first.
+              (emit line first)
+              (setf first nil)))
+          (incf at))))
       ;; **THE MODEL'S ITEMS ADVANCE NOTHING**, because they are not stops: `todos-stops` skips
       ;; them for the reason its docstring gives (no key acts on one), and a walk that advanced
       ;; here would run `at` past the stop it is comparing against — which is how the pane came to
@@ -817,6 +875,17 @@ stops: the recorded index was the length before some pushes and after others."
       (emit (list (cons (if *todos-hide-done*
                             "  done items are hidden — h shows them again."
                             "  h hides the done ones.")
+                        '(:dim t))))
+      ;; **AND THE ONE ACT THE PANE DOES NOT BIND, SAID WHERE ITS ROWS ARE.** `[p]` is a mark this
+      ;; pane has and `TODO.md` does not, so it is the one mark a reader cannot look up in org —
+      ;; and the two verbs are named here rather than only in `/help`, because a state you can
+      ;; see and cannot lift is a state that looks like a bug. Two short lines rather than one
+      ;; long one: the pane trims to the window, and a sentence whose second half is off the
+      ;; edge is a sentence that named nothing. The reference's own lines (todos.rs), words and
+      ;; break and all, so the two heads teach the same mark the same way.
+      (emit (list (cons "  `[p]` is a row you set aside — it stays on the board and the model still sees it:"
+                        '(:dim t))))
+      (emit (list (cons "  the check stops asking about it · `/todo postpone N` · `/todo resume N`"
                         '(:dim t)))))
     (values (nreverse out)
             (if (or (zerop (length stop-lines)) (zerop n)) 0 (aref stop-lines sel))

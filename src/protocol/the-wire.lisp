@@ -96,10 +96,19 @@ the operator's rows reach it, a reminder can only ever be about something the MO
         ;; announced as done still counted as open, for ever, and the reminder asked again every idle
         ;; period. **ONE mapping**, here, from the head's own item shape to the wire's — which is what
         ;; `make-set-operator-todos`'s name already promised.
+        ;; **AND `postponed` IS THE THIRD WORD THIS MAP KNOWS.** The state is the OPERATOR's act
+        ;; (`/todo postpone N`, see the pane) and it lives on the daemon's board exactly as long as
+        ;; this head keeps saying it: a mapping that collapsed a set-aside row back to `pending`
+        ;; would undo the act on the next push — any add, any delete — while the head's own list
+        ;; still drew `[p]`, which is the same two-mappings defect the `completed` constant was,
+        ;; one spelling further along. Every other status is the wire's `pending`, as before.
         :items (coerce (mapcar (lambda (item)
                                  (list :content (or (getf item :content) "")
-                                       :status (if (equal (getf item :status) "completed")
-                                                   "completed" "pending")
+                                       :status (cond ((equal (getf item :status) "completed")
+                                                      "completed")
+                                                     ((equal (getf item :status) "postponed")
+                                                      "postponed")
+                                                     (t "pending"))
                                        :by "operator"))
                                items)
                        'vector)))

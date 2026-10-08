@@ -78,6 +78,10 @@
     ("jobs" . "the background-jobs pane")
     ("subagents" . "the subagent tree")
     ("todos" . "the plan and the repo's TODO.md — or /todos add for one of your own")
+    ;; **`/todo`'s table entry lists what THIS head implements** — the daemon's family also has
+    ;; `TEXT`, `done N`, `rm N`; here those are the card, the space key and the delete key, and a
+    ;; table that promised them as typed verbs would be promising doors that do not open.
+    ("todo" . "postpone N sets one of your rows aside, resume N lifts it — the pane numbers your rows")
     ("dashboards" . "the live dashboard — panels are DATA, in ~/.config/letibot/dashboards/")
     ("dash-reload" . "re-read the dashboard directories from disk")
     ("peek" . "SESSION-ID — read a subagent's output without leaving this session")

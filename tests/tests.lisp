@@ -6055,7 +6055,10 @@ and Enter did nothing to the file's items."
            (flet ((text () (lines-text (todos-lines h 210)))
                   (key (k) (leticl::%handle-key h (list :type k))))
              (let ((text (text)))
-               (is (string= "todos" (first text)) "the title alone — no hint suffix")
+               (is (string= "todos — 0 open" (first text))
+                   "**the title carries the count** — the operator's ask, *\"with some counter visible to
+  me\"*: `open` is always drawn, even at zero, because an empty plan is exactly the fact a reader
+  opens this pane to confirm; `postponed` joins it only when there is one")
                ;; **R44 DEPARTS FROM LETIBOT HERE, DELIBERATELY, AND THIS IS THE ASSERTION THAT
                ;; SAYS SO.** letibot's pane opens with no `▸` anywhere: its cursor rests on the
                ;; first ROW, which is a heading, and only items can be marked. This pane's cursor
@@ -6081,12 +6084,15 @@ and Enter did nothing to the file's items."
                                     l))
                          text)
                    "and the closing line says what the pane DOES to that file, and which board it is not")
-               ;; **THE HINT LINE IS LAST NOW, AND IT HAS TO BE SOMEWHERE A READER LOOKS.** These two
-               ;; lines are the pane's own account of its two file-writing keys, and the one that
-               ;; follows them is the mode's state — which is the only thing that can say the mode is
-               ;; ON, since its whole effect is rows that are not there.
-               (is (string= "  h hides the done ones." (car (last text)))
-                   (format nil "the hint line closes the pane and names the key: ~s" (car (last text)))))
+               ;; **THE PANE'S LAST LINE MOVED, AND THE ONE THAT HAS IT IS THE `[p]` EXPLANATION**
+               ;; — the mark `TODO.md` has no spelling for, so it is the one a reader cannot look up
+               ;; in org: the pane names the verbs that undo it, and a state you can see and cannot
+               ;; lift is a state that looks like a bug. The mode line still says which STATE the
+               ;; hide is in; it is just no longer the last thing on the screen.
+               (is (string= "  the check stops asking about it · `/todo postpone N` · `/todo resume N`"
+                            (car (last text)))
+                   (format nil "the pane closes with the door out of the one mark org cannot spell: ~s"
+                           (car (last text)))))
              ;; **the cursor's ring is `(:add :repo2 :repo3 :repo5 :repo6)`** — the add row, then
              ;; every repo row that IS an item. Headings are drawn and skipped, which is what
              ;; letibot does with its own `stops`.
@@ -6250,12 +6256,13 @@ Four claims, and the second is the one that makes the feature honest rather than
     (let ((text (lines-text (leticl::todos-lines h 90))))
       (is (some (lambda (l) (search "check the logs" l)) text) "the operator's item is in the list")
       (is (some (lambda (l) (search "the model's own item" l)) text) "beside the model's")
-      (is (some (lambda (l) (string= "    [ ] check the logs  — you" l)) text)
-          (format nil "**marked as YOURS**: ~s" (remove-if-not (lambda (l) (search "check the logs" l)) text)))
+      (is (some (lambda (l) (string= "     1  [ ] check the logs  — you" l)) text)
+          (format nil "**marked as YOURS, and NUMBERED on your half** — the number is what `/todo postpone N` names: ~s"
+                  (remove-if-not (lambda (l) (search "check the logs" l)) text)))
       (is (some (lambda (l) (search "the model's own item  — model" l)) text)
           "and the model's as the model's — one row each, and the author on both")
-      (is (some (lambda (l) (string= "      the daemon log, not the head's" l)) text)
-          "**the description hangs under its title**, indented under the mark")
+      (is (some (lambda (l) (string= "          the daemon log, not the head's" l)) text)
+          "**the description hangs under its title**, indented under the mark — which moved with the number column")
       (is (some (lambda (l) (string= "  ▸ [+] add todo item" l)) text)
           (format nil "**the add row reads as a CONTROL and not as a line of the list** — the
  operator, of the first cut: *\"it looks like a regular text\"*, which it did: plain, in the
@@ -15266,15 +15273,17 @@ to anything that does not look at the bytes that actually leave the process."
   (let* ((frame (make-set-operator-todos
                  7 (list (list :id "t1" :content "done already" :status "completed")
                          (list :id "t2" :content "still to do" :status "open")
-                         (list :id "t3" :content "being worked" :status "in_progress"))))
+                         (list :id "t3" :content "being worked" :status "in_progress")
+                         (list :id "t4" :content "push once CI lands" :status "postponed"))))
          ;; **AN ARRAY, which is what the wire carries** — `make-set-operator-todos` builds a VECTOR
          ;; deliberately, so that an EMPTY list is still sent rather than elided (see
          ;; `%encode`'s vector arm, and the un-restartable head it fixes).
          (items (coerce (getf frame :items) 'list))
          (json (encode-frame frame)))
-    (is (equal '("completed" "pending" "pending") (mapcar (lambda (i) (getf i :status)) items))
-        "**the head's status reaches the wire** — only `completed` is completed")
-    (is (equal '("done already" "still to do" "being worked")
+    (is (equal '("completed" "pending" "pending" "postponed")
+               (mapcar (lambda (i) (getf i :status)) items))
+        "**the head's status reaches the wire** — completed, pending, and now POSTPONED: a row set\n  aside reaches the daemon's board as set aside, which is the whole point of the state — the\n  idle check reads THAT board")
+    (is (equal '("done already" "still to do" "being worked" "push once CI lands")
                (mapcar (lambda (i) (getf i :content)) items))
         "and every row is carried, in order")
     (is (every (lambda (i) (equal "operator" (getf i :by))) items)
@@ -15283,12 +15292,14 @@ to anything that does not look at the bytes that actually leave the process."
     ;; completed row is not among the pending ones. (A count rather than a substring: the frame
     ;; legitimately contains the word pending for the rows that ARE pending, which is what made the
     ;; first cut of this assertion wrong — it searched for a pattern that the LAST row matched.)
-    (dolist (text '("done already" "still to do" "being worked"))
+    (dolist (text '("done already" "still to do" "being worked" "push once CI lands"))
       (is (search text json) (format nil "~s is in the encoded frame" text)))
     (is (= 1 (count-substring "completed" json))
         "**exactly one row is completed** — a constant would make it zero")
     (is (= 2 (count-substring "pending" json))
-        "and exactly two are pending, so the status is per-row and not one value for the list")))
+        "and exactly two are pending, so the status is per-row and not one value for the list")
+    (is (= 1 (count-substring "postponed" json))
+        "**and exactly one is postponed** — a map that collapsed it to pending would undo the\n  operator's `/todo postpone` on the next push")))
 
 (def-test an-operator-row-on-the-wire-is-not-drawn-as-the-models (:suite leticl)
   "**The board's union arrived in `session-todos` while the pane drew its own half for the same
@@ -15327,6 +15338,112 @@ to anything that does not look at the bytes that actually leave the process."
                   mine))
       (is (= 1 (length theirs)) "the model's row still comes through, once")
       (is (search "— model" (first theirs)) "labelled as the model's own"))))
+
+(def-test a-postponed-row-is-counted-painted-and-numbered (:suite leticl)
+  "**The fourth state, and the four things that make it a state rather than a word** (the
+  reference's own framing, todos.rs): the row stays on the board, nothing asks about it, the
+  operator can see how many there are, and they can lift it again. This pins the two a READER
+  sees — the mark and the number in the header — plus the two a LIFTER needs: the row's number
+  on its half, and the pane naming the verbs that undo the mark.
+
+  `3 open · 1 postponed` over five rows of which one is finished — the reference's own board, and
+  the numbers a reader can count to on the screen: the `[p]` mark drawn, the done row in NEITHER
+  number, and `open` carrying the model's pending row too (the board is one list).
+
+  **`[p]` is DIM and not a fourth hue** — the reference's ruling, asserted on the STYLE: a
+  postponed row is the same thing turned down, and a fourth colour would be a fourth thing to
+  learn on the one row whose whole meaning is *this one is not shouting*."
+  (let ((leticl::*operator-todos*
+          (list (list :id "t1" :content "one I owe" :status "open" :detail "")
+                (list :id "t2" :content "started" :status "in_progress" :detail "")
+                (list :id "t3" :content "finished" :status "completed" :detail "")
+                (list :id "t4" :content "push once CI lands" :status "postponed" :detail "")))
+        (leticl::*todo-draft* nil) (leticl::*repo-todo-open* nil)
+        (leticl::*todos-hide-done* nil)
+        (leticl::*pane-scroll* 0) (leticl::*pane-room* 40) (leticl::*pane-lines* 0)
+        (leticl::*write-prefs* nil)
+        (h (%on-head :cols 90 :rows 30)))
+    ;; the model's pending row beside the operator's four — one board, both authors
+    (setf (session-todos (head-session h))
+          (list (list :content "the model's row" :status "pending" :by "model"))
+          (session-wiring (head-session h)) (list :workspace "/nonexistent-for-this-test"))
+    (let* ((lines (leticl::todos-lines h 120))
+           (text (lines-text lines))
+           (drawn (lambda (mark) (count-if (lambda (l) (search mark l)) text))))
+      (is (= 2 (funcall drawn "[ ] ")) "two open rows, one of them the model's")
+      (is (= 1 (funcall drawn "[~] ")) "one started")
+      (is (= 1 (funcall drawn "[x] ")) "one finished")
+      (is (= 1 (funcall drawn "[p] ")) "**one set aside — the mark this pane gained**")
+      (is (some (lambda (l) (search "3 open · 1 postponed" l)) text)
+          "**the header carries both numbers** — and the done row is in neither")
+      ;; **the model's row carries no number**, the operator's carry theirs — a number is a door
+      ;; for `/todo postpone N`, and the model's rows are not the operator's to edit by number
+      (is (some (lambda (l) (search " 4  [p] push once CI lands" l)) text)
+          "the set-aside row is the FOURTH of the operator's half, and says so")
+      (is (every (lambda (l) (not (search " 1  [ ]" l)))
+                 (remove-if-not (lambda (l) (search "the model's row" l)) text))
+          "and the model's row is unnumbered")
+      ;; **the mark's STYLE is dim** — asserted on the segments, because the text alone cannot
+      ;; tell a turned-down row from a coloured one
+      (let ((p-seg (some (lambda (line)
+                           (find "[p]" line :key #'car :test #'string=))
+                         lines)))
+        (is (equal '(:dim t) (cdr p-seg))
+            "**`[p]` is DIM and not a fourth hue** — the reference's own ruling"))
+      ;; **the pane names the verbs that undo the mark** — a state you can see and cannot lift is
+      ;; a state that looks like a bug, and `[p]` is the one mark org has no spelling for
+      (is (some (lambda (l) (search "/todo postpone N" l)) text)
+          "the pane names the verb that sets a row aside")
+      (is (some (lambda (l) (search "/todo resume N" l)) text)
+          "and the one that lifts it"))))
+
+(def-test a-row-is-set-aside-and-lifted-by-number (:suite leticl)
+  "**`/todo postpone N` / `/todo resume N` — the state the operator owns, over the numbers the
+  pane prints on their rows.** The reference's own pair of acts (commands.rs), on this head's
+  half of the board: `*operator-todos*`, in its store, pushed to the daemon so the idle check —
+  the nag the operator asked to stop — reads the state from the board rather than from a screen.
+
+  Refused by name when the number is not one of theirs, so a typo cannot set aside a row nobody
+  named; and a bare `/todo postpone` is a usage note rather than a new row titled `postpone`,
+  because on this head the add door is the card."
+  (let ((leticl::*operator-todos*
+          (list (list :id "t1" :content "one I owe" :status "open" :detail "")
+                (list :id "t2" :content "push once CI lands" :status "open" :detail "")))
+        (leticl::*todo-draft* nil) (leticl::*write-prefs* nil)
+        (h (%on-head :cols 90 :rows 30)))
+    ;; --- set aside by number: the row keeps its words, changes its status, and the board hears
+    (leticl::%command h "todo postpone 2")
+    (is (string= "postponed" (getf (second leticl::*operator-todos*) :status))
+        "row 2 is postponed — BY NUMBER, over the operator's half")
+    (is (string= "push once CI lands" (getf (second leticl::*operator-todos*) :content))
+        "and it is the same row: the words did not move")
+    (is (string= "open" (getf (first leticl::*operator-todos*) :status))
+        "and nothing else changed")
+    (is (search "set aside" (head-status-note h))
+        "the act SAYS what it did — and how to lift it")
+    (is (search "/todo resume 2" (head-status-note h))
+        "the note carries the door out, not just the fact")
+    ;; --- and lifted again, by the number the note named
+    (leticl::%command h "todo resume 2")
+    (is (string= "open" (getf (second leticl::*operator-todos*) :status))
+        "resume puts it back as OPEN work — not done, which answers a different question")
+    (is (search "back in the list" (head-status-note h)) "and says so")
+    ;; --- a number that is not one of theirs is refused BY NAME
+    (leticl::%command h "todo postpone 9")
+    (is (string= "open" (getf (second leticl::*operator-todos*) :status)) "nothing changed")
+    (is (search "there is no row 9" (head-status-note h))
+        "and the refusal names the row and the count")
+    ;; --- not a number at all
+    (leticl::%command h "todo postpone soon")
+    (is (search "not a row number" (head-status-note h)) "said, not a silence")
+    ;; --- a bare verb is a usage note, NOT a row titled `postpone`
+    (leticl::%command h "todo postpone")
+    (is (= 2 (length leticl::*operator-todos*)) "no row was added")
+    (is (search "which row" (head-status-note h))
+        "a usage note — the card is the add door on this head")
+    ;; --- and the verb is in the table `/help` and tab read
+    (is (assoc "todo" leticl::*slash-commands* :test #'string=)
+        "`/todo` is in the verb table, so `/help` lists it")))
 
 (def-test the-models-answer-to-an-operator-row-is-taken-by-the-head (:suite leticl)
   "**THE MODEL CAN MARK ONE OF THE OPERATOR'S ROWS DONE — so the head has to hear about it.**

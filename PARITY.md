@@ -135,8 +135,10 @@ Argued in full in the four documents; in one line each:
 - **The backwards viewport walk** (`%viewport-lines`) instead of a cache — the
   same lever the reference reached for in `fill_backward`, and the reason our
   attach to a 2000-item session is 0.29 s.
-- **Nine local slash verbs** (`/subagents`, `/todos`, `/peek`, `/resume`,
-  `/promote`, `/models`) the reference reaches only by chord.
+- **Ten local slash verbs** (`/subagents`, `/todos`, `/todo postpone N`/`resume N`,
+  `/peek`, `/resume`, `/promote`, `/models`) the reference reaches only by chord —
+  `/todo`'s pair is the fourth todo state, set aside without nag, numbered on your
+  half in the pane.
 - **An unknown verb is forwarded to the daemon**, not refused: the head does not
   need to learn every daemon verb to be useful with it.
 - **The eval socket**, which the reference has no equivalent of at all.
