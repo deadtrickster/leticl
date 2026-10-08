@@ -15584,6 +15584,132 @@ to anything that does not look at the bytes that actually leave the process."
     (is (assoc "todo" leticl::*slash-commands* :test #'string=)
         "`/todo` is in the verb table, so `/help` lists it")))
 
+(def-test a-condition-is-attached-to-a-row-by-a-verb-by-number (:suite leticl)
+  "**The operator's own shape:** *'if you are telling me 'job ends and i do this and that' then
+  'this and that' is a todo item, which is conditioned by job status (end)'* — and *'when I file
+  a todo'* is where it belongs: the row is filed first, the condition is put on it here, by the
+  number the pane prints.
+
+  Four claims: the verb sets the condition and SAYS what it means (a job this daemon has never
+  heard of counts as ended, which is what a restart looks like); `when N -` takes it off, which is
+  not a courtesy (a condition nobody can take off is a row waiting for ever on a job that already
+  ended); **the condition is carried across `postpone` and `resume` by construction** — neither
+  touches it, and a row set aside while waiting on a job goes back to waiting on the same one; and
+  the store keeps it, so a restart does not spend it."
+  (let ((leticl::*operator-todos*
+          (list (list :id "t1" :content "push once CI lands" :status "open" :detail "")
+                (list :id "t2" :content "one I owe" :status "open" :detail "")))
+        (leticl::*todo-draft* nil) (leticl::*write-prefs* nil)
+        (h (%on-head :cols 90 :rows 30)))
+    ;; --- set, by number
+    (leticl::%command h "todo when 1 j121")
+    (is (equal '(:kind "job" :handle "j121")
+               (getf (first leticl::*operator-todos*) :when))
+        "row 1 waits on j121 — the WIRE's own decoded shape, one spelling everywhere")
+    (is (search "due once `j121` is not running" (head-status-note h))
+        "the act SAYS what the condition means — including what a restart looks like")
+    (is (null (getf (second leticl::*operator-todos*) :when))
+        "and nothing else changed")
+    ;; --- clear, and that is not a courtesy
+    (leticl::%command h "todo when 1 -")
+    (is (null (getf (first leticl::*operator-todos*) :when))
+        "`-` takes the condition off")
+    (is (search "no longer waits on anything" (head-status-note h)) "and says so")
+    ;; --- carried across postpone and resume, by construction
+    (leticl::%command h "todo when 1 j121")
+    (leticl::%command h "todo postpone 1")
+    (is (equal '(:kind "job" :handle "j121")
+               (getf (first leticl::*operator-todos*) :when))
+        "**a set-aside row KEEPS its condition** — the handle is kept and does not fire while the\n  row is postponed")
+    (leticl::%command h "todo resume 1")
+    (is (equal '(:kind "job" :handle "j121")
+               (getf (first leticl::*operator-todos*) :when))
+        "and lifting it puts it back waiting on the SAME job")
+    ;; --- refusals, by name
+    (leticl::%command h "todo when 9 j1")
+    (is (search "there is no row 9" (head-status-note h)) "out of range is refused by name")
+    (leticl::%command h "todo when soon j1")
+    (is (search "not a row number" (head-status-note h)) "and so is not a number")
+    (leticl::%command h "todo when 1")
+    (is (search "a row number and the handle" (head-status-note h))
+        "a bare when N teaches the shape and the dash that clears it")))
+
+(def-test the-condition-reaches-the-wire-and-a-fired-row-cannot-re-arm (:suite leticl)
+  "**The board is where the evaluator reads it, and the board is the memory.** The daemon fires a
+  row whose job ended — reports it to the model, SPENDS the condition so it cannot fire twice —
+  and the status stays open: a fired row is ordinary open work. Two halves here: the push carries
+  the condition so the daemon can evaluate it at all, and the FOLD takes the daemon's spent
+  condition back — without the second half, this head's next push (any add, any delete) re-arms a
+  row the daemon already fired, which is the two-writers defect the status fold exists to prevent,
+  one field along."
+  ;; --- the push carries it, and omits it when there is none
+  (let* ((frame (make-set-operator-todos
+                 7 (list (list :id "t1" :content "push once CI lands" :status "open"
+                               :when (list :kind "job" :handle "j121"))
+                         (list :id "t2" :content "still to do" :status "open"))))
+         (json (encode-frame frame)))
+    (is (search "\"kind\":\"job\"" json) "the condition is on the wire, tagged the way the daemon reads it")
+    (is (search "\"handle\":\"j121\"" json) "with its handle")
+    (is (= 1 (count-substring "\"kind\":\"job\"" json))
+        "**and exactly one row carries it** — a row without a condition omits the field, which is\n  what every daemon older than it read as unconditional"))
+  ;; --- the fold takes a spent condition back
+  (let ((leticl::*operator-todos*
+          (list (list :id "t1" :content "push once CI lands" :status "open" :detail ""
+                      :when (list :kind "job" :handle "j121")))))
+    ;; the board's row: same content, the operator's, still open, and the condition GONE —
+    ;; the daemon fired it when j121 ended and consumed the `when`
+    (leticl::fold-board-statuses
+     (list (list :content "push once CI lands" :status "open" :by "operator")))
+    (is (null (getf (first leticl::*operator-todos*) :when))
+        "**a fired row comes back WITHOUT its condition** — the fold takes the spent `when`, so\n  the next push cannot re-arm it")
+    (is (string= "open" (getf (first leticl::*operator-todos*) :status))
+        "and the status is what it was: a fired row is ordinary open work"))
+  ;; --- and a condition the board still holds is kept, not dropped
+  (let ((leticl::*operator-todos*
+          (list (list :id "t1" :content "push once CI lands" :status "open" :detail ""
+                      :when (list :kind "job" :handle "j121")))))
+    (leticl::fold-board-statuses
+     (list (list :content "push once CI lands" :status "open" :by "operator"
+                 :when (list :kind "job" :handle "j121"))))
+    (is (equal '(:kind "job" :handle "j121")
+               (getf (first leticl::*operator-todos*) :when))
+        "a row the board still holds the condition for keeps it — the fold is not a clear")))
+
+(def-test the-pane-says-what-a-row-is-waiting-on (:suite leticl)
+  "**A row can carry a condition and the pane never drew it**, so a row filed with `when` was
+  indistinguishable from an unconditional one once it was on the board — and it matters most for
+  a POSTPONED row, whose condition is the thing that is *kept and not fired*: without this the
+  row would read as one whose condition had been dropped, which is the one reading the state must
+  not invite. DIM, like the author tag — an aside about the row, not the row. Both halves of the
+  board: the wire's `TodoEntry` carries `when` for either author."
+  (let ((leticl::*operator-todos*
+          (list (list :id "t1" :content "push once CI lands" :status "postponed" :detail ""
+                      :when (list :kind "job" :handle "j121"))))
+        (leticl::*todo-draft* nil) (leticl::*repo-todo-open* nil)
+        (leticl::*todos-hide-done* nil)
+        (leticl::*pane-scroll* 0) (leticl::*pane-room* 40) (leticl::*pane-lines* 0)
+        (leticl::*write-prefs* nil)
+        (h (%on-head :cols 90 :rows 30)))
+    (setf (session-todos (head-session h))
+          (list (list :content "a model row that waits" :status "pending" :by "model"
+                      :when (list :kind "job" :handle "j9")))
+          (session-wiring (head-session h)) (list :workspace "/nonexistent-for-this-test"))
+    (let* ((lines (leticl::todos-lines h 120))
+           (text (lines-text lines)))
+      (is (some (lambda (l) (search " · waits on j121" l)) text)
+          "the operator's row carries its condition, after the author tag")
+      (is (some (lambda (l) (search "[p] push once CI lands  — you · waits on j121" l)) text)
+          "on the row that matters most: SET ASIDE, and the handle kept and not fired")
+      (is (some (lambda (l) (search "— model · waits on j9" l)) text)
+          "and the model's row too — the wire carries `when` for either author")
+      ;; the clause is DIM, an aside like the author tag — asserted on the segments
+      (let ((seg (some (lambda (line)
+                         (find-if (lambda (x) (and (stringp (car x))
+                                                   (search " · waits on " (car x))))
+                                   line))
+                       lines)))
+        (is (equal '(:dim t) (cdr seg)) "dim, like the author tag")))))
+
 (def-test the-models-answer-to-an-operator-row-is-taken-by-the-head (:suite leticl)
   "**THE MODEL CAN MARK ONE OF THE OPERATOR'S ROWS DONE — so the head has to hear about it.**
 

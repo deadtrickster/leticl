@@ -341,11 +341,24 @@ of the replay story."
                           :key (lambda (r) (getf r :content))
                           :test #'string=)))
           (when (and wire
-                     (string= (or (getf wire :by) "") "operator")
-                     (getf wire :status)
-                     (not (equal (getf item :status) (getf wire :status))))
-            (setf (getf item :status) (getf wire :status)
-                  changed t))))
+                     (string= (or (getf wire :by) "") "operator"))
+            ;; **THE STATUS, as ever** — the daemon's board owns the state once a row
+            ;; reaches it.
+            (when (and (getf wire :status)
+                       (not (equal (getf item :status) (getf wire :status))))
+              (setf (getf item :status) (getf wire :status)
+                    changed t))
+            ;; **AND THE CONDITION, WHICH THE DAEMON SPENDS.** A row whose job ended is
+            ;; fired — reported to the model, and its `when` CLEARED so it cannot fire
+            ;; twice — while the status stays open: a fired row is ordinary open work.
+            ;; Without this half the fold, the board says *no condition* and this head
+            ;; still holds the handle, so the NEXT push (any add, any delete) re-arms a
+            ;; row the daemon already fired — the same two-writers defect the status
+            ;; fold exists to prevent, one field along. The clear is folded exactly like
+            ;; a change: unequal is what moves.
+            (unless (equal (getf item :when) (getf wire :when))
+              (setf (getf item :when) (getf wire :when)
+                    changed t)))))
       (when changed (save-operator-todos))
       changed)))
 
@@ -379,8 +392,8 @@ and so the identity is minted in the one place that owns the list, not by whoeve
         (push-operator-todos head)
         item))))
 (defun todo-postpone-command (head rest)
-  "`/todo postpone N` and `/todo resume N` — set one of the OPERATOR's rows aside, and lift it
-again. T when the line was taken.
+  "`/todo postpone N`, `/todo resume N`, and `/todo when N JOB` — the three typed verbs over
+the OPERATOR's rows, by the numbers the pane prints on them. T when the line was taken.
 
 The operator's ask (the reference's own, commands.rs): *\"can we handle postponed todo item
 properly? i.e. they persist but without nag and with some counter visible to me\"*. The state is
@@ -397,10 +410,10 @@ and named in the pane's own hint lines.
 
 **`resume` and not a second spelling of `done`**, because the two answers are different
 questions: `done` is *this is finished*, `resume` is *ask me about this again*. Lifting a row
-puts it back as open work — which is what the queue and the idle check read. The daemon keeps
-whatever CONDITION the row was carrying across both verbs; this head has no conditions on rows
-yet, so there is nothing to keep and nothing to drop — said here so the difference is a recorded
-fact and not a silent gap.
+puts it back as open work — which is what the queue and the idle check read. **The condition
+is carried across both verbs by construction**: neither touches `:when`, and a row set aside
+while waiting on a job goes back to waiting on the same one — the daemon's own ruling, and the
+pane says so on the row (`· waits on HANDLE`).
 
 Numbered over the operator's half exactly as the pane numbers it (`mine-at`, 1-based), and
 refused by name when the number is not one of theirs — so a typo cannot set aside a row nobody
@@ -411,12 +424,66 @@ line that silently created a row titled `postpone` would be a row nobody meant t
          (verb (first words))
          (n (second words)))
     (cond
-      ((not (member verb '("postpone" "resume") :test #'string=))
-       (say head "usage: /todo postpone N · /todo resume N — the pane numbers your rows")
+      ((not (member verb '("postpone" "resume" "when") :test #'string=))
+       (say head "usage: /todo postpone N · /todo resume N · /todo when N JOB — the pane numbers your rows")
        t)
       ((null n)
-       (say head (format nil "which row? /todo ~a N — the todos pane numbers your rows" verb))
+       (say head (format nil "which row? /todo ~a N~@[ ~a~] — the todos pane numbers your rows"
+                         verb (and (string= verb "when") "JOB")))
        t)
+      ;; **`when N JOB` — the condition, attached by number** (`when N -` takes it off).
+      ;; The operator's own shape: *"if you are telling me 'job ends and i do this and
+      ;; that' then 'this and that' is a todo item, which is conditioned by job status
+      ;; (end)"*, and *"when I file a todo"* is where it belongs — the row is filed first
+      ;; and the condition is put on it here. **`-` clears it, and that is not a
+      ;; courtesy**: a condition nobody can take off is a row waiting for ever on a job
+      ;; that already ended, and the daemon's evaluator would go on reporting it as due.
+      ((string= verb "when")
+       (let ((job (third words)))
+         (cond
+           ((null job)
+            (say head "`/todo when N JOB` — a row number and the handle it waits on. `/todo when N -` takes the condition off.")
+            t)
+           (t
+            (let ((at (ignore-errors (parse-integer n :junk-allowed t))))
+              (cond
+                ((null at)
+                 (say head (format nil "`~a` is not a row number — the todos pane numbers your rows" n))
+                 t)
+                ((or (< at 1) (> at (length *operator-todos*)))
+                 (say head (format nil "there is no row ~d of yours — you have ~d"
+                                   at (length *operator-todos*)))
+                 t)
+                (t
+                 (let* ((item (nth (1- at) *operator-todos*))
+                        (clear (string= job "-"))
+                        (now (and (not clear) (list :kind "job" :handle job))))
+                   ;; **SET THROUGH THE PLACE, NOT THE LOCAL.** A row that has never
+                   ;; carried a condition has no `:when` key, and `(setf (getf item …))`
+                   ;; on an ABSENT key rebinds the local to a fresh cons — the store's
+                   ;; list still points at the old one and the condition silently goes
+                   ;; nowhere. Every other verb here sets keys that already exist
+                   ;; (`:status`), where setf getf updates in place; this is the one
+                   ;; arm that can ADD a key, so it writes through `(nth …)`'s own
+                   ;; setf, which stores the new list head back into the slot.
+                   (setf (getf (nth (1- at) *operator-todos*) :when) now)
+                   ;; and the local follows, for the store save below
+                   (setf item (nth (1- at) *operator-todos*))
+                   ;; ONE ROW, the same store discipline as every other mutation here
+                   (when *write-prefs*
+                     (store-save-todo item at (operator-todos-workspace head)))
+                   ;; **AND THE BOARD, which is where the evaluator reads it**: the
+                   ;; daemon fires the row when the job ends, spends the condition,
+                   ;; and tells the model — none of which a head-only handle can do.
+                   (push-operator-todos head)
+                   (setf (head-dirty head) t)
+                   (say head (if clear
+                                 (format nil "row ~d no longer waits on anything" at)
+                                 (format nil "row ~d is due once `~a` is not running — a job this ~
+                                              daemon has never heard of counts as ended, which is ~
+                                              what a restart looks like."
+                                         at job)))
+                   t))))))))
       (t
        (let ((at (ignore-errors (parse-integer n :junk-allowed t))))
          (cond

@@ -109,7 +109,17 @@ the operator's rows reach it, a reminder can only ever be about something the MO
                                                      ((equal (getf item :status) "postponed")
                                                       "postponed")
                                                      (t "pending"))
-                                       :by "operator"))
+                                       :by "operator"
+                                       ;; **AND THE CONDITION, WHEN THERE IS ONE.** `when` is
+                                       ;; `#[serde(default)]` on the wire, so it is OMITTED
+                                       ;; when the row has none (`%encode` drops a nil value),
+                                       ;; which is the shape every daemon older than the field
+                                       ;; read as *unconditional*. The plist is the wire's own
+                                       ;; decoded shape (`(:kind "job" :handle ...)`) and goes
+                                       ;; out as the object it is — one variant exists, and a
+                                       ;; second arrives here as a second plist without this
+                                       ;; map learning anything.
+                                       :when (getf item :when)))
                                items)
                        'vector)))
 

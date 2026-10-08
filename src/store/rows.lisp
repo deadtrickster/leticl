@@ -132,7 +132,8 @@ replace the error being reported with its own."
                                           title  text not null,
                                           detail text not null default '',
                                           status text not null default 'open',
-                                          workspace text not null default '')"
+                                          workspace text not null default '',
+                                          when_handle text not null default '')"
                                        (sb-sys:int-sap 0) (sb-sys:int-sap 0) err))
                          (progn (setf *store-unavailable* (or (sb-alien:deref err) "schema failed"))
                                 (%sq-close db))
@@ -173,6 +174,16 @@ replace the error being reported with its own."
                            (ignore-errors
                             (%sq-exec db
                                       "alter table operator_todo add column workspace text not null default ''"
+                                      (sb-sys:int-sap 0) (sb-sys:int-sap 0) err))
+                           ;; **AND `when_handle`, THE SAME SHAPE ONE FEATURE LATER** — the job a
+                           ;; todo row waits on (`/todo when N JOB`). Same ignored `alter`, same
+                           ;; reading of the only failure it can have (`duplicate column name`,
+                           ;; which means the schema is already right), for the same reason: a
+                           ;; head upgrading from before the column must not keep a schema every
+                           ;; later statement naming it fails against.
+                           (ignore-errors
+                            (%sq-exec db
+                                      "alter table operator_todo add column when_handle text not null default ''"
                                       (sb-sys:int-sap 0) (sb-sys:int-sap 0) err))
                            db))))
             (sb-alien:free-alien cell)
@@ -272,16 +283,28 @@ empty both have nothing to draw, and inventing a difference would be inventing a
                 (setf *store-note*
                       (format nil "~d todo~:p written before todos were per-project now belong~@[ to ~a~]"
                               adopted workspace))))
-            (with-statement (stmt db "select id, title, detail, status from operator_todo
-                                        where workspace = ? order by seq")
+            (with-statement (stmt db "select id, title, detail, status, when_handle
+                                        from operator_todo where workspace = ? order by seq")
               (%bind-text stmt 1 (or workspace ""))
               (let ((out nil))
                 (loop while (= +sqlite-row+ (%sq-step stmt))
-                      do (push (list :id (%sq-column-text stmt 0)
-                                     :content (%sq-column-text stmt 1)
-                                     :detail (or (%sq-column-text stmt 2) "")
-                                     :status (or (%sq-column-text stmt 3) "open"))
-                               out))
+                      do (let* ((handle (%sq-column-text stmt 4))
+                                ;; **`:when` IS THE WIRE'S OWN DECODED SHAPE** — `(:kind "job"
+                                ;; :handle "j121")` — so the fold, the push and the pane read
+                                ;; one spelling. **ABSENT when the handle is empty, not nil-
+                                ;; valued**: `getf` reads both the same, but a plist key with a
+                                ;; nil value is not the plist without it (`equal` says so), and
+                                ;; a row without a condition must round-trip byte for byte.
+                                ;; Absence is also how `make-set-operator-todos` omits the
+                                ;; field on the wire.
+                                (when (and (plusp (length (or handle "")))
+                                           (list :kind "job" :handle handle))))
+                           (push (append (list :id (%sq-column-text stmt 0)
+                                               :content (%sq-column-text stmt 1)
+                                               :detail (or (%sq-column-text stmt 2) "")
+                                               :status (or (%sq-column-text stmt 3) "open"))
+                                         (and when (list :when when)))
+                                 out)))
                 (nreverse out))))
         (error (e) (%store-failed e)))))))
 
@@ -428,7 +451,8 @@ keep a stale owner after a rename. NIL is stored as the empty string, which is t
     (when db
       (handler-case
           (with-statement (stmt db "insert or replace into operator_todo
-                                     (id, seq, title, detail, status, workspace) values (?,?,?,?,?,?)")
+                                     (id, seq, title, detail, status, workspace, when_handle)
+                                     values (?,?,?,?,?,?,?)")
             (%bind-text stmt 1 (getf item :id))
             (%sq-bind-int64 stmt 2 (or seq
                                        (ignore-errors (parse-integer (or (getf item :id) "")
@@ -438,6 +462,11 @@ keep a stale owner after a rename. NIL is stored as the empty string, which is t
             (%bind-text stmt 4 (getf item :detail))
             (%bind-text stmt 5 (or (getf item :status) "open"))
             (%bind-text stmt 6 (or workspace ""))
+            ;; **THE HANDLE, and empty is *unconditional*** — the column's default is the
+            ;; statement every row already written made. One variant exists on the wire
+            ;; (`kind = "job"`), so the KIND is not stored: a second variant would add its
+            ;; own column rather than overloading this one.
+            (%bind-text stmt 7 (or (getf (getf item :when) :handle) ""))
             (= +sqlite-done+ (%sq-step stmt)))
         (error (e) (%store-failed e)))))))
 

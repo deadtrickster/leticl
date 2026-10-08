@@ -579,15 +579,31 @@ two entries."
      ;; selectable row here, so a reader who has learnt this pane's cursor finds it on a
      ;; session item too. The row is reversed when it is the one the cursor is on, which is
      ;; what every other pane does and what makes `delete` mean *this row*.
-     (list (list (cons (if here "  ▸ " "    ") (and here '(:reverse t)))
-                 ;; **the row's NUMBER on the operator's half** — right-aligned in two columns
-                 ;; with two after, exactly the reference's `{mine_at:>2}  `, and blank on the
-                 ;; model's rows: a number is a door for `/todo postpone N`, and the model's
-                 ;; rows are not the operator's to edit by number.
-                 (cons (if number (format nil "~2d  " number) "    ") nil)
-                 (cons (%todo-mark-text st) (%todo-mark-style st))
-                 (cons (format nil " ~a" (getf item :content)) (and here '(:reverse t)))
-                 (cons (format nil "  — ~a" author) (if here '(:reverse t) '(:dim t)))))
+     (list (append
+            (list (cons (if here "  ▸ " "    ") (and here '(:reverse t)))
+                  ;; **the row's NUMBER on the operator's half** — right-aligned in two columns
+                  ;; with two after, exactly the reference's `{mine_at:>2}  `, and blank on the
+                  ;; model's rows: a number is a door for `/todo postpone N`, and the model's
+                  ;; rows are not the operator's to edit by number.
+                  (cons (if number (format nil "~2d  " number) "    ") nil)
+                  (cons (%todo-mark-text st) (%todo-mark-style st))
+                  (cons (format nil " ~a" (getf item :content)) (and here '(:reverse t)))
+                  (cons (format nil "  — ~a" author) (if here '(:reverse t) '(:dim t))))
+            ;; **AND WHAT THE ROW IS WAITING ON, when it is waiting on anything.** A row
+            ;; can carry a condition (`/todo when N JOB`) and the pane never drew it, so a
+            ;; row filed with `when` was indistinguishable from an unconditional one once
+            ;; it was on the board — and it matters most for a POSTPONED row, whose
+            ;; condition is the thing that is *kept and not fired*: without this the row
+            ;; would read as one whose condition had been dropped, which is the one
+            ;; reading the state must not invite. DIM, like the author tag: it is an aside
+            ;; about the row and not the row. Both halves of the board — the wire's
+            ;; `TodoEntry` carries `when` for either author. APPENDED rather than a
+            ;; `(when …)` in the segment list, which would leave a NIL segment on every
+            ;; unconditional row — a nil in a segment list is a segment the painter cannot
+            ;; draw, and the well-formedness check exists to catch exactly that.
+            (let ((handle (getf (getf item :when) :handle)))
+              (and handle
+                   (list (cons (format nil " · waits on ~a" handle) '(:dim t)))))))
      (let ((detail (getf item :detail)))
        (when (and show-detail detail (plusp (length detail)))
          ;; ten columns — two past the mark, which sits at eight once the number column is in
