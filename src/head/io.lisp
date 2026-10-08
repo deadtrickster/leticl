@@ -169,6 +169,30 @@ it is not \"anchored at the frame that revealed this\", it is thrown away.")
   "The last skew sentence this head filed, so a `Switch`'s second `Hello` on the same
 connection does not file a second identical row.")
 
+(defvar *daemon-seat* nil
+  "The process at the other end of the socket, as of the last `Hello` — `(pid . protocol)`.
+
+**A PAIR rather than the pid alone, because the kernel reuses pids** (the reference's own
+ruling, `DaemonSeat`): a daemon restarted and handed the same number is a different daemon
+with the same identity, and the protocol version is the other half of the answer — a replaced
+daemon is usually a rebuilt one, and a rebuild that moved the wire is the case a head most
+needs to be told about. What this deliberately is NOT is a daemon instance id: that would be a
+boot stamp the daemon mints and a `PROTOCOL_VERSION` bump, and `SO_PEERCRED` is already on the
+socket. The residue — a replacement with the same pid AND the same protocol — is named here
+rather than papered over.
+
+NIL until the first `Hello` (nothing to compare), and reset by `with-replay-globals`, because a
+replay has no socket and no peer.")
+
+(defvar *seat-said-pending* nil
+  "The replaced-daemon sentence the `Hello` being folded produced, held until the snapshot is
+in — the same reason as `*skew-said-pending*`, beside which it sits.")
+
+(defvar *seat-last-said* nil
+  "The last replaced-daemon sentence this head filed, so the same change does not file twice
+(a flip back and forth between two daemons files each move, which is right; the SAME move
+filing twice is not).")
+
 (defvar *filtered-total* 0
   "Events this head consumed and did not draw, over its life — what `/verbosity`
 reports beside the level, so \"terse\" is a number and not a mood.")

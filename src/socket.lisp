@@ -5,6 +5,51 @@
 
 (in-package #:leticl)
 
+;;; **THE PROCESS AT THE OTHER END OF THE SOCKET** — `SO_PEERCRED`, read through
+;;; `sb-alien` because `sb-posix` has no `getsockopt` of its own on this build
+;;; (measured: `GETSOCKOPT` is absent from the package's exports). The alien type
+;;; is toplevel because `define-alien-type` is a compile-time definition, and the
+;;; fd comes off the fd-stream — `socket-make-stream` discards the socket object,
+;;; but the stream keeps the descriptor, which is the same fact one call later.
+(sb-alien:define-alien-type nil
+    (sb-alien:struct ucred (pid sb-alien:int) (uid sb-alien:int) (gid sb-alien:int)))
+
+(defun daemon-pid (stream)
+  "The process at the other end of STREAM's socket, from `SO_PEERCRED`, or NIL.
+
+**Why this exists at all:** a head outlives the daemon that gave it its facts —
+the operator's box has had three `letibot-tui` processes up for days while the
+daemon was replaced underneath them — and the registry is in memory, so a daemon
+that comes back is not the one whose answers are still on the screen. The pid is
+how the head notices (`%seat-check`, frames.lisp), read per seating.
+
+**NIL IS *THE KERNEL WOULD NOT NAME THE PEER*, NOT A PID OF ZERO** — a stream
+without an fd (a test's string stream, a replay) has no peer to ask, and a head
+that printed a number it did not have would send the operator to `ps` for a
+process that is not there. `pid_word`'s rule (session.rs), kept here because two
+writers say it: the farewell and the replaced-daemon note.
+
+Measured against the live daemon on this box: `harnessd`'s own pid, read off the
+connected socket."
+  (when (typep stream 'sb-sys:fd-stream)
+    (let ((fd (sb-sys:fd-stream-fd stream)))
+      (when (>= fd 0)
+        (ignore-errors
+          (sb-alien:with-alien ((cred (sb-alien:struct ucred))
+                                (len sb-alien:int))
+            (setf len (sb-alien:alien-size (sb-alien:struct ucred) :bytes))
+            (let ((r (sb-alien:alien-funcall
+                      (sb-alien:extern-alien
+                       "getsockopt"
+                       (function sb-alien:int
+                                 sb-alien:int sb-alien:int sb-alien:int
+                                 (* (sb-alien:struct ucred)) (* sb-alien:int)))
+                      fd 1 17 (sb-alien:addr cred) (sb-alien:addr len))))
+              (when (zerop r)
+                ;; a dead peer can read as pid 0 — not a process, not an answer
+                (let ((pid (sb-alien:slot cred 'pid)))
+                  (and (plusp pid) pid))))))))))
+
 (defun connect-unix (path)
   "A UTF-8 character stream on a unix socket. Unbuffered output: frames are
 written whole and flushed per frame (wire.rs:88).

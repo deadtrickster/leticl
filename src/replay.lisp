@@ -172,6 +172,12 @@ see this file's header."
          (*diag* nil)
          (*skew-said-pending* nil)
          (*skew-last-said* nil)
+         ;; **and the daemon's seat** — a replay has no socket and no peer, and one
+         ;; replay's daemon must not sit as the next one's "was": the second replay
+         ;; would file a replaced-daemon note about a change that never happened
+         (*daemon-seat* nil)
+         (*seat-said-pending* nil)
+         (*seat-last-said* nil)
          (*filed-notes* 0)
          ;; the wall clock the wire's deadlines are read against. ZERO, which
          ;; makes `wire-deadline->monotonic` the IDENTITY — so a deadline in a

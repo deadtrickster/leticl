@@ -419,6 +419,28 @@ and a `hello` with a snapshot). Returns T when the queue moved."
        ;; asserts the sentence exists, which is the only reason this is not a
        ;; silence nobody would have noticed.
        (setf *skew-said-pending* said))
+     ;; **AND WHICH DAEMON THAT IS — the seating, checked where a seating happens.**
+     ;;
+     ;; A head outlives the daemon that gave it its facts (the operator's box has had
+     ;; three `letibot-tui` processes up for days while the daemon was replaced under
+     ;; them), and the daemon's registry is in memory — so the party at the other end
+     ;; of this socket has to be checked rather than assumed. The pid is `SO_PEERCRED`
+     ;; off the live stream (`daemon-pid`, measured against this box's own `harnessd`),
+     ;; and the protocol rides this frame; a PAIR, because the kernel reuses pids and a
+     ;; rebuild that moved the wire is the case a head most needs to be told about.
+     ;;
+     ;; **The check is on the SEATING, which is where it belongs**: a `Hello` is an
+     ;; attach, a re-attach and the return from a switch, and a switch is answered on
+     ;; the same socket by the same process — so this fires once per connection that
+     ;; lands somewhere new, not once per keystroke. Held like the skew sentence: the
+     ;; refetch the sentence promises is the one this arm already does (the plan
+     ;; re-pushed, the settings re-asked, the session list in this frame, the children
+     ;; in its snapshot).
+     (let ((seat (cons (daemon-pid (head-stream head))
+                       (and (integerp (getf frame :protocol-version))
+                            (getf frame :protocol-version)))))
+       (setf *seat-said-pending* (daemon-replaced-said *daemon-seat* seat)
+             *daemon-seat* seat))
      ;; A Switch lands as a Hello on the new session, and the money meter is the
      ;; CONVERSATION's — carrying one session's bill onto another's header is
      ;; wrong in the direction that costs money. Cleared, not guessed.
@@ -511,6 +533,18 @@ and a `hello` with a snapshot). Returns T when the queue moved."
        (setf *skew-last-said* *skew-said-pending*
              (head-dirty head) t))
      (setf *skew-said-pending* nil)
+     ;; **AND THE SEAT'S, filed beside the skew's and for the same reasons** — held
+     ;; until the snapshot was folded, deduped so the same change is not filed twice,
+     ;; and a ROW rather than a note because the fact is about the connection and
+     ;; outlives the next keystroke: a silent stale picture is exactly what
+     ;; `note-unreadable` exists to prevent, and a replacement daemon under a picture
+     ;; nobody refreshes is the biggest one there is.
+     (when (and *seat-said-pending*
+                (not (equal *seat-said-pending* *seat-last-said*)))
+       (file-head-note (head-session head) *seat-said-pending*)
+       (setf *seat-last-said* *seat-said-pending*
+             (head-dirty head) t))
+     (setf *seat-said-pending* nil)
      :control)
     ((string= (frame-name frame) "event")
      (let* ((env frame)

@@ -165,6 +165,46 @@ they should expect to happen next."
                      Restarting the daemon is the way to make them the same build."
                 daemon head))))
 
+(defun pid-word (pid)
+  "`pid 1234`, or *a pid the kernel did not name* for NIL — never a pid of zero.
+
+Two writers say this (the reference's own `pid_word`, session.rs): the
+replaced-daemon note and, in its head, the stop's farewell. A pid this head
+printed without having would send the operator to `ps` for a process that is
+not there."
+  (if pid (format nil "pid ~d" pid) "a pid the kernel did not name"))
+
+(defun protocol-word (p)
+  "`36`, or *a protocol it did not say* for NIL — the same rule as `pid-word`, for
+the other half of the seat: a number a head did not have must not be printed as
+one."
+  (if (integerp p) (format nil "~d" p) "a protocol it did not say"))
+
+(defun daemon-replaced-said (was now)
+  "The sentence about a REPLACED daemon, or NIL when the seat did not move.
+
+The reference's own sentence (events/hello.rs), kept word for word where this
+head's facts are the same: both numbers on both sides, because a bare pair of
+pids makes the reader work out which side they are on, and `None` said as *not
+told* rather than as zero.
+
+**The claim list is THIS head's, and says what this head actually re-asks**: a
+`Hello` here reloads and re-pushes the operator's plan, re-sends the settings
+request, and the Hello itself carries the session list — while the snapshot's
+`subagents` field carries the children. The reference's sentence also names its
+job table; this head's job rows are events the daemon replays, which is not a
+refetch, so the sentence does not claim one."
+  (when (and was now (not (equal was now)))
+    (format nil
+            "this is not the daemon this head was attached to. That one was ~a and ~
+             spoke protocol ~a; this one is ~a and speaks ~a. Everything the old ~
+             one told me that was its own — its session list, its children, your ~
+             plan, the settings — has been asked for again, because a daemon's ~
+             registry is in memory and a replacement holds none of it. What you ~
+             are reading below is what THIS daemon holds."
+            (pid-word (car was)) (protocol-word (cdr was))
+            (pid-word (car now)) (protocol-word (cdr now)))))
+
 ;;; Why a Rejected was sent — stable codes a head branches on (protocol.rs).
 (defparameter +reject-stale-seq+ "stale expected_seq")
 (defparameter +reject-unknown-decision+ "no such open decision")

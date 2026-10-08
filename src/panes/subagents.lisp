@@ -17,29 +17,53 @@ with the same id so `running` becomes `done` rather than a second line
 (app.rs:1846). This is that fold, done at draw time so the wire state stays what
 the daemon sent. The id is the event's `subagent_id` — the envelope's own
 `session_id` is the PARENT's (event.rs:841), and a fold keyed on that counted every
-child of one session as one subagent. Rows are `(:session-id :state :prompt :answer :role)` — and **`:prompt` and `:answer` are two things
-because the daemon sends them in one field**: the task's first line while the child runs, its answer's
-first line once it is done. The fold keeps the FIRST as the prompt and the LAST as the answer, so a
-finished child's row can still say what it was asked."
+child of one session as one subagent. Rows are `(:session-id :state :prompt :answer :role :task :model)` — and the slot is
+also seeded from a SNAPSHOT's `subagents` field (`%subagent-view->event`), which is
+what brings the parent's tree back on a switch back: a seeded envelope carries
+`:answer` under its own name and `:task` in full, and the fold cannot tell it from
+the live thing."
   (let ((rows nil))
     (dolist (env (reverse (session-subagents (head-session head))))
       (let* ((id (or (getf env :subagent-id) (getf env :session-id)))
              (row (find id rows :key (lambda (r) (getf r :session-id)) :test #'equal)))
         (if row
             (setf (getf row :state) (getf env :state)
-                  ;; **THE PROMPT IS THE FIRST THING THE DAEMON SAID; THE ANSWER IS THE LAST.**
-                  ;; The daemon publishes `derive_title(prompt)` — the task's first line — on `opening`
-                  ;; and `running`, and the child's ANSWER's first line on `done`, into the SAME field
-                  ;; (`harness.rs:7177`, `:7322`). Last-wins therefore replaced the task with the answer:
-                  ;; measured on the operator's head, four finished children whose `:prompt` read
-                  ;; `ready`, `4191 lines.`, … — which is why the pane could not show what a child was
-                  ;; asked, and why the operator asked for it. A later value is the answer; the prompt
-                  ;; is whatever the FIRST event carried. The residual is stated rather than hidden: a
-                  ;; child whose first event is `done` never had a prompt here, so its row has none.
-                  (getf row :answer) (getf env :prompt)
-                  (getf row :role) (getf env :role))
+                  ;; **AN EXPLICIT `:answer` KEY WINS, and truth is not the test.** A current
+                  ;; daemon's events carry `answer` under its own name (`#[serde(default)]`, so
+                  ;; nil while the child runs — said, not absent); the SNAPSHOT's seeded rows
+                  ;; carry it too (`%subagent-view->event`). An OLDER daemon's events have no
+                  ;; key at all, and for those the finish's `prompt` still IS the answer —
+                  ;; presence, not truth, separates *there is none* from *it cannot say*.
+                  (getf row :answer) (if (member :answer env)
+                                         (getf env :answer)
+                                         (getf env :prompt))
+                  (getf row :role) (getf env :role)
+                  ;; `task`/`model` are the same on every state, so last non-empty wins —
+                  ;; a first event from an older daemon has neither, and a later one from
+                  ;; a current daemon should still put them on the row
+                  (getf row :task) (or (and (plusp (length (or (getf env :task) "")))
+                                            (getf env :task))
+                                       (getf row :task))
+                  (getf row :model) (or (and (plusp (length (or (getf env :model) "")))
+                                             (getf env :model))
+                                        (getf row :model)))
             (push (list :session-id id :state (getf env :state)
-                        :prompt (getf env :prompt) :answer nil :role (getf env :role))
+                        ;; **THE TITLE IS THE TASK IN FULL WHEN THE WIRE CARRIES IT** — the
+                        ;; event's own rule (event.rs, `Subagent::prompt`): `prompt` means the
+                        ;; subtask's first line while the child opens and the ANSWER's first line
+                        ;; on the finish, and a row titled by the last event's `prompt` is titled
+                        ;; by its own answer. `task` is the subtask whole, the same on every
+                        ;; state, and this head truncates for a row as it does for everything
+                        ;; else it draws — which is the reference's own row. `task` empty is a
+                        ;; daemon older than the field: `prompt`'s first line, the pre-field
+                        ;; behaviour, and the pane's own comment about *the fold keeps the task*
+                        ;; is finally true rather than aspirational.
+                        :prompt (let ((task (or (getf env :task) "")))
+                                  (if (plusp (length task)) task (getf env :prompt)))
+                        :answer (and (member :answer env) (getf env :answer))
+                        :role (getf env :role)
+                        :task (getf env :task)
+                        :model (getf env :model))
                   rows))))
     (nreverse rows)))
 

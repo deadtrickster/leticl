@@ -5733,6 +5733,137 @@ depends on whether the tree is dirty."
       (leticl::%render h)
       (is (not (search "(main" (%screen-text h))) "and with no reading the field is absent"))))
 
+(def-test the-parents-tree-comes-back-on-a-switch-back (:suite leticl)
+  "**The count that disappeared and came back on its own — *“so the counter is gone”*, then minutes later *“yep and now it is back. wtf”* — while a subagent ran throughout.**
+
+  Nothing was restarted in between; the drawn state was dropped deterministically (the switch's
+  clear) and restored opportunistically (a later list reply catching the child generating). The
+  fix is the wire's: the parent's snapshot now carries its children — the SAME words the head
+  that watched the spawn had, not the one bit (`running`) the session list can supply, which reads
+  `false` for a child parked between rounds while being perfectly alive.
+
+  Four claims, one per phase: the seed REPLACES the rows with the snapshot's children; a switch
+  into the child (a snapshot whose `subagents` is empty) clears them — the clear was right about
+  what it protected; a switch BACK restores the tree whole, title from the TASK and answer under
+  its own name; and a LIVE event after the seed still folds into the seeded row, because the
+  mapping's whole point is that the fold cannot tell it from the live thing."
+  (flet ((hello (h id &optional subagents)
+           (leticl::%handle-frame
+            h (list :frame "hello" :protocol-version leticl:+protocol-version+
+                    :session-id id :head-id "h1" :dropped 0 :sessions nil :wiring nil
+                    :resumed-from nil :scrubbed nil
+                    :snapshot (list :session-id id :seq 1 :dropped 0 :items-dropped 0
+                                    :items nil :turn nil :open-decisions nil
+                                    :settled-decisions nil :heads nil :warnings nil
+                                    :subagents subagents)))))
+    (let ((h (%make-head))
+          (leticl::*daemon-seat* nil) (leticl::*seat-said-pending* nil)
+          (leticl::*seat-last-said* nil)
+          (leticl::*skew-said-pending* nil) (leticl::*skew-last-said* nil)
+          (leticl::*daemon-protocol* nil))
+      (let ((children
+              ;; the view's own shape: `prompt` is the LAST event's field (the answer line on
+              ;; a finish), `task` is the subtask in full, `answer` has its own name
+              (list (list :session-id "s-child-one" :state "running"
+                          :prompt "look at the logs and" :role "coder"
+                          :task "look at the logs and report what broke" :model ""
+                          :answer nil :ts 5)
+                    (list :session-id "s-child-two" :state "done"
+                          :prompt "ready" :role "coder"
+                          :task "port the fold to the pane" :model "local"
+                          :answer "ported, two rows folded" :ts 9))))
+        ;; --- the parent, met through its snapshot: the tree is there, and the ROWS are
+        ;;     the task in full with the answer under its own name
+        (hello h "s-parent" children)
+        (let ((rows (subagent-rows h)))
+          (is (= 2 (length rows)) "two children, one row each — seeded from the snapshot")
+          (is (string= "look at the logs and report what broke"
+                       (getf (first rows) :prompt))
+              "**the title is the TASK in full**, not the first line the event's `prompt` carries")
+          (is (string= "ported, two rows folded" (getf (second rows) :answer))
+              "the answer is the ANSWER, under its own name")
+          (is (not (equal "ready" (getf (second rows) :prompt)))
+              "and a finished child's row is not titled by its own answer — the view's `prompt` is
+  the finish's field and the fold reads `task` for the row"))
+        ;; --- a switch INTO the child: its snapshot has no children, and the rows go
+        (hello h "s-child-one" nil)
+        (is (null (subagent-rows h))
+            "**switching in clears them — and that is right**: a row belongs to the session the
+  event arrived in, and the fold cannot tell such a row from this session's own child")
+        ;; --- and BACK: the tree is whole again, which is the whole fix
+        (hello h "s-parent" children)
+        (let ((rows (subagent-rows h)))
+          (is (= 2 (length rows)) "**the tree came back with the count** — no opportunist needed")
+          (is (string= "running" (getf (first rows) :state))
+              "state intact")
+          (is (string= "ported, two rows folded" (getf (second rows) :answer))
+              "answer intact"))
+        ;; --- and a LIVE event after the seed folds into the seeded row
+        (leticl::apply-event (head-session h)
+                             (list :event "subagent" :session-id "s-parent"
+                                   :subagent-id "s-child-one" :state "done"
+                                   :prompt "two words" :answer "two words" :role "coder"
+                                   :task "look at the logs and report what broke" :model ""))
+        (let ((row (find "s-child-one" (subagent-rows h)
+                         :key (lambda (r) (getf r :session-id)) :test #'string=)))
+          (is (string= "done" (getf row :state))
+              "a live finish folds into the seeded row — one row, not a second line")
+          (is (string= "two words" (getf row :answer))
+              "and the live event's answer is the row's answer"))))))
+
+(def-test a-head-that-outlives-its-daemon-says-so (:suite leticl)
+  "**Three `letibot-tui` processes were alive for days on the operator's box while the daemon was
+  replaced underneath them — and the head went on drawing the old daemon's answers without ever
+  saying the party it was talking to had changed.**
+
+  The check is on the SEATING (a `Hello` is an attach, a re-attach and the return from a switch),
+  and the seat is a PAIR — the socket's pid and the protocol — because the kernel reuses pids and
+  a rebuild that moved the wire is the case a head most needs to be told about. A test head has no
+  socket (the pid is *a pid the kernel did not name*), so the protocol is the half that moves here.
+
+  **What the head deliberately does NOT do: re-attach.** The socket dying is what reconnects, and
+  the `Hello` that answers is this arm — what was missing was NOTICING, and noticing is what turns
+  a silent stale picture into a named one."
+  (flet ((hello (h version)
+           (leticl::%handle-frame
+            h (list :frame "hello" :protocol-version version :session-id "s-1"
+                    :head-id "h1" :dropped 0 :sessions nil :wiring nil :resumed-from nil
+                    :scrubbed nil :snapshot nil))
+           h))
+    (let ((h (%make-head))
+          (leticl::*daemon-seat* nil) (leticl::*seat-said-pending* nil)
+          (leticl::*seat-last-said* nil) (leticl::*daemon-protocol* nil))
+      (let ((leticl::*skew-said-pending* nil)
+            ;; the replaced daemon speaks 35 against this head's 36, which files a SKEW row
+            ;; too — pre-seeding the skew's dedupe keeps this test about the seat's row alone
+            (leticl::*skew-last-said* (leticl::protocol-skew-said 35 leticl:+protocol-version+)))
+        (hello h leticl:+protocol-version+)
+        (is (null leticl::*seat-said-pending*)
+            "the first seating says nothing — there is nothing to compare")
+        ;; a switch's second Hello on the SAME connection: same seat, same silence
+        (hello h leticl:+protocol-version+)
+        (is (zerop (length (session-items (head-session h))))
+            "two Hellos, one daemon, no row")
+        ;; the daemon was replaced: a different protocol on the same socket
+        (hello h 35)
+        (let* ((s (head-session h))
+               (items (coerce (session-items s) 'list))
+               (rows (mapcar (lambda (i) (format nil "~a" (getf (getf i :item) :text))) items)))
+          (is (= 1 (length rows)) "**one row** — and it is in the conversation, not a note that expires")
+          (is (search "not the daemon this head was attached to" (first rows))
+              "the sentence says what happened")
+          (is (and (search (format nil "protocol ~d" leticl:+protocol-version+) (first rows))
+                   (search "speaks 35" (first rows)))
+              "**both numbers, both sides** — the sentence's own shape: *spoke protocol N* /
+  *speaks N*, so a bare pair never makes the reader work out which side is which")
+          (is (search "a pid the kernel did not name" (first rows))
+              "and an unnamed pid is SAID as unnamed, never as zero")
+          ;; and the same change does not file twice: a flip back and forth files each move,
+          ;; the SAME move twice files once
+          (hello h 35)
+          (is (= 1 (length (coerce (session-items (head-session h)) 'list)))
+              "the same seat again is the same silence"))))))
+
 (def-test the-subagents-pane-says-none-the-way-the-reference-does (:suite leticl)
   "letibot's subagents pane: `subagents`, a blank, `none spawned yet…`, a blank,
 `arrows move, Enter reads…`. Ours had never drawn (the same nested header as the
@@ -10516,7 +10647,13 @@ operator is entitled to know before they spend an hour in that session."
                     :session-id "s-1" :snapshot nil :sessions nil :wiring nil))
            h))
     (let ((h (%make-head))
-          (*daemon-protocol* nil) (*skew-said-pending* nil) (*skew-last-said* nil))
+          (*daemon-protocol* nil) (*skew-said-pending* nil) (*skew-last-said* nil)
+          ;; the seat trio, QUALIFIED because a stale same-second fasl once read
+          ;; them as this package's own symbols — a binding of the wrong variable
+          ;; is silent, and an earlier test's daemon would file a replaced-daemon
+          ;; row into this one's items
+          (leticl::*daemon-seat* nil) (leticl::*seat-said-pending* nil)
+          (leticl::*seat-last-said* nil))
       ;; **before the handshake the row says so**, which is a different statement
       ;; from a version number — and it cannot be read as "we agree".
       (is (some (lambda (l) (string= "  protocol    not told yet" l))
@@ -10547,7 +10684,9 @@ operator is entitled to know before they spend an hour in that session."
             "three Hellos are one sentence, not three"))
       ;; and the older direction, on a fresh head
       (let ((h2 (%make-head))
-            (*daemon-protocol* nil) (*skew-said-pending* nil) (*skew-last-said* nil))
+            (*daemon-protocol* nil) (*skew-said-pending* nil) (*skew-last-said* nil)
+            (leticl::*daemon-seat* nil) (leticl::*seat-said-pending* nil)
+            (leticl::*seat-last-said* nil))
         (hello h2 9)
         (is (leticl::head-running h2) "an older daemon does not stop the head either")
         (let* ((item (aref (session-items (head-session h2))

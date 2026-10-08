@@ -203,7 +203,14 @@ that id, a carried row is a question about a job that was never here; a denial o
 a notice from a conversation that is no longer on the screen is the same lie a
 carried-over model name is. The running turn's clock goes with them — nothing
 cleared `*turn-started-ms*`, so a switch left the previous session's start time
-walking under the new session's composer."
+walking under the new session's composer.
+
+**The subagent clear is now the FALLBACK and not the whole story**: the wire's
+`Snapshot` carries the session's children (`subagents`, `#[serde(default)]`), and
+`ingest-snapshot` REPLACES the rows with them a few lines after this clear — so a
+switch into a child leaves the clear standing (its snapshot has no children) and
+a switch BACK to the parent restores the tree whole, which is what the clear
+alone could never do. See `%subagent-view->event`."
   (setf (session-subagents session) nil
         (session-jobs session) nil
         (session-denials session) nil
@@ -240,6 +247,40 @@ process, so a `/switch` away and back, or a reconnect, keeps its meaning. Bound 
   (if (session-snapshotted-p id)
       nil
       (progn (push id *snapshotted-sessions*) t)))
+
+(defun %subagent-view->event (view)
+  "One `SubagentView` — a snapshot's `subagents` row — to the ENVELOPE shape the
+`:subagent` arm of `apply-event` leaves in `session-subagents`.
+
+**The whole point of the mapping is that the fold cannot tell it from the live
+thing** (`subagent-rows` runs over both), so every field keeps the name the live
+event uses: `subagent-id` (the event's own name for the child's session, because
+`session-id` on a live envelope is the PARENT's), `state`, `role`, `ts`.
+
+**The title comes from `task` and not from `prompt`, which is the event's own
+rule** (event.rs, `Subagent::prompt`): `prompt` is the subtask's first line on
+the opening states and the child's ANSWER's first line on the finish — a field
+with two meanings, whose meaning depends on the state — while `task` is the
+subtask in full, the same string on every state. The view takes its fields from
+the LAST event verbatim, so a finished child's `prompt` IS the answer line; a
+row titled from it would be titled by its own answer. `task` empty (a daemon
+older than the field) falls back to `prompt`, which is the pre-field behaviour
+the event's own `#[serde(default)]` documents.
+
+**`:answer` is present even when NIL**, and that is the distinction the fold
+reads: a live envelope from an older daemon has no `answer` KEY at all (the
+field is `#[serde(default)]` on the wire), and for those the finish's `prompt`
+still IS the answer — so presence, not truth, is what separates *the daemon said
+there is none* from *the daemon cannot say*."
+  (list :subagent-id (or (getf view :session-id) "")
+        :state (or (getf view :state) "")
+        :prompt (let ((task (or (getf view :task) "")))
+                  (if (plusp (length task)) task (or (getf view :prompt) "")))
+        :role (or (getf view :role) "")
+        :task (or (getf view :task) "")
+        :model (or (getf view :model) "")
+        :answer (getf view :answer)
+        :ts (or (getf view :ts) 0)))
 
 (defun ingest-snapshot (session snapshot &key attach)
   "Replace state with SNAPSHOT's. Resync is a normal outcome, never an error
@@ -286,6 +327,25 @@ thing that knows whether this is the same conversation (app.rs:1897-1934)."
         (session-warnings session) (reverse (getf snapshot :warnings))
         (session-heads session) (getf snapshot :heads)
         (session-items session) (%items-vector (getf snapshot :items)))
+  ;; **THE PARENT'S CHILDREN, CARRIED BY THE SNAPSHOT — the fix for the count that
+  ;; disappeared on a switch back.** The wire's `Snapshot` grows a `subagents` field
+  ;; (`#[serde(default)]`, so a daemon older than it omits it and this `member` is the
+  ;; whole of the skew story): one folded row per child, the SAME words the head that
+  ;; watched the spawn had — state, the task, the model, the answer — instead of the one
+  ;; bit (`running`) the session list can supply, which is *a turn is generating in that
+  ;; session at this instant* and reads `false` for a child parked between rounds while
+  ;; being perfectly alive.
+  ;;
+  ;; REPLACED and not appended, which is `%clear-session-scoped`'s own rule taken one
+  ;; step further: a row in this slot belongs to the session the event arrived in, and
+  ;; the fold cannot tell such a row from a child of THIS session the snapshot has not
+  ;; listed — so the snapshot's list is the session's children, whole. An empty list is
+  ;; the same statement as an absent one (*this daemon told me about no children*) and
+  ;; both leave the clear standing; a NON-empty one is the parent's tree back, on the
+  ;; switch back and on the resync alike.
+  (when (member :subagents snapshot)
+    (setf (session-subagents session)
+          (reverse (mapcar #'%subagent-view->event (getf snapshot :subagents)))))
   ;; ONE PASS over the items, for the display targets a head that attached AFTER
   ;; a turn has no live proposals to learn from: the assistant row is the only
   ;; place that call is described, and a `ToolResult` row carries no target.
