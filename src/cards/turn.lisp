@@ -412,9 +412,13 @@ thing would leave the `queued` line on the screen for the rest of the session."
                                      ;; piece no row is drawing stays here, drawn by the tail — as ONE
                                      ;; block per entry, because one entry is one message to read.
                                      (%echo-leftover (head-queued head) bound))
-            for tag = (if (member text *queued-unconfirmed* :test #'equal)
-                          "unconfirmed"
-                          "queued")
+            ;; **THE TAG IS `queued` ON BOTH ARMS** (the operator, 2026-10-08: *"rename
+            ;; unconfirmed back to queued"*): to the reader both words meant the same and
+            ;; neither said what the other did not, so one word it is. The distinction the
+            ;; two arms drew is the head's own bookkeeping (has the daemon confirmed the
+            ;; echo yet) and it stays bookkeeping — inside `*queued-unconfirmed*`, not on
+            ;; the screen.
+            for tag = "queued"
             for head-w = (max 8 (- w 2 (string-width tag) 3))
             for indent = (make-string (+ (string-width tag) 3) :initial-element #\space)
             append (let* ((rows (or (wrap-segments

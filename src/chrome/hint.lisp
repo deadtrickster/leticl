@@ -135,6 +135,32 @@ is worse than no hint at all."
 ;;; it rather than the reader. The top edge's subagent legend stays right-pinned, as the reference has
 ;;; it; a legend whose first glyph is a moving spinner is the one that cannot be.
 
+(defparameter +slow-after-ms+ 15000
+  "How long a GENERATING turn may be silent before the Responding row turns yellow
+(rano's `SLOW_AFTER_MS`, one number so the two heads agree on what *slow* is).
+
+Fifteen seconds and not forty: the old sentence this replaces said 40s because a FAILED
+turn used to look exactly like a slow one, and failed turns end with `TurnFailed` now, so
+silence here is only ever slowness — and the operator's ask was *'when we detect delays -
+yellow it'*, a delay being something a person notices inside half a minute.")
+
+(defun turn-slow-p (head)
+  "Is the turn GENERATING and silent past `+slow-after-ms+`?
+
+**`generating` and deliberately NOT `turn-busy-p`** — the reference's own ruling: a
+`cargo test` that runs silently for two minutes is a call, not a slow model, and gated on
+busy the row would go yellow through every long command — the false alarm that trains a
+reader to ignore it. The colour is the WHOLE of the signal: no sentence, no notification
+(*'I dont want notification that it is slow yet we continue'*).
+
+NIL when no turn is on, when the turn is between tokens arriving on a call, before any
+event has arrived at all, or on a replay whose clock is pinned."
+  (let ((turn (session-turn (head-session head))))
+    (and turn
+         (string= (turn-state-name turn) "running")
+         *last-event-ms* *now-ms*
+         (>= (- *now-ms* *last-event-ms*) +slow-after-ms+))))
+
 (defun turn-status (head &optional (cols 40))
   "The running turn in a few words, or NIL when no turn is running — the
 reference's `turn_status` (app.rs:7501-7566).

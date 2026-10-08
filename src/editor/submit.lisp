@@ -17,6 +17,19 @@ text — which is what makes the ledger safe to forget about."
   (let* ((typed (composer-buffer (head-composer head)))
          (line (expand-pastes typed))
          (decision (%open-decision head)))
+    ;; **A PASTED BLOCK IS NOT A COMMAND, checked before anything parses it** (the
+    ;; reference's composer, `d0ba286`). The composer is one line; the only way a
+    ;; newline gets here is a paste, and a paste whose first line starts with `!`
+    ;; used to become one `!` command whose newlines the shell then split — the
+    ;; measured incident: a copied `operator_run_unreadable` notice re-ran an
+    ;; earlier `sudo` with the notice's remaining words as its arguments. The rule
+    ;; lives in the protocol module so this composer and the daemon cannot disagree
+    ;; about what may run; the text is KEPT — it is the operator's, the composer is
+    ;; untouched because nothing has been cleared yet, and their next move is to
+    ;; take the command out of it.
+    (awhen (operator-line-refusal line)
+      (say head it)
+      (return-from %submit-line nil))
     ;; a blank Enter is not an entry: the reference never reaches its `take` on
     ;; one (editor.rs:319-325), and this head pushed BEFORE the empty check, so
     ;; every stray Enter put a blank line in the history to walk past

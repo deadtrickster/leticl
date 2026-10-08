@@ -2509,6 +2509,52 @@ of, and a paste that arrives truncated is worse than one that is awkward."
         "four lines go in as they are")
     (is (null *paste-ledger*) "and nothing was remembered")))
 
+(def-test a-pasted-block-is-not-a-command (:suite leticl)
+  "**MEASURED on the reference's own head, 2026-10-08:** a copied `operator_run_unreadable`
+  notice — five lines, the first reading `! sudo apt install mc` — was submitted, and the
+  newlines the shell then split re-ran an earlier `sudo` with the notice's remaining words
+  as its arguments. The parse was RIGHT: it *is* a `!` line. The fix is a check in front of
+  the parse, in the one place both halves read (the reference keeps the rule in sessionlog
+  for exactly that reason; this head keeps it in the protocol module beside the frame it
+  guards).
+
+  Four claims: the block is refused and NOTHING is sent; the composer KEEPS the text,
+  because it is the operator's and their next move is to take the command out of it; one
+  line is a command and passes; and every ordinary paste — a stack trace, a diff, a
+  paragraph — is a prompt and never meets the rule."
+  (let* ((h (%on-head :cols 90 :rows 20))
+         (wire (%wire h)))
+    ;; `make-operator-shell` reads the LIVE image's `*session*` for the seq, and that
+    ;; global is NEVER defvar'd (only the live image sets it) — so a `let` here binds a
+    ;; lexical nobody reads. PROGV binds it DYNAMICALLY whatever the declarations say,
+    ;; which is the one spelling that reaches the wire function.
+    (progv '(leticl::*session*) (list (head-session h))
+    ;; --- the five-line block, first line a `!` command: refused, nothing sent, kept
+    (setf (composer-buffer (head-composer h))
+          (format nil "! sudo apt install mc~%usage: sudo …~%it.~%so~%/proc")
+          (composer-cursor (head-composer h)) 29)
+    (leticl::%submit-line h)
+    (is (null (%sent wire)) "**nothing was sent** — not the command, not the prompt, nothing")
+    (is (search "5 lines" (head-status-note h))
+        "the refusal counts the lines, so the reader knows what would have run")
+    (is (search "Nothing was run" (head-status-note h)) "and says so in the daemon's own words")
+    (is (search "! sudo apt install mc" (composer-buffer (head-composer h)))
+        "**and the text is KEPT** — the composer was not cleared, the operator takes the command out of it")
+    ;; --- one line is a command, and passes to the wire
+    (setf (head-status-note h) nil
+          (composer-buffer (head-composer h)) "!ls")
+    (leticl::%submit-line h)
+    (is (equal "operator_shell" (getf (first (%sent wire)) :frame))
+        "a one-line `!` command still runs — the rule guards the block, not the command")
+    ;; --- every ordinary paste is a prompt and never meets the rule, asked of the rule
+    ;;     itself (the daemon's own test does the same): multi-line, no bang, nothing said
+    (is (null (leticl::operator-line-refusal (format nil "thread 'main' panicked~%at src/main.rs:12~%note: run with")))
+        "a pasted stack trace is a prompt")
+    (is (null (leticl::operator-line-refusal "explain this:\n    fn f() {}"))
+        "a pasted paragraph is too")
+    (is (null (leticl::operator-line-refusal "look at `!send`\nand this"))
+        "a `!` that is not the first character of the line is not a `!` line at all"))))
+
 (def-test expanding-a-paste-leaves-other-text-alone (:suite leticl)
   (let ((*paste-ledger* nil)
         (c (make-composer)))
@@ -5923,6 +5969,67 @@ envelope's `session_id`, which is the parent's."
     (let ((edge (lines-text (list (leticl::composer-box-top h 60)))))
       (is (search "1 subagent running ─╮" (format nil "~{~a~}" edge))
           "and the edge pins it RIGHT and frames it, not hard against the ╭"))))
+
+(def-test children-the-events-never-mentioned-are-drawn-from-the-list (:suite leticl)
+  "**FOUND LIVE, 2026-10-09: the rano head, four children running, the pane empty.**
+
+  A daemon that is REPLACED loses its registry (it is in memory), and the store keeps
+  transcript rows, not SessionEvents — so the replacement's view folds no `Subagent` events
+  and its snapshot carries no children. Children that SURVIVED the restart are processes of
+  their own; the new daemon adopts them into its task table without a new spawn, and a spawn
+  is the only thing that publishes the event. A head attached after the restart has no events
+  and no seed: the pane is empty while four agents run. The reference's pane falls back to
+  LIST-DERIVED rows in exactly this case (*'a head then draws the list-derived rows it always
+  did'*) — this is that half, and this test is the scenario whole.
+
+  Four claims: a generating child of this session is drawn, from the list, as an ACTIVE row
+  at the top; a child the list cannot speak for carries NO state word — [?] and 'state
+  unknown', a fact about the host that was not watching, not an invented 'done'; a child the
+  events DID mention keeps the event's richer row (the whole task, the role) and is not
+  duplicated; and a child of ANOTHER session is not this pane's business."
+  (let ((h (%make-head))
+        (leticl::*subagents-finished-open* nil))
+    (setf (session-subagents (head-session h))
+          ;; one child the events DID mention: running, with the whole task and role
+          (list (list :session-id "parent" :subagent-id "s-known"
+                      :state "running" :prompt "the whole task from the event" :role "coder"
+                      :task "the whole task from the event" :model ""))
+          (session-session-id (head-session h)) "s-parent"
+          ;; the list the last Hello carried: this session has three children it never
+          ;; heard an event for (one generating, one parked) and one stranger's child
+          (session-sessions (head-session h))
+          (list (list :session-id "s-parent" :title "the parent" :parent-session-id nil)
+                (list :session-id "s-gen" :title "build the widget"
+                      :parent-session-id "s-parent"
+                      :status (list :running t)
+                      :wiring (list :model "glm-4"))
+                (list :session-id "s-parked" :title "read the logs"
+                      :parent-session-id "s-parent"
+                      :status (list :running nil)
+                      :wiring (list :model ""))
+                (list :session-id "s-other-child" :title "somebody else's"
+                      :parent-session-id "s-other-parent"
+                      :status (list :running t)
+                      :wiring (list :model ""))))
+    (let ((rows (leticl::%subagents-all-rows h))
+          (text (lines-text (subagent-lines h 210))))
+      (is (= 3 (length rows))
+          "the event's child plus TWO strangers from the list — and not the other parent's")
+      (is (search "[~] the whole task from the event" (nth 2 text))
+          "the event's child is first, with the words the event gave")
+      (is (search "[~] build the widget" (nth 4 text))
+          "**a generating child the events never mentioned is drawn, ACTIVE** — the rano case")
+      (is (search "on glm-4" (nth 5 text))
+          "with the model the brief's wiring carries")
+      ;; the parked child carries no state word, so it sits UNDER THE FOLDED finished
+      ;; group ([?] would say it ended, which the list cannot know) — open the group and
+      ;; read it there
+      (let ((leticl::*subagents-finished-open* t))
+        (let ((text (lines-text (subagent-lines h 210))))
+          (is (some (lambda (l) (search "[?] read the logs" l)) text)
+              "a child the list cannot speak for carries [?] — alive, state unknown, folded under finished")))
+      (is (notany (lambda (l) (search "somebody else's" l)) text)
+          "and a child of another session is not this pane's business"))))
 
 (def-test the-finished-children-live-under-a-folded-group (:suite leticl)
   "**The operator, 2026-10-06, twice:** *'i went to subagents panel and dont see it here'* — a
@@ -10523,11 +10630,14 @@ for one whose row is never coming."
     (is (every (lambda (txt) (member txt (head-queued h) :test #'equal))
                leticl::*queued-unconfirmed*)
         "every unconfirmed text is still a held echo")
-    ;; the mark on the screen is the OTHER word
+    ;; **the mark on the screen is ONE word now** (the operator, 2026-10-08: *'rename
+    ;; unconfirmed back to queued'*): both arms of the old tag drew a distinction that was
+    ;; the head's own bookkeeping, not a fact the reader could use. The bookkeeping stays
+    ;; -- `*queued-unconfirmed*` is still read above -- and the screen says `queued`.
     (let ((text (segs-of (leticl::queued-lines h 90))))
-      (is (search "unconfirmed · also gone" text) "the row says unconfirmed: ~s" text)
-      (is (not (search "queued · also gone" text))
-          "and does NOT say queued, which the head can no longer support"))
+      (is (search "queued · also gone" text) "the row says queued, whichever arm held it: ~s" text)
+      (is (not (search "unconfirmed" text))
+          "and never the word the operator retired"))
     ;; and a row that lands retires it out of BOTH lists
     (leticl::%handle-frame
      h (list :frame "event" :seq 901 :event "transcript_content" :item-id "u9"

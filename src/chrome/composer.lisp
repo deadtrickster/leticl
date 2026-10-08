@@ -256,7 +256,18 @@ form cannot both be true at once."
            ;; and a count of anything else here would be the second place the same question is answered.
            (status (truncate-to-width (or (turn-status head cols) (turn-report-text)) (max 1 cols)))
            (pad (max 0 (- cols (string-width status)))))
-      (list (append (list (cons status '(:dim t))
+      (list (append (list (cons status
+                                ;; **GREEN WHILE THE TURN GOES, YELLOW WHEN IT GOES QUIET, and
+                                ;; nothing else is said** (the operator, 2026-10-08: *"let usual
+                                ;; Responding be green and when we detect delays - yellow it"*).
+                                ;; The row used to be dim — a colour that says nothing — so a slow
+                                ;; turn and a live one read the same, and the sentence that used to
+                                ;; sit here (*"nothing received for 40s"*) was retired with it:
+                                ;; a failed turn ends now, so silence is only ever slowness, and
+                                ;; the colour carries it without a notification nobody asked for.
+                                (if (turn-slow-p head)
+                                    '(:fg :yellow)
+                                    '(:fg :green)))
                           (cons (make-string pad :initial-element #\space) nil)))))))
 
 (defun turn-report-text ()

@@ -329,6 +329,31 @@ answers with, so `%peek-snapshot-pane` draws it with `%viewport-lines` and no he
 involved. `Events` stays reachable for a caller that wants the ring; nothing sends it today."
   (list :frame "peek" :session-id session-id :shape "Rows"))
 
+(defun operator-line-refusal (text)
+  "Why a pasted block must not be submitted as an `!` line, or NIL when it may.
+
+THE RULE IN THE SHARED CRATE (the reference's `sessionlog::operator_line_refusal`,
+`d0ba286`), so the composer that submits and the daemon that run cannot disagree about
+what may run — which is why this lives here and not beside the composer's `!` arm.
+
+MEASURED on the reference's own head, 2026-10-08: a copied `operator_run_unreadable`
+notice — five lines, the first reading `! sudo apt install mc` — was submitted, and the
+newlines the shell then split re-ran an earlier `sudo` with the notice's remaining words
+as its arguments. The parse was RIGHT: it *is* a `!` line. This is not a fix to the parse
+but a check in front of it.
+
+A multi-line text that does NOT start with `!` is untouched — a pasted stack trace is a
+prompt, and it is the ordinary reason somebody pastes. A `!` that is not the first
+character of the line is not a `!` line at all. ONE line is a command and passes."
+  (let* ((end (position #\newline text))
+         (first (subseq text 0 (or end (length text)))))
+    (when (and end
+               (plusp (length (string-left-trim '(#\space #\tab) first)))
+               (char= (char (string-left-trim '(#\space #\tab) first) 0) #\!))
+      (let ((rest (count #\newline text)))
+        (format nil "that is ~d line~:p and its first one starts with `!`, so running it would run every line of the pasted block as its own shell command. Nothing was run. A `!` line is ONE line: send the command on its own."
+                (1+ rest))))))
+
 (defun make-operator-shell (line)
   "The operator's own shell command — a new client frame at protocol 28.
 
