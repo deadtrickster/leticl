@@ -239,6 +239,9 @@ answered in the same place or not at all.")
     ;; flight; a receipt for the wait. Routine because the daemon said it would
     ;; stop and did.
     "daemon_stopping_runs"
+    ;; **`provider_key_saved`** — the operator saved a provider key; routine
+    ;; because it is a receipt for a thing they asked for that worked.
+    "provider_key_saved"
     ;; **`operator_shell_failed`** — the operator's own `!` command failed.
     ;; FAILURE because the operator needs to know.
     ;; **`operator_run_unreadable`** — a run this daemon cannot look at.

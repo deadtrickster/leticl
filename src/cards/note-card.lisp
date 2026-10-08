@@ -155,6 +155,7 @@
      ("merge_queued" . "the branch is in the queue; the pane lists its place")
      ("merge_not_queued" . "the branch is not in the queue — read the note beside this row for the reason")
      ("daemon_stopping_runs" . "the daemon is stopping and there are runs in flight — wait for them to end")
+     ("provider_key_saved" . "the key is stored; the model picker lists it")
      ("operator_shell_failed" . "the command failed — read the row for its exit status and output")
      ("operator_run_unreadable" . "the daemon cannot read this run's state — it may still be running")
      ("prompt" . "the command is asking a question — type the answer and press enter, or !send LINE")
