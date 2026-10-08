@@ -3093,12 +3093,15 @@ the wrong place — the reference found this in its own test."
     (setf (session-subagents (head-session h))
           (list (list :subagent-id "sub-2" :state "running" :prompt "second task" :role "worker")
                 (list :subagent-id "sub-1" :state "done" :prompt "first task" :role "worker")))
-    (setf (head-picker-sel h) 1)
-    (multiple-value-bind (lines sel-line) (subagent-lines h 80)
-      (is (< 1 sel-line) "the second ROW is not line 1 — there are headers above it")
-      (is (< sel-line (length lines)) "and it is a line that exists")
-      (is (search "first task" (format nil "~{~a~}" (mapcar #'car (nth sel-line lines))))
-          "the line it names is the row the cursor is on (grouped: running before done, so row 1 is the done one)"))))
+    ;; one running, one done: the done one lives UNDER the folded group, so stop 1 is the
+    ;; group row -- a stop of its own kind, and the line it names must be that row
+    (let ((leticl::*subagents-finished-open* nil))
+      (setf (head-picker-sel h) 1)
+      (multiple-value-bind (lines sel-line) (subagent-lines h 80)
+        (is (< 1 sel-line) "the second STOP is not line 1 — there are headers above it")
+        (is (< sel-line (length lines)) "and it is a line that exists")
+        (is (search "finished (1)" (format nil "~{~a~}" (mapcar #'car (nth sel-line lines))))
+            "the line it names is the stop the cursor is on -- the finished group row, not the done child beneath it")))))
 
 ;;; ---------------------------------------------------- the todos pane (P42) ;;;
 
@@ -5401,7 +5404,10 @@ conversation."
           (list (list :subagent-id "s-child" :session-id "s-child" :state "done"
                       :prompt "the whole task" :answer "the answer" :role "coder"))
           (head-mode h) :subagents
-          (head-picker-sel h) 0)
+          ;; a lone DONE child lives under the folded group: stop 0 is the group row and
+          ;; the child is the stop beneath it, which is the row `p` reads
+          leticl::*subagents-finished-open* t
+          (head-picker-sel h) 1)
     (let ((wire (%wire h)))
       (leticl::%handle-key h (list :type :char :ch #\p))
       (is (not (null leticl::*peek-prompt-only*))
@@ -5877,7 +5883,7 @@ envelope's `session_id`, which is the parent's."
       (is (string= "    none spawned yet. The model spawns them with the task tool."
                    (car (first (third lines)))))
       (is (null (fourth lines)))
-      (is (string= "    arrows move, Enter or o switches into it, p reads its prompt — subagents are hidden from ctrl-s."
+      (is (string= "    arrows move · enter or o switches into the subagent, or folds the finished group · p reads its prompt · esc closes"
                    (car (first (fifth lines)))))
       (is (= 2 sel-line)))
     ;; two children of one parent, each with two state events: two rows, latest state each
@@ -5891,12 +5897,24 @@ envelope's `session_id`, which is the parent's."
       (is (string= "done" (getf (first rows) :state)) "the first, spawned first, is done")
       (is (string= "running" (getf (second rows) :state)) "the second is running"))
     (setf (head-picker-sel h) 0)
-    (let ((text (lines-text (subagent-lines h 210))))
-      ;; **GROUPED BY STATE** (the operator's ask): running first, with a group header
-      ;; when there is more than one group on the pane
-      (is (search "[~] second" (nth 2 text))
-          "**the running one is FIRST** (grouped: running before done)")
-      (is (search "[x] first" (nth 4 text)) "the done one, second in the grouped order"))
+    (let ((leticl::*subagents-finished-open* nil))
+      (let ((text (lines-text (subagent-lines h 210))))
+        ;; **THE CHILDREN STILL GOING FIRST, THE FINISHED ONES UNDER A FOLDED GROUP ROW**
+        ;; (the operator's ask, 2026-10-06: *'i went to subagents panel and dont see it
+        ;; here'* — a just-started child pushed off the bottom — *'please group finished
+        ;; separately in the finished group which will be collapsed'*)
+        (is (search "[~] second" (nth 2 text))
+            "**the running one is FIRST** — the row the pane was opened to see")
+        (is (search "[+] finished (1)" (nth 4 text))
+            "the finished ones are ONE group row, folded by default and counted")
+        (is (notany (lambda (l) (search "[x] first" l)) text)
+            "**and the done child is not drawn while the group is folded**")
+        ;; unfold it: the finished child appears under the group row
+        (setf leticl::*subagents-finished-open* t)
+        (let ((text (lines-text (subagent-lines h 210))))
+          (is (search "[-] finished (1)" (nth 4 text)) "open, the group says so")
+          (is (search "[x] first" (nth 6 text))
+              "and the done child is under it — second, where the operator put it"))))
     ;; **THE COUNTS ARE ON THE BOX'S TOP EDGE**, where the operator asked for them back:
     ;; *"ok, so please bring counters back to the input box border top right."* The subagent count had been
     ;; moved to the row above the box (`9954b2c`); both are on the border again.
@@ -5905,6 +5923,74 @@ envelope's `session_id`, which is the parent's."
     (let ((edge (lines-text (list (leticl::composer-box-top h 60)))))
       (is (search "1 subagent running ─╮" (format nil "~{~a~}" edge))
           "and the edge pins it RIGHT and frames it, not hard against the ╭"))))
+
+(def-test the-finished-children-live-under-a-folded-group (:suite leticl)
+  "**The operator, 2026-10-06, twice:** *'i went to subagents panel and dont see it here'* — a
+  child just started, and the pane drew the finished ones first and pushed the running one off
+  the bottom — and then *'please group finished separately in the finished group which will be
+  collapsed'*.
+
+  Five claims: the children still going are drawn first, always, which is the whole point; the
+  finished ones are ONE group row, folded and counted, and NOT drawn while it is folded; enter
+  (and o, which the footer names as the same act) folds and unfolds, and says which way; p on
+  the group row refuses by name — there is no child under it to read; and a row with no state
+  word gets [?] and 'state unknown', which is a fact about the HOST (it was not watching when
+  the child ended) rather than an invented 'done'."
+  (let ((h (%make-head))
+        (leticl::*subagents-finished-open* nil))
+    ;; three finished children and one that just started -- the operator's exact pane
+    (setf (session-subagents (head-session h))
+          (append (loop for i from 1 to 3
+                        collect (list :session-id "parent"
+                                      :subagent-id (format nil "s-finished~d" i)
+                                      :state "done" :prompt "an old one" :role "coder"
+                                      :answer "done long ago"))
+                  (list (list :session-id "parent" :subagent-id "s-just-started"
+                              :state "running" :prompt "the one they came for" :role "coder"
+                              :model "local")))
+          (head-mode h) :subagents
+          (head-picker-sel h) 0)
+    (let ((text (lines-text (subagent-lines h 210))))
+      (is (search "[~] the one they came for" (nth 2 text))
+          "**the child still going is the FIRST row** — no finished one can push it off the bottom")
+      (is (search "[+] finished (3)" (nth 4 text))
+          "the finished ones are one group row, folded and counted")
+      (is (notany (lambda (l) (search "an old one" l)) text)
+          "and none of them is drawn while the group is folded")
+      (is (search "on local" (nth 3 text))
+          "the fact line carries the child's own model as a clause that vanishes when unsaid"))
+    ;; --- enter on the group row folds it open, and says which way
+    (setf (head-picker-sel h) 1)
+    (is (leticl::subagent-switch h) "enter on the group row is taken")
+    (is (eq t leticl::*subagents-finished-open*) "and the group is OPEN")
+    (is (search "finished group open" (head-status-note h)) "said, in the direction it moved")
+    (let ((text (lines-text (subagent-lines h 210))))
+      (is (search "[-] finished (3)" (nth 4 text)) "the row says open")
+      (is (search "[x] an old one" (nth 6 text)) "and the finished children are under it")
+      (is (search "done long ago" (nth 7 text))
+          "with the answer as the fact line's last clause — the row is the question"))
+    ;; --- and o folds it back, which the footer names as the same act
+    (leticl::subagent-switch h)
+    (is (null leticl::*subagents-finished-open*) "o folds the same row")
+    ;; --- p on the group row refuses by name: there is no child under it to read
+    (setf (head-picker-sel h) 0
+          (head-status-note h) nil)
+    ;; stop 0 is the running child again; put the cursor on the group row
+    (setf (head-picker-sel h) 1)
+    (leticl::%handle-key h (list :type :char :ch #\p))
+    (is (search "heading" (head-status-note h))
+        "p on the group row says what it is and how to get under it, rather than silence")
+    ;; --- a row with no state word is [?] and 'state unknown' -- the host was not watching
+    (let ((leticl::*subagents-finished-open* t))
+      (setf (session-subagents (head-session h))
+            (list (list :session-id "parent" :subagent-id "s-rebuilt" :state ""
+                        :prompt "rebuilt from the list" :role "coder"))
+            (head-picker-sel h) 1)
+      (let ((text (lines-text (subagent-lines h 210))))
+        (is (some (lambda (l) (search "[?] rebuilt from the list" l)) text)
+            "no state word draws [?] — not [x], which would invent how it ended")
+        (is (some (lambda (l) (search "state unknown" l)) text)
+            "and the fact line SAYS the state is unknown, which is a fact about the host")))))
 
 (def-test the-subagent-pane-draws-the-task-in-full-and-follows-the-rung (:suite leticl)
   "**The operator, on the subagents pane, two asks of four:** *\"the first prompt is truncated too

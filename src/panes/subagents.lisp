@@ -67,81 +67,165 @@ the live thing."
                   rows))))
     (nreverse rows)))
 
+(defvar *subagents-finished-open* nil
+  "Whether the `finished (N)` group on the subagents pane is UNFOLDED.
+
+COLLAPSED BY DEFAULT, which is the operator's own ruling (2026-10-06): *'i went to
+subagents panel and dont see it here'* — a child just started, and the pane drew the
+finished ones first and pushed the running one off the bottom — and then *'please group
+finished separately in the finished group which will be collapsed'*. A pane opened to see
+what is happening shows what is happening; what finished is one row and one enter away.
+
+A `defvar` like `*repo-todo-open*`: where your eyes are, not a preference, and not a head
+slot (a struct layout change is a restart).")
+
+(defun %subagent-finished-p (row)
+  "Is ROW a settled child? Anything but `running` and `opening` — `done`, `failed`, and a
+row with NO state word, which is the honest reading for a row the daemon's session list
+rebuilt: that list says whether a turn is generating and nothing about how a settled child
+ended."
+  (not (member (or (getf row :state) "") '("running" "opening") :test #'string=)))
+
+(defun subagents-stops (head)
+  "The rows the subagents pane's cursor may land on, in the order the pane draws them:
+the children still going first (in spawn order), then ONE `finished` group row when any
+finished exist, then — only while the group is unfolded — the finished children.
+
+Tags, not positions: `(:agent . I)` is the Ith of `subagent-rows`, `(:finished)` is the
+group row. ONE enumeration, read by the drawing, the arrows, Enter, `o` and `p` alike —
+the drawn `▸` and the key that acts cannot disagree about which row is selected, which is
+the defect `todos-stops` exists for and this pane now shares its rule.
+
+The children still going are NEVER pushed off the bottom by the finished ones, which is
+the whole point: the row the operator opened the pane to see is at the top."
+  (let* ((rows (subagent-rows head))
+         (actives (loop for r in rows for i from 0
+                        unless (%subagent-finished-p r) collect (cons :agent i)))
+         (finished (loop for r in rows for i from 0
+                         when (%subagent-finished-p r) collect (cons :agent i))))
+    (append actives
+            (and finished
+                 (cons '(:finished)
+                       (and *subagents-finished-open* finished))))))
+
+(defun subagent-stop-at (head)
+  "The stop the subagents cursor is on — `(:agent . I)` or `(:finished)` — and the ROW
+under it (NIL for the group row, which is a heading and not a child)."
+  (let* ((stops (subagents-stops head))
+         (n (length stops))
+         (sel (if (plusp n) (min (max 0 (head-picker-sel head)) (1- n)) 0))
+         (stop (nth sel stops)))
+    (values stop
+            (and stop (eq (car stop) :agent)
+                 (nth (cdr stop) (subagent-rows head))))))
+
 (defun subagent-lines (head cols)
-  "The subagent tree, the reference's `subagents_lines` (app.rs:5936):
+  "The subagent tree, the reference's own frame (rano's `SubagentsPane::content`):
 
     subagents
     <blank>
-        none spawned yet. The model spawns them with the task tool.
+      ▸ [~] the task it was asked, whole
+           …3908838 · role coder · on glm · running
+      · [+] finished (2)
+           enter shows the ones that have ended
     <blank>
-        arrows move, Enter reads the subagent's output, o switches into it — subagents are hidden from ctrl-s.
+        arrows move · enter or o switches into the subagent, or folds the finished group ·
+        p reads its prompt · esc closes
 
-or, with subagents, two lines each in place of the `none` row: `▸ [~] prompt`
-(`[…]` opening, `[~]` running yellow, `[x]` done green, `[!]` failed red; the
-picked row reversed) over a dim `       …3908838 · role NAME · state`, with
-` — not attachable yet` while it is still opening.
+The children still going first, then ONE `finished (N)` row that stays folded unless the
+operator unfolded it (see `*subagents-finished-open*`). The second line is the row's own
+facts as CLAUSES THAT VANISH when the daemon did not say them — a row rebuilt from the
+session list carries a name and a model and no role, and a fixed `role X · state` would
+draw two holes on every rebuilt row.
 
-Never rendered before, for the same nested-line header as `jobs-lines`.
-
-Returns the lines and, as a second value, the LINE the cursor is on. A pane's
-cursor indexes ROWS while the scroll offset counts LINES, and the two differ by
-every header above the list — passing one where the other was meant scrolls to
-the wrong place, which is how the reference found this in its own test."
+Returns the lines and, as a second value, the LINE the cursor is on. Every stop draws
+exactly two lines — the row and its fact line — which is also what the click conversion
+assumes (`per-row 2`), so a click on either half of either kind of stop is the same stop."
   (let* ((w (pane-width cols))
          (rows (subagent-rows head))
-         (n (length rows))
-         (sel (if (plusp n) (min (head-picker-sel head) (1- n)) 0))
+         (stops (subagents-stops head))
+         (n (length stops))
+         (sel (if (plusp n) (min (max 0 (head-picker-sel head)) (1- n)) 0))
          (out (list nil (list (cons "subagents" '(:bold t))))))
     (when (null rows)
       (push (list (cons "    none spawned yet. The model spawns them with the task tool."
                         '(:dim t)))
             out))
-    (flet ((group-of (state)
-              (cond ((string= state "running") 0)
-                    ((string= state "opening") 1)
-                    ((string= state "done") 2)
-                    ((string= state "failed") 3)
-                    (t 4))))
-       (let ((sorted (sort (copy-list rows) #'<
-                           :key (lambda (s) (group-of (or (getf s :state) ""))))))
-    (loop for s in sorted
-          for i from 0
-          do (let* ((state (or (getf s :state) ""))
-                    (mark (cond ((string= state "opening") "[…]")
-                                ((string= state "running") "[~]")
-                                ((string= state "done") "[x]")
-                                ((string= state "failed") "[!]")
-                                (t "[ ]")))
-                    (colour (cond ((string= state "running") '(:fg :yellow))
-                                  ((string= state "done") '(:fg :green))
-                                  ((string= state "failed") '(:fg :red))
-                                  (t nil)))
-                    (picked (= i sel)))
-               (push (list (cons (format nil "~a " (if picked "▸" " ")) (and picked '(:reverse t)))
-                           (cons mark (if picked (append '(:reverse t) colour) colour))
-                           (cons (format nil " ~a" (or (getf s :prompt) ""))
-                                 (and picked '(:reverse t))))
-                     out)
-               ;; **THE SECOND LINE IS THE CHILD'S ANSWER, NOT ITS ID.** The operator: *"right now each
-               ;; agent takes two lines on the agents pane and they are underutilized. so the first line
-               ;; can gain a prompt excerpt and the second line - response excerpt."* The first line
-               ;; already carries the prompt (which the fold now keeps as the TASK rather than letting
-               ;; `done` overwrite it with this very answer), the id is a lookup key, and the state is
-               ;; already the mark on the first row — so this line carries what the child SAID.
-               (push (list (cons (truncate-to-width
-                                  (format nil "       ~@[→ ~a~]~@[~a~]"
-                                          (getf s :answer)
-                                          (if (string= state "opening")
-                                              "not attachable yet — it is still opening"
-                                              (if (getf s :answer) "" state)))
-                                  w)
-                                 '(:dim t)))
-                     out))))
-     (push nil out)
-    (push (list (cons "    arrows move, Enter or o switches into it, p reads its prompt — subagents are hidden from ctrl-s."
+    (loop for k from 0
+          for stop in stops
+          for picked = (= k sel)
+          do (cond
+               ((eq (car stop) :finished)
+                ;; **THE GROUP ROW: a heading and not a child.** There is nobody to switch
+                ;; into, and Enter (and `o`, which does the same) folds or unfolds — the
+                ;; one key a group row owns. `[+]` folded, `[-]` open, the count beside the
+                ;; word, and the faint line under it says what the key does in the state it
+                ;; is in, which is how a fold teaches itself.
+                (let ((n-finished (count-if #'%subagent-finished-p rows)))
+                  (push (list (cons (format nil "~a " (if picked "▸" " "))
+                                    (and picked '(:reverse t)))
+                              (cons (if *subagents-finished-open* "[-]" "[+]")
+                                    (and picked '(:reverse t)))
+                              (cons (format nil " finished (~d)" n-finished)
+                                    (and picked '(:reverse t))))
+                        out)
+                  (push (list (cons (if *subagents-finished-open*
+                                        "       the ones that have ended · enter folds them away"
+                                        "       enter shows the ones that have ended")
+                                      '(:dim t)))
+                        out)))
+               (t
+                (let* ((s (nth (cdr stop) rows))
+                       (state (or (getf s :state) ""))
+                       (mark (cond ((string= state "opening") "[…]")
+                                   ((string= state "running") "[~]")
+                                   ((string= state "done") "[x]")
+                                   ((string= state "failed") "[!]")
+                                   ;; no state word — a row rebuilt from the session list,
+                                   ;; which cannot say how a settled child ended. `[?]`
+                                   ;; means THE HOST WAS NOT WATCHING, not `done`.
+                                   (t "[?]")))
+                       (colour (cond ((string= state "running") '(:fg :yellow))
+                                     ((string= state "done") '(:fg :green))
+                                     ((string= state "failed") '(:fg :red))
+                                     (t nil))))
+                  (push (list (cons (format nil "~a " (if picked "▸" " "))
+                                    (and picked '(:reverse t)))
+                              (cons mark (if picked (append '(:reverse t) colour) colour))
+                              (cons (format nil " ~a" (or (getf s :prompt) ""))
+                                    (and picked '(:reverse t))))
+                        out)
+                  ;; **THE ROW'S OWN FACTS, as clauses that vanish when unsaid.** The id
+                  ;; first (it is the lookup key), then `role X` and `on MODEL` only when
+                  ;; the daemon sent them — the model clause is the operator's 2026-10-05
+                  ;; ask, a tree of children on different models is a fact the pane has to
+                  ;; show. The state word: `state unknown` for a rebuilt row, the word
+                  ;; itself otherwise. The ANSWER joins as the last clause when there is
+                  ;; one — the row is the question and the fact line carries what the
+                  ;; child said (the operator's own two-line ask). `not attachable yet`
+                  ;; while the child is still opening, in the row's own words.
+                  (let ((clauses (list (format nil "…~a"
+                                               (subseq (or (getf s :session-id) "")
+                                                       (max 0 (- (length (getf s :session-id)) 7)))))))
+                    (when (plusp (length (getf s :role)))
+                      (push (format nil "role ~a" (getf s :role)) clauses))
+                    (when (plusp (length (or (getf s :model) "")))
+                      (push (format nil "on ~a" (getf s :model)) clauses))
+                    (push (if (zerop (length state)) "state unknown" state) clauses)
+                    (when (and (getf s :answer) (string= state "done"))
+                      (push (getf s :answer) clauses))
+                    (when (string= state "opening")
+                      (push "not attachable yet" clauses))
+                    (push (list (cons (truncate-to-width
+                                       (format nil "       ~{~a~^ · ~}" (reverse clauses))
+                                       w)
+                                      '(:dim t)))
+                          out))))))
+    (push nil out)
+    (push (list (cons "    arrows move · enter or o switches into the subagent, or folds the finished group · p reads its prompt · esc closes"
                       '(:dim t)))
           out)
-    (values (nreverse out) (+ 2 (* 2 sel))))))
+    (values (nreverse out) (+ 2 (* 2 sel)))))
 
 ;;;; The repo's TODO.md, read the way org reads it.
 ;;;;
@@ -172,13 +256,25 @@ what keeps the two from disagreeing.
 
 The KEY is `src/editor.lisp:283-296`'s — its `:char` arm handles only `#\\q` —
 and this is the act that arm is missing."
-  (let ((row (nth (max 0 (head-picker-sel head)) (subagent-rows head))))
-    (cond ((null row) (say head "no subagent under the cursor") nil)
-          ((string= (or (getf row :state) "") "opening")
-           (say head "not attachable yet — it is still opening") nil)
-          ((null (getf row :session-id))
-           (say head "that subagent has no session id to switch to") nil)
-          (t (%send head (make-switch (getf row :session-id) 0))
-             (setf (head-mode head) :normal
-                   (head-dirty head) t)
-             t))))
+  (multiple-value-bind (stop row) (subagent-stop-at head)
+    (cond
+      ;; **THE GROUP ROW IS NOT A CHILD.** There is nobody to switch into; `o` does what
+      ;; Enter does here and folds the group, which is the one key a heading owns. Said,
+      ;; because a key that appears to do nothing on the row it was pressed on is the
+      ;; defect this pane's own footer exists to prevent.
+      ((eq (car stop) :finished)
+       (setf *subagents-finished-open* (not *subagents-finished-open*)
+             (head-dirty head) t)
+       (say head (if *subagents-finished-open*
+                     "finished group open"
+                     "finished group folded"))
+       t)
+      ((null row) (say head "no subagent under the cursor") nil)
+      ((string= (or (getf row :state) "") "opening")
+       (say head "not attachable yet — it is still opening") nil)
+      ((null (getf row :session-id))
+       (say head "that subagent has no session id to switch to") nil)
+      (t (%send head (make-switch (getf row :session-id) 0))
+         (setf (head-mode head) :normal
+               (head-dirty head) t)
+         t))))

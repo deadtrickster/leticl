@@ -450,8 +450,12 @@ one thing this head must not need."
                    ;; transcript is where it lives. The same peek Enter sends; the flag is what makes it
                    ;; narrow (see `%peek-prompt-pane`).
                    ((and (eql ch #\p) (eq mode :subagents))
-                    (let ((row (nth (head-picker-sel head) (subagent-rows head))))
-                      (cond ((null row) nil)
+                    ;; **THE GROUP ROW HAS NO PROMPT TO READ** — said rather than silent,
+                    ;; for the same reason every other refusal here is
+                    (multiple-value-bind (stop row) (subagent-stop-at head)
+                      (cond ((eq (car stop) :finished)
+                             (say head "the finished group is a heading — unfold it with enter and read a child") t)
+                            ((null row) nil)
                             ((equal (getf row :state) "opening")
                              (say head "that subagent is still opening — nothing to read yet") t)
                             (t (let ((id (getf row :session-id)))

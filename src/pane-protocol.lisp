@@ -255,7 +255,10 @@ outrank any pane's hint."))
 
 ;;; ----------------------------------------------------------- the cursor ;;;
 
-(defmethod pane-cursor-rows ((pane subagents-pane) head) (length (subagent-rows head)))
+;; **THE STOPS, NOT THE ROWS** — the finished group is one stop over many rows, and a
+;; cursor that counted rows would run off the end of the drawn list every time the
+;; group was folded (see `subagents-stops`).
+(defmethod pane-cursor-rows ((pane subagents-pane) head) (length (subagents-stops head)))
 (defmethod pane-cursor-rows ((pane jobs-pane) head) (length (head-jobs head)))
 (defmethod pane-cursor-rows ((pane todos-pane) head)
   (length (repo-todo-rows-cached
