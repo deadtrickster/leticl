@@ -5261,6 +5261,65 @@ became text. Reproduced by injecting fifteen events: eight leaked."
           "fifteen wheel events, none of them text: ~s" (remove :mouse keys :key (lambda (k) (getf k :type))))
       (is (every (lambda (k) (eq (getf k :kind) :wheel-down)) keys)))))
 
+(def-test scrolled-back-the-question-stays-pinned-on-top (:suite leticl)
+  "**SCROLLED BACK THROUGH A LONG ANSWER, THE QUESTION IT ANSWERS SCROLLS OFF** and the
+  reader loses track of what the turn was about (letibot `26b9e08`). While the view is held,
+  the window's top row is the operator's prompt for the turn ON SCREEN — found from the row at
+  the top of the window, walking back to the nearest row the operator wrote, so it is the
+  question the VISIBLE answer answers and not the session's newest. It covers the top row the
+  way the holding banner covers the bottom, and it is not drawn while the prompt is still on
+  screen."
+  (let* ((h (%make-head))
+         (s (head-session h)))
+    (setf (session-items s)
+          (coerce (loop for i from 1 to 20
+                        collect (list :item-id (format nil "u~d" i)
+                                      :kind "user"
+                                      ;; ONE operator row, first; everything after it is the
+                                      ;; session's own, so the walk-back has a real distance
+                                      :item (list :type "user"
+                                                  :speaker (if (= i 1) "operator" "agent")
+                                                  :parts (list (list :kind "text"
+                                                                     :text (format nil "~:[a report~;what about the widget~]~d" (= i 1) i))))))
+                  'vector))
+    ;; --- parked deep: the top row is the pinned question
+    (setf (head-scroll h) 24)
+    (let ((lines (leticl::%viewport-lines h 60 10)))
+      (is (search "what about the widget" (segs-of (list (first lines))))
+          "**the top row is the operator's own prompt** — one line, at the top")
+      (is (not (search "message" "")) "sanity: the probe string is not in the fixture at all")
+      (is (search "scrolled back" (segs-of (last lines)))
+          "and the banner still holds the bottom — the two cover the two ends"))
+    ;; --- following the stream again: no pin
+    (setf (head-scroll h) 0)
+    (let ((lines (leticl::%viewport-lines h 60 10)))
+      (is (not (search "what about the widget" (segs-of (list (first lines)))))
+          "at the live end there is nothing to pin"))
+    ;; --- parked, but the prompt is STILL ON SCREEN: no pin. Twenty rows and a window
+    ;;     that covers all of them: the top of the window IS the prompt's own row.
+    (setf (head-scroll h) 3)
+    (let ((lines (leticl::%viewport-lines h 60 25)))
+      (is (search "what about the widget" (segs-of (list (first lines))))
+          "the window starts at the prompt itself")
+      (is (not (search "▌ what about the widget" (segs-of (list (second lines)))))
+          "and the pin is NOT a second copy of the row right below it")))
+  ;; and a window with no room for it: the reference's own `out.len() > 2`
+  (let* ((h (%make-head))
+         (s (head-session h)))
+    (setf (session-items s)
+          (coerce (list (list :item-id "u1" :kind "user"
+                              :item (list :type "user" :speaker "operator"
+                                          :parts (list (list :kind "text" :text "the question"))))
+                        (list :item-id "u2" :kind "user"
+                              :item (list :type "user" :speaker "agent"
+                                          :parts (list (list :kind "text" :text "the long answer")))))
+                  'vector)
+          (head-scroll h) 1)
+    (let ((lines (leticl::%viewport-lines h 60 1)))
+      (is (<= (length lines) 2) "a one-row window is a one-row window")
+      (is (not (search "the question" (segs-of (list (first lines)))))
+          "and nothing is stolen for a pin"))))
+
 (def-test the-wheel-scrolls-the-transcript-and-the-pane (:suite leticl)
   "A wheel event is `(:type :mouse :kind :wheel-up)` and the key ladders dispatched
 on TYPE, so their `:wheel-up` arms never matched and a wheel did nothing anywhere —

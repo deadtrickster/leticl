@@ -810,6 +810,54 @@ to decide when the reader has asked for the rows above the window (`fetch-row-ab
 
 
 
+(defun %bound-covering (line)
+  "The last `*hist-bounds*` entry that STARTS at or before LINE — the item the window's
+top row belongs to. Bounds are oldest-first, so the last such entry is the innermost."
+  (let ((best nil))
+    (dolist (b *hist-bounds* best)
+      (when (<= (second b) line) (setf best b)))))
+
+(defun %pinned-prompt (session start end cols prefs)
+  "The one-line row that pins the turn's question to the TOP while scrolled back, or NIL.
+
+**SCROLLED BACK THROUGH A LONG ANSWER, THE QUESTION IT ANSWERS SCROLLS OFF** and the
+reader loses track of what the turn was about (letibot `26b9e08`). While the view is
+held, the window's top row is the operator's prompt for the turn ON SCREEN, drawn as
+their row is drawn and cut to one line — it covers the top row the way the holding
+banner covers the bottom one.
+
+**The turn is found from the row at the TOP OF THE WINDOW, walking back to the nearest
+row the operator wrote** — so the pin is the question the VISIBLE answer answers, not
+the session's newest one. START and END are the window's line range in the very list the
+bounds were counted in. NIL when the prompt itself is still on screen (its own lines
+reach the window) — the pin must not fight the row it copies."
+  (declare (ignore end prefs))
+  (let* ((here (%bound-covering start))
+         (items (session-items session))
+         (from (when here
+                 (loop for i from (1- (length items)) downto 0
+                       when (string= (item-id (aref items i)) (first here))
+                         return i))))
+    (when from
+      (loop for i from from downto 0
+            for item = (aref items i)
+            for body = (item-body item)
+            when (and (string= (or (item-kind item) "") "user")
+                      (eq :operator (%user-speaker body)))
+              return (let ((mine (find (item-id item) *hist-bounds*
+                                       :key #'first :test #'string=)))
+                       ;; its OWN lines are still on the screen: nothing to pin
+                       (unless (and mine (>= (third mine) start))
+                         (let* ((text (%fold-cells (%user-parts-text body)))
+                                ;; one line: every run of whitespace becomes one space,
+                                ;; which is what makes a multi-line prompt a row
+                                (one (format nil "~{~a~^ ~}"
+                                             (remove ""
+                                                     (uiop:split-string
+                                                      (substitute #\space #\newline text))))))
+                           (first (%operator-block-lines
+                                   one (%clock-time (item-ts item)) cols)))))))))
+
 (defun %viewport-lines (head cols want)
   "The conversation's last WANT lines (scrolled up by head-scroll), as
  segment lines oldest-first. The running turn is the newest thing there is, so
@@ -990,6 +1038,13 @@ to decide when the reader has asked for the rows above the window (`fetch-row-ab
                 (list (cons (format nil "── scrolled back · ~d lines below · ↓ or esc to follow · wheel scrolls · shift+drag selects"
                                     (- n end))
                             '(:fg :yellow)))))
+        ;; **AND THE TOP ROW IS THE QUESTION THE VISIBLE ANSWER ANSWERS** — while the
+        ;; view is held and there is room for it (the reference's own `out.len() > 2`).
+        (when (and (plusp (head-scroll head)) (> (length out) 2))
+          (let ((pin (%pinned-prompt (head-session head) start end cols
+                                     (head-prefs head))))
+            (when pin
+              (setf (car out) pin))))
         ;; **R36: THE ANCHOR IS REFRESHED FROM WHAT WAS JUST DRAWN**, which is why it cannot
         ;; drift from the glass — it records the top ROW of this frame, not a keypress. Done
         ;; here, after the window is known and before the caller paints it, and it is the only
