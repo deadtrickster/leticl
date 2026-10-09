@@ -195,6 +195,57 @@ what the hint bar says while one runs (`esc interrupt · ctrl+c clear`)."
                     (head-dirty head) t)
               (setf *ctrlc-at* now (head-dirty head) t))))))
 
+(defvar *wheel-run-step* nil
+  "The step a RUN of wheel notches has grown to, or NIL between runs.
+
+**THE OUTRUN WALK** (letibot `a950c6e`, and the operator's report behind it: *'there is
+scrolling problem - i restarted pg-noop scrolled up and couldnt scroll back with mouse -
+stuck at 190 lines lol'*). Against a transcript that is STILL ARRIVING, three lines a notch
+is outrun by two arriving rows: the notch moves every time and the count still grows, so a
+receding bottom is unreachable. The notches of one run therefore DOUBLE their step — 3, 6,
+12, 24 … capped — because a doubling outgrows any fixed arrival pace.
+
+**The first notch of a run is three lines ALWAYS**, which is the half that keeps this from
+repeating an older defect: a one-notch jump to the tail was measured as *'one simple stroke
+gets me to the bottom immediately - effectively like Esc'*, and a reader who cannot walk
+down through a conversation has lost the feature they were using.")
+
+(defvar *wheel-run-at* nil
+  "When the last wheel notch landed — the run is a PACE, not a count: it ends on 200ms of
+quiet (`+wheel-run-ms+`), a turn in the other direction, or arrival at the tail.")
+
+(defvar *wheel-run-dir* nil
+  "The direction this run is going (`:up` / `:down`), so a TURN AROUND starts a new run at
+three lines rather than continuing the other direction's grown step.")
+
+(defparameter +wheel-run-ms+ 200
+  "How long a run of notches survives a pause. The reference's own `WHEEL_RUN_MS`.")
+
+(defparameter +wheel-run-cap+ 192
+  "The largest step a run grows to. The reference's own cap; a run that reaches it has
+outpaced any arrival pace a model can produce.")
+
+(defun %wheel-step (head dir)
+  "How far THIS notch moves, given the run it is part of.
+
+Three against a still transcript, every notch — a reader walks down through a
+conversation. Against a LIVING one (a turn is generating or working) the step doubles within
+a run, capped, so the bottom is reachable in a bounded number of notches. A direction
+change is a new run: the reader turning around is not asking for a bigger step."
+  (let ((now *now-ms*)
+        (live (let ((turn (session-turn (head-session head))))
+                (and turn (turn-busy-p turn)))))
+    (if (and live
+             *wheel-run-at* *now-ms*
+             (eq *wheel-run-dir* dir)
+             (< (- now *wheel-run-at*) +wheel-run-ms+))
+        (setf *wheel-run-step* (min +wheel-run-cap+
+                                    (* 2 (or *wheel-run-step* *scroll-notch*))))
+        (setf *wheel-run-step* *scroll-notch*))
+    (setf *wheel-run-at* (and *now-ms* now)
+          *wheel-run-dir* dir)
+    (or *wheel-run-step* *scroll-notch*)))
+
 (defun %scroll-view (head delta)
   "Move the reader's view DELTA lines (positive is further back), and DROP THE ANCHOR.
 
@@ -348,8 +399,8 @@ of R36 keeps — the anchor is a record of the top row of the last frame, never 
       ((:page-down) (%scroll-view head (- (max 1 (- (head-rows head) 3)))))
       ((:wheel-up) (when (>= (head-scroll head) *scroll-max*)
                      (fetch-row-above head))
-                   (%scroll-view head (* (%wheel-notches key) *scroll-notch*)))
-      ((:wheel-down) (%scroll-view head (- (* (%wheel-notches key) *scroll-notch*))))
+                   (%scroll-view head (* (%wheel-notches key) (%wheel-step head :up))))
+      ((:wheel-down) (%scroll-view head (- (* (%wheel-notches key) (%wheel-step head :down)))))
       ((:ctrl)
        (case (getf key :ch)
          ((#\c) (%ctrl-c head))

@@ -5358,6 +5358,40 @@ pass while that happened."
       "**and the notch is the SMALLER one**, which is the direction the bug went: the copy made the
  wheel as big as the page rather than the other way round"))
 
+(def-test a-run-of-wheel-notches-outpaces-a-living-stream (:suite leticl)
+  "**The operator: *'there is scrolling problem - i restarted pg-noop scrolled up and couldnt
+  scroll back with mouse - stuck at 190 lines lol'*** (letibot `a950c6e`). Against a transcript
+  that is still arriving, three lines a notch is outrun by two arriving rows: the notch moves
+  every time and the count still grows, so a receding bottom is unreachable. The notches of one
+  run double their step, capped — a doubling outgrows any fixed arrival pace.
+
+  Three claims, and the first two are the ones that keep it honest: the FIRST notch of a run is
+  three lines ALWAYS (a one-notch jump to the tail was measured as *'one simple stroke gets me
+  to the bottom immediately - effectively like Esc'*, and a reader must still be able to walk
+  down through a conversation); a still transcript is walked at three a notch however long the
+  run; and against a LIVE one the step doubles — 3, then 6 — and a turn around starts over."
+  (let ((h (%on-head :cols 80 :rows 24)))
+    (setf leticl::*wheel-run-step* nil leticl::*wheel-run-at* nil leticl::*wheel-run-dir* nil)
+    ;; a still transcript: three a notch, every notch
+    (setf (head-scroll h) 0)
+    (leticl::%handle-key h (list :type :mouse :kind :wheel-up))
+    (is (= 3 (head-scroll h)) "the first notch of a run is THREE lines, never more")
+    (leticl::%handle-key h (list :type :mouse :kind :wheel-up))
+    (is (= 6 (head-scroll h)) "and a still transcript is walked three lines a notch")
+    ;; against a living stream, the run doubles
+    (setf leticl::*wheel-run-step* nil leticl::*wheel-run-at* nil leticl::*wheel-run-dir* nil
+          (head-scroll h) 0
+          (session-turn (head-session h)) (list :state (list :state "running") :calls nil))
+    (leticl::%handle-key h (list :type :mouse :kind :wheel-up))
+    (is (= 3 (head-scroll h)) "still three for the first notch of the run")
+    (leticl::%handle-key h (list :type :mouse :kind :wheel-up))
+    (is (= 9 (head-scroll h)) "**and the second doubles it** — 3 then 6, so a receding bottom is reachable")
+    (leticl::%handle-key h (list :type :mouse :kind :wheel-up))
+    (is (= 21 (head-scroll h)) "and it keeps doubling")
+    ;; a turn around is a NEW run: the reader is not asking for a bigger step
+    (leticl::%handle-key h (list :type :mouse :kind :wheel-down))
+    (is (= 18 (head-scroll h)) "the other direction starts over at three")))
+
 (def-test parked-in-the-scrollback-the-last-row-says-so (:suite leticl)
   "The reference's banner: `── scrolled back · N lines below · ↓ or esc to follow`,
 yellow, in the transcript's last row; esc and ↓ follow again, and only then does
