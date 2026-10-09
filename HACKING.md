@@ -53,6 +53,15 @@ encoded; `ms` is the eval's wall time.
 
 ## The other door: the `/lisp` pane
 
+**A *door* is this tree's word for a way IN — one entry point onto a surface, where
+two paths reach the same thing and only the spelling differs.** The socket above is one
+door onto the eval; this pane is the other. Neither is a frame, a call or a socket: it
+is a metaphor, and the tree uses it in two shades — *two doors onto one thing* (here,
+and `hack.lisp`'s `same door` for the eval), and *a door that may be open or closed to
+you* (the operator-call door is the daemon's list of tools a head is allowed to run for
+the person, and a pane's door is the one place its keys and its escape are named). A
+reader who has not been told this has to guess, which is why the sentence is here.
+
 The same surface is **in the head**, as a full-body screen: `/lisp` opens it (and
 toggles it shut), the composer is the prompt, Enter evaluates, ↑↓ walk the forms
 you have evaluated, and Esc goes back to the transcript. `/lisp FORM` is the
