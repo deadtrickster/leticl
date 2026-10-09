@@ -420,6 +420,51 @@ head runs today breaks without them.
   characters, not raw bytes — where 0x1c arrives and whether the interception can
   live in the driver is the first thing to measure.
 
+- [ ] **the reference's head-side mirrors from its 48-commit batch (2026-10-09)** —
+  the wire and the policy are ported (`06e0da9`, `c2a5605`: protocol 37's todo
+  author, the read-only seating of an older daemon, the list-derived child's
+  `stored_end`); what remains is head-side UI, each measured against this tree:
+
+  - [ ] **scrolled back, the turn's prompt stays pinned on the top row**
+    (`26b9e08`). The turn is found from the row at the TOP of the window,
+    walking back to the nearest row the operator wrote — the pin is the
+    question the VISIBLE answer answers, not the session's newest — drawn as
+    their row is drawn and cut to one line, covering the top row the way the
+    holding banner covers the bottom. Not drawn while the prompt itself is on
+    screen; a prompt above the rows a tail frame rendered has no span and is
+    pinned too.
+  - [ ] **a wheel notch renders before it steps, and a run of notches outpaces
+    a living stream** (`a950c6e`) — the fix is in `window.rs`'s render/step
+    order.
+  - [ ] **the count labels on the composer's edge are BUTTONS** (`9ac7dad`) —
+    a click on `1 subagent running` opens the subagents pane, `1 job running`
+    the jobs pane. This head already converts clicks for panes and rows; this
+    is the edge's own hit test.
+  - [ ] **a settling diff card is handed over on the row's body, not its
+    announcement** (`98a8f11`, the settle-flicker merge: a call is in one half
+    or the other, never neither, so a settling card's frames are identical).
+  - [ ] **a click on an edit opens its change in a popup** (`88b003d`): the
+    whole file, no editor chrome; and **the popup's scroll repaints its rows,
+    not the whole screen** (`6fb34d4`).
+  - [ ] **a redirected job's window is the file, even when a preamble reached
+    the capture** (`d234194`) — the jobs pane's tail.
+  - [ ] **`ctrl-e`: a real editor pane** (`a8f5e83`, `e38b82e`, `8e91a4b`,
+    `88b003d`) — ctrl-e puts the editor away and brings it back with its files
+    kept; on an empty prompt it opens on any file; and the pane wears the
+    head's frame rather than nano's. This is the `!term` project's sibling and
+    the same rectangle contract applies.
+  - [ ] **standing notes: the agent writes the notes it already reads**
+    (`1c9f3a4`, `35670ee`, `1be706b`) — a tool, so the wire is the tool table;
+    the head's notes pane is the surface, and every read must say the notes are
+    historical. Delivery moved to session open and every base rebuild, and
+    nowhere else.
+  - [ ] **a refused request compacts: the wall classified** (`03f0277`,
+    `08faf55`, `8590f2c`, `7eceda7`) — a provider's context-length refusal IS
+    the wall; the guard stands down the pre-emptive door only and survives the
+    restart; both automatic doors take the pre-turn check.
+  - [ ] **a model change during a retrying turn takes** (`12ade5e`) — daemon,
+    but the head's `/model` surface should say the turn continues.
+
 - [ ] **the merge queue pane** — the queue is DAEMON-LEVEL, not the session's: the
   snapshot carries none of it by design, and a head that wants the queue asks with
   `ListMergeQueue` and is answered by `MergeQueue` (the whole queue as of now);
