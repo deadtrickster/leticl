@@ -100,7 +100,16 @@ globals a frame reads.")
 
 ;;; ---------------------------------------------------------------- io ;;;
 (defun %send (head frame)
-  "Main thread only — the writer is single-threaded by construction."
+  "Main thread only — the writer is single-threaded by construction.
+
+**A READ-ONLY SEATING SENDS NOTHING, and this is where that is true for every path**
+(the operator's ruling, letibot `f6e66f0`): the composer, a decision card's answer, a
+secret, a pane's bytes, and the head's own seating asks all come through here, and a
+frame a 22 daemon has never heard of fails its deserialiser and ends the session. The
+REASON is said at the sites a person acts — `%submit-line` and the chord — and silently
+here, because a pane refetching on a timer is not a person to argue with."
+  (when (skew-locked-p)
+    (return-from %send nil))
   ;; ONE PLACE remembers that this head asked for a session. The daemon answers
   ;; a `NewSession` with a `Sessions` frame carrying `created`, and whether that
   ;; id is somewhere to GO or merely something to announce depends on who asked
@@ -114,6 +123,25 @@ globals a frame reads.")
       (error (e)
         (setf (head-connected head) nil)
         (say head (format nil "send failed: ~a" e))))))
+
+(defun attach-anyway (head)
+  "`ctrl-^` — *attach anyway, I know what this is.*
+
+**Nothing is re-sent.** The override does not reach back for whatever was refused while
+locked: a refused line was HELD in the composer, not queued, and re-sending a person's
+words after they have moved on is an act nobody asked for. What it does send are the
+reads the seating itself owes — the settings ask the Hello would have made — which the
+lock skipped on arrival: those are the head's own obligations, not the operator's, and
+lifting the lock is the moment they come due. Silent when nothing is locked, by the
+rule a chord is only named where it acts."
+  (when (skew-locked-p)
+    (let ((older (cdr *daemon-seat*)))
+      (setf *skew-override-seat* *daemon-seat*)
+      (%send head (make-settings))
+      (say head (format nil "attached anyway — this head now sends to a daemon speaking protocol ~d against its own ~d. The first frame the two do not share still ends the connection, with a `Bye` naming both builds; restarting the daemon is the fix."
+                        older +protocol-version+))
+      (setf (head-dirty head) t)
+      t)))
 
 (defun %reader-loop (head)
   "Socket → frames mailbox. EOF is detach, never abort (§13.2).

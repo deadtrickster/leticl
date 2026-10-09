@@ -27,6 +27,11 @@ text — which is what makes the ledger safe to forget about."
     ;; about what may run; the text is KEPT — it is the operator's, the composer is
     ;; untouched because nothing has been cleared yet, and their next move is to
     ;; take the command out of it.
+    ;; **A READ-ONLY SEATING REFUSES AND HOLDS** (see `skew-locked-p`): the words are
+    ;; kept in the composer, nothing leaves, and the sentence says why and what to do.
+    (awhen (skew-refusal-said)
+      (say head it)
+      (return-from %submit-line nil))
     (awhen (operator-line-refusal line)
       (say head it)
       (return-from %submit-line nil))

@@ -1,4 +1,4 @@
-;;;; protocol.lisp — the head frame vocabulary, protocol version 36.
+;;;; protocol.lisp — the head frame vocabulary, protocol version 37.
 ;;;; Source of truth: crates/sessionlog/src/protocol.rs. Frames are plists in
 ;;;; the image (PLAN.md §7, D4); the constructors below are the only place
 ;;;; that knows what a frame looks like on the wire.
@@ -11,13 +11,30 @@
 
 (in-package #:leticl)
 
-(defparameter +protocol-version+ 36
+(defparameter +protocol-version+ 37
   "The version this head announces at ATTACH, and the number is a CLAIM rather than a flag.
 
 The protocol's only compatibility check is EQUALITY at ATTACH, so a head that announces a
 version is saying *I know what those frames are* — and a head that announces a number it does
 not understand has traded a clear refusal for a mid-session surprise. So what 24, 25 and 27
 added is written down here rather than assumed:
+
+  · **37** is THE TODO AUTHOR'S THIRD VARIANT (letibot `38f10b0`): `TodoStatus`'s author,
+    spelled `by` on every `Todos` row and on `TodosUpdated`, gains `Parent <session-id>` —
+    a parent writes its child's board, and the child reads which of its rows it decided and
+    which it was told. The reference MOVED THE NUMBER for it and gives the reason in its own
+    words: `serde` has no catch-all on that enum and the author travels inside the frame, so
+    a 36 head meeting one fails to DECODE it and takes every row in the frame down with it —
+    mid-session, with no warning. Both sides say the mismatch by name at attach instead.
+
+      TodoBy is one bare string, and the three it may spell are `model`, `operator`, and
+      `Parent <session-id>` — not an object, so `sqlite3` reads the author as a word.
+
+    **This head never had the decode failure** — its `by` is whatever yason read, a string —
+    but the number is a CLAIM and not a flag (see the top of this docstring), so it steps with
+    the wire. What it must DO with the third word is in `repo-todo.lisp`: a parent's row is
+    not the operator's, and it is labelled in its own words rather than as the model's — the
+    false author this pane was measured telling once already.
 
   · **27** is THE COMPACTION'S OWN PROGRESS, and it is a NEW VARIANT rather than a defaulted
     field — so a 26 head meeting one mid-session fails to decode the frame, which is why the
@@ -164,6 +181,47 @@ they should expect to happen next."
                      The session can end on the next command the two do not share. ~
                      Restarting the daemon is the way to make them the same build."
                 daemon head))))
+
+(defvar *skew-override-seat* nil
+  "The seat on which the operator lifted the read-only seating, or NIL.
+
+A SEAT and not a boolean, because the override belongs to the daemon it was given on —
+a `Switch` keeps it (same process, same socket) and a REPLACED daemon re-locks (a
+different seat), which is the reference's own rule (`skew_override_for`).")
+
+(defun skew-locked-p ()
+  "Is this attach READ-ONLY because the daemon is from an older build?
+
+**THE OPERATOR'S RULING, REVERSING A STATED POLICY** (letibot `f6e66f0`, and the
+measurement behind it is theirs): a 17-day-old daemon speaking protocol 22 against a
+head's 36 — its warm KV costing minutes to rebuild — was killed by a bare `Bye` at the
+door. *'this is really sad, especially considering tui is newer'*, and then the rule:
+*'so ideally it would be like - connect, look around and make informed decision'*. The
+old gate did the opposite on the one half that could act; this puts the decision where
+the ruling puts it, with the person at the keyboard.
+
+**THE ASYMMETRY IS LOAD-BEARING and `protocol-skew-said` already argues it**: a NEWER
+daemon is a reading problem this head survives (unknown frames are said, counted,
+skipped) — nothing is disabled. An OLDER daemon is a WRITING problem: the first
+`ClientFrame` it has never heard of fails its deserialiser and it answers with a `Bye`
+and a closed socket. So an older daemon seats the head read-only — the conversation
+readable and scrollable, nothing leaving — until `ctrl-^` lifts it.
+
+Nothing here is a new wire shape: the `Hello` already carried the daemon's number, and
+the only change is whether a number is a refusal. The reference deliberately did NOT
+bump for it, and neither does this head."
+  (let ((proto (and (consp *daemon-seat*) (integerp (cdr *daemon-seat*)) (cdr *daemon-seat*))))
+    (and proto
+         (< proto +protocol-version+)
+         (not (equal *skew-override-seat* *daemon-seat*)))))
+
+(defun skew-refusal-said ()
+  "The sentence a refused act gets while the attach is read-only: the full informed
+skew sentence, and what to do about it. NIL when nothing is locked."
+  (when (skew-locked-p)
+    (format nil "~a Nothing was sent — this attach is read-only by default, and ctrl-^ attaches anyway."
+            (or (protocol-skew-said (cdr *daemon-seat*) +protocol-version+)
+                "this attach is read-only."))))
 
 (defun pid-word (pid)
   "`pid 1234`, or *a pid the kernel did not name* for NIL — never a pid of zero.

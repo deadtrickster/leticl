@@ -125,12 +125,37 @@ are richer (the whole task, the role, the answer) and the list cannot improve th
             (let ((id (getf brief :session-id)))
               (unless (find id (subagent-rows head)
                             :key (lambda (r) (getf r :session-id)) :test #'string=)
-                (push (list :session-id id
-                            :state (if (getf (getf brief :status) :running) "running" "")
-                            :prompt (or (getf brief :title) "")
-                            :answer nil :role ""
-                            :task "" :model (or (getf (getf brief :wiring) :model) ""))
-                      out)))))))
+                (let* ((running (getf (getf brief :status) :running))
+                       (live (getf brief :live))
+                       (stored (getf brief :stored-end))
+                       (kind (and (listp stored) (getf stored :kind)))
+                       (answered (and (stringp kind) (string= kind "answered"))))
+                  (push (list :session-id id
+                              ;; **HOW IT ENDED, IN WORDS, AFTER A RESTART** (letibot
+                              ;; `8eb9135`, the reference's own four-arm rule read off
+                              ;; `panes.rs`): generating is `running`; a last item that was
+                              ;; a finished assistant answer is `done`; a mid-turn last item
+                              ;; on a session nobody is attached to is `stopped mid-turn` —
+                              ;; three different facts that used to be one silence, and the
+                              ;; reader had no way to tell a child that answered from one
+                              ;; that died in the middle. Nothing at all is still nothing:
+                              ;; the list must not guess.
+                              :state (cond (running "running")
+                                           (answered "done")
+                                           ((and (stringp kind)
+                                                 (string= kind "mid_turn")
+                                                 (not live))
+                                            "stopped mid-turn")
+                                           (t ""))
+                              ;; and the answer itself when there is one to show: the first
+                              ;; line of its last words, which the fact line draws as the
+                              ;; row's last clause
+                              :answer (and answered (not running)
+                                           (getf stored :first-line))
+                              :prompt (or (getf brief :title) "")
+                              :role ""
+                              :task "" :model (or (getf (getf brief :wiring) :model) ""))
+                            out))))))))
     (nreverse out)))
 
 (defun subagents-stops (head)

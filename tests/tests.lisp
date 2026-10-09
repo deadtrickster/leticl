@@ -6047,6 +6047,120 @@ envelope's `session_id`, which is the parent's."
       (is (search "1 subagent running ─╮" (format nil "~{~a~}" edge))
           "and the edge pins it RIGHT and frames it, not hard against the ╭"))))
 
+(def-test an-older-daemon-seats-this-head-read-only (:suite leticl)
+  "**The operator's ruling, reversing a stated policy** (letibot `f6e66f0`, and the
+  measurement behind it is theirs): a 17-day-old daemon speaking protocol 22 against a head's
+  36 — its warm KV costing minutes to rebuild — was killed by a bare `Bye` at the door.
+  *'this is really sad, especially considering tui is newer'*, and then the rule: *'so ideally
+  it would be like - connect, look around and make informed decision'*.
+
+  The asymmetry is load-bearing: a NEWER daemon is a reading problem this head survives, so
+  nothing is disabled; an OLDER one is a WRITING problem — the first frame it has never heard
+  of fails its deserialiser and it answers with a `Bye` — so it seats the head READ-ONLY until
+  the operator says otherwise. Five claims: an older seat sends NOTHING (the gate is under
+  every path, not just the composer); a submit refuses and HOLDS the words with the sentence
+  and the chord named; `ctrl-^` lifts it, pays the seating's own ask, and says what it did;
+  a newer daemon is not locked at all; and the override belongs to the SEAT it was given on —
+  a replaced daemon is a different seat and re-locks."
+  (let ((h (%make-head))
+        (leticl::*daemon-seat* nil) (leticl::*skew-override-seat* nil)
+        (leticl::*daemon-protocol* nil) (leticl::*skew-said-pending* nil)
+        (leticl::*skew-last-said* nil))
+    (let ((sent (%fake-daemon h)))
+      ;; --- an OLDER daemon: locked, and the gate is under everything
+      (leticl::%handle-frame h (list :frame "hello" :protocol-version (- leticl:+protocol-version+ 1)
+                                     :session-id "s-1" :snapshot nil :sessions nil :wiring nil))
+      (is (leticl::skew-locked-p) "an older seat locks the head")
+      (leticl::%send h (make-list-jobs))
+      (is (null (funcall sent)) "**nothing leaves** — the gate is under %send, not the composer alone")
+      ;; --- a submit refuses and HOLDS
+      (setf (head-status-note h) nil
+            (composer-buffer (head-composer h)) "hello?")
+      (leticl::%submit-line h)
+      (is (string= "hello?" (composer-buffer (head-composer h))) "the words are held, not swallowed")
+      (is (search "read-only by default" (head-status-note h)) "and the refusal says so")
+      (is (search "ctrl-^" (head-status-note h)) "with the chord that lifts it named")
+      (is (null (funcall sent)) "still nothing on the wire")
+      ;; --- ctrl-^ lifts it, pays the seating's ask, and says what it did
+      (setf (head-status-note h) nil)
+      (leticl::%handle-key h (list :type :ctrl :ch (code-char (+ 96 30))))
+      (is (not (leticl::skew-locked-p)) "the overlay is lifted")
+      (is (member "settings" (mapcar (lambda (f) (getf f :frame)) (funcall sent)) :test #'equal)
+          "and the seating's own ask — skipped while locked — is now on the wire")
+      (is (search "attached anyway" (head-status-note h)) "the act is said, not silent"))
+    ;; --- a NEWER daemon disables nothing
+    (let ((h2 (%make-head))
+          (leticl::*daemon-seat* nil) (leticl::*skew-override-seat* nil)
+          (leticl::*daemon-protocol* nil) (leticl::*skew-said-pending* nil)
+          (leticl::*skew-last-said* nil))
+      (let ((sent (%fake-daemon h2)))
+        (leticl::%handle-frame h2 (list :frame "hello" :protocol-version (+ leticl:+protocol-version+ 1)
+                                        :session-id "s-1" :snapshot nil :sessions nil :wiring nil))
+        (is (not (leticl::skew-locked-p)) "a newer daemon is a reading problem, not a locked door")
+        (leticl::%send h2 (make-list-jobs))
+        (is (funcall sent) "and sends still go out"))))
+  ;; --- the override belongs to its seat: a replaced daemon re-locks
+  (let ((leticl::*daemon-seat* '(1234 . 20))
+        (leticl::*daemon-protocol* 20)
+        (leticl::*skew-override-seat* '(1234 . 20)))
+    (is (not (leticl::skew-locked-p)) "the seat it was given on is unlocked")
+    (setf leticl::*daemon-seat* '(5678 . 20))
+    (is (leticl::skew-locked-p) "and a DIFFERENT seat re-locks — the override is not a boolean")))
+
+(def-test a-child-rebuilt-from-the-list-says-how-it-ended (:suite leticl)
+  "The reference's own four-arm rule (letibot `8eb9135`, read off `panes.rs`): three
+  different facts that used to be one silence. Generating is `running`; a last item that was
+  a finished assistant answer is `done` — and the row can SHOW the answer's first line; a
+  mid-turn last item on a session nobody is attached to is `stopped mid-turn`, because a
+  child that died in the middle must not read as one that finished. Nothing at all stays
+  nothing: the list must not guess."
+  (let ((h (%make-head))
+        (leticl::*subagents-finished-open* t))
+    (setf (session-session-id (head-session h)) "s-parent"
+          (session-sessions (head-session h))
+          (list (list :session-id "s-answered" :title "the one that answered"
+                      :parent-session-id "s-parent" :live nil
+                      :status (list :running nil)
+                      :stored-end (list :kind "answered" :first-line "shipped it, tests green")
+                      :wiring (list :model ""))
+                (list :session-id "s-died" :title "the one that died"
+                      :parent-session-id "s-parent" :live nil
+                      :status (list :running nil)
+                      :stored-end (list :kind "mid_turn")
+                      :wiring (list :model ""))
+                (list :session-id "s-busy" :title "the one still going"
+                      :parent-session-id "s-parent" :live t
+                      :status (list :running t)
+                      :stored-end nil
+                      :wiring (list :model ""))))
+    (let ((rows (leticl::%subagents-all-rows h))
+          (text (lines-text (leticl::subagent-lines h 210))))
+      (is (equal "running" (getf (third rows) :state))
+          "a generating child is running, whoever is attached")
+      (is (equal "done" (getf (first rows) :state))
+          "and a finished answer is done — not a silence")
+      (is (equal "stopped mid-turn" (getf (second rows) :state))
+          "**and a child that died in the middle says so** — the fact the list could not tell before")
+      (is (some (lambda (l) (search "shipped it, tests green" l)) text)
+          "the answer's first line is on the row, so a reader sees WHAT it decided")
+      (is (some (lambda (l) (search "stopped mid-turn" l)) text)
+          "and the mid-turn child draws that word"))))
+
+(def-test a-parents-row-is-not-labelled-model (:suite leticl)
+  "Protocol 37's third author (letibot `38f10b0`): a parent writes its child's board, authored
+  `Parent <session-id-of-parent>` — the operator's own words. The reference's rule is
+  `mine = by == Operator`, so a parent's row is not the operator's; THIS pane also labels the
+  author on every row, and labelling a parent's row `model` would be the false author this
+  file was measured telling once already. The wire's own word is drawn."
+  (let ((model (leticl::%todo-item-lines (list :content "raised the timeout" :status "in_progress" :by nil) "model" nil))
+        (parent (leticl::%todo-item-lines (list :content "raise the timeout" :status "pending" :by "Parent s-1234") "Parent s-1234" nil)))
+    (is (search "— model" (format nil "~{~a~}" model))
+        "an absent author is the daemon's default and reads model")
+    (is (search "— Parent s-1234" (format nil "~{~a~}" parent))
+        "**and a parent's row names the parent** — not the model's")
+    (is (not (search "— model" (format nil "~{~a~}" parent)))
+        "never both words on one row")))
+
 (def-test children-the-events-never-mentioned-are-drawn-from-the-list (:suite leticl)
   "**FOUND LIVE, 2026-10-09: the rano head, four children running, the pane empty.**
 
@@ -7679,7 +7793,7 @@ like an answer to something nobody asked here."
                  (%slash-warning (%slash-detail "/tools" "a" "b" "c" "d")))
     (is (eq :slash (head-mode h)) "the pane is up")
     ;; a Hello for a DIFFERENT session
-    (leticl::%handle-frame h (list :frame "hello" :protocol-version 22
+    (leticl::%handle-frame h (list :frame "hello" :protocol-version leticl:+protocol-version+
                                    :session-id "s-2" :snapshot nil :sessions nil
                                    :wiring nil))
     (is (null *slash-out*) "the listing is gone")
@@ -8063,7 +8177,7 @@ note, which is the thing R24 is getting rid of."
                                                          :detail "stopping this turn" :ts 5))))))
       ;; a HELLO first, so the resync below is a reattach and not an attach
       (leticl::%handle-frame
-       h (list :frame "hello" :protocol-version 23 :session-id "s-r24" :head-id "h1"
+       h (list :frame "hello" :protocol-version leticl:+protocol-version+ :session-id "s-r24" :head-id "h1"
                :dropped 0 :sessions nil :wiring nil :resumed-from nil :scrubbed nil
                :snapshot (list :session-id "s-r24" :seq 899 :dropped 0 :items-dropped 0
                                :items nil :turn nil :open-decisions nil
@@ -8184,7 +8298,7 @@ counts them. **The log keeps them; the head does not have to open with them.**"
         (*snapshotted-sessions* nil)
         (h (%on-head :cols 96 :rows 24)))
     (leticl::%handle-frame
-     h (list :frame "hello" :protocol-version 23 :session-id "s-r19" :head-id "h1"
+     h (list :frame "hello" :protocol-version leticl:+protocol-version+ :session-id "s-r19" :head-id "h1"
              :dropped 0 :sessions nil :wiring nil :resumed-from nil :scrubbed nil
              :snapshot (%snapshot-with-warnings
                         (list (list :code "daemon_stopping" :detail "someone asked me to stop" :ts 1)
@@ -8227,7 +8341,7 @@ flag is a keyword the frame's own caller passes and not a property of the payloa
         (w (list :code "context_wall" :detail "the context is nearly full" :ts 5)))
     ;; the head meets the session: an attach, nothing planted
     (leticl::%handle-frame
-     h (list :frame "hello" :protocol-version 23 :session-id "s-r19b" :head-id "h1"
+     h (list :frame "hello" :protocol-version leticl:+protocol-version+ :session-id "s-r19b" :head-id "h1"
              :dropped 0 :sessions nil :wiring nil :resumed-from nil :scrubbed nil
              :snapshot (%snapshot-with-warnings (list w) :session-id "s-r19b")))
     (is (null (%warning-rows h)) "the attach plants nothing")
@@ -9882,6 +9996,14 @@ The pattern the picker tests use (`tests.lisp:1772`): the assertion is what went
 out ON THE WIRE, not what a function returned, because a frame that is built and
 never sent is the defect this whole document is about."
   (let ((wire (make-string-output-stream)))
+    ;; **A FRESH SOCKET IS A FRESH SEAT.** The seat and the read-only lock are properties of
+    ;; an ATTACH, and a test that puts a new stream where a socket would be has just attached
+    ;; to nobody: a seat left by an earlier test's `Hello` would lock a head that never met
+    ;; the daemon it describes (found the moment the lock landed — a fabricated `Hello` with
+    ;; a filler protocol number is now a MEANINGFUL old daemon).
+    (setf leticl::*daemon-seat* nil
+          leticl::*skew-override-seat* nil
+          leticl::*daemon-protocol* nil)
     (setf (leticl::head-stream head) wire (head-connected head) t)
     (lambda ()
       (nreverse (mapcar #'json-decode
@@ -10077,7 +10199,8 @@ wiped, `head_id`/`wiring`/`sessions`/title/`resumed_from` never read, the
 settings never asked for, and `*attach-started-ms*` never cleared — the attach
 cat walking forever over a head folding a backlog into a session whose id it had
 just forgotten."
-  (let* ((line "{\"frame\":\"hello\",\"protocol_version\":22,\"session_id\":\"s-1\",\"head_id\":\"h1\",\"dropped\":2,\"snapshot\":null,\"resumed_from\":42,\"scrubbed\":{\"deltas\":3,\"tool_progress\":1},\"wiring\":{\"model\":\"deepseek/deepseek-flash\",\"role\":\"main\"},\"sessions\":[{\"session_id\":\"s-1\",\"title\":\"the resumed one\"}]}")
+  ;; the wire line carries the CURRENT version: it is a fixture of an attach, not of a skew
+  (let* ((line (format nil "{\"frame\":\"hello\",\"protocol_version\":~d,\"session_id\":\"s-1\",\"head_id\":\"h1\",\"dropped\":2,\"snapshot\":null,\"resumed_from\":42,\"scrubbed\":{\"deltas\":3,\"tool_progress\":1},\"wiring\":{\"model\":\"deepseek/deepseek-flash\",\"role\":\"main\"},\"sessions\":[{\"session_id\":\"s-1\",\"title\":\"the resumed one\"}]}" leticl:+protocol-version+))
          (hello (json-decode line))
          (s (make-session))
          (*scrubbed-total* 0)
@@ -10655,7 +10778,7 @@ too, and through the SAME function, or the two paths retire different things."
       (setf (session-session-id (head-session h2)) "s-r16b"
             (head-queued h2) (list "second thing" "first thing"))
       (leticl::%handle-frame
-       h2 (list :frame "hello" :protocol-version 23 :session-id "s-r16b"
+       h2 (list :frame "hello" :protocol-version leticl:+protocol-version+ :session-id "s-r16b"
                 :head-id "h1" :dropped 0 :sessions nil :wiring nil
                 :resumed-from nil :scrubbed nil
                 :snapshot (%snapshot-with (list (%a-user-row "u1" "first thing")

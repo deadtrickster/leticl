@@ -114,6 +114,11 @@
     ;; GENERATION and the reader was asking about a CALL.
     ("interrupt_idle" . "nothing to do — no turn was generating")
      ("promote_idle" . "nothing to do — no command was running to background")
+     ;; **`promote_in_flight` names an act and not a fact** (R29): the request ARRIVED and
+     ;; the run's own wait loop takes it — so the note says where it went, which is the
+     ;; whole reason the code exists (the sentence it replaced said the request had been
+     ;; honoured while the run kept sleeping in the foreground).
+     ("promote_in_flight" . "the move is in flight — the run's own wait loop takes the request on its next half-second poll; nothing else is needed")
      ("cache_reuse_shortfall" . "nothing to do — the cache was reused less than the daemon hoped; /status has the numbers")
      ("fabric_refresh_failed" . "nothing can be done from here — the fabric did not refresh")
      ("flowy_not_seated" . "/flowy login [SEAT] attaches a seat; /flowy status shows whether one is held")

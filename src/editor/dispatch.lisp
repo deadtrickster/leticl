@@ -21,6 +21,15 @@ for the lists)."
       ((eq type :eof) (setf (head-running head) nil))
       ;; the secret card owns everything while it is up: a password field is
       ;; not a composer and must never leak into one
+      ;; **`ctrl-^` RUNS BEFORE EVERY CARD** (the reference's own placement): the
+      ;; read-only override must be reachable with a decision card, a secret or a
+      ;; prompt up, because a locked attach is exactly the situation a head is in
+      ;; before it has been allowed to ask anything. The byte is 0x1e — caret
+      ;; notation's `ctrl-^`, which the decoder spells `(:ctrl #\~)` by its
+      ;; `(+ 96 code)` rule — and it is silent when nothing is locked.
+      ((and (eq type :ctrl) (eql (getf key :ch) #\~))
+       (attach-anyway head)
+       t)
       ((head-secret-req head) (%secret-key head key type))
       ;; **THE PROMPT CARD ALSO OWNS ENTER** — when the operator's run is asking, Enter
       ;; sends the composer's content as `PromptAnswer` (protocol 33). Unlike the secret

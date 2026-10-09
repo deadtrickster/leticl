@@ -827,7 +827,23 @@ stops: the recorded index was the length before some pushes and after others."
       (dolist (item todos)
         (unless (or (string= (or (getf item :by) "") "operator")
                     (%todo-hidden-p item))
-          (dolist (line (%todo-item-lines item "model" nil))
+          ;; **THE ROW NAME ITSELF WHEN THE WIRE NAMED AN AUTHOR THIS BUILD DOES NOT KNOW**
+          ;; (protocol 37, letibot `38f10b0`: a parent writes its child's board, authored
+          ;; `Parent <session-id-of-parent>` — the operator's own words: *"yes - i want parent
+          ;; agents to be able to create todos for subagents. throught tree author - (Parent
+          ;; <session-id-of-parent>)"*). The reference's rule is `mine = by == Operator`, so a
+          ;; parent's row is simply not the operator's; this pane also LABELS the author, and
+          ;; labelling a parent's row `model` would be the false author this file already had
+          ;; measured once. Absent `by` is the daemon's default and reads `model`; anything else
+          ;; is drawn in its own word, as the wire spelled it — the same rule `%speaker-said`
+          ;; keeps for an unknown speaker, *a wrong colour is worse than none*.
+          (dolist (line (%todo-item-lines
+                         item
+                         (let ((by (getf item :by)))
+                           (if (or (null by) (string= by "") (string= by "model"))
+                               "model"
+                               by))
+                         nil))
             (emit line nil))))
       (when (and (null *operator-todos*) (null todos))
         (emit (list (cons "    none written yet. The model writes them with todo_write, and the row above adds one of yours."

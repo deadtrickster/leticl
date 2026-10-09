@@ -239,6 +239,14 @@ answered in the same place or not at all.")
     ;; flight; a receipt for the wait. Routine because the daemon said it would
     ;; stop and did.
     "daemon_stopping_runs"
+    ;; **`promote_in_flight`, from letibot `964c284`** ("a foreground run past a minute is
+    ;; told on, and ctrl-o reaches a run on the bang thread"). A background request for the
+    ;; operator's own run arrived while that run was in flight on its own thread; the
+    ;; sentence says where the request went — the run's wait loop takes it and moves the
+    ;; run — rather than the false *nothing was running to move*. ROUTINE because it is a
+    ;; receipt for a thing the operator asked for that worked: the defect it replaced was a
+    ;; note that claimed the request had been honoured when the run kept sleeping.
+    "promote_in_flight"
     ;; **`provider_key_saved`** — the operator saved a provider key; routine
     ;; because it is a receipt for a thing they asked for that worked.
     "provider_key_saved"

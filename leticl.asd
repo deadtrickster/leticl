@@ -3,7 +3,7 @@
 
 (asdf:defsystem #:leticl
   :description "Common Lisp head (TUI) for the letibot harness daemon"
-  :long-description "Speaks protocol 36 (NDJSON over a unix socket) to an
+  :long-description "Speaks protocol 37 (NDJSON over a unix socket) to an
 untouched Rust harnessd, renders with its own cell buffer and ANSI diff
 painter, and is a live image: a model can redefine its render path at runtime
 through an eval socket and see the change on the next frame."
