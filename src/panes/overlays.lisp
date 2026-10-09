@@ -162,23 +162,63 @@ keypress, saying `reading…`, rather than showing an empty screen for the answe
                           (diagnostic-listing-lines diag)))
   t)
 
+(defvar *prompt-away* nil
+  "The prompt card is put AWAY (esc) without the request being answered or the run
+ended. The request's presence and the card's visibility are TWO FACTS — the reference's
+own `prompt_away` — and the difference is the window the operator's `y` fell through
+(2026-10-09, measured: card away, bare line submitted, the words reached the MODEL while
+the operator's own command waited and was killed at its deadline).
+
+A `defvar` and not a head slot: pushed state, kept out of the frozen image's struct
+layout.")
+
 (defun prompt-card-lines (head cols)
   "The card for a run that is asking: the question and the two ways in. The
 composer IS the field (in the open — not masked, not a secret). Enter sends
-`PromptAnswer`; `!send LINE` always works (protocol 33)."
+`PromptAnswer`; `!send LINE` always works (protocol 33).
+
+**TWO CARDS, AND `reading` IS WHAT TELLS THEM APART** (the reference's `PromptReading`,
+`b0ff4f8`). The asking card is drawn when the daemon READ the run and saw it blocked;
+the UNREADABLE card — `reading: \"unreadable\"` — is the honest one for a run the daemon
+may not look at (one process of it belongs to another uid, so `/proc/<pid>/fd/0` is
+`EACCES`), and it must not borrow the asking card's headline: *your command is asking*
+would be exactly the guess the design refuses — a long quiet command that is asking
+nothing looks the same from here. The unreadable card says so, and that a line goes in
+either way."
   (let ((req (head-prompt-req head)))
-    (when req
+    (when (and req (not *prompt-away*))
       (let ((w (pane-width cols)))
-        (list nil
-              (list (cons "  the command is asking" '(:bold t)))
-              nil
-              (list (cons (format nil "  ~a"
-                                  (truncate-to-width (or (getf req :question) "")
-                                                     (max 8 (- w 4))))
-                          '(:fg :yellow)))
-              nil
-              (list (cons "  type the answer and press enter · !send LINE always works"
-                          '(:dim t))))))))
+        (if (string= (or (getf req :reading) "blocked") "unreadable")
+            ;; **THE CARD THE DAEMON COULD NOT BACK WITH A READING** — one sentence for
+            ;; the fact there is no reading, one for what the person can do about it
+            ;; (the same thing they would have done with a card that had read the
+            ;; process), the run named because the question cannot be.
+            (list nil
+                  (list (cons "  your command is running, and this daemon could not read it"
+                              '(:bold t)))
+                  nil
+                  (list (cons (format nil "  run: ~a"
+                                      (truncate-to-width
+                                       (or (getf req :command) "")
+                                       (max 8 (- w 4))))
+                              '(:dim t)))
+                  nil
+                  (list (cons "  I cannot tell whether it is waiting for a line — part of it belongs to another user, so I may not look at what it is doing. A line you type here goes into its input either way."
+                              '(:dim t)))
+                  nil
+                  (list (cons (format nil "  enter sends it · esc puts the card away · !send LINE also works~@[ · ~a~]"
+                                      (getf req :job))
+                              '(:dim t))))
+            (list nil
+                  (list (cons "  the command is asking" '(:bold t)))
+                  nil
+                  (list (cons (format nil "  ~a"
+                                      (truncate-to-width (or (getf req :question) "")
+                                                         (max 8 (- w 4))))
+                              '(:fg :yellow)))
+                  nil
+                  (list (cons "  type the answer and press enter · esc puts the card away · !send LINE always works"
+                              '(:dim t)))))))))
 
 (defun secret-ask-lines (head cols)
   "The password card — the reference's `secret_lines` (app.rs:7305-7327):

@@ -578,7 +578,11 @@ and a `hello` with a snapshot). Returns T when the queue moved."
          ;; the card is in the open, and the answer goes back as `PromptAnswer` (a line,
          ;; never a password — those have their own path through `SecretRequested`).
          ((:prompt-requested)
+          ;; **A NEW REQUEST BRINGS THE CARD BACK** — the daemon re-offers an unreadable
+          ;; run once per run (`apt` asks more than one question), and a re-offer must
+          ;; not arrive onto an away-state from the last one.
           (setf (head-prompt-req head) env
+                *prompt-away* nil
                 (head-dirty head) t))
          ;; **AND ITS SETTLEMENT CLOSES THE CARD.** `sent` says whether a line reached the
          ;; run; `by` is a person's identity or a sentence (the run ended with the card up,
@@ -589,6 +593,7 @@ and a `hello` with a snapshot). Returns T when the queue moved."
                      (equal (getf (head-prompt-req head) :req-id)
                             (getf env :req-id)))
             (setf (head-prompt-req head) nil
+                  *prompt-away* nil
                   (head-dirty head) t)
             (say head (if (getf env :sent)
                           (format nil "answer sent by ~a" (getf env :by))

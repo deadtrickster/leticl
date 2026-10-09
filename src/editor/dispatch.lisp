@@ -27,6 +27,18 @@ for the lists)."
       ;; card, the prompt does NOT own every key: the field is the composer itself, drawn
       ;; in the open, so typing, editing, and every other chord still work. Only Enter is
       ;; claimed, because that is the act of answering.
+      ;; **ESC PUTS THE CARD AWAY — and that is not answering it.** The request stays
+      ;; open and the run keeps waiting (the reference's `prompt_away`, `b0ff4f8`): the
+      ;; operator may want the transcript back while deciding, and the card is a window
+      ;; onto a request, not the request. While the request is open — card up or away —
+      ;; a bare line is HELD (see `%submit-line`), which is the window the operator's
+      ;; `y` fell through on the reference: card away, bare line submitted, the words
+      ;; reached the model while their own command waited and died at its deadline.
+      ((and (head-prompt-req head) (not *prompt-away*) (eq type :esc))
+       (setf *prompt-away* t
+             (head-dirty head) t)
+       (say head "the card is away — the request is still open, and a bare line is held until the run ends")
+       t)
       ((and (head-prompt-req head) (eq type :enter))
        (let* ((req (head-prompt-req head))
               (line (composer-buffer (head-composer head))))

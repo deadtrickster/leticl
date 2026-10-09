@@ -86,6 +86,53 @@ rebuilt: that list says whether a turn is generating and nothing about how a set
 ended."
   (not (member (or (getf row :state) "") '("running" "opening") :test #'string=)))
 
+(defun %subagents-all-rows (head)
+  "The pane's rows: the events' fold, then the list-derived strangers. ONE function,
+because stops, lines and the stop resolution must all see the same list — an enumeration
+over one list acting on another is the defect `todos-stops` names."
+  (append (subagent-rows head) (%list-derived-subagent-rows head)))
+
+(defun %list-derived-subagent-rows (head)
+  "Children of THIS session the events never mentioned, from the session list — or nothing.
+
+**THE FALLBACK THE REFERENCE'S PANE HAS AND THIS ONE LACKED** (found live, 2026-10-09: the
+rano head, four children running, the pane empty). A daemon that is REPLACED loses its
+registry — the registry is in memory — and the store keeps transcript rows, not
+`SessionEvent`s, so the replacement's view folds no `Subagent` events and its snapshot
+carries no children. Children that SURVIVED the restart (they are processes of their own)
+were adopted by the new daemon's task table without a new spawn, and a spawn is the only
+thing that publishes the event. Result: a head attached after the restart — any head, the
+reference included — has no events and no seed, and the pane is empty while four agents
+run. The reference's pane draws list-derived rows in exactly this case (*'a head then
+draws the list-derived rows it always did'*, view.rs); this is that half.
+
+**The list says less than the event, and the row says so.** `:running` in a brief is *a
+turn is generating in that session at this instant* — for a child parked on its own
+background job it is NIL while the child is perfectly alive, so a generating child is
+`running` (it is, right now) and everything else carries NO state word: `[?]` and *state
+unknown*, which is a fact about the host that was not watching, not an invented `done`.
+The title is the picker's derive_title — the task's first line, the best the list has.
+The model comes from the brief's wiring, which the child inherited or chose.
+
+Rows already known from an event or the snapshot seed are LEFT ALONE — the event's words
+are richer (the whole task, the role, the answer) and the list cannot improve them."
+  (let ((mine (session-session-id (head-session head)))
+        (out nil))
+    (unless (or (null mine) (zerop (length mine)))
+      (dolist (brief (session-sessions (head-session head)))
+        (let ((parent (getf brief :parent-session-id)))
+          (when (and parent (string= parent mine))
+            (let ((id (getf brief :session-id)))
+              (unless (find id (subagent-rows head)
+                            :key (lambda (r) (getf r :session-id)) :test #'string=)
+                (push (list :session-id id
+                            :state (if (getf (getf brief :status) :running) "running" "")
+                            :prompt (or (getf brief :title) "")
+                            :answer nil :role ""
+                            :task "" :model (or (getf (getf brief :wiring) :model) ""))
+                      out)))))))
+    (nreverse out)))
+
 (defun subagents-stops (head)
   "The rows the subagents pane's cursor may land on, in the order the pane draws them:
 the children still going first (in spawn order), then ONE `finished` group row when any
@@ -98,7 +145,7 @@ the defect `todos-stops` exists for and this pane now shares its rule.
 
 The children still going are NEVER pushed off the bottom by the finished ones, which is
 the whole point: the row the operator opened the pane to see is at the top."
-  (let* ((rows (subagent-rows head))
+  (let* ((rows (%subagents-all-rows head))
          (actives (loop for r in rows for i from 0
                         unless (%subagent-finished-p r) collect (cons :agent i)))
          (finished (loop for r in rows for i from 0
@@ -117,7 +164,7 @@ under it (NIL for the group row, which is a heading and not a child)."
          (stop (nth sel stops)))
     (values stop
             (and stop (eq (car stop) :agent)
-                 (nth (cdr stop) (subagent-rows head))))))
+                 (nth (cdr stop) (%subagents-all-rows head))))))
 
 (defun subagent-lines (head cols)
   "The subagent tree, the reference's own frame (rano's `SubagentsPane::content`):
@@ -142,7 +189,10 @@ Returns the lines and, as a second value, the LINE the cursor is on. Every stop 
 exactly two lines — the row and its fact line — which is also what the click conversion
 assumes (`per-row 2`), so a click on either half of either kind of stop is the same stop."
   (let* ((w (pane-width cols))
-         (rows (subagent-rows head))
+         ;; **THE UNION: the events' rows, then the list-derived ones the events never
+         ;; mentioned.** The derived rows sit AFTER the known actives because they are
+         ;; strangers with less to say — but they are drawn, which is the whole fix.
+         (rows (%subagents-all-rows head))
          (stops (subagents-stops head))
          (n (length stops))
          (sel (if (plusp n) (min (max 0 (head-picker-sel head)) (1- n)) 0))

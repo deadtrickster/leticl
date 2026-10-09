@@ -2509,6 +2509,83 @@ of, and a paste that arrives truncated is worse than one that is awkward."
         "four lines go in as they are")
     (is (null *paste-ledger*) "and nothing was remembered")))
 
+(def-test the-way-in-the-card-away-and-the-line-held (:suite leticl)
+  "**The reference's own measured defect (b0ff4f8, 2026-10-09):** `! sudo apt install mc` —
+  the password taken, `apt` at `Continue? [Y/n]` as root, `/proc/<pid>/fd/0` `EACCES` for the
+  daemon — and the `y` typed at the composer became a PROMPT that reached the MODEL while the
+  operator's own command waited and was killed at its deadline. Their words: *'sudo can get
+  input from here so can others'*.
+
+  Four claims: a bare line while the request is open is HELD (nothing sent, nothing queued as a
+  prompt, the words stay in the composer) with both doors NAMED; the verbs still work past the
+  hold (`!send y` goes to the command); esc puts the card AWAY without answering (the request
+  stays open, a new request brings the card back); and the UNREADABLE card is its own card —
+  *your command is asking* is exactly the claim it must not make, because one process of the
+  run belongs to another uid and a long quiet command asking nothing looks the same from here."
+  (let* ((h (%on-head :cols 90 :rows 24))
+         (wire (%wire h))
+         (leticl::*prompt-away* nil))
+    (flet ((ask (&key (reading "blocked"))
+             ;; the wire's shape: the event's NAME is a string and the fields ride the
+             ;; frame itself, beside it
+             (leticl::%handle-frame
+              h (list :frame "event" :seq 1 :event "prompt_requested"
+                      :req-id "r1" :job "j1"
+                      :command "sudo apt install mc"
+                      :question "Continue? [Y/n]"
+                      :reading reading))))
+      ;; --- the card up, a bare line held: the operator's own keystroke
+      (setf (composer-buffer (head-composer h)) "y")
+      (ask)
+      (leticl::%submit-line h)
+      (is (null (%sent wire)) "**the `y` is not spent** — not on the model, not on anything")
+      (is (string= "y" (composer-buffer (head-composer h))) "the words are held, not swallowed")
+      (is (search "`!send LINE` answers it" (head-status-note h))
+          "and both doors are NAMED — the verb, and the model when the run ends")
+      ;; --- the verbs are past the hold
+      (setf (head-status-note h) nil
+            (composer-buffer (head-composer h)) "!send y")
+      (leticl::%submit-line h)
+      (is (equal "send_line" (getf (first (%sent wire)) :frame))
+          "`!send y` still goes to the command — the hold is on bare lines only")
+      ;; --- esc puts the card away without answering; the request stays open; a re-offer
+      ;;     brings the card back
+      (setf (composer-buffer (head-composer h)) "")
+      (ask)
+      (leticl::%handle-key h (list :type :esc))
+      (is (eq t leticl::*prompt-away*) "esc put the card away")
+      (is (leticl::head-prompt-req h) "and ANSWERED nothing — the request is still open")
+      (is (null (leticl::prompt-card-lines h 90)) "the card draws nothing while it is away")
+      (let ((text (lines-text (leticl::prompt-card-lines h 90))))
+        (declare (ignore text)))
+      (ask)                                    ; the daemon re-offers: apt asks again
+      (is (null leticl::*prompt-away*) "a new request brings the card back")
+      (is (leticl::prompt-card-lines h 90) "and it draws")
+      ;; --- the UNREADABLE card is its own card
+      (ask :reading "unreadable")
+      (let ((text (lines-text (leticl::prompt-card-lines h 90))))
+        (is (some (lambda (l) (search "could not read it" l)) text)
+            "**the headline is the honest one** — the daemon could not read the run")
+        (is (notany (lambda (l) (search "the command is asking" l)) text)
+            "and NOT the asking card's claim, which is a guess about a process it may not look at")
+        (is (some (lambda (l) (search "run: sudo apt install mc" l)) text)
+            "the run is named, because the question cannot be")
+        (is (some (lambda (l) (search "goes into its input either way" l)) text)
+            "and the way in is offered anyway — the same door a read card would have named"))
+      ;; --- the asking card is unchanged for a read run
+      (ask :reading "blocked")
+      (let ((text (lines-text (leticl::prompt-card-lines h 90))))
+        (is (some (lambda (l) (search "the command is asking" l)) text)
+            "a blocked reading still draws the asking card")
+        (is (some (lambda (l) (search "Continue?" l)) text) "with the question it read"))
+      ;; --- and settlement closes the request and resets the away state
+      (setf leticl::*prompt-away* t)
+      (leticl::%handle-frame
+       h (list :frame "event" :seq 2 :event "prompt_settled"
+               :req-id "r1" :sent t :by "operator"))
+      (is (null (leticl::head-prompt-req h)) "settlement closes the request")
+      (is (null leticl::*prompt-away*) "and the away state goes with it"))))
+
 (def-test a-pasted-block-is-not-a-command (:suite leticl)
   "**MEASURED on the reference's own head, 2026-10-08:** a copied `operator_run_unreadable`
   notice — five lines, the first reading `! sudo apt install mc` — was submitted, and the

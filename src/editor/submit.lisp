@@ -30,6 +30,20 @@ text — which is what makes the ledger safe to forget about."
     (awhen (operator-line-refusal line)
       (say head it)
       (return-from %submit-line nil))
+    ;; **A BARE LINE WHILE THE OPERATOR'S OWN COMMAND WAITS IS HELD, NOT SPENT** (the
+    ;; reference's own measured defect, `b0ff4f8`, 2026-10-09: `! sudo apt install mc`,
+    ;; the password taken, `apt` at `Continue? [Y/n]` as root, the card put away — and
+    ;; the `y` typed at the composer became a PROMPT and reached the MODEL while the
+    ;; command waited and was killed at its deadline). Checked HERE, before any state
+    ;; is touched, so the words are HELD in the composer rather than cleared — the
+    ;; request's presence holds, not the card's visibility, and both doors are NAMED.
+    ;; The verbs are exempt BY SHAPE: a slash line, `!send` and a `!` command all begin
+    ;; with the one character that names them.
+    (when (and (head-prompt-req head)
+               (plusp (length line))
+               (not (member (char line 0) '(#\/ #\!) :test #'char=)))
+      (say head "your command's request is still open — `!send LINE` answers it, and a message goes to the model when the run ends")
+      (return-from %submit-line nil))
     ;; a blank Enter is not an entry: the reference never reaches its `take` on
     ;; one (editor.rs:319-325), and this head pushed BEFORE the empty check, so
     ;; every stray Enter put a blank line in the history to walk past

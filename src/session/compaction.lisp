@@ -511,6 +511,13 @@ the screen, and a count of what is hidden is the one count that may not be wrong
 
 (defparameter +events-not-folded-here+
   '(:explain :screen-requested :secret-requested :secret-settled
+    ;; the prompt card's two events, the same first kind as the secret's: the
+    ;; loop raises the card from `:prompt-requested` and closes it from
+    ;; `:prompt-settled`, and the folder has no card to raise. Found by the first
+    ;; test ever to send one (2026-10-09): every prompt event filed an *unknown
+    ;; event* row and bumped `*unreadable-total*`, so a live head raising the card
+    ;; was also alarming `⚠ unreadable 1` about a frame it reads perfectly well.
+    :prompt-requested :prompt-settled
     ;; R24 part two. The head RUNS the call and sends the result from the frame
     ;; path, because a run is an act and not a fold: it needs the socket, the
     ;; door and — if this head ever has fetchers — the network, none of which the
