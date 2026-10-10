@@ -106,10 +106,6 @@ the CHANGE; the file is named above it when the row knows its name."
                                 '(:dim t)))))))
       (append head-line body tail))))
 
-(defun awhen-edit-lines (edit cols)
-  "Both sides of an edit, as a real diff. See `edit-lines`."
-  (edit-lines edit cols))
-
 
 
 

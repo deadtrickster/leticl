@@ -17,40 +17,6 @@
 
 (in-package #:leticl)
 
-(defparameter *prefs-keys*
-  '("diff" "thinking" "tools" "raw_calls" "verbosity" "todo_template" "git_format")
-  "The keys THIS build owns, in THIS head's own file. Anything else is somebody else's — a
-newer build's, or the operator's — and is preserved verbatim.
-
-**Five, and `retired` is not one of them (R24).** `retired` was the odd one out: the others are
-choices about how the head DRAWS, and it was a memory of what the reader has already read. R19
-part 3 put it here because this file has the right lifetime — it has to outlive the process —
-and the requirement then moved it to the file EVERY head writes (`~/.config/letibot/head.toml`),
-so that a dismissal made in either head is honoured by both: a set in two files is a set that
-disagrees with itself. See `load-retired-into`.
-
-**`verbosity` is the fifth and it belongs here rather than in the shared file** (R42's sibling,
-letibot's `1da8f08`). Two reasons, and the second is a measurement rather than a preference: the
-rung is a drawing choice like the folds, and **the two heads spell R37's rung with two different
-words** — this head's `reading`, letibot's `conversation`. Writing this head's word into the file
-letibot reads would put a value IT cannot read in front of it on every start, and letibot reports
-an unknown value by name and leaves it in the file — so the bug would be permanent and visible on
-their screen. The shared `retired` line is different: its keys are opaque text both heads keep
-without parsing. `verbosity-for-word` still READS letibot's word, so a file either head wrote is
-understood here.")
-
-;;; A PLIST, not a struct, and this is a live-update decision rather than a
-;;; stylistic one. `defstruct` is SKIPPED by `tui-eval --file` because a changed
-;;; struct layout is a hard error in this SBCL, so a struct defined here could
-;;; never reach a head that started before this file existed — S5 would have
-;;; needed a restart, which is the one thing a live head must not need. Measured:
-;;; pushing this file to a head without it left `make-prefs` undefined.
-;;;
-;;; It is also this repo's own convention. PLAN.md D4: state is plists all the
-;;; way down, so a model hacking a live head inspects exactly what it has. The
-;;; reference uses a Rust struct because Rust has no other option; the fields
-;;; are the same four, under the same four names.
-
 (defparameter *prefs-defaults*
   (list :diff "split"        ; `split` (two panels) or `unified` always — the
                              ; toggle is the whole choice; the width is the

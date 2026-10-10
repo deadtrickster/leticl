@@ -45,30 +45,6 @@ settlement's closing promise are different things that sit in the same place."
   (and (stringp text)
        (some (lambda (p) (uiop:string-prefix-p p text)) +notice-prefixes+)))
 
-(defun %notice-agent-task (text)
-  "The subagent's own task, for a `[task]` notice — the first line the daemon titled it with.
-
-**Looked up rather than parsed out of the notice**, because the notice does not carry it: the fact line
-is `<id> done: <what it answered>`, and what it was ASKED lives on the subagent row (`:prompt`, which is
-`derive_title(prompt)` — the task's first line — the same string the subagents pane draws as its title,
-so the two surfaces cannot disagree). `*payload-head*` is the head the row is being drawn for, bound in
-`%viewport-lines` where rows are drawn; a render with no head bound answers NIL and the field is simply
-absent rather than wrong."
-  (let* ((facts (multiple-value-bind (o f r) (%job-notice-parts text)
-                  (declare (ignore o r)) f))
-         ;; **THE ID IS ON THE FACT LINE, not in the opening sentence.** The opening reads `a subagent
-         ;; you started has finished:`, whose second word is `subagent` — measured, and the first
-         ;; version of this took exactly that. The fact line is `\`s-…\` done: …`, so the id is its
-         ;; first token with the daemon's backticks off.
-         (first-fact (first facts))
-         (id (and first-fact (subseq first-fact 0 (or (position #\space first-fact)
-                                                      (length first-fact)))))
-         (row (and id *payload-head*
-                   (find (remove #\` id)
-                         (ignore-errors (subagent-rows *payload-head*))
-                         :key (lambda (r) (getf r :session-id)) :test #'string=))))
-    (and row (getf row :prompt))))
-
 (defun %job-notice-parts (text)
   "TEXT split into `(values OPENING FACTS REST)`.
 
@@ -89,21 +65,6 @@ with `- ` after trim, and everything after them is the closing sentence."
     (values opening
             (mapcar (lambda (l) (string-left-trim " -" l)) facts)
             (string-trim " " (format nil "~{~a~^ ~}" rest)))))
-
-(defun %notice-counts (text)
-  "How many JOBS and how many SUBAGENTS TEXT reports — counted per group, by the daemon's own headings.
-
-**A heading counts none of its own facts**: `[job] 3 jobs you backgrounded have ended:` is ONE
-opening line and THREE settlements under it, so counting the openings read *1 job ended (j12, j15,
-j19)* for a batch of three — measured on the first run of this. A heading (`[job] `/`[task] `) starts a
-group and each `- ` line under it is one settlement of that kind."
-  (let ((jobs 0) (tasks 0) (kind nil))
-    (dolist (line (uiop:split-string text :separator '(#\newline)))
-      (cond ((uiop:string-prefix-p "[job] " line) (setf kind :job))
-            ((uiop:string-prefix-p "[task] " line) (setf kind :task))
-            ((uiop:string-prefix-p "- " (string-left-trim " " line))
-             (case kind (:job (incf jobs)) (:task (incf tasks)) (t nil)))))
-    (values jobs tasks)))
 
 (defun %notice-card-lines (text)
   "The notice as ROWS — the parts the operator asked to see, each on its own line.
@@ -163,66 +124,6 @@ lookup keyed on the whole text would answer the first fact's task for every one 
                   (find id (ignore-errors (subagent-rows *payload-head*))
                         :key (lambda (r) (getf r :session-id)) :test #'string=))))
     (and row (getf row :prompt))))
-
-(defun %job-notice-facts (text)
-  "The settlement's facts as ONE line — `j152 killed by job_kill after 27.6s, wrote 15 bytes`.
-
-**Built from the daemon's own sentence and not from a summary of it**, which is R37's ladder
-applied to a second surface: the source that costs nothing is the one already computed, and a
-settlement arrives with the job, its ending, its duration and its byte count already spelled out.
-The backticks go because they are markdown for the MODEL — the reader is looking at a rendered
-screen, not at the prompt.
-
-**A model was offered for this and is not needed**, and the measurement is the reason: every fact
-the reader wants is in this line before anything reads it. That is worth writing down because *a
-model could summarize it* is the shape of answer that adds a latency and a failure mode to a path
-that has neither."
-  (let* ((facts (multiple-value-bind (o f r) (%job-notice-parts text)
-                  (declare (ignore o r)) f))
-         ;; **the backticks are REMOVED, not blanked.** `substitute` put a space where each one was,
-         ;; which read ` j152  killed by job_kill` — two spaces for every quote, measured on the
-         ;; first run of this. They are markdown for the MODEL; the reader is looking at a
-         ;; rendered screen.
-         (one (mapcar (lambda (f)
-                        (string-trim " "
-                                     (remove #\` (string-trim " " f))))
-                      facts)))
-    (cond ((null one) nil)
-          ;; **AN AGENT'S NOTICE NAMES THE AGENT AND WHAT IT WAS ASKED.** A job's one-liner is the
-          ;; daemon's own fact and needs nothing added; a subagent's reads `<id> done: <answer>`, and
-          ;; the operator's shape for it is `Agent <id> · <task> · <result>` — the task being the one
-          ;; field the notice does not carry, which is why it is looked up (see `%notice-agent-task`)
-          ;; rather than parsed. The daemon's `done:` is kept verbatim: it is their word for it, and a
-          ;; second spelling here is another thing that can drift.
-          ((= 1 (length one))
-           (let ((fact (first one)))
-             (if (eq :task (%notice-kind text))
-                 (format nil "Agent ~a · ~@[~a · ~]~a"
-                         (short-id (subseq fact 0 (or (position #\space fact) (length fact))))
-                         (%notice-agent-task text)
-                         fact)
-                 ;; **THE NOUN IS HERE, AND NOWHERE ELSE.** A job's fact is the daemon's sentence;
-                 ;; naming it is this function's business, because a CALLER that prefixed its own
-                 ;; noun produced `Job 1 job and 1 subagent finished ended (…)` on the operator's
-                 ;; screen for a coalesced row — the branch below.
-                 (format nil "Job ~a" fact))))
-          ;; **SEVERAL NOTICES IN ONE ROW, AND THEY ARE NOT ALL JOBS.** The daemon coalesces notices
-          ;; that arrive together, so this branch sees a mixed row: measured on the operator's screen,
-          ;; `2 jobs ended (j66, s-…-sub-…)` — a subagent called a job by a line that counted the two
-          ;; openings in a row that had one of each. The count is of the OPENINGS, which are the
-          ;; daemon's own words, so the sentence cannot be wrong about what settled.
-          ;; **COMPLETE SENTENCES, BECAUSE NOTHING IS PREPENDED TO THEM ANY MORE.** The measured defect
-          ;; was `Job 1 job and 1 subagent finished ended (…)`: one caller added a noun while another
-          ;; added `ended` to a phrase that had already said `finished`. One writer, one sentence.
-          (t (multiple-value-bind (j k) (%notice-counts text)
-               (let ((ids (format nil "(~{~a~^, ~})"
-                                  (mapcar (lambda (f) (subseq f 0 (or (position #\space f)
-                                                                      (length f))))
-                                          one))))
-                 (cond ((and (plusp j) (plusp k))
-                        (format nil "~d job~:p and ~d subagent~:p finished ~a" j k ids))
-                       ((plusp k) (format nil "~d subagent~:p finished ~a" k ids))
-                       (t (format nil "~d job~:p ended ~a" j ids)))))))))
 
 (defun %job-notice-rows (text)
   "The daemon's notice as rows a reader can OPEN — R41's own vocabulary, verbatim.

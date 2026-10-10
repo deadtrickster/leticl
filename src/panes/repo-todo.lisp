@@ -448,15 +448,6 @@ worst case is one lost edit."
                    (t (values nil why)))))
            (error (e) (values nil (format nil "TODO.md could not be written: ~a" e))))))))
 
-(defun repo-todo-lines (workspace)
-  "The repo's TODO.md as plain lines, for callers that want text. The pane uses
-`repo-todo-rows-cached`; this stays for the rest."
-  (mapcar (lambda (row) (format nil "~a~@[~a ~]~a"
-                                (make-string (getf row :indent) :initial-element #\space)
-                                (case (getf row :mark) (:done "[x]") (:doing "[~]") (:open "[ ]"))
-                                (getf row :text)))
-          (repo-todo-rows workspace)))
-
 (defvar *repo-todo-open* nil
   "Whether the repo item under the cursor is UNFOLDED — the reference's
 `repo_open`, one flag beside one cursor.
@@ -541,13 +532,6 @@ error."
      (when (and detail open (getf row :item))
        (mapcar (lambda (l) (list (cons (format nil "~a        ~a" pad l) '(:dim t))))
                detail)))))
-
-(defun repo-todo-stops (rows)
-  "The indices of the ITEMS in ROWS — where the todos cursor may stop.
-
-Headings roll up the rows beneath them and have nothing to unfold, so the cursor
-skips them: the reference's `stops` (app.rs:3268)."
-  (loop for r in rows for i from 0 when (getf r :item) collect i))
 
 (defun %todo-item-lines (item author show-detail &optional here (number nil))
   "ITEM as the pane's lines: the mark, the words, and whose they are — plus the description under

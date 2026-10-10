@@ -311,9 +311,3 @@ of its own — the reasoning pane's dim italic."
     ;; trailing blanks off
     (loop while (and out (null (first out))) do (pop out))
     (nreverse out)))
-
-(defun pad-to (string width)
-  (let ((w (string-width string)))
-    (if (< w width)
-        (concatenate 'string string (make-string (- width w) :initial-element #\space))
-        string)))

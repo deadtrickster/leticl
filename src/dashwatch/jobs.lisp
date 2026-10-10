@@ -206,12 +206,6 @@ has not moved."
      *dash-sinks*)
     (nreverse rows)))
 
-(defun dash-watcher-count ()
-  "How many watchers are running, for the pane's heading."
-  (let ((n 0))
-    (maphash (lambda (k w) (declare (ignore k w)) (incf n)) *dash-watchers*)
-    n))
-
 (defun dash-watchers-reset ()
   "Forget every watcher and sink, and stop their samplers. The suite's door; a live reload does NOT
 do this, because a reload must not throw away a running watcher's history."

@@ -147,7 +147,8 @@ unknown speaker can name itself in the same place."
              ;;
              ;; Every one of those facts is ALREADY IN THE DAEMON'S OWN SENTENCE — the job, how it
              ;; ended, how long it ran, how many bytes it wrote and its command (see
-             ;; `%job-notice-facts`) — so the line costs nothing and is true by construction. That
+             ;; `%notice-card-lines`, which is what draws it) — so the line costs nothing and is
+             ;; true by construction. That
              ;; is R37's ladder on a second surface, and it is why no model is in the path: a
              ;; summary would be a slower, lossier spelling of what arrived spelled out.
              ;;
@@ -225,9 +226,9 @@ part that is not text is NAMED rather than skipped — `[image image/png]`,
 attached image was a message the operator could see they had sent and could not
 see they had attached anything to.
 
-`item-display-text` (session.lisp) still does the old concatenation; it feeds
-search and the pane summaries, and it is another strand's file. The RENDERING
-reads this one."
+`item-display-text` (session.lisp) joined the parts with NOTHING, so two parts
+were one word; it feeds search and the pane summaries, and it is another
+strand's file. The RENDERING reads this one."
   (format nil "~{~a~^ ~}"
           (mapcar (lambda (p)
                     (switch ((or (getf p :kind) "text") :test #'string=)

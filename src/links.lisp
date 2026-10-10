@@ -232,15 +232,6 @@ wants the link."
   (when style
     (loop for (k v) on style by #'cddr unless (eq k :link) append (list k v))))
 
-(defun links-said ()
-  "The sentence about what a link IS, for `/help` and for the row that files this.
-
-**Nothing here promises what a click does**, and that is deliberate: an OSC 8 asks the terminal to
-make the text clickable, and the terminal hands a `file://` URL to whatever this desktop has
-registered for it. Whether that is an image viewer is the operator's configuration and not this
-head's to state — so the head says *this path is a link*, and stops."
-  "an image path is a link — what opens it is your terminal's, not this head's")
-
 ;;; =============================================================== the fence ;;;
 ;;;
 ;;; **THE ONE THING THAT MUST STAY TRUE**, kept beside the escapes it is about so it cannot be

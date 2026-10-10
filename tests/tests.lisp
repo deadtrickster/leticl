@@ -12047,11 +12047,6 @@ the C1 range (`0x9B` is 8-bit CSI)."
                  (<= #x80 (char-code c) #x9f))
           collect (cons i (char-code c))))
 
-(defun %segments-of (lines)
-  "SEGMENT LINES as one string, so a whole row can be swept with one call."
-  (format nil "~{~a~^~%~}"
-          (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l))) lines)))
-
 (defparameter +§3-1-payloads+
   (list (format nil "~C[31mred~C[0m" #\Esc #\Esc)          ; an SGR pair
         (format nil "~C[?1002h" #\Esc)                      ; mouse reporting
@@ -19580,8 +19575,6 @@ the operator's, in their words:
                        texts))
             "the sentence's last words appear once, on the counts' row and not on one of their own")))))
 
-(defun %blank-line-p (s) (every (lambda (ch) (char= ch #\space)) s))
-
 ;;; ------------------- the counts' room, and what gives way when it is tight ----------------- ;;;
 ;;;
 ;;; **The operator's own report, and it is the requirement:** *"when in conversatoin mode we add this
@@ -19618,17 +19611,6 @@ that is a function of how many digits the run produced."
          collect (list :item-id (format nil "r~d" i) :kind "reasoning" :ts 0
                        :item (list :type "reasoning" :text "thinking about it")))))
 
-(defun %counts-marker-text (calls thinking cols &optional newest)
-  "The marker a run of CALLS and THINKING draws at COLS, as one string.
-
-**With the seam ON**, because the ladder this is used to check spends the seam as well as the counts
-and its last rungs are about which of the two gives way first. The seam is a preference and its
-default is OFF — `the-marker-seam-is-hidden-unless-asked-for` is the test for that, and this is the
-one for the ladder."
-  (let ((leticl::*marker-seam* t))
-    (format nil "~{~a~}"
-            (mapcar #'car (leticl::hidden-run-marker (%counts-run-items calls thinking) cols newest)))))
-
 (defun %counts-head (calls thinking)
   "A hundred-column head whose narration is followed by a run of CALLS and THINKING."
   (let ((h (%on-head :cols 100 :rows 40)))
@@ -19645,17 +19627,6 @@ one for the ladder."
                         :item (list :type "assistant" :text "and the conclusion is X"))))
            'vector))
     h))
-
-(defun %counts-narration-row (calls thinking)
-  "The NARRATION row's lines, as text, from a head whose run is CALLS and THINKING rows long."
-  (let ((leticl::*verbosity* :reading) (leticl::*scroll-anchor* nil)
-        (leticl::*hist-cache* nil) (leticl::*hist-generation* 0)
-        (leticl::*hidden-run-open* nil) (leticl::*marker-seam* t))
-    (let* ((rows (mapcar (lambda (l) (if (consp l) (format nil "~{~a~}" (mapcar #'car l)) ""))
-                         (leticl::%viewport-lines (%counts-head calls thinking) 100 40)))
-           (at (position-if (lambda (s) (search "Now here is" s)) rows))
-           (end (or (position "" rows :start (1+ at)) (length rows))))
-      (subseq rows at end))))
 
 (def-test the-marker-steps-down-its-ladder-to-fit-the-last-line (:suite leticl)
   "**The ladder is what pays, and the SENTENCE is never what gives way.**

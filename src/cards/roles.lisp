@@ -181,10 +181,6 @@ row at the bottom of every open card, against letibot's screen."
         (butlast rows)
         rows)))
 
-(defun %payload-line-count (payload)
-  "How many lines PAYLOAD is, which is the number the fold marker counts."
-  (length (%payload-lines payload)))
-
 (defun %sgr-to-style (params)
   "SGR parameter string → a style plist, or NIL for the reset (no style).
 

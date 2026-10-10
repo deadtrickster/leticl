@@ -39,8 +39,10 @@
   · **the format is applied ON THE READER THREAD, never in a paint** — a mistyped template or a
     preference function this build lacks is then a bad line rather than a header that fails to
     draw;
-  · the preference is `git_format` in this head's own file: add it to `*prefs-keys*` and
-    `*prefs-defaults*`, an accessor pair, one load arm and one save arm — the load arm needs the
+  · the preference is `git_format` in this head's own file: add it to `*prefs-defaults*` and the
+    load/save arms in `src/prefs/notes.lisp` (`*prefs-keys*` was a fourth list to keep in step
+    and nothing read it — deleted 2026-10-11, so the arms are the only place), an accessor pair,
+    one load arm and one save arm — the load arm needs the
     quoted-string handling `todo_template` has.
 
   **Where it stopped**: the core was written into `src/chrome.lisp` and then reverted, because

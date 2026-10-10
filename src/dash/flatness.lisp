@@ -206,18 +206,6 @@ is there (not absent), and it is **present and non-zero** (not idle) — and it 
 `flat` would make every plateau look the same size."
   (and finding (format nil "flat ~a" (duration (max 0 (floor (getf finding :held-ms)))))))
 
-(defun dash-plateaued (&optional (now *now-ms*))
-  "Every series that has stopped moving — the list a frame surfaces without being opened.
-
-**ATTENTION, NOT DISPLAY.** With eleven dashboards the operator does not want eleven sparklines;
-they want to know which ones stopped. A frame that requires reading every panel to find the stuck
-one has moved the work rather than done it.
-
-NOW is a parameter for the reason every other clock question here takes one: a frame and a test must
-be able to ask *as of this instant* rather than as of whenever `*now-ms*` was last set."
-  (loop for name being the hash-keys of *dash-series*
-        when (dash-plateau-p name now) collect name))
-
 (defun dash-flatness-said (name &optional (now *now-ms*))
   "`flat 3h` for NAME when it is flat, or NIL — **and NIL means a panel says its own thing instead**,
 which is serenedash's `views.py`: *\"Orphaned beats flat … That is a reclaimable number, which is

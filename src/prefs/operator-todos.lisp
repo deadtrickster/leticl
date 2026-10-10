@@ -127,21 +127,3 @@ must not be saved over, or a permissions error costs the operator the list it co
     (t (handler-case (values (text->operator-todos (uiop:read-file-string path)) t)
          (error () (values nil nil))))))
 
-(defun persist-operator-todos (items &optional (path (operator-todos-path)))
-  "Write ITEMS to PATH through a RENAME, answering T when it wrote.
-
-**The rename is the one structural rule copied from the notes writer**: a partial file left by an
-interrupted write is a list the operator did not author, and the next read would take it for one.
-`write-temp` + `rename` is atomic here, so a reader sees the old list or the new one, never half."
-  (when path
-    (handler-case
-        (progn
-          (ensure-directories-exist path)
-          (let ((tmp (format nil "~a.tmp" path)))
-            (with-open-file (out tmp :direction :output :if-exists :supersede
-                                     :external-format :utf-8)
-              (write-string (operator-todos->text items) out))
-            (rename-file tmp path)
-            t))
-      (error () nil))))
-

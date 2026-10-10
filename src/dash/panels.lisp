@@ -80,14 +80,6 @@ prevent. A caller that wants a placeholder writes `(or (dash-bytes x) the dash)`
                              (format nil "~,1f~a" n u))))
                (setf n (/ n 1024))))))
 
-(defun dash-bytes-at (base per sec)
-  "BASE bytes plus a growth RATE, which is what makes a storage panel actionable: the number
-alone cannot tell filling from full."
-  (cond ((and per (plusp (abs per)))
-         (format nil "~a ~a~a/~a" (dash-bytes base) (if (plusp per) "+" "-")
-                 (dash-bytes (abs per)) (if sec (duration (* 1000 sec)) "s")))
-        (t (dash-bytes base))))
-
 (defun dash-rate (n &optional (unit "tok/s"))
   "A rate, or NIL when nobody measured one. **NOT ZERO** — `0 tok/s` is a claim, and the same
 distinction serenedash draws between a publisher that is quiet and one that is dead."
@@ -107,8 +99,6 @@ is the one place a silent version of this would have printed a plausible wrong n
     (if (zerop digits)
         (format nil "~d%" (round (* 100.0 (float frac))))
         (format nil "~,vf%" digits (* 100.0 (float frac))))))
-
-(defun dash-counter (n) (thousands (round (or n 0))))
 
 (defun dash-spark-band (frac)
   "Which of the eight block glyphs a fraction occupies.

@@ -125,11 +125,3 @@ end, and `/gate recent`'s rows are sentences, so a cut line costs the reason."
     (push (list (cons "    esc closes · up/down scrolls" '(:dim t))) out)
     (nreverse out)))
 
-(defun slash-out-row-count (head)
-  "How many rows the listing has for its arrows to walk — 0, and that zero is the
-same fact `peek-row-count` records: this pane has no CURSOR, so Up and Down scroll it.
-`pane-row-count` answering a positive number here would clamp a cursor to rows nobody
-can select and leave the pane unscrollable."
-  (declare (ignorable head))
-  0)
-
