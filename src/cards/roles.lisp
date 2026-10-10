@@ -202,10 +202,16 @@ row at the bottom of every open card, against letibot's screen."
     (dolist (c codes)
       (case c
         ((0) (setf style nil))
-        ((1) (push :bold style))
-        ((2) (push :dim style))
-        ((3) (push :italic style))
-        ((4) (push :underline style))
+        ;; **A BARE KEYWORD IS NOT A PLIST, AND THIS PUSHED FOUR OF THEM.** `(push :bold style)`
+        ;; made the list `(:bold (:fg :red) …)`, and `(apply #'append …)` below then either
+        ;; returned the keyword itself (one code) or signalled — `(append :bold '(:dim t))` is
+        ;; *:BOLD is not of type LIST* — while every caller passes the result on as a style to
+        ;; `truncate-to-width`/`wrap-segments` and a row with any SGR bold or dim took the whole
+        ;; frame down. Found by the cards reviewer, 2026-10-11; `%paint-line` had no test.
+        ((1) (push '(:bold t) style))
+        ((2) (push '(:dim t) style))
+        ((3) (push '(:italic t) style))
+        ((4) (push '(:underline t) style))
         ;; fg colours: 30-37 standard, 90-97 bright
         ((30) (push '(:fg :black) style))
         ((31) (push '(:fg :red) style))
@@ -223,7 +229,11 @@ row at the bottom of every open card, against letibot's screen."
         ((95) (push '(:fg :bright-magenta) style))
         ((96) (push '(:fg :bright-cyan) style))
         ((97) (push '(:fg :bright-white) style))
-        ((39) (setf style (remove '(:fg) style :key #'car :test #'eq)))
+        ;; **39 IS `remove-if`, NOT `remove`** — the keys here are the PLISTS' cars, and the test
+        ;; compared the KEYWORD `:fg` against the list `(:fg)`, which is never `eq`: `ESC[39m`
+        ;; therefore never reset a colour, and `31;39` came back as `(:fg :red)`. Found by the
+        ;; cards reviewer, 2026-10-11.
+        ((39) (setf style (remove-if (lambda (s) (and (consp s) (eq (car s) :fg))) style)))
         ;; everything else: dropped
         (t nil)))
     (apply #'append (nreverse style))))

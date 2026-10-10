@@ -3606,6 +3606,29 @@ and the decision line would have been the second copy")
 
 ;;; ------------------------------------------------------- mouse click (P27) ;;;
 
+(def-test sgr-bold-and-dim-become-a-plist-and-39-resets-the-colour (:suite leticl)
+  "**`%sgr-to-style` PUSHED BARE KEYWORDS**, and the result went straight on as a STYLE: `(push
+  :bold style)` made the list `(:bold (:fg :red) …)`, and `(apply #'append …)` then either returned
+  the keyword itself or signalled — `(append :bold \'(:dim t))` is *:BOLD is not of type LIST* —
+  while every caller hands the result to `truncate-to-width`/`wrap-segments`. A row carrying any SGR
+  bold or dim took the whole frame down, and `%paint-line` had no test at all (cards reviewer,
+  2026-10-11).
+
+  And the reset: the `39` arm compared the keyword `:fg` against the LIST `(:fg)` with `eq`, which is
+  never true, so `ESC[39m` never reset a colour and `31;39` came back as `(:fg :red)` — a row that
+  asked for the terminal's default foreground kept the one it had."
+  (is (equal '(:bold t :fg :red)
+             (leticl::%sgr-to-style "1;31"))
+      "**bold and a colour are ONE plist** — not a keyword followed by a list")
+  (is (equal '(:dim t) (leticl::%sgr-to-style "2")) "dim alone is a plist too")
+  (is (null (leticl::%sgr-to-style "31;39"))
+      "**39 drops the foreground it set** — a row that asked for the terminal's default keeps nothing, and the empty style IS that answer")
+  (is (null (leticl::%sgr-to-style "39")) "and 39 with nothing to drop is nothing")
+  (is (equal '(:fg :green) (leticl::%sgr-to-style "0;32"))
+      "0 clears what came before, so the colour after it is the whole style")
+  (is (equal '(:italic t :underline t) (leticl::%sgr-to-style "3;4"))
+      "and two attributes stack in order"))
+
 (def-test a-config-click-lands-on-the-row-under-the-pointer (:suite leticl)
   "**The click conversion was the one consumer no pane's test exercised** (the editor reviewer's
   own note), and the config pane is where that cost something: its rows are NOT one line apart —
@@ -3618,7 +3641,7 @@ and the decision line would have been the second copy")
   both are asked rather than recounted."
   (let ((*pane-scroll* 0) (*pane-lines* 40) (*pane-room* 30)
         (h (%make-head)))
-    (setf (head-settings (head-session h))
+    (setf (head-settings h)
           (list (list :key "diff" :value "unified" :section "head — this window"
                       :source "/tmp/head.toml" :edit (list :head "diff"))
                 (list :key "verbosity" :value "reading" :section "head — this window"
@@ -3630,17 +3653,30 @@ and the decision line would have been the second copy")
           (head-mode h) :config
           (head-picker-sel h) 0)
     (multiple-value-bind (lines sel-line per-row)
-        (leticl::config-lines h (head-settings (head-session h)) 80)
+        (leticl::config-lines h (head-settings h) 80)
       (declare (ignore lines))
-      (is (= 2 sel-line) "the cursor on row 0 is two lines down: title, blank")
-      (is (equal '((0 . 2) (1 . 3) (2 . 6) (3 . 9)) per-row)
-          "**and every row's own line comes out of the walk that drew them** — a heading and a blank before each new group")
-      ;; the click resolves through the pane's answer, so a line in the SECOND group is that row
-      (is (= 1 (click-row->sel h :config 3)) "row one's line is its own")
-      (is (= 2 (click-row->sel h :config 6))
-          "**and the first row of the second group is ITSELF**, where the old arithmetic said row 4")
-      (is (null (click-row->sel h :config 4))
-          "a section heading is not a row (and is not a neighbour of one)"))))
+      (is (= 3 sel-line)
+          "the cursor on row 0 sits three lines down: title, blank, and the first group's heading")
+      (is (plusp (length per-row))
+          (format nil "**every row's own line comes out of the walk that drew them**: ~s" per-row))
+      ;; **THE RELATION, not the numbers**: every row's own line resolves to that row, which is
+      ;; what an 80-wide pane, a wider heading or a new group cannot break.
+      (dolist (pair per-row)
+        (is (eql (car pair) (click-row->sel h :config (cdr pair)))
+            (format nil "row ~d is the row on its own line ~d" (car pair) (cdr pair))))
+      ;; **THE SECOND GROUP IS WHERE THE OLD ARITHMETIC WENT WRONG.** `config-rows` builds the
+      ;; list itself — seven head rows, one per daemon setting, one per config file — so the first
+      ;; SESSION row is the first row of a new group, and a blank plus a heading sit above it. The
+      ;; numbers here are the pane's own (`per-row`), read off the walk rather than counted by hand.
+      (let* ((crossing (assoc 7 per-row))          ; the first session row
+             (heading-line (1- (cdr crossing))))   ; the heading above it
+        (is (eql 7 (click-row->sel h :config (cdr crossing)))
+            (format nil "**the first row of the second group is ITSELF** (line ~d): ~s"
+                    (cdr crossing) per-row))
+        (is (null (click-row->sel h :config heading-line))
+            (format nil "and the heading above it (line ~d) is not a row" heading-line))
+        (is (not (eql (cdr crossing) (+ (cdr (assoc 6 per-row)) 1)))
+            "**which is the whole defect**: the old arithmetic said the next row was the next LINE")))))
 
 (def-test a-click-selects-the-row-under-the-pointer (:suite leticl)
   "The reference's own guarded clicks: a click is only trusted for a row the frame

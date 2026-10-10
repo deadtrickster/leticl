@@ -187,6 +187,15 @@ prompt you type next lands there."
                  (why (say head why))
                  (t (setf (head-mode head) :normal (head-dirty head) t))))))))
 
+(defun numbered-rows (rows)
+  "THE rows the session picker NUMBERS — the conversations, in the pane's own order.
+
+**One rule, one place, because two things count these rows**: the pane prints the number
+(`%session-position` counts the numbered rows for its `1/3`) and the composer resolves a typed
+number against them. A child is drawn under its parent, `↳`-marked and unnumbered, and is
+reached by its id or by clicking it — not by counting."
+  (remove-if (lambda (b) (getf b :parent-session-id)) rows))
+
 (defun %resolve-session (head typed)
   "TYPED as a session: `(values ID WHY)`, ID NIL when it names none.
 
@@ -209,8 +218,14 @@ is still right for the one case it can serve."
     (cond
       ((zerop (length typed)) (values nil nil))
       ((null rows) (values typed nil))
-      ((and n (<= 1 n (length rows)))
-       (values (getf (nth (1- n) rows) :session-id) nil))
+      ((and n (<= 1 n (length (numbered-rows rows))))
+       ;; **THE NUMBER THE PANE DREW, NOT THE INDEX IN THE LIST.** The pane numbers only the rows
+       ;; the daemon calls conversations (a child is drawn under its parent, `↳`-marked and
+       ;; UNNUMBERED), while this read the typed number as an index into the whole interleaved list:
+       ;; with `[P1, C1, P2]` the row drawn `2` is P2 at index 2, and typing `2` switched to C1 — the
+       ;; child (found by the panes reviewer, 2026-10-11). A wrong session switch is not recoverable
+       ;; by a keystroke, which is why the count is asked of the same list the pane counts.
+       (values (getf (nth (1- n) (numbered-rows rows)) :session-id) nil))
       (t (let ((hits (remove-if-not
                       (lambda (b)
                         (or (uiop:string-prefix-p typed (or (getf b :session-id) ""))
