@@ -465,6 +465,38 @@ head runs today breaks without them.
   - [ ] **a model change during a retrying turn takes** (`12ade5e`) — daemon,
     but the head's `/model` surface should say the turn continues.
 
+- [ ] **the reference's second 116-commit batch (2026-10-09, protocols 38–42)** — the wire
+  core is ported (`c2a5605`'s successor: 42's todo author and `cancelled`, 40's
+  `TranscriptForked` drop, the exit id on stdout, `prefix_stale`); what remains is head-side:
+
+  - [ ] **the standing-notes pane** (`ccee82a`, protocol 39): `ClientFrame::ListNotes` →
+    `ServerFrame::StandingNotes` carrying `NoteEntry` — one row per note, and the form the
+    budget gave each. Two frames, so this is the one item here that adds wire. The reference's
+    pane draws it and Enter opens the note in rano (`81749c9`).
+  - [ ] **the carry by the row's own words** (`53ac610`, `7b18b1d`): on a live re-seat a fork
+    takes the reader's CARRY — the row's own words and the line — and the view is re-anchored
+    by them under the new id, or the sentence says it cannot. The fork port drops the anchor
+    and lets `%anchor-lose` say so; this is the better half.
+  - [ ] **the todo verbs and the pane's own reading** — `rm` strikes a row off (`91dc73f`: the
+    STATUS is ported; the verb and its `/todo resume N` are not), a row read whole with enter
+    (`fe9febe`), a row's title capped at the pane's own row with the rest as detail (`aa27a89`),
+    one row marked by quoting it (`09b1c0f`), a row waiting on a CHILD (`f8d98b6`), and the
+    plan as a DAG with `needs` edges (`c211118`, `f8d98b6`) — `TodoNeed::{Row, Child}` rides
+    the row and this pane draws none of it.
+  - [ ] **the merge queue** (`e9eb358`, `424c212`, `8178c4e`, `5b925b6`, `1cff68e`,
+    `0b05003`): the pane, the person's approve/veto/rm, `/queue reset|clean|restart`, the
+    gate's steps drawn in order, the standings beside the triangle, and the review queue as
+    TWO VIEWS OF ONE LIST (protocol 38's removal rides it). The big filed project; the queue
+    is daemon-level and asks with `ListMergeQueue`.
+  - [ ] **the lateral send and the question row** — a message to a session the worker owns is
+    a row and a turn (`af218a2`, `3d36cea`), and an answered question leaves the operator's
+    answer as their own row, byte-identical and citable (`7179fc6`, `0cf9cce`).
+  - [ ] **the head's smaller mirrors**: a printed path is a link (`5b3843f`), a change detected
+    after a command draws its diff (`e09d77c`), a job named in every sentence about it
+    (`29f2422`, `5d3bfac`), `allow-all`'s answer surviving a restart (`9f09f04`), the stop
+    that interrupts the turns it holds (`195a813`), and the term pane born at its size
+    (`401e61f`).
+
 - [ ] **the merge queue pane** — the queue is DAEMON-LEVEL, not the session's: the
   snapshot carries none of it by design, and a head that wants the queue asks with
   `ListMergeQueue` and is answered by `MergeQueue` (the whole queue as of now);

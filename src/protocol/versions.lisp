@@ -1,4 +1,4 @@
-;;;; protocol.lisp — the head frame vocabulary, protocol version 37.
+;;;; protocol.lisp — the head frame vocabulary, protocol version 42.
 ;;;; Source of truth: crates/sessionlog/src/protocol.rs. Frames are plists in
 ;;;; the image (PLAN.md §7, D4); the constructors below are the only place
 ;;;; that knows what a frame looks like on the wire.
@@ -11,13 +11,51 @@
 
 (in-package #:leticl)
 
-(defparameter +protocol-version+ 37
+(defparameter +protocol-version+ 42
   "The version this head announces at ATTACH, and the number is a CLAIM rather than a flag.
 
 The protocol's only compatibility check is EQUALITY at ATTACH, so a head that announces a
 version is saying *I know what those frames are* — and a head that announces a number it does
 not understand has traded a clear refusal for a mid-session surprise. So what 24, 25 and 27
 added is written down here rather than assumed:
+
+  · **42** IS THE FOURTH AUTHOR (letibot `5e53434`): `TodoBy` gains `Queue` — the review
+    queue's own session writes the board (*'reviews are subagents managed by the main
+    gatekeeper'*, the operator's design). The wire word is `queue`; the pane draws *the
+    merge queue*, because a bare `queue` on a row is a word the reader has to place.
+
+  · **41** IS A ROW STRUCK OFF (letibot `91dc73f`): `TodoStatus` gains `Cancelled` — `rm` is
+    not a removal any more, because the board is a HISTORY (*'only i should be able to delete
+    todo items. as a rule everything that ever created stays in history'*, *'so done items or
+    canceled items should be kept'*). The row keeps its words, its author and its place, the
+    model still sees it, and the header never counts it as open. Same shape as 36's
+    `Postponed`: no frame added, the number still moves, because the failure is the whole
+    `Todos`/`TodosUpdated` frame and not the row.
+
+  · **40** IS THE FORK'S OWN EVENT (letibot `14f8e2b`): `SessionEvent::TranscriptForked
+    { transcript_id, parent_id }` — a fork (`/reseat`, `/compact`, a re-seat onto a rebuilt
+    prompt) opens a NEW transcript and carries the conversation into it under the new
+    transcript's ids, and **nothing in the stream said the rows a reader already held belonged
+    to a transcript the session had left**. So every reader folded both conversations into one
+    list. MEASURED on the operator's own screen — scrolled up and reading, they typed
+    `/reseat` and were left with *'thousands of lines below'* — and in the reference's
+    fixtures: 40 rows plus a 60-row carry left 100 items and a banner reading *144 line(s)
+    below*; 60 with the fix. The daemon carries it (a late head would otherwise be handed the
+    conversation twice by its own snapshot) and the head drops exactly what the event names.
+
+  · **39** IS THE STANDING-NOTES PANE (letibot `ccee82a`): `ClientFrame::ListNotes` and
+    `ServerFrame::StandingNotes`, carrying `NoteEntry` — the row the notes pane draws, one per
+    note, with the form the budget gave each. Two NEW frames, which is why 39 is its own
+    number. **This head does not ask** (`ListNotes` is unsent here, so a daemon never answers
+    with a `StandingNotes` this build could not read), which is the bootstrap rule `/todos`
+    already keeps: a pane that is never opened costs a mismatched frame nothing.
+
+  · **38** IS THE MERGE QUEUE'S OWN VERBS AND ITS REMOVAL (letibot `e9eb358`): the person's
+    *approve / veto / rm*, and `SessionEvent::MergeEntryRemoved`. No frame added; the number
+    moves because a removal rides an enum a version-37 head cannot decode. **This head does
+    not ask for the queue** and so never meets it — the merge-queue pane is filed as its own
+    session's work (TODO.md), and this bump is a claim about what this head can READ, which
+    for these frames is: nothing, because it never asks.
 
   · **37** is THE TODO AUTHOR'S THIRD VARIANT (letibot `38f10b0`): `TodoStatus`'s author,
     spelled `by` on every `Todos` row and on `TodosUpdated`, gains `Parent <session-id>` —

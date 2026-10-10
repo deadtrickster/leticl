@@ -6315,6 +6315,83 @@ envelope's `session_id`, which is the parent's."
       (is (notany (lambda (l) (search "somebody else's" l)) text)
           "and a child of another session is not this pane's business"))))
 
+(def-test a-fork-replaces-the-transcript-it-names (:suite leticl)
+  "**The operator, scrolled up and reading, typed `/reseat` and was left with *'thousands of
+  lines below'*** (letibot `14f8e2b`, protocol 40). A fork opens a NEW transcript and carries
+  the conversation into it, so every carried row is published under the new transcript's ids —
+  and **not one of the ids the replaced transcript's rows are held under is in the carry**.
+  Nothing used to say so, and every reader folded both conversations into one list: the
+  reference measured 40 rows plus a 60-row carry leaving 100 items and a banner reading
+  *144 line(s) below*; 60 with the fix.
+
+  Three claims: the rows of the transcript the fork NAMES go; rows of any OTHER transcript a
+  head also holds stay (a resume republishes the tail of the transcripts a compaction put
+  behind the current one, on purpose, so a reader can scroll above the summary — dropping
+  those would lose the history the resume restored); and the reader's anchor is dropped with
+  the rows, because the row it named is the one that just went."
+  (let* ((h (%make-head))
+         (s (head-session h)))
+    (setf (session-items s)
+          (coerce (list (list :item-id "t1.1" :kind "user" :item (list :type "user" :speaker "operator"
+                                                                     :parts (list (list :kind "text" :text "the old conversation"))))
+                        (list :item-id "t1.2" :kind "assistant" :item (list :type "assistant" :text "old answer"))
+                        (list :item-id "t2.0" :kind "assistant" :item (list :type "assistant" :text "the summary"))
+                        (list :item-id "t2.1" :kind "assistant" :item (list :type "assistant" :text "the carried answer")))
+                  'vector)
+          leticl::*scroll-anchor* (list "t1.2" 3))
+    (leticl::%handle-frame h (list :frame "event" :seq 9 :event "transcript_forked"
+                                   :transcript-id "t2" :parent-id "t1"))
+    (is (equal '("t2.0" "t2.1")
+               (mapcar #'leticl::item-id (coerce (session-items s) 'list)))
+        "**the replaced transcript's rows are gone** — both of them, and only them")
+    (is (null leticl::*scroll-anchor*)
+        "and the anchor goes with them: the row it named is the one that left")
+    ;; a fork naming a transcript this head does not hold changes nothing
+    (leticl::%handle-frame h (list :frame "event" :seq 10 :event "transcript_forked"
+                                   :transcript-id "t3" :parent-id "t-nope"))
+    (is (equal '("t2.0" "t2.1")
+               (mapcar #'leticl::item-id (coerce (session-items s) 'list)))
+        "a fork for a transcript we never held leaves the conversation alone")))
+
+(def-test the-fold-survives-going-down-into-a-child-and-back-up (:suite leticl)
+  "**The operator, of this pane: *'it supposed to group finishes subagents, and it doesnt. but
+  it was grouping before i entered one of the gatekeepers.'* … *'so somehow it expands
+  itself.'*** (the reference's report, and its `bee50f8`). The group was folded; they went
+  into a child; they came back; the group was open.
+
+  The reference's writer was `fold_subagents`: climbing back up out of a child unfolded a
+  finished one so the cursor could land on its row. This head has never had that walk — the
+  ONLY writer of the flag is Enter on the group row — and this test pins the ruling so it
+  cannot acquire one: the fold is the operator's, the cursor may sit ON the group row (a stop
+  of its own kind), and nothing but Enter changes it."
+  (let ((h (%make-head))
+        (leticl::*subagents-finished-open* nil))
+    (setf (session-subagents (head-session h))
+          (list (list :session-id "parent" :subagent-id "s-live"
+                      :state "running" :prompt "still going" :role "coder" :model "m")
+                (list :session-id "parent" :subagent-id "s-done"
+                      :state "done" :prompt "the one that ended" :role "coder" :model "m"
+                      :answer "all done"))
+          (head-mode h) :subagents
+          (head-picker-sel h) 0)
+    ;; fold the group ON, then go into the child and come back
+    (setf (head-picker-sel h) 1)
+    (leticl::subagent-switch h)          ; enter on the group row: folds it open
+    (is (eq t leticl::*subagents-finished-open*) "the premise: the group is open")
+    (leticl::subagent-switch h)          ; and again: the operator folds it
+    (is (null leticl::*subagents-finished-open*) "folded")
+    ;; enter the live child, then come back up (a switch to the parent, as esc does)
+    (setf (head-picker-sel h) 0)
+    (leticl::subagent-switch h)
+    (setf (session-session-id (head-session h)) "s-live")   ; we are IN the child now
+    (setf (session-session-id (head-session h)) "parent")   ; and back up
+    (is (null leticl::*subagents-finished-open*)
+        "**still folded after the round trip** — nothing but Enter writes the flag")
+    (let ((text (lines-text (subagent-lines h 210))))
+      (is (notany (lambda (l) (search "the one that ended" l)) text)
+          "and the ended child is still off the glass")
+      (is (some (lambda (l) (search "[+] finished (1)" l)) text) "under its folded group"))))
+
 (def-test the-finished-children-live-under-a-folded-group (:suite leticl)
   "**The operator, 2026-10-06, twice:** *'i went to subagents panel and dont see it here'* — a
   child just started, and the pane drew the finished ones first and pushed the running one off

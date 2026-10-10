@@ -289,6 +289,53 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
                        :partial-kept (getf env :partial-kept))))
          (note-turn-finished "failed")
          :dirty))
+      ;; **THE TRANSCRIPT IS REPLACED ON THE WIRE, NOT APPENDED TO** (protocol 40, letibot
+      ;; `14f8e2b`). A fork — a `/reseat`, a `/compact`, a re-seat onto a rebuilt prompt —
+      ;; opens a NEW transcript and carries the conversation into it, so every carried row is
+      ;; published under the new transcript's ids and **not one of the ids the replaced
+      ;; transcript's rows are held under is in the carry**. Nothing used to say so, and every
+      ;; reader folded both conversations into one list: MEASURED on the operator's own screen
+      ;; — scrolled up and reading, they typed `/reseat` and were left with *"thousands of
+      ;; lines 'below'"* — and in the reference's fixtures, 40 rows plus a 60-row carry left
+      ;; 100 items and a banner reading *144 line(s) below*.
+      ;;
+      ;; **Only the PARENT's rows go.** A head can hold rows of more than one transcript (a
+      ;; resume republishes the tail of the transcripts a compaction put behind the current
+      ;; one, on purpose, so a reader can scroll above the summary), and those are not what the
+      ;; fork replaced — the event names exactly what it did. A row's id names the transcript
+      ;; it is numbered in (`{transcript_id}.{n}`), so the test is the prefix.
+      ;;
+      ;; The reader's PLACE is dropped with the rows and said by `%anchor-lose` at the next
+      ;; paint: this head's anchor is a row identity, and the row it named is the one that just
+      ;; went. (The reference takes a CARRY here — the row's own words, to be re-found under
+      ;; the new id — which is `53ac610`'s work and is filed; until then the honest fallback is
+      ;; the sentence, which is what `%anchor-lose` is for.)
+      ((:transcript-forked)
+       ;; the arm's VALUE, not an early return: `apply-event` measures the seq gap after the
+       ;; fold, and a fork that returned from inside would skip it — the shape its own comment
+       ;; records as a defect once already ("a gap does not swallow the event that revealed it").
+       (let* ((parent (or (getf env :parent-id) ""))
+              (gone (and (plusp (length parent)) (concatenate 'string parent ".")))
+              (items (session-items session)))
+         (if (and gone
+                  (some (lambda (i) (let ((id (item-id i)))
+                                      (and (stringp id)
+                                           (>= (length id) (length gone))
+                                           (string= gone id :end2 (length gone)))))
+                        items))
+             (progn
+               (setf (session-items session)
+                     (coerce (remove-if (lambda (i)
+                                          (let ((id (item-id i)))
+                                            (and (stringp id)
+                                                 (>= (length id) (length gone))
+                                                 (string= gone id :end2 (length gone)))))
+                                        (coerce items 'list))
+                             'vector)
+                     *scroll-anchor* nil)
+               (incf *hist-generation*)
+               :dirty)
+             :quiet)))
       ((:transcript-appended)
        ;; THE ROWS THIS TURN HAS PUBLISHED, in order. The field was initialised
        ;; at `turn_started` and written by nothing, so it was dead: `view.rs:246-253`

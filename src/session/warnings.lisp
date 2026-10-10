@@ -239,6 +239,13 @@ answered in the same place or not at all.")
     ;; flight; a receipt for the wait. Routine because the daemon said it would
     ;; stop and did.
     "daemon_stopping_runs"
+    ;; **`prefix_stale`** — letibot `73da5cc`: a session's message 0 is FIXED when it is
+    ;; created (protocol §14), so a build that has since changed the system instructions, the
+    ;; tool schemas or the seat hands that session a prompt it will never speak, and nothing
+    ;; said so on any screen. Routine because it is said once per connection and the remedy is
+    ;; the reader's own (`/reseat`); the daemon detects it by hashing the frozen half of the
+    ;; prefix and comparing it with the one this session was seated on.
+    "prefix_stale"
     ;; **`promote_in_flight`, from letibot `964c284`** ("a foreground run past a minute is
     ;; told on, and ctrl-o reaches a run on the bang thread"). A background request for the
     ;; operator's own run arrived while that run was in flight on its own thread; the

@@ -103,6 +103,20 @@ through `scripts/leticl-head`, the same two frames `/new` sends from the compose
     ;; is dropped for exactly this (`App::farewell`, app.rs:1555).
     (awhen (head-farewell head)
       (format *error-output* "~&leticl: ~a~%" it)
-      (force-output *error-output*))))
+      (force-output *error-output*))
+    ;; **THE ID IT WAS SERVING, ALONE ON STDOUT** (letibot `feed8b5`, and it is the operator's
+    ;; own ask: *'I guess on exit you have to print main session id to stdout too'*, after a
+    ;; restart landed them in a reviewer's session instead of the conversation). The launcher
+    ;; `exec`s this head, so THIS stdout IS the launcher's — the daemon's is detached into a log
+    ;; nobody reads — and `--session ID` reopens whatever this names.
+    ;;
+    ;; The session the head was IN at exit, not the daemon's root: the operator may have
+    ;; switched with ctrl-s, and a child reopens as readily as a root. Alone on stdout, with
+    ;; everything else an exit says left on stderr where a pipeline ignores it; a head that
+    ;; never seated a session prints nothing, because an empty line is worse than silence.
+    (let ((id (session-session-id (head-session head))))
+      (when (and id (plusp (length id)))
+        (format *standard-output* "~a~%" id)
+        (force-output *standard-output*)))))
 
 

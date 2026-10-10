@@ -573,6 +573,16 @@ two entries."
   (let ((st (cond ((string= (or (getf item :status) "") "in_progress") :doing)
                   ((string= (or (getf item :status) "") "completed") :done)
                   ((string= (or (getf item :status) "") "postponed") :postponed)
+                  ;; **`cancelled` — the operator struck the row off (`rm`), and the board is a
+                  ;; HISTORY** (protocol 41, letibot `91dc73f`: *"only i should be able to delete
+                  ;; todo items. as a rule everything that ever created stays in history"* and
+                  ;; *"so done items or canceled items should be kept"*). The reference's own
+                  ;; ruling is followed here: rano's four marks have no fifth, so a struck-off
+                  ;; row draws in the SET-ASIDE register — faint, kept on the board, and not
+                  ;; asked about — which is the closest of the four. The row keeps its words,
+                  ;; its author and its place; what a reader gets right is everything that
+                  ;; matters, and the header never counts it as open.
+                  ((string= (or (getf item :status) "") "cancelled") :postponed)
                   (t :open))))
     (append
      ;; **the cursor mark, in the pane's own column** — `▸ ` or two spaces, like every other
@@ -766,7 +776,7 @@ stops: the recorded index was the length before some pushes and after others."
                                     todos))
              (board (append *operator-todos* model-half))
              (open (count-if (lambda (i)
-                               (not (member (or (getf i :status) "") '("completed" "postponed")
+                               (not (member (or (getf i :status) "") '("completed" "postponed" "cancelled")
                                              :test #'string=)))
                              board))
              (postponed (count-if (lambda (i) (string= (or (getf i :status) "") "postponed"))
@@ -840,9 +850,15 @@ stops: the recorded index was the length before some pushes and after others."
           (dolist (line (%todo-item-lines
                          item
                          (let ((by (getf item :by)))
-                           (if (or (null by) (string= by "") (string= by "model"))
-                               "model"
-                               by))
+                           (cond ((or (null by) (string= by "") (string= by "model")) "model")
+                                 ;; **`queue` is the fourth author** (protocol 42, letibot
+                                 ;; `5e53434`): the review queue's own session writes the board
+                                 ;; (*"reviews are subagents managed by the main gatekeeper"*,
+                                 ;; the operator's design), and the reference spells the word
+                                 ;; out as *the merge queue* rather than leaving the wire's
+                                 ;; bare `queue` for the reader to place.
+                                 ((string= by "queue") "the merge queue")
+                                 (t by)))
                          nil))
             (emit line nil))))
       (when (and (null *operator-todos*) (null todos))
