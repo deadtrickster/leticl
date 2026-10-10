@@ -358,6 +358,33 @@ of R36 keeps — the anchor is a record of the top row of the last frame, never 
          (composer-insert c (string #\newline))
          (setf (head-dirty head) t)))
       ((:esc)
+       ;; **A SINGLE ESC INSIDE A SUBAGENT'S SESSION IS THE WAY BACK UP THE TREE.**
+       ;;
+       ;; The operator, measured twice — once on the reference (letibot `b9abcf1`) and
+       ;; once on this head, 2026-10-09: *"i went to subagent and then wanted to get back
+       ;; to the main session - pressed esc and it didnt work, pressed second time -
+       ;; subagent stopped"* … *"again i couldnt escape subagent session - it offered me
+       ;; to stop the turn"*. The press fell through to the composer, which counted it as
+       ;; the FIRST of the `esc esc` pair, so the next Esc interrupted the child the
+       ;; operator was only trying to leave.
+       ;;
+       ;; **Two guards the way-up arm must NOT have**, and each is the defect: a
+       ;; half-typed line does not hold them (a switch keeps the composer's text — it is
+       ;; the HEAD's, not the session's — so the draft goes up with the operator and
+       ;; nothing is lost), and a decision waiting in the child does not ARM anything:
+       ;; it says where the operator is and stays put, consuming the press.
+       ;;
+       ;; Ahead of the scroll-follow arm on purpose: parked in a child's scrollback, the
+       ;; reader pressing esc is asking for the way up, and the banner's promise is about
+       ;; the transcript they are IN — leaving is the larger act.
+       (let ((parent (%parent-session-id head)))
+         (when parent
+           (if (session-open-decisions (head-session head))
+               (progn
+                 (say head "a decision is waiting in this subagent — answer it, then esc goes up")
+                 (setf (head-dirty head) t))
+               (%switch-to head parent))
+           (return-from %normal-key nil)))
        ;; Esc while parked in the scrollback means "follow the stream again",
        ;; which is what the banner says it means. Only then does esc start
        ;; arming an interrupt: `esc esc` — twice within the gesture window.

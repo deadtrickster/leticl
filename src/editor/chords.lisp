@@ -187,10 +187,13 @@ Esc was a second thing to remember per pane."
         ;; `o` on the subagents pane switches INTO the row under the cursor
         ;; (app.rs:3696-3707); anywhere else it promotes the running command,
         ;; which is what this chord has always meant here.
-        ((#\o) (if (eq (head-mode head) :subagents)
-                   (subagent-switch head)
-                   (%command head "promote"))
-               t)
+        ;; **`ctrl-o` PROMOTES, WHATEVER IS ON THE SCREEN**, which is the reference's own arm
+        ;; (`CtrlO => self.promote()`, `keys/chords.rs:190`). This head had made it the pane's
+        ;; switch while the subagents pane was up — and the CHAR `o` already is that
+        ;; (`keys/panes.rs:363` is the character, and `pane-keys.lisp` binds it beside `p`), so
+        ;; the mode test bought nothing and cost the chord its one meaning. Found by two
+        ;; independent reviews, 2026-10-11.
+        ((#\o) (%command head "promote") t)
         ((#\s) (pane :picker "sessions"))             ; the session list
         ((#\n)
          ;; **R22: retire every note this head holds.** *n* for notes, and the byte is

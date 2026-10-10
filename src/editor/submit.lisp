@@ -225,6 +225,26 @@ is still right for the one case it can serve."
              (t (values nil (format nil "~d sessions match ~s; type the number on the left instead"
                                     (length hits) typed)))))))))
 
+(defun %parent-session-id (head)
+  "The session this one is a CHILD of, or NIL when it is a conversation of its own.
+
+**The parent link the daemon already sends**, in the session list's brief — the same
+field the picker nests rows by and the same one `%list-derived-subagent-rows` reads to
+find a session's children. Reverse it and you have *am I inside a subagent*, which is
+the question the way-up arm asks (`dispatch.lisp`): a fork of the tree walk with no
+state kept beyond this one link.
+
+NIL for the session this head has not heard a brief for — a just-created session answers
+its own title first and the list a frame later — and NIL is the honest answer there:
+the operator is not provably inside a child, and an Esc that went *up* to a guessed
+parent would be the worse of the two failures."
+  (let ((mine (session-session-id (head-session head))))
+    (when (and mine (plusp (length mine)))
+      (let ((b (find mine (picker-sessions (head-session head))
+                     :key (lambda (s) (getf s :session-id)) :test #'string=)))
+        (let ((p (and b (getf b :parent-session-id))))
+          (and (stringp p) (plusp (length p)) p))))))
+
 (defun %switch-to (head id)
   "Go to session ID — the one place that knows what \"go\" means, the reference's
 `switch_to` (`app.rs:5098-5150`).

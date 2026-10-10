@@ -6353,6 +6353,111 @@ envelope's `session_id`, which is the parent's."
                (mapcar #'leticl::item-id (coerce (session-items s) 'list)))
         "a fork for a transcript we never held leaves the conversation alone")))
 
+(def-test a-single-esc-inside-a-subagent-goes-up-and-never-arms-an-interrupt (:suite leticl)
+  "**The operator, twice — once on the reference and once here: *'i went to subagent and then
+  wanted to get back to the main session - pressed esc and it didnt work, pressed second time -
+  subagent stopped'* and *'again i couldnt escape subagent session - it offered me to stop the
+  turn'*.** The press fell through to the composer, which counted it as the FIRST of the
+  `esc esc` pair, so the next Esc interrupted the child they were only trying to leave.
+
+  Four claims: inside a child a single Esc goes UP (a switch to the parent link the daemon
+  already sends) and arms nothing; the draft goes up with the operator, because the composer's
+  text is the HEAD's and a switch does not clear it; a decision waiting in the child keeps them
+  there, said and NOT armed, so two presses interrupt nothing; and outside a child nothing
+  changes — Esc still follows the stream and still arms the pair."
+  (let* ((h (%on-head :cols 90 :rows 24))
+         (wire (%wire h)))
+    (flet ((seat (parent &optional decisions)
+             (setf (session-session-id (head-session h)) "s-child"
+                   ;; the SHAPE the parent link rides: the session list the last Hello carried.
+                   ;; `:live t` because the parent is OPEN in this daemon — a stored row takes the
+                   ;; resume path in `%switch-to` and a test about the way up is not a test about
+                   ;; the store.
+                   (session-sessions (head-session h))
+                   (list (list :session-id "s-child" :parent-session-id parent :live t)
+                         (list :session-id "s-parent" :parent-session-id nil :live t))
+                   (session-open-decisions (head-session h)) decisions)))
+      ;; --- inside a child: up, and nothing armed
+      (seat "s-parent")
+      (is (equal "s-parent" (leticl::%parent-session-id h))
+          "the parent link is read off the session list")
+      (is (eq :normal (head-mode h)) "and the ladder ends at the composer for it")
+      (setf leticl::*esc-at* nil
+            (composer-buffer (head-composer h)) "a half-typed line")
+      (leticl::%handle-key h (list :type :esc))
+      ;; **`%sent` DRAINS the stream**, so the frames are taken ONCE — calling it twice in a
+      ;; row is how this test first reported *no session id* on a frame it had just read.
+      (let ((frames (%sent wire)))
+        (is (equal "switch" (getf (first frames) :frame))
+            "**a single Esc inside a child sends the switch up**")
+        (is (equal "s-parent" (getf (first frames) :session-id)) "to the parent link")
+        (is (= 1 (length frames)) "one frame, and nothing else"))
+      (is (null leticl::*esc-at*)
+          "**and arms nothing** — the pair never starts, so a second press cannot interrupt the child")
+      (is (string= "a half-typed line" (composer-buffer (head-composer h)))
+          "the draft goes up with the operator: the composer's text is the head's, not the session's")
+      ;; --- a decision waiting: said, and still not armed
+      (setf leticl::*esc-at* nil)
+      (seat "s-parent" (list (list :req-id "r1" :kind "permission")))
+      (leticl::%handle-key h (list :type :esc))
+      (is (search "a decision is waiting in this subagent" (head-status-note h))
+          "**the one thing that keeps them there says why**")
+      (is (null leticl::*esc-at*) "and two presses interrupt nothing")
+      ;; --- outside a child, Esc is exactly what it was
+      (setf leticl::*esc-at* nil)
+      (seat nil)
+      (leticl::%handle-key h (list :type :esc))
+      (is (integerp leticl::*esc-at*)
+          "a root session still arms the esc-esc pair — the timestamp is the arming")
+      (setf leticl::*esc-at* nil (head-scroll h) 4)
+      (leticl::%handle-key h (list :type :esc))
+      (is (= 0 (head-scroll h)) "and esc while scrolled back still follows the stream")
+      (is (null leticl::*esc-at*) "without starting the pair"))))
+
+(def-test enter-and-o-switch-into-the-child-under-the-cursor (:suite leticl)
+  "**FOUND BY TWO INDEPENDENT REVIEWS, 2026-10-11, and it is the defect a test through the pane
+  function cannot see.** Enter and the char `o` resolved their row with
+  `(nth (head-picker-sel head) (subagent-rows head))` — the EVENT FOLD — while the pane draws
+  `subagents-stops` over `%subagents-all-rows`: actives first, then the `finished (N)` group row,
+  then the finished children. So with events `[A done, B running]` the pane draws B at `sel 0`
+  and Enter switched into A — the child that had ENDED; and on a pane rebuilt from the session
+  list alone (`%list-derived-subagent-rows`, the rano case) `subagent-rows` is empty and Enter
+  did nothing at all.
+
+  This test presses the KEYS, through `%handle-key`, which is what every earlier test of this
+  pane skipped: they called `subagent-switch` directly, so the arm that was wrong was never
+  reached."
+  (let ((h (%make-head))
+        (leticl::*subagents-finished-open* nil))
+    (setf (session-subagents (head-session h))
+          ;; A ends before B starts, so the pane draws B FIRST (actives first) and
+          ;; `(nth 0 (subagent-rows …))` is A — the whole of the defect.
+          (list (list :session-id "parent" :subagent-id "s-a"
+                      :state "done" :prompt "the one that ended" :role "" :model "" :answer "done")
+                (list :session-id "parent" :subagent-id "s-b"
+                      :state "running" :prompt "the one still going" :role "" :model ""))
+          (session-sessions (head-session h))
+          (list (list :session-id "s-b" :parent-session-id "parent" :live t)
+                (list :session-id "parent" :parent-session-id nil :live t))
+          (session-session-id (head-session h)) "parent"
+          (head-mode h) :subagents
+          (head-picker-sel h) 0)
+    (let ((wire (%wire h)))
+      ;; --- Enter on row one: the RUNNING child, not the ended one
+      (leticl::%handle-key h (list :type :enter))
+      (is (equal "s-b" (getf (first (%sent wire)) :session-id))
+          "**Enter switches into the child the cursor is ON** — row one is the running one")
+      ;; --- and the char `o` is the same act
+      (setf (head-mode h) :subagents (head-picker-sel h) 0)
+      (leticl::%handle-key h (list :type :char :ch #\o))
+      (is (equal "s-b" (getf (first (%sent wire)) :session-id))
+          "and `o` switches into the same row")
+      ;; --- folded, row two is the GROUP row: enter folds, and switches nowhere
+      (setf (head-mode h) :subagents (head-picker-sel h) 1)
+      (leticl::%handle-key h (list :type :enter))
+      (is (null (%sent wire)) "enter on the group row sends nothing")
+      (is (eq t leticl::*subagents-finished-open*) "it folds the group open"))))
+
 (def-test the-fold-survives-going-down-into-a-child-and-back-up (:suite leticl)
   "**The operator, of this pane: *'it supposed to group finishes subagents, and it doesnt. but
   it was grouping before i entered one of the gatekeepers.'* … *'so somehow it expands
@@ -6978,11 +7083,25 @@ that appears to do nothing is the defect this head keeps finding elsewhere:
 **And the removal is BY ID.** The list can change between the draw and the keypress — a
 `TodosUpdated` arriving, another removal — and an index would then take the row that moved into
 the deleted one's place. That is why the stops carry an id at all."
-  (let ((leticl::*operator-todos* nil) (leticl::*todo-draft* nil) (leticl::*repo-todo-open* nil)
+  ;; **THE FIXTURE IS MADE HERE, not assumed at a fixed path.** This test read
+  ;; `/tmp/leticl-walk-probe` — a directory NOTHING in the tree creates — and passed for as long as
+  ;; some earlier session's scratch survived there. When /tmp was cleaned, the repo half of the
+  ;; board came back as its refusal row (which carries `:item nil`, so there is no `:repo` stop at
+  ;; all) and `(position-if … :repo)` put NIL into a fixnum slot: a type error in a test about
+  ;; removing todos, which is exactly how a test that depends on the world lies to you. Same rule
+  ;; as `temp-prefs-path`: a test makes its own path, under a unique name, and takes it away.
+  (let* ((ws (merge-pathnames (format nil "leticl-test-~a-~a/" "walk-probe" (random 1000000))
+                              (uiop:temporary-directory)))
+         (todo (merge-pathnames "TODO.md" ws)))
+    (ensure-directories-exist todo)
+    (with-open-file (out todo :direction :output :if-exists :supersede)
+      (format out "# probe~%## Queue~%- [ ] the repo's own row — not started~%"))
+    (unwind-protect
+     (let ((leticl::*operator-todos* nil) (leticl::*todo-draft* nil) (leticl::*repo-todo-open* nil)
         (leticl::*pane-scroll* 0) (leticl::*pane-room* 40) (leticl::*pane-lines* 40)
         (h (%on-head :cols 100 :rows 40)))
     (setf (head-connected h) t
-          (session-wiring (head-session h)) (list :workspace "/tmp/leticl-walk-probe")
+          (session-wiring (head-session h)) (list :workspace (namestring ws))
           (session-todos (head-session h)) (list (list :content "the model's item"
                                                         :status "pending")))
     (leticl::operator-todo-add "mine to drop" "the detail")
@@ -7020,7 +7139,11 @@ the deleted one's place. That is why the stops carry an id at all."
       ;; --- and the pane OWNS the key: nothing reached the composer
       (is (string= "" (composer-buffer (head-composer h)))
           "**`delete` never falls through to the composer** with the pane up — the pane owns it,
- like Tab and Enter"))))
+ like Tab and Enter")))
+      ;; and the fixture goes with the test: a scratch directory left behind is the defect
+      ;; `forget-prefs-file` records (144 of them, one per test per run, measured 2026-09-22).
+      (ignore-errors (delete-file todo))
+      (ignore-errors (uiop:delete-empty-directory ws)))))
 
 (def-test a-queued-prompt-stays-at-the-bottom-and-does-not-cross-the-reply (:suite leticl)
   "**R45, and this test was written the wrong way round once — the measurement is what corrected it.**
@@ -11530,7 +11653,15 @@ terse. Deleted rather than fixed, and pinned here so it cannot come back."
 
 (defun %wire (head)
   "Give HEAD a stream to write frames to. Returns the stream, which `%sent`
-decodes — the head's own socket path, with a string stream standing in for it."
+decodes — the head's own socket path, with a string stream standing in for it.
+
+**AND IT IS A FRESH ATTACH, so the seat is cleared with it** — the same three globals
+`%fake-daemon` clears, and for the same reason: a seat left by an earlier test's `Hello`
+would lock this head read-only (`skew-locked-p`) and every `%send` here would be silently
+dropped, which reads as *the switch went nowhere* rather than as a fixture problem."
+  (setf leticl::*daemon-seat* nil
+        leticl::*skew-override-seat* nil
+        leticl::*daemon-protocol* nil)
   (let ((wire (make-string-output-stream)))
     (setf (leticl::head-stream head) wire (head-connected head) t)
     wire))
@@ -16719,9 +16850,15 @@ advertised that they scroll. And Esc left to `:normal` where the reference's
     (is (eq :subagents (head-mode h)) "which is where esc lands from the peek pane")))
 
 (def-test o-switches-into-the-subagent-under-the-cursor (:suite leticl)
-  "panes.md G13: `o` on the subagents pane switches into that subagent
-(app.rs:3696-3707); anywhere else it promotes the running command, which is what
-the chord has always meant here."
+  "panes.md G13: the CHAR `o` on the subagents pane switches into that subagent
+(app.rs:3696-3707).
+
+**AND `ctrl-o` IS NOT THAT KEY** — corrected 2026-10-11, because this test used to press the
+chord and thereby pin a deviation. The reference's `CtrlO` is unconditionally
+`self.promote()` (`keys/chords.rs:190`); the switch is the character (`keys/panes.rs:363`),
+which `pane-keys.lisp` binds beside `p`. Two independent reviews found the same thing: the
+mode test bought nothing and cost the chord its one meaning, so the chord promotes wherever
+it is pressed and this test now asserts BOTH halves."
   (let* ((h (%make-head))
          (wire (make-string-output-stream)))
     (setf (leticl::head-stream h) wire (head-connected h) t
@@ -16731,10 +16868,15 @@ the chord has always meant here."
           ;; the parent's, which is why the fold keys on the first
           (list (list :subagent-id "s-sub-1" :session-id "s-parent" :state "running"
                       :prompt "scout the transcript" :role "digest")))
+    (leticl::%handle-key h (list :type :char :ch #\o))
+    (let ((line (get-output-stream-string wire)))
+      (is (search "switch" line) "the char `o` sends the switch frame: ~a" line)
+      (is (search "s-sub-1" line) "naming the subagent's session"))
+    ;; the chord is the command, not the pane's key
     (leticl::%handle-key h (list :type :ctrl :ch #\o))
     (let ((line (get-output-stream-string wire)))
-      (is (search "switch" line) "a switch frame went out: ~a" line)
-      (is (search "s-sub-1" line) "naming the subagent's session"))))
+      (is (not (search "switch" line))
+          "**`ctrl-o` promotes wherever it is pressed** — it is not the pane's switch: ~a" line))))
 
 ;;; =========================================================================
 ;;; The parity pass of 2026-09-20, closing `docs/parity/rendering.md`.

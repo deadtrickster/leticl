@@ -6,22 +6,13 @@
 
 (in-package #:leticl)
 
-(defun %subagent-switch (head)
-  "The switch into the subagent under the cursor — what Enter and `o` both do
-on the subagents pane.
-
-The ruling moved at letibot `0c841de`: Enter used to READ (a peek that left the
-head where it was) and `o` SWITCHED, and the operator measured that they wanted
-Enter to be the switch. Now the two keys are one act — `switch_to(id)`, the
-switch into that subagent's session, and the pane closes behind it. Enter is
-unconditional (a pane owns Enter); `o` keeps the empty-composer guard, because
-a pane is not allowed to eat half a typed word. The read moved to `p`."
-  (let ((row (nth (head-picker-sel head) (subagent-rows head))))
-    (cond ((null row) nil)
-          ((equal (getf row :state) "opening")
-           (say head "that subagent is still opening — nothing to attach to yet"))
-          (t (awhen (getf row :session-id)
-               (%switch-to head it))))))
+;; **`%subagent-switch` USED TO LIVE HERE, AND IT WAS THE WRONG LIST.** It indexed
+;; `(nth (head-picker-sel head) (subagent-rows head))` — the event fold — while the pane draws
+;; `subagents-stops` over `%subagents-all-rows`. Two independent reviews on 2026-10-11 measured the
+;; consequence: with events `[A done, B running]` the pane draws B at `sel 0` and Enter switched
+;; into A, and on a pane rebuilt from the session list alone it switched into nothing at all.
+;; `subagent-switch` (src/panes/subagents.lisp) resolves through `subagent-stop-at`, the pane's own
+;; enumeration, and is what Enter and both `o` chords call now. Nothing here, on purpose.
 
 (defun %job-out-page (head forward)
   "The job-output overlay's paging — the reference's `job_out_page`
@@ -123,7 +114,20 @@ two sides in circles."
   ;; because a pane is not allowed to eat half a typed word. A child still `opening` has no
   ;; session to switch to yet, and the refusal is said here rather than bounced through the
   ;; daemon (app.rs:6648).
-  (%subagent-switch head))
+  ;; **THE ROW UNDER THE CURSOR IS A STOP, NOT AN EVENT.** This called `%subagent-switch`, which
+  ;; indexed `(nth (head-picker-sel head) (subagent-rows head))` — the EVENT FOLD — while the pane
+  ;; draws `subagents-stops` over `%subagents-all-rows`: actives first, then the `finished (N)`
+  ;; group row, then the finished children. So with any finished child on the board, Enter
+  ;; switched into a DIFFERENT child than the one under the cursor (measured on this head by two
+  ;; independent reviews, 2026-10-11: events `[A done, B running]` draw B at `sel 0`, and
+  ;; `(nth 0 (subagent-rows …))` is A) — and on a pane rebuilt from the session list alone, where
+  ;; `subagent-rows` is empty, Enter did nothing at all.
+  ;;
+  ;; `subagent-switch` resolves through `subagent-stop-at`, the pane's own enumeration, which is
+  ;; the rule every pane here keeps: the keys act on the list the rows were DRAWN from. The
+  ;; tests kept passing because they called the pane function directly — `%handle-key` is what
+  ;; this is tested through now.
+  (subagent-switch head))
 
 (defmethod pane-enter ((pane peek-pane) head)
   ;; The pane's hint bar says *"enter re-reads"* and it did not: `:peek` was
@@ -442,7 +446,7 @@ one thing this head must not need."
                    ((and (eq mode :todos) empty (eql ch #\h)) (%todo-toggle-hide-done head) t)
                    ((not empty) nil)
                    ((eql ch #\q) (shut))
-                   ((and (eql ch #\o) (eq mode :subagents)) (%subagent-switch head) t)
+                   ((and (eql ch #\o) (eq mode :subagents)) (subagent-switch head) t)
                    ;; **`p` IS THE PROMPT, ALONE, IN A POPUP THAT SCROLLS.** The operator: *"when i select
                    ;; an agent and press 'p' it should show me prompt in a scrollable popup."* The pane's
                    ;; first line is an EXCERPT — the daemon's `Subagent.prompt` is the task's first line
