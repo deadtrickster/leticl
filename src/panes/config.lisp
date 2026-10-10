@@ -83,7 +83,16 @@ step. Returns the save's complaint, or NIL when it landed."
                    (t nil)))))
     ((string= key "raw_calls")
      (setf (head-pref head :raw-calls)
-           (not (head-pref head :raw-calls)))))
+           (not (head-pref head :raw-calls))))
+    ;; **`marker_seam` IS A ROW THE PANE DRAWS AND COULD NOT FLIP.** The pane lists it
+    ;; (`*head-setting-rows*`), `config-rows` gives it the edit mark and the `:head` dispatch,
+    ;; and `%head-setting-value` answers `shown`/`hidden` from `*marker-seam*` — while this
+    ;; `cond` had no arm for it: Enter wrote head.toml, changed nothing, and reported the value
+    ;; unchanged. `%set-marker-seam` is documented as its only writer and nothing called it
+    ;; (found by the panes reviewer, 2026-10-11). The value is the head's own, not a preference —
+    ;; it changes what the ROW renders to — so the setter is the act and the save below is harmless.
+    ((string= key "marker_seam")
+     (%set-marker-seam (not *marker-seam*))))
   (%save-head-prefs-note head))
 
 (defparameter *daemon-config-files*

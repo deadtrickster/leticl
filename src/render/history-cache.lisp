@@ -164,7 +164,45 @@ when the viewport is full, so the cost is the window and not the session."
        ;; right for this one, where the row draws a number.
        (let ((r (getf turn :reasoning)))
          (when (and (stringp r) (plusp (length r)))
-           (reasoning-line-count r (max 20 (- cols (activity-indent cols))))))))))
+           ;; **COUNTED ONCE PER STRING, NOT ONCE PER FRAME.** This element is a full wrap:
+           ;; `reasoning-line-count` splits the WHOLE reasoning text and measures every line —
+           ;; measured at 0.23 ms for a 20 KB / 200-line text (with a `length` stand-in for
+           ;; `string-width`, so a floor), ten times a second for the length of a think, plus a
+           ;; fresh list of fresh substrings each time. The paragraph above argues that a count
+           ;; which moves a few times a minute costs a handful of MISSES, which is true of the
+           ;; misses and was never true of the computation (found by the drawing reviewer,
+           ;; 2026-10-11).
+           ;;
+           ;; The text is a fresh string per commit and is not mutated afterwards, so IDENTITY is
+           ;; the right key: a new text moves the count at once, and the same text answers from here
+           ;; while the turn holds it. A `defvar` and not a cache with a lifetime, because there is
+           ;; exactly one live reasoning text at a time.
+           (%reasoning-count-cached r (max 20 (- cols (activity-indent cols))))))))))
+
+(defvar *reasoning-count-cache* nil
+  "`(TEXT . COUNT)` — the last reasoning text this head counted, and what it cost.
+
+One entry and not a table: there is ONE live reasoning text at a time, and a cache that grew
+would be a slow leak keyed on strings nobody holds any more.")
+
+(defun %reasoning-count-cached (text width)
+  "`reasoning-line-count` for TEXT at WIDTH, computed once per TEXT.
+
+**The key is IDENTITY, and it is the right key rather than a cheap one.** A reasoning text is
+a fresh string per commit and is never mutated in place — the fold concatenates — so `eq`
+answers *has this text changed* exactly, and a text that has changed is counted at once. The
+width is part of the value because a frame can be any width; a resize costs one recount.
+
+Found by the drawing reviewer (2026-10-11): the count sits inside `%hist-key`, which runs on
+EVERY frame, so this was a full split-and-measure of the whole reasoning text ten times a
+second through a long think — the paragraph that put it there argues about cache MISSES and
+never considered the cost of the key itself."
+  (let ((hit *reasoning-count-cache*))
+    (if (and hit (eq (car hit) text) (eql (cddr hit) width))
+        (cadr hit)
+        (let ((n (reasoning-line-count text width)))
+          (setf *reasoning-count-cache* (list text n width))
+          n))))
 
 (defun %hist-key (head cols)
   "Generation, width, the IDENTITY of the items vector, and the live tick.

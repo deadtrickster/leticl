@@ -918,7 +918,16 @@ and a `hello` with a snapshot). Returns T when the queue moved."
      ;; not the reply's: the head asks for settings on attach now (they are only
      ;; ever sent in reply to a request, §7.4), and a reply that opened the pane
      ;; would pop `/config` at every attach.
-     (setf (head-settings head) (getf frame :rows)
+     ;;
+     ;; **AND THE FOLD BELOW THE HEAD GOES WITH IT** — `%fold-settings` is the one writer of
+     ;; `*compaction-sections*`, and it had NO CALLER ANYWHERE: the daemon's own list of the
+     ;; sections a compaction keeps (R28) reached the head on this frame, `head-settings` was
+     ;; set, and the list was dropped on the floor — so `(not stated)` could never be drawn, and
+     ;; a compaction report whose sections the daemon did not name drew as *nothing to say*
+     ;; instead of *the daemon did not say* (found by the wire reviewer, 2026-10-11). The suite
+     ;; hid it by binding the variable by hand, which is exactly what a hand-bound variable
+     ;; does. One call, in the one place the settings land.
+     (setf (head-settings head) (%fold-settings (getf frame :rows))
            ;; when the rows were last heard, so the header can rank them against
            ;; the turn's own word for the model (`%model-name`)
            *model-from-settings-at* (session-seq (head-session head))
