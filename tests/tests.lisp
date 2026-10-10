@@ -5287,7 +5287,8 @@ became text. Reproduced by injecting fifteen events: eight leaked."
     (let ((lines (leticl::%viewport-lines h 60 10)))
       (is (search "what about the widget" (segs-of (list (first lines))))
           "**the top row is the operator's own prompt** — one line, at the top")
-      (is (not (search "message" "")) "sanity: the probe string is not in the fixture at all")
+      (is (not (search "message" (segs-of lines)))
+          "the fixture's other rows are not in the window — the probe's own guard")
       (is (search "scrolled back" (segs-of (last lines)))
           "and the banner still holds the bottom — the two cover the two ends"))
     ;; --- following the stream again: no pin
@@ -5370,15 +5371,20 @@ pass while that happened."
   to the bottom immediately - effectively like Esc'*, and a reader must still be able to walk
   down through a conversation); a still transcript is walked at three a notch however long the
   run; and against a LIVE one the step doubles — 3, then 6 — and a turn around starts over."
-  (let ((h (%on-head :cols 80 :rows 24)))
-    (setf leticl::*wheel-run-step* nil leticl::*wheel-run-at* nil leticl::*wheel-run-dir* nil)
+  (let* ((h (%on-head :cols 80 :rows 24))
+         ;; **BOUND, not setf-ed.** These three are process globals; a test that leaves them
+         ;; dirty makes the next test's wheel run depend on this one (found by the test-suite
+         ;; review, 2026-10-11 — the rest of this file binds them for exactly that reason).
+         (leticl::*wheel-run-step* nil) (leticl::*wheel-run-at* nil)
+         (leticl::*wheel-run-dir* nil))
     ;; a still transcript: three a notch, every notch
     (setf (head-scroll h) 0)
     (leticl::%handle-key h (list :type :mouse :kind :wheel-up))
     (is (= 3 (head-scroll h)) "the first notch of a run is THREE lines, never more")
     (leticl::%handle-key h (list :type :mouse :kind :wheel-up))
     (is (= 6 (head-scroll h)) "and a still transcript is walked three lines a notch")
-    ;; against a living stream, the run doubles
+    ;; against a living stream, the run doubles — the run state is RESET first, which now writes
+    ;; the BINDINGS above rather than the globals (the point of binding them)
     (setf leticl::*wheel-run-step* nil leticl::*wheel-run-at* nil leticl::*wheel-run-dir* nil
           (head-scroll h) 0
           (session-turn (head-session h)) (list :state (list :state "running") :calls nil))
@@ -6485,13 +6491,22 @@ envelope's `session_id`, which is the parent's."
     (is (eq t leticl::*subagents-finished-open*) "the premise: the group is open")
     (leticl::subagent-switch h)          ; and again: the operator folds it
     (is (null leticl::*subagents-finished-open*) "folded")
-    ;; enter the live child, then come back up (a switch to the parent, as esc does)
-    (setf (head-picker-sel h) 0)
-    (leticl::subagent-switch h)
-    (setf (session-session-id (head-session h)) "s-live")   ; we are IN the child now
-    (setf (session-session-id (head-session h)) "parent")   ; and back up
+    ;; **THE WAY UP IS A REAL PATH, so it is pressed rather than assigned.** This used to write
+    ;; the session id twice by hand with nothing running between them — a round trip only in the
+    ;; comment, and a test that cannot fail (found by the test-suite review, 2026-10-11).
+    ;; `dispatch.lisp` gives a child's single Esc the parent link, so the fixture says the head
+    ;; is inside the child (`%parent-session-id` reads it off the session list) and the key goes
+    ;; through `%handle-key`.
+    (setf (session-session-id (head-session h)) "s-live"
+          (session-sessions (head-session h))
+          (list (list :session-id "s-live" :parent-session-id "parent" :live t)
+                (list :session-id "parent" :parent-session-id nil :live t))
+          (head-picker-sel h) 0)
+    (is (equal "parent" (leticl::%parent-session-id h))
+        "the head says it is inside the child — the link the way-up arm reads")
+    (leticl::%handle-key h (list :type :esc))
     (is (null leticl::*subagents-finished-open*)
-        "**still folded after the round trip** — nothing but Enter writes the flag")
+        "**still folded after the way up** — nothing but Enter writes the flag")
     (let ((text (lines-text (subagent-lines h 210))))
       (is (notany (lambda (l) (search "the one that ended" l)) text)
           "and the ended child is still off the glass")
@@ -23327,12 +23342,20 @@ not resolve renders as plain text rather than as a link that fails when clicked.
                (is (search (leticl::%url-encode png) drawn) "and it carries the resolved path")
                ;; **BALANCED**: every open has a close, or a terminal leaves the rest of the
                ;; screen inside one hyperlink
-               (let ((opens 0) (closes 0))
-                 (loop for i from 0 below (- (length drawn) 4)
-                       when (string= (subseq drawn i (+ i 4))
-                                     (format nil "~C]8;;" (%ch 27)))
-                         do (if (string= (subseq drawn (+ i 4) (+ i 5)) ";")
+               (let ((opens 0) (closes 0)
+                     ;; **FIVE characters: `ESC]8;;`** — this read FOUR against a five-character
+                     ;; needle, so neither counter ever moved and `(= opens closes)` was
+                     ;; `(= 0 0)` on every possible screen (found by the test-suite review,
+                     ;; 2026-10-11). What FOLLOWS the introducer tells open from close: the
+                     ;; painter writes `ESC]8;;URL ESC\` to open and `ESC]8;;ESC\` to close
+                     ;; (`src/links.lisp:44-56`), so a terminator there is a close.
+                     (needle (format nil "~C]8;;" (%ch 27))))
+                 (loop for i from 0 below (- (length drawn) 5)
+                       when (string= (subseq drawn i (+ i 5)) needle)
+                         do (if (char= (char drawn (+ i 5)) (%ch 27))
                                 (incf closes) (incf opens)))
+                 (is (plusp opens)
+                     "the scan FOUND a link to balance — 0 and 0 balances for ever")
                  (is (= opens closes)
                      (format nil "~d opens and ~d closes — an unclosed link swallows what follows"
                              opens closes)))))
