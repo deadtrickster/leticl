@@ -11917,8 +11917,11 @@ control."
                                                :arguments "{\"path\":\"a.rs\"}")
                                          (list :id "c2" :name "bash"
                                                :arguments "{\"command\":\"ls\"}")))))
-      (setf leticl::*answered-calls* (list "c1")
-            leticl::*item-facts* nil)
+      ;; **BOUND, NOT SETF-ED** (the test-suite reviewer, 2026-10-11): these two are process
+      ;; globals, and this was the only unbound `setf` of either name in the file — forty other
+      ;; sites bind both. The file's own note says a leaked global already broke the suite once.
+      (let ((leticl::*answered-calls* (list "c1"))
+            (leticl::*item-facts* nil))
       (flet ((lines (prefs)
                (segs-of (item-lines (list :item-id "i1" :kind "assistant"
                                           :item body)
@@ -11931,7 +11934,7 @@ control."
               "with the name and the arguments the parser read")
           (is (search "→ Ran ls · no result" on)
               "and the UNANSWERED call still draws its `no result` row — the two "
-              "cases are different rows and both are wanted"))))))
+              "cases are different rows and both are wanted")))))))
 
 (def-test an-attach-that-is-never-answered-ends-with-the-two-commands-that-reach-it (:suite leticl)
   "§6. The reference's `ATTACH_WAIT` is 30 seconds and its failure names
@@ -20817,7 +20820,12 @@ The assertion is that the three lists produce the SAME STRUCTURE — a bold titl
 with the cursor's row reversed and `← now` on the one in force, and dim hint rows under them —
 because a reader who has learned one has learned all three. A card of its own shape for a third
 setting is the *third thing to learn* the requirement forbids."
-  (let ((leticl::*verbosity* :normal))
+  (let ((leticl::*verbosity* :normal)
+        ;; **BOUND, because this test SETS it and never clears it** (the test-suite
+        ;; reviewer, 2026-10-11): it left `*pick-open*` at `:mode` for every test after it —
+        ;; a card nobody can see owning the ladder, which is how the keyboard goes somewhere
+        ;; unexpected in a suite whose own note records that happening once already.
+        (leticl::*pick-open* nil))
       (let ((h (%on-head :cols 100 :rows 40)))
         ;; mode and model read the daemon's rows; verbosity reads the head's ladder
         (setf (head-settings h)
@@ -24554,23 +24562,45 @@ That is what makes a watcher file safe to commit — and `seat` is a NAME, never
   ;; **AND THE BUILDABLE CASE CARRIES NO TOKEN.** The seat file that DOES exist on this box is
   ;; `~/.config/flowy/env-claude-lab2x1`; the generated command must name it by PATH and never
   ;; contain a credential, so a watcher file is safe to commit.
-  (when (probe-file (dash-flowy-seat-file "claude-lab2x1"))
-    (let* ((watcher (list :name "w" :file #P"/tmp/w.json" :scope :user :series nil))
-           (spec (list :name "s" :kind "flowy" :seat "claude-lab2x1"
-                       :addr "http://example.invalid:1" :retain 200 :series '("a.b"))))
-      (dash-sink-add-from-spec spec watcher)
-      (let ((sink (gethash "s" *dash-sinks*)))
-        (is (search "env-claude-lab2x1" (getf sink :command))
-            "the seat's env FILE is what the command names")
-        (is (search "$FLOWY_TOKEN" (getf sink :command))
-            "**and the token is an ENVIRONMENT VARIABLE the shell expands** — a variable reference,
- not a value, which is the difference between a committable file and a leaked secret")
-        (is (search "FLOWY_TOKEN:?" (getf sink :command))
-            "**and the second belt**: if the file exists and is empty, `${VAR:?}` stops it with a
- message rather than sending an unauthenticated post")
-        (is (null (search "Bearer ey" (getf sink :command)))
-            "**and no credential is in the command at all** — `Bearer` is followed by a VARIABLE, so
- a watcher file can be committed without leaking the seat it pushes under"))))
+  ;; **AND THE FILE IS MADE HERE, not looked for in the operator's `~/.config`** (the test-suite
+  ;; reviewer, 2026-10-11): this read `(when (probe-file (dash-flowy-seat-file "claude-lab2x1"))`
+  ;; — four assertions that ran on THIS box and on no other, because that file is one operator's
+  ;; seat. Elsewhere the branch never ran and the test was green having checked nothing, which is
+  ;; the defect `(>= n 0)` has: a check that cannot fail. A temp HOME with the same file name
+  ;; tests the RULE, which is what the assertions are about.
+  (let* ((home (merge-pathnames (format nil "leticl-test-~a-~a/" "flowy-seat" (random 1000000))
+                                (uiop:temporary-directory)))
+         (file (merge-pathnames "env-claude-lab2x1" (merge-pathnames ".config/flowy/" home)))
+         (saved-home (uiop:getenv "HOME")))
+    (ensure-directories-exist file)
+    (unwind-protect
+         (progn
+           (with-open-file (out file :direction :output :if-exists :supersede)
+             (format out "FLOWY_TOKEN=x~%"))
+           (sb-posix:setenv "HOME" (namestring home) 1)
+           (is (probe-file (dash-flowy-seat-file "claude-lab2x1"))
+               "the seat file is looked for under the HOME the test gave it")
+           (let* ((watcher (list :name "w" :file #P"/tmp/w.json" :scope :user :series nil))
+                  (spec (list :name "s" :kind "flowy" :seat "claude-lab2x1"
+                              :addr "http://example.invalid:1" :retain 200 :series '("a.b"))))
+             (dash-sink-add-from-spec spec watcher)
+             (let ((sink (gethash "s" *dash-sinks*)))
+               (is (search "env-claude-lab2x1" (getf sink :command))
+                   "the seat's env FILE is what the command names")
+               (is (search "$FLOWY_TOKEN" (getf sink :command))
+                   "**and the token is an ENVIRONMENT VARIABLE the shell expands** — a variable reference,
+  not a value, which is the difference between a committable file and a leaked secret")
+               (is (search "FLOWY_TOKEN:?" (getf sink :command))
+                   "**and the second belt**: if the file exists and is empty, `${VAR:?}` stops it with a
+  message rather than sending an unauthenticated post")
+               (is (null (search "Bearer ey" (getf sink :command)))
+                   "**and no credential is in the command at all** — `Bearer` is followed by a VARIABLE, so
+  a watcher file can be committed without leaking the seat it pushes under"))))
+      (if saved-home (sb-posix:setenv "HOME" saved-home 1))
+      (ignore-errors (delete-file file))
+      (ignore-errors (uiop:delete-empty-directory (merge-pathnames ".config/flowy/" home)))
+      (ignore-errors (uiop:delete-empty-directory (merge-pathnames ".config/" home)))
+      (ignore-errors (uiop:delete-empty-directory home))))
   (dash-sinks-reset)
   (dash-reset-series))
 

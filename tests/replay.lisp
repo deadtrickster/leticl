@@ -70,7 +70,8 @@ and `· 1ms` on the next. `with-replay-globals` freezes the clock and resets eve
 global a frame reads, and the second call here is what proves the reset covers
 them — a fixture that passed alone and failed in a batch would be the worst
 possible shape for a regression net."
-  (dolist (name (fixture-names))
+  (let ((looked 0))
+   (dolist (name (fixture-names))
     (let ((a (leticl::replay-screen (fixture name)))
           (b (leticl::replay-screen (fixture name))))
       (is (equal a b) "~a: two replays of one file differ" name))))
@@ -142,7 +143,15 @@ being right is not evidence that what is on disk was built by it."
                  (is (gethash (getf item :call-id) finished)
                      "~a: the row for call ~a landed before its tool_finished"
                      name (getf item :call-id))))))))
-      (is (>= results 0) "~a" name))))
+      (incf looked results)))
+   ;; **A TAUTOLOGY UNTIL 2026-10-11** — this read `(is (>= results 0))`, and `results` is the
+   ;; walk's own counter, initialised to 0 and only ever incremented: true of every fixture,
+   ;; including one whose rows stopped arriving. It cannot be asserted PER FIXTURE — several
+   ;; fixtures are about something else and hold no tool_result row at all, which is not a defect —
+   ;; so the assertion is about the WALK: the whole set must offer at least one row to check, or
+   ;; this comparison has been quietly comparing nothing. (The per-fixture form of the fix failed
+   ;; seven fixtures on the way to this shape.) Found by the test-suite reviewer.
+   (is (plusp looked) "the committed fixtures offered tool_result rows to check")))
 
 (def-test every-fixture-renders-without-taking-the-head-down ()
   "Every committed fixture, folded and painted, with no render error left behind.
