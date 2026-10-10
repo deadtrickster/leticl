@@ -4,6 +4,11 @@
 ;;;; consecutive, so every reference kept the direction it had and the split
 ;;;; moved no behaviour.
 
+
+;;;; **The `*.rs:NNNN` citations here are to the reference as of 2026-10-08**, before its widget
+;;;; files moved into the `rano` crate — a reading, not a path that can be followed. See HACKING.md,
+;;;; "What a Rust citation means", for how to re-check one.
+
 (in-package #:leticl)
 
 ;;; ------------------------------------------------------------- lifecycle ;;;

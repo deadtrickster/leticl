@@ -1,6 +1,11 @@
 ;;;; assistant-card.lisp — the model's PROSE row: the answer at the body's own column,
 ;;;; and the `→ verb target · no result` line a call with nothing back keeps.
 
+
+;;;; **The `*.rs:NNNN` citations here are to the reference as of 2026-10-08**, before its widget
+;;;; files moved into the `rano` crate — a reading, not a path that can be followed. See HACKING.md,
+;;;; "What a Rust citation means", for how to re-check one.
+
 (in-package #:leticl)
 
 (defclass assistant-card (card) ())

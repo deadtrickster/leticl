@@ -23,6 +23,11 @@
 ;;;; global, exactly as the functions it delegates to always did; the instances below
 ;;;; are singletons because the dispatch needs an object and nothing else.
 
+
+;;;; **The `*.rs:NNNN` citations here are to the reference as of 2026-10-08**, before its widget
+;;;; files moved into the `rano` crate — a reading, not a path that can be followed. See HACKING.md,
+;;;; "What a Rust citation means", for how to re-check one.
+
 (in-package #:leticl)
 
 ;;; ------------------------------------------------------------- the classes ;;;

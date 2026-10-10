@@ -25,6 +25,11 @@
 ;;;; the one session a head never spends a turn in. Two digits out, on the file whose
 ;;;; job is to say where a frame goes; see PERF.md.
 
+
+;;;; **The `*.rs:NNNN` citations here are to the reference as of 2026-10-08**, before its widget
+;;;; files moved into the `rano` crate — a reading, not a path that can be followed. See HACKING.md,
+;;;; "What a Rust citation means", for how to re-check one.
+
 (in-package #:leticl)
 
 ;;; ------------------------------------------------------------- wrapping ;;;

@@ -10,6 +10,11 @@
 ;;;; lists them in DEPENDENCY order rather than the old file's, which is why two
 ;;;; `undefined variable` warnings this tree used to emit are gone.
 
+
+;;;; **The `*.rs:NNNN` citations here are to the reference as of 2026-10-08**, before its widget
+;;;; files moved into the `rano` crate — a reading, not a path that can be followed. See HACKING.md,
+;;;; "What a Rust citation means", for how to re-check one.
+
 (in-package #:leticl)
 
 ;;; ------------------------------------------------------- pane rendering ;;;
@@ -290,7 +295,7 @@ cannot undo what the terminal has already been told.
 
 **This head's painter does not put an escape on the wire** — `clusters` carries
 a sequence in the cluster's `esc`, `screen-put-string` writes only the cluster's
-`text`, and a zero-width cluster draws nothing (`src/cells.lisp:209-224`). So
+`text`, and a zero-width cluster draws nothing (`src/cells/screen.lisp:33-48`). So
 the mode string was already not reaching the terminal. But that is the painter
 being incidentally lucky with bytes nobody sanitised, one refactor away from not
 being true, and it is not free either: the escape vanished whole, so a row
@@ -381,7 +386,7 @@ cut on, and then the characters are all there is — walked from the right and
 counted in COLUMNS, which is what ours did not do: a character count overshoots
 the budget on every non-ASCII path.
 
-**Not `%ellipsise-left`, and the name is the finding.** `src/chrome.lisp:162`
+**Not `%ellipsise-left`, and the name is the finding.** `src/chrome/counters.lisp:162`
 already holds a function by that name — the header's workspace path, cut at a
 CHARACTER — and chrome is loaded after cards, so defining a second one here
 silently replaced this rule with that one at load time and every test of it

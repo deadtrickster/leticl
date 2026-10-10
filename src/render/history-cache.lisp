@@ -4,6 +4,11 @@
 ;;;; consecutive, so every reference kept the direction it had and the split
 ;;;; moved no behaviour.
 
+
+;;;; **The `*.rs:NNNN` citations here are to the reference as of 2026-10-08**, before its widget
+;;;; files moved into the `rano` crate — a reading, not a path that can be followed. See HACKING.md,
+;;;; "What a Rust citation means", for how to re-check one.
+
 (in-package #:leticl)
 
 
@@ -1213,7 +1218,7 @@ transcript."
 (defparameter *card-page* 10
   "How many rows one press pages a card's content viewport.
 
-**The payload window's own number** (`*payload-page*`, `src/cards.lisp`), and reused
+**The payload window's own number** (`*payload-page*`, `src/cards/`), and reused
 rather than chosen a second time for the reason that one gives: the window's height is a
 function of the frame and the content, and the key handler knows neither, so the unit is
 a constant and the CLAMP is where the height is known. Two windows in one head that paged
@@ -1485,7 +1490,7 @@ scrolls the transcript by a row every keystroke.
              ;;
              ;; Only the HEIGHT half is taken. The `session_id.is_empty()` half
              ;; would move the body's first row to 0 on a head that has not been
-             ;; told its session yet, and `click-row->sel` (`src/editor.lisp:213`)
+             ;; told its session yet, and `click-row->sel` (`src/editor/answer.lisp:128`)
              ;; converts a click with `(- row 1)` — the pane's origin is written
              ;; down in a second place, in another strand's file, and moving one
              ;; of the two would put every click in a pane one row out. The

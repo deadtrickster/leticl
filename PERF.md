@@ -19,16 +19,16 @@ in-turn every frame is a full rebuild of the transcript. The chain, four links, 
 one measured:
 
 1. **In-turn the frame is rebuilt many times a second.** `%hist-key` puts a clock in
-   the cache key — `%hist-live-tick` (`src/render.lisp:443`) answers
+   the cache key — `%hist-live-tick` (`src/render/history-cache.lisp:102`) answers
    `(floor (internal-real-time-ms) +live-frame-ms+)` while a call runs — and every
-   committed row or body fill bumps `*hist-generation*` (`src/session.lisp:433,443`).
+   committed row or body fill bumps `*hist-generation*` (`src/session/state.lisp:493,443`).
    `%hist-key`'s own docstring says it: *"while a call runs the tick changes ten times
    a second, so EVERY frame is a miss."* So in-turn, frames are cold frames.
 2. **A cold frame re-rendered the whole window.** `%item-lines-render` was called
    44-296 times per frame and **never hit** — see finding A.
 3. **What it re-rendered was expensive and scales with payload size**, because an
    `item-lines` call on a `tool_result` splits, sanitises and filters the whole
-   payload (`%tool-payload-rows`, `src/cards.lisp:1280`) and there was no memo under
+   payload (`%tool-payload-rows`, `src/cards/payload.lisp:66`) and there was no memo under
    it.
 4. **Ten frames a second is enough.** Measured per-frame cost, 2038 items, 214x60,
    live turn:
@@ -49,12 +49,12 @@ one measured:
 ## Code review — the five things wrong
 
 **A. The per-item memo from `feedc9b` never produced a hit. Blocking.**
-`item-lines` (`src/cards.lisp:3238`) kept **one** frame per stamp, and the stamp
-carries `prefs` (`%item-lines-stamp`, `src/cards.lisp:3205`). Inside a single walk
+`item-lines` (`src/cards/note-card.lisp:149`) kept **one** frame per stamp, and the stamp
+carries `prefs` (`%item-lines-stamp`, `src/cards/note-card.lisp:107`). Inside a single walk
 `item-lines` is called twice per item with **two different `prefs`**:
 
-- `src/render.lisp:694` — `(item-lines item cols (head-prefs head))`
-- `src/render.lisp:699` -> `%row-invisible-p` -> `src/cards.lisp:1522` —
+- `src/render/history-cache.lisp:391` — `(item-lines item cols (head-prefs head))`
+- `src/render/history-cache.lisp:396` -> `%row-invisible-p` -> `src/cards/tool-result-card.lisp:351` —
   `(item-lines item cols nil)`
 
 Each alternation discarded the table (`(unless frame ...)` built a fresh hash table),
@@ -70,7 +70,7 @@ second of a running call costs a full walk and re-render of the window. This is 
 frame-rate multiplier for everything else.
 
 **C. `newest-payload-row-p` recomputed a session-wide scan once per drawn row. High.**
-`src/cards.lisp:2476` calls it per folded tool row; it calls
+`src/cards/decisions.lisp:227` calls it per folded tool row; it calls
 `newest-payload-item-id` (`src/cards.lisp:1323`), which walks backwards from the
 newest item asking `%row-openable-rows` -> `%tool-payload-rows` of every candidate.
 The answer is the same for every row in a frame. Measured: 43-60
@@ -82,25 +82,25 @@ is unbounded — 2038-4000 `%row-openable-rows` calls for a *single* scan, about
 `%C1-CONTROL-P`).
 
 **D. `%tool-payload-rows` was recomputed for every reason, including "is this
-pageable". Medium.** `src/cards.lisp:1280` splits, sanitises (`%without-control`, a
+pageable". Medium.** `src/cards/payload.lisp:66` splits, sanitises (`%without-control`, a
 character at a time) and `remove-if`s the whole payload on every call — for the row's
 own drawing *and* for the pageability question. A 90 KB payload was re-split two or
 three times per frame per row. It is a pure function of the payload.
 
 **E. Stale measurements in the docstrings that justify policy. Medium — house rule.**
-`src/render.lisp:11-15` states `%render` "measures under 0.1 ms a frame"; measured
-here **2.2-2.7 ms** warm at 214x60 (20-30x). `*idle-poll-ms*` (`src/head.lisp:1835`)
+`src/render/wrapping.lisp:11-15` states `%render` "measures under 0.1 ms a frame"; measured
+here **2.2-2.7 ms** warm at 214x60 (20-30x). `*idle-poll-ms*` (`src/head/op-call.lisp:273`)
 claims a pass costs "under 0.001 ms"; measured on an idle live head (pid 2536078):
 5158 passes in 10 s at 30 ms of CPU = **about 6 us a pass**, 516 passes/s, about
 **0.3 % of a core** (so the 2 ms wait is still defensible — the number backing it is
 not). This tree's method is *measure, then write the number down*; these two are
 load-bearing and both were wrong.
 
-**F. Minor.** `newest-hidden-run-id` (`src/cards.lisp:1526`, called at
+**F. Minor.** `newest-hidden-run-id` (`src/cards/tool-result-card.lisp:355`, called at
 `src/render.lisp:589` **before** the cache test) walks the session backwards every
 frame whenever no rung is hiding anything — cheap per item here (about 0 ms at 2038),
 but it is an O(session) call on the hit path. `%reading-joined-items`
-(`src/cards.lisp:2131`) is O(n) per call (1.0 ms at 2038, 2.0 ms at 4000) on the same
+(`src/cards/hidden-run.lisp:573`) is O(n) per call (1.0 ms at 2038, 2.0 ms at 4000) on the same
 pre-cache path: harmless while `*reading-join-prose*` is off, a per-frame O(n) the
 moment it is on.
 
@@ -119,7 +119,7 @@ moment it is on.
 
 ## Fixes — what was changed, and what it measures
 
-**1. The item memo holds a frame per render CONTEXT, not one slot** (`src/cards.lisp`).
+**1. The item memo holds a frame per render CONTEXT, not one slot** (`src/cards/`).
 `*item-lines-frames*` is a bounded list (`+item-lines-contexts+` 4) searched by the same stamp, so
 the walk's prefs and `%row-invisible-p`'s NIL no longer evict each other.
 MEASURED, 2038 items, 214x60, live turn, cold frame: **44-296 `%item-lines-render` calls a frame,
@@ -134,7 +134,7 @@ mutated IN PLACE, so the signature holds the item's own FIELDS (`:retired`, `:ts
 reference. `*bound-prompts*`, which `bound-prompt-for` reads by item id, joined the stamp for the
 same reason.
 
-**3. `newest-payload-item-id` is answered once per frame** (`src/cards.lisp`). `*newest-payload*`
+**3. `newest-payload-item-id` is answered once per frame** (`src/cards/`). `*newest-payload*`
 keys on `(items vector, *hist-generation*)` — the vector alone is not enough, because a row becomes
 pageable when its BODY arrives and `fill-item` bumps the generation without replacing the vector.
 MEASURED: 43-60 asks per cold frame became 1, and where no row is pageable the scan used to walk the
@@ -170,7 +170,7 @@ against 45-168% before. `%history-until` is now **0.93 ms on a hit and 0.90 ms o
 from the memo, so the miss IS the hit. The pathological shape — a session where no row is pageable,
 where one frame made 43 full-transcript scans — went from **46.8 ms a cold frame to 0.2 ms**.
 
-Pushed live to the operator's own head (`tui-eval --file src/cards.lisp`, 179 forms, gate green,
+Pushed live to the operator's own head (`tui-eval --file src/cards/`, 179 forms, gate green,
 155 ms) and verified there: `:item-memo T :payload-memo T :contexts 4`.
 
 **The suite is green on all of it: 7104 checks, 7104 pass, 0 fail** (`sbcl --script run.lisp test`),

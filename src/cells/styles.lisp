@@ -114,8 +114,8 @@ whose value is NIL removed.
 different indices with different bytes — `ESC[0;31;1m` against `ESC[0;1;31m` —
 so a frame drawn by one and repainted by the other emitted a style change where
 nothing had changed, and `compare-heads` read a difference that was not one.
-Both spellings are in the tree today (`src/chrome.lisp:271,329` against
-`src/cards.lisp:1065`).
+Both spellings are in the tree today (`src/chrome/counters.lisp:271,329` against
+`src/cards/decisions.lisp:93`).
 
 A NIL value is dropped rather than kept, because `'(:bold nil)` renders as
 nothing and index 0 renders as nothing, and two indices for one rendition is the

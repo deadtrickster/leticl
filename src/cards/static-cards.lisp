@@ -3,6 +3,11 @@
 ;;;; session. Three kinds in one file because each is a few lines of text and none of
 ;;;; them has state, helpers or a second shape.
 
+
+;;;; **The `*.rs:NNNN` citations here are to the reference as of 2026-10-08**, before its widget
+;;;; files moved into the `rano` crate — a reading, not a path that can be followed. See HACKING.md,
+;;;; "What a Rust citation means", for how to re-check one.
+
 (in-package #:leticl)
 
 (defclass system-card (card) ())

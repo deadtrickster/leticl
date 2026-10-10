@@ -3,7 +3,7 @@
 ;;;; THE REQUIREMENT, in the operator's own words: *"if ill ask an agent in a different project to
 ;;;; create me a nice dashboard for the long running import… that is the goal of having common lisp
 ;;;; here."* An agent in another project cannot edit this head's source, so a dashboard that exists
-;;;; only as a `dash-register` call inside `src/dash.lisp` can only ever be written by the one person
+;;;; only as a `dash-register` call inside `src/dash/` can only ever be written by the one person
 ;;;; who did not need the feature — and the operator said so plainly: *"everything is half done."*
 ;;;;
 ;;;; So a panel is DATA ON DISK. `dash-register` stays exactly what it was — the live-REPL escape
@@ -15,7 +15,7 @@
 ;;;; would have to know Common Lisp to draw a progress bar. JSON, because this head already depends
 ;;;; on `yason` (`leticl.asd`) and already parses JSON in `src/json.lisp`, letibot reads JSON with
 ;;;; serde, `~/.config/letibot/` already holds `permission.json`, and this head's TOML reader is the
-;;;; *"flat key = value subset"* (`src/prefs.lisp:9`) with no nesting — a dashboard's rows are a
+;;;; *"flat key = value subset"* (`src/prefs/state.lisp:9`) with no nesting — a dashboard's rows are a
 ;;;; nested list, so TOML would mean writing a nested-table parser first. See
 ;;;; `docs/r56-dashboards-from-files.md` §6.
 ;;;;

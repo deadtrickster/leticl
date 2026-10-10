@@ -4,6 +4,11 @@
 ;;;; full-body screen; the ranges are consecutive, so every reference kept its
 ;;;; direction. The protocol the screens answer through is `pane-protocol.lisp`.
 
+
+;;;; **The `*.rs:NNNN` citations here are to the reference as of 2026-10-08**, before its widget
+;;;; files moved into the `rano` crate — a reading, not a path that can be followed. See HACKING.md,
+;;;; "What a Rust citation means", for how to re-check one.
+
 (in-package #:leticl)
 
 (defvar *peeked-session* nil
@@ -161,7 +166,7 @@ that promises nothing.
 
 Written from the DRAW rather than from the frame that built the view, which is
 where the reference writes it: the arm that folds a `peeked` frame is in
-`src/head.lisp` and belongs to another strand. Idempotent through `*peek-spill*`,
+`src/head/` and belongs to another strand. Idempotent through `*peek-spill*`,
 so the cost is one write per peek and not one per frame."
   (let ((key (cons session-id (length lines))))
     (if (equal (car *peek-spill*) key)
@@ -180,7 +185,7 @@ so the cost is one write per peek and not one per frame."
 
 (defun peek-row-count (head)
   "How many BODY lines the peek pane has — what `pane-row-count` should answer
-for `:peek`, where `src/editor.lisp:749` answers 0.
+for `:peek`, where `src/editor/completion.lisp:320` answers 0.
 
 That zero is the whole of the pane's arrow keys: `move-cursor` clamps the cursor
 to `(1- 0)` and Up and Down move nothing, while the pane's own last line
@@ -200,7 +205,7 @@ row was chosen from — *\"and Esc returns to the jobs list, which never closed\
 (letibot `3aabe4f`). The list itself survives because `head-jobs` and
 `head-picker-sel` are untouched while the overlay is up.
 
-The key itself is dispatched in `src/editor.lisp:242`, which sends every pane to
+The key itself is dispatched in `src/editor/answer.lisp:157`, which sends every pane to
 `:normal`; this is the fact that arm needs and the one line it is missing."
   (pane-esc-target (pane-for mode)))
 

@@ -9,8 +9,8 @@ dont belong to jobs. Also not visible - dashboards directory. everything is half
 The three defects that make "half done" the right word:
 
 1. **Nothing can reach the machinery.** `grep` for anything named watcher or dashboard finds exactly
-   one file, `src/dash.lisp`. There is no `watchers/`, no `dashboards/`. `dash-register-defaults`
-   (`src/dash.lisp:1310-1411`) hardcodes this head's panels in this head's SOURCE, so a new
+   one file, `src/dash/`. There is no `watchers/`, no `dashboards/`. `dash-register-defaults`
+   (`src/dash/window.lisp:63-164`) hardcodes this head's panels in this head's SOURCE, so a new
    dashboard is an edit to leticl or a live `dash-register` that dies with the image.
 2. **A watcher cannot belong to a job.** The job tie exists only as `:job` on a *panel*, matched by
    `dash-panel-for-job`, fed from the job's OUTPUT window. `*dash-samplers*` has no job notion at
@@ -37,7 +37,7 @@ ${XDG_CONFIG_HOME:-~/.config}/letibot/dashboards/*.json
 ```
 
 `<workspace>` is `(getf (session-wiring s) :workspace)` — the head already knows it
-(`src/editor.lisp:545`, `src/panes.lisp:341`).
+(`src/editor/completion.lisp:35`, `src/panes/status.lisp:56`).
 
 **Precedence: union by `name`; on a collision the workspace file wins.** Not "the workspace
 directory replaces the user one" — a project adds one dashboard without having to restate the rest.
@@ -110,7 +110,7 @@ rule is kept.
 ### `watch` — the job binding, and it is the same match rule
 
 A string, or an array of strings. The match is `dash-job-matches-p` exactly as it is
-(`src/dash.lisp:585`): a **substring of the job's COMMAND, or the exact `:id`, case-insensitive**. No
+(`src/dash/flatness.lisp:324`): a **substring of the job's COMMAND, or the exact `:id`, case-insensitive**. No
 second spelling of that rule — `dash-job-matches-p` is already the one place for it, and the pane and
 the feed ask it in both directions.
 
@@ -427,7 +427,7 @@ MEASURED, in order of weight:
    property that makes this DATA rather than Lisp.
 3. `~/.config/letibot/` already holds `permission.json` and `sensitive.json`. JSON is not a foreign
    body in that directory.
-4. leticl's TOML reader is the *"flat `key = "value"` subset"* (`src/prefs.lisp:9`) — **no nesting**.
+4. leticl's TOML reader is the *"flat `key = "value"` subset"* (`src/prefs/state.lisp:9`) — **no nesting**.
    A watcher's `series` list and a dashboard's `rows` list are nested, so TOML would mean writing
    and testing a nested-table parser first.
 5. Every agent writes JSON. No agent needs Common Lisp, and no agent needs leticl's TOML subset.
@@ -452,7 +452,7 @@ grep -rn "dash-note .*:unit" src/*.lisp     → nothing
 grep -rn "dash-series-new"  src/*.lisp      → its own definition, and no caller at all
 ```
 
-Every value-producing path — `dash-collect-once` (`src/dash.lisp:1095`), `dash-note-job` (1231,
+Every value-producing path — `dash-collect-once` (`src/dash/flatness.lisp:834`), `dash-note-job` (1231,
 1232, 1237) — calls `(dash-note name value)` with no unit. So every series in a running head has
 `unit = ""`, `dash-floor-for ""` is the 1.0 default, and `+dash-flat-floor+` is reachable **only
 from the test helper `%feed`**, which is the one caller that passes a unit.
@@ -533,7 +533,7 @@ type REAL`), not a wrong answer — the failure mode this tree prefers.
 ## 9. Build order (each step usable alone)
 
 1. ~~Read the two directories; register panels from files; report broken files in the pane.~~
-   **BUILT** — commit `814909e`, `src/dashfiles.lisp`. This alone gives the operator the dashboards
+   **BUILT** — commit `814909e`, `src/dashfiles/`. This alone gives the operator the dashboards
    directory, one file per dashboard, and the minimum example in §3. Plus `/dash-reload`, the
    per-panel file note in the header, and `enabled: false` for suppression. The two example files
    are in `~/.config/letibot/dashboards/` (`machine.json`, working now; `import.json`, the template
@@ -710,7 +710,7 @@ needed and is deliberate:
 ### The frame-grid divergence — NOTED, not resolved
 
 flowy's own grid is `{label: 22, value: 10, bar: 18}` and this head's is `{label 24, value 11, bar 18}`
-(`+dash-col-label+`, `+dash-col-value+`, `+dash-col-bar+` in `src/dash.lisp`). **Not adopted, not
+(`+dash-col-label+`, `+dash-col-value+`, `+dash-col-bar+` in `src/dash/`). **Not adopted, not
 harmonised, and not hidden:** the two are two columns off on label and one on value, which is a
 cosmetic difference in a pane and would be a silent behaviour change to whichever side moved. The
 operator is filing it with four other known divergences between the three implementations; this is

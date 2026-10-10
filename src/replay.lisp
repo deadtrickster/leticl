@@ -38,6 +38,11 @@
 ;;;; — a `let` over a symbol that is not yet special is a lexical binding, and
 ;;;; the reset below would then silently do nothing.
 
+
+;;;; **The `*.rs:NNNN` citations here are to the reference as of 2026-10-08**, before its widget
+;;;; files moved into the `rano` crate — a reading, not a path that can be followed. See HACKING.md,
+;;;; "What a Rust citation means", for how to re-check one.
+
 (in-package #:leticl)
 
 (defun replay-envelopes-from-lines (lines)

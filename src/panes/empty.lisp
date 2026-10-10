@@ -4,6 +4,11 @@
 ;;;; full-body screen; the ranges are consecutive, so every reference kept its
 ;;;; direction. The protocol the screens answer through is `pane-protocol.lisp`.
 
+
+;;;; **The `*.rs:NNNN` citations here are to the reference as of 2026-10-08**, before its widget
+;;;; files moved into the `rano` crate — a reading, not a path that can be followed. See HACKING.md,
+;;;; "What a Rust citation means", for how to re-check one.
+
 (in-package #:leticl)
 
 ;;; --------------------------------------------- the empty-session banner ;;;

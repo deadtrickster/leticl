@@ -5,6 +5,11 @@
 ;;;; `edit-card` and `write-card` are the two families with a file of their own, because
 ;;;; a diff and a set of write targets are shapes rather than a word.
 
+
+;;;; **The `*.rs:NNNN` citations here are to the reference as of 2026-10-08**, before its widget
+;;;; files moved into the `rano` crate — a reading, not a path that can be followed. See HACKING.md,
+;;;; "What a Rust citation means", for how to re-check one.
+
 (in-package #:leticl)
 
 (defclass tool-result-card (card)

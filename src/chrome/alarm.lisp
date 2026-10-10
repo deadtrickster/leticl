@@ -4,6 +4,11 @@
 ;;;; consecutive, so every reference kept the direction it had and the split
 ;;;; moved no behaviour.
 
+
+;;;; **The `*.rs:NNNN` citations here are to the reference as of 2026-10-08**, before its widget
+;;;; files moved into the `rano` crate — a reading, not a path that can be followed. See HACKING.md,
+;;;; "What a Rust citation means", for how to re-check one.
+
 (in-package #:leticl)
 
 ;;; ----------------------------------------------------------- alarm line ;;;
@@ -201,7 +206,7 @@ has always been in and the reason it reads as a ghost rather than as a message."
 (defun completions-line (head cols)
   "The live `/command` matches as ONE dim row — the standalone form.
 
-Tab has completed since the beginning (`src/editor.lisp:118`) and **nothing was
+Tab has completed since the beginning (`src/editor/answer.lisp:33`) and **nothing was
 ever drawn**: `grep -rn completion src/*.lisp` found `%complete` and no renderer,
 so the only way to learn what a prefix matched was to press Tab and watch the
 buffer change under you. A bare `/` lists every verb; a prefix nothing matches

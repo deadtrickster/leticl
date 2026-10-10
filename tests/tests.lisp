@@ -1760,7 +1760,7 @@ is a fact about the caller's assumption and not about the tree."
                              (asdf:system-source-directory :leticl)))
                            (uiop:getcwd)))
          (root (find-if (lambda (dir)
-                          ;; **A FILE THAT IS STILL A FILE.** This probed `src/commands.lisp`
+                          ;; **A FILE THAT IS STILL A FILE.** This probed `src/commands/`
                           ;; until `commands` became a directory — the check then found no tree
                           ;; at all and refused, which is the right failure said loudly rather
                           ;; than a walk over nothing. `package.lisp` is the one src file with no
@@ -2068,7 +2068,7 @@ every frame, and that reads as flicker."
 ;;; ------------------------------------------- every frame the head owes is sent ;;;
 
 (defun protocol-constructors ()
-  "The names of every `make-*` frame constructor in src/protocol.lisp."
+  "The names of every `make-*` frame constructor in src/protocol/."
   (let* ((text (source-of "protocol"))
          (names nil)
          (i 0)
@@ -4055,7 +4055,7 @@ assertions: two columns comes back as one cluster plus the mark."
     (is (= 2 (string-width cut)) "two columns: one cluster plus the ellipsis")
     (is (eql 0 (search (format nil "a~C" acute) cut))
         "and the cluster it kept is whole"))
-  (let ((cut (truncate-to-width "…/Projects/leticl/src/cards.lisp" 12)))
+  (let ((cut (truncate-to-width "…/Projects/leticl/src/cards/" 12)))
     (is (<= (string-width cut) 12) "never over the budget the caller gave")
     (is (char= #\… (char cut (1- (length cut)))) "and it ends in the mark")))
 
@@ -5161,16 +5161,16 @@ subject — and kept when they name nothing, which is the tool whose label would
 otherwise be empty or a bare modifier. Both halves are asserted here, and the tools
 that keep it are named."
   ;; an `edit` names a file, so nothing is drawn before it
-  (is (equal "/home/dead/Projects/leticl/src/commands.lisp"
+  (is (equal "/home/dead/Projects/leticl/src/commands/"
              (display-target
-              "{\"edits\":[{\"old_string\":\"a\",\"new_string\":\"b\"}],\"path\":\"/home/dead/Projects/leticl/src/commands.lisp\"}"))
+              "{\"edits\":[{\"old_string\":\"a\",\"new_string\":\"b\"}],\"path\":\"/home/dead/Projects/leticl/src/commands/\"}"))
       "the array first, as the model wrote it")
   ;; the reference's own test case, `a.rs […]` before this ruling, `a.rs` after it
   (is (equal "a.rs" (display-target "{\"path\":\"a.rs\",\"edits\":[{\"old\":\"x\"}]}"))
       "and with the array after the path, which is the order letibot's own test uses")
   ;; the same rule one tool over: a `read` with ranges names its file
-  (is (equal "src/cards.lisp"
-             (display-target "{\"path\":\"src/cards.lisp\",\"ranges\":[{\"offset\":100}]}"))
+  (is (equal "src/cards/"
+             (display-target "{\"path\":\"src/cards/\",\"ranges\":[{\"offset\":100}]}"))
       "a windowed read names the file and not the windows")
   ;; **THE HALF THAT MUST SURVIVE.** `todo_write` sends an array and nothing else —
   ;; no scalar at all — and `[…]` is the only thing its label can say.
@@ -5204,7 +5204,7 @@ underneath the row — the edit excerpt is a diff of it — which is the same ar
 is dropped on. What the row is for is `Wrote <file>`."
   ;; the operator's arguments, in their own order. **THE PATH IS UNQUOTED**: only an argument with
   ;; WHITESPACE is quoted (`%debug-quote`, Rust's `{:?}`), which is how every other row draws a path
-  ;; — `Read src/cards.lisp`, `Edited src/f.lisp` — and the body that used to lead here IS quoted,
+  ;; — `Read src/cards/`, `Edited src/f.lisp` — and the body that used to lead here IS quoted,
   ;; which is half of why the row read as a wall
   (is (equal "/tmp/x/repl-msg.txt"
              (display-target
@@ -5579,7 +5579,7 @@ check that would have caught the bug on the day it landed."
   (let ((h (%pane-head))
         ;; the job-output overlay is a SPECIAL rather than a head slot — the
         ;; window is ephemeral, and a slot is exactly the state a snapshot and a
-        ;; reconnect carry (src/session.lisp on `*job-out*`) — so it is bound
+        ;; reconnect carry (src/session/ on `*job-out*`) — so it is bound
         ;; here rather than seeded in `%pane-head`, where it would leak into
         ;; every other test that builds one
         (leticl::*job-out*
@@ -11498,7 +11498,7 @@ operator is entitled to know before they spend an hour in that session."
   ;; the headers say the number the constant says
   (is (search (format nil "protocol version ~d" +protocol-version+)
               (source-of "protocol"))
-      "src/protocol.lisp's header names the version it sends")
+      "src/protocol/'s header names the version it sends")
   (is (search (format nil "protocol ~d" +protocol-version+) (%repo-file "leticl.asd"))
       "and so does the system definition"))
 
@@ -14348,7 +14348,7 @@ wiring would have started emitting what the reference suppresses."
 
 (def-test the-picker-opens-on-the-session-you-are-in (:suite leticl)
   "**Ctrl+S then Enter moved you off your own session.** `%open-pane` seeds every
-pane's cursor at row 0 (`src/commands.lisp:178-191`), so the session picker
+pane's cursor at row 0 (`src/commands/verbs.lisp:182-195`), so the session picker
 opened on row 1 of the list and Enter — the obvious thing to press on a list you
 did not mean to change — switched. The reference seeds `picker_sel` from the
 current session when it opens the list (app.rs:3080-3087) precisely so that Enter
@@ -14378,7 +14378,7 @@ about which row is which."
 
 (def-test the-peek-pane-shows-the-tail-and-names-its-spill-file (:suite leticl)
   "**The pane advertised three keys and a file, and had none of them.**
-`pane-row-count` answers 0 for `:peek` (`src/editor.lisp:749`) so its cursor has
+`pane-row-count` answers 0 for `:peek` (`src/editor/completion.lisp:320`) so its cursor has
 nowhere to walk; the generic pane window took the TOP of the read, so a subagent
 that had written two hundred lines showed its first screenful while its ANSWER,
 which is at the end, was off the bottom; and `spill_sub_out` (app.rs:8025-8060)
@@ -14865,8 +14865,8 @@ to a label whose subject is the daemon's to state."
   "The card the operator was looking at: unbounded content above the ladder."
   (setf (session-open-decisions (head-session head))
         (list (list :req-id req-id :kind "permission"
-                    :summary "`edit` wants write access to `src/panes.lisp`"
-                    :target "src/panes.lisp"
+                    :summary "`edit` wants write access to `src/panes/`"
+                    :target "src/panes/"
                     :detail (format nil "the patch:~%~{~a~%~}"
                                     (loop for i from 1 to diff-lines
                                           collect (format nil "-old ~d~%+new ~d" i i)))
@@ -15214,7 +15214,7 @@ sent and not about the last one that finished. Ours read `state.usage` or
 turn the header showed the PREVIOUS turn's context while the bar on the
 composer's edge expanded a different one.
 
-`src/session.lisp:218-223` has folded `PromptProgress` onto the turn as
+`src/session/state.lisp:225-230` has folded `PromptProgress` onto the turn as
 `(:total :cache :processed :time-ms)` since it was written; nothing read it."
   (let* ((h (%make-head))
          (s (head-session h)))
@@ -15408,11 +15408,11 @@ different fact from one that did."
 
 (def-test o-on-a-subagent-row-switches-into-it (:suite leticl)
   "The subagents pane's own footer has advertised `o switches into it` since it
-was written (`src/panes.lisp:686`) and **no key was ever bound to it** — the one
+was written (`src/panes/config.lisp:323`) and **no key was ever bound to it** — the one
 row on the screen that names a key named a key that did nothing. The reference
 binds it at app.rs:3696-3707.
 
-This is the act; the key is `src/editor.lisp:283-296`'s, whose `:char` arm
+This is the act; the key is `src/editor/answer.lisp:198-211`'s, whose `:char` arm
 handles only `#\\q`."
   (let ((h (%pane-head))
         (sent nil)
@@ -15991,7 +15991,7 @@ Four claims, and the last two are the ones a cosmetic reading would miss:
 
 (def-test the-completions-row-lists-what-tab-would-take (:suite leticl)
   "`completions_line` (app.rs:4342-4358). Tab has completed since this head was
-written (`src/editor.lisp:118`) and **nothing was ever drawn**, so the only way
+written (`src/editor/answer.lisp:33`) and **nothing was ever drawn**, so the only way
 to learn what a prefix matched was to press Tab and watch the buffer change under
 you. A bare `/` lists everything; a prefix nothing matches draws nothing, because
 a row that appears and disappears is noise."
@@ -17079,7 +17079,7 @@ the output with nothing to say it had been."
   "Gap 29. `'(:fg :red :bold t)` and `'(:bold t :fg :red)` are the same
 rendition and interned at two indices with two different escapes —
 `ESC[0;31;1m` against `ESC[0;1;31m`. Both spellings are in the tree today
-(`src/chrome.lisp:271,329` against `src/cards.lisp:1065`), so a row drawn by one
+(`src/chrome/counters.lisp:271,329` against `src/cards/decisions.lisp:93`), so a row drawn by one
 and repainted by the other emitted a style change where nothing had changed."
   (is (= (leticl::style-index '(:fg :red :bold t))
          (leticl::style-index '(:bold t :fg :red)))
@@ -17165,11 +17165,11 @@ is the shape a person reads straight past.\"*"
          (*call-started-ms* nil)
          (body (list :type "assistant" :text ""
                      :tool-calls (list (list :id "c1" :name "read"
-                                             :arguments "{\"path\":\"src/cards.lisp\"}"))))
+                                             :arguments "{\"path\":\"src/cards/\"}"))))
          (line (first (item-lines (list :item-id "a1" :kind "assistant" :item body)
                                   80 nil))))
     (is (equal (list (cons "  " nil)
-                     (cons "→ Read src/cards.lisp · no result" '(:bold t :fg :yellow)))
+                     (cons "→ Read src/cards/ · no result" '(:bold t :fg :yellow)))
                line)
         "the whole line in Attention, stepped in by the activity indent")
     ;; below sixty columns the step is given up, and this row went with it
@@ -17359,9 +17359,9 @@ invisible on the row that attached it."
                     :parts (list (list :kind "text" :text "what is wrong with")
                                  (list :kind "image" :media-type "image/png"
                                        :data-ref "r1")
-                                 (list :kind "file_ref" :path "src/cards.lisp"
+                                 (list :kind "file_ref" :path "src/cards/"
                                        :sha256 "abc")))))
-    (is (equal "what is wrong with [image image/png] [file src/cards.lisp]"
+    (is (equal "what is wrong with [image image/png] [file src/cards/]"
                (leticl::%user-parts-text body))
         "and an attachment is named where it sat")
     (is (search "[image image/png]"
@@ -17489,7 +17489,7 @@ really buries a conversation.")
 
 (defparameter +task-notice+
   "[task] a subagent you started has finished:
-  - `s-1791017230755743833-sub-1791063330816` done: /home/dead/Projects/leticl/src/panes.lisp has 3417 lines.
+  - `s-1791017230755743833-sub-1791063330816` done: /home/dead/Projects/leticl/src/panes/ has 3417 lines.
 This is the completion arriving on its own — you do not need to wait for it, and calling `task_result` to block would only hold you for a result you already have. Read what it said with `task_result` (task=\"…\"), then carry on with what you were doing."
   "A subagent-completion notice as the daemon writes it — the same shape as a job's, with the same
 closing paragraph addressed to the model, which is why it was drawn in full until the vocabulary knew
@@ -19078,7 +19078,7 @@ line it belongs to and the report follows."
                        :item (list :type "reasoning" :text "let me check the arithmetic"))
                  (list :item-id "t2" :kind "tool_result" :ts 0
                        :item (list :type "tool_result" :call-id "c2" :name "edit"
-                                   :verb "edited" :subject "src/chrome.lisp"
+                                   :verb "edited" :subject "src/chrome/"
                                    :outcome (list :outcome "ok") :payload "SECOND PAYLOAD"))
                  (list :item-id "a2" :kind "assistant" :ts 0
                        :item (list :type "assistant" :text "and the conclusion is X")))
@@ -19173,7 +19173,7 @@ The assertion is on the ESCAPE, not on the words, because the words were never t
       ;; --- the counts carry no summary of any kind
       (is (not (search "cargo test" view))
           "**no verb or target** — the head already had them and the marker does not use them")
-      (is (not (search "src/chrome.lisp" view)) "not the distinct targets either")
+      (is (not (search "src/chrome/" view)) "not the distinct targets either")
       (is (not (search "ran " view)) "not the verb label")
       (is (not (search " — " view)) "no em-dash clause hanging off the counts")
       ;; --- the two registers, on the SEGMENTS: the counts plain, the seam faint
@@ -23943,7 +23943,7 @@ worst-shaped failure this file has, so the timeout is asserted rather than assum
 ;;; **THE OPERATOR'S OWN WORDS ARE THE REQUIREMENT**: *"if ill ask an agent in a different project to
 ;;; create me a nice dashboard for the long running import… that is the goal of having common lisp
 ;;; here."* An agent in another project cannot edit this head's source, so a dashboard that exists
-;;; only as a `dash-register` call in `src/dash.lisp` can only ever be written by the one person who
+;;; only as a `dash-register` call in `src/dash/` can only ever be written by the one person who
 ;;; did not need the feature. These tests are about the FILE — the reading, the refusals, and the two
 ;;; defects in the flatness work that only a declared unit could expose.
 
@@ -26512,7 +26512,7 @@ nothing about it**. MEASURED on a clean debian:stable-slim: all six files extrac
 The fix reads `sb-ext:*runtime-pathname*`, which answers *where am I installed* rather than *where was
 I started from*. **And the first verification of it was WRONG for the reason this whole day has been
 about**: the head showed the old answer because the new definition had not been pushed to it. A
-`--file src/highlight.lisp` and the same call returned the installed path. A test that binds the
+`--file src/highlight/` and the same call returned the installed path. A test that binds the
 runtime pathname is how the next reader gets that answer without a live head."
   (let* ((dir (merge-pathnames (format nil "leticl-hltest-~a/" (random 1000000))
                                (uiop:temporary-directory)))
@@ -26796,7 +26796,7 @@ TWICE, in the transcript card and in the settled row, so a fix to one would have
   (flet ((facts-for (name)
            (note-call-started "call_b")
            (note-call-finished "call_b"
-                               :edit (list :path "src/protocol.lisp" :created nil
+                               :edit (list :path "src/protocol/" :created nil
                                            :before-start 10 :after-start 10
                                            :before-lines 20 :after-lines 20 :truncated nil
                                            :before (format nil "a~%b~%c")
@@ -26810,7 +26810,7 @@ TWICE, in the transcript card and in the settled row, so a fix to one would have
     (let* ((*call-facts* nil) (*item-facts* nil) (*call-started-ms* nil)
            (item (facts-for "bash"))
            (text (segs-of (item-lines item 80 (list :show-tools t :tools-open t)))))
-      (is (search "src/protocol.lisp" text)
+      (is (search "src/protocol/" text)
           (format nil "**a `bash` row carrying an excerpt NAMES the file**: ~s" text))
       (is (search "-b" text)
           (format nil "**and draws the removed line** — this is the diff card the operator asked

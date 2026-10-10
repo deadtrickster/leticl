@@ -4,6 +4,11 @@
 ;;;; The same call gets the same CLASS here and in `tool-result-card.lisp`: the wire
 ;;;; shapes differ, the tool does not.
 
+
+;;;; **The `*.rs:NNNN` citations here are to the reference as of 2026-10-08**, before its widget
+;;;; files moved into the `rano` crate — a reading, not a path that can be followed. See HACKING.md,
+;;;; "What a Rust citation means", for how to re-check one.
+
 (in-package #:leticl)
 
 (defun %call-elapsed-ms (call)

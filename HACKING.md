@@ -51,6 +51,29 @@ and would look in `/tmp/leticl-<uid>`. `scripts/tui-eval` searches both, and
 bound to the running head. The reply's `value` is the printed result, JSON-
 encoded; `ms` is the eval's wall time.
 
+## What a Rust citation means
+
+The comments in `src/` cite the reference head constantly — `app.rs:2650-2651`, `keys/chords.rs:190`,
+`protocol.rs:872-884` — and those citations are **to the reference tree as of 2026-10-08**. On that day
+the reference moved its widget files into the `rano` crate: `crates/ui/src/{width,diff,sidediff,markdown}.rs`
+were deleted (`695a9c6`, `9c92d45`), `app.rs` became the `app` module (`1a3b51f`), and `cards.rs` and
+`chrome.rs` had gone earlier. So a citation here names **where a reading was taken**, not a path a reader
+can open today — and 232 of them were checked by two reviewers on 2026-10-11 and found unresolvable.
+
+**The reading is the fact, and it is still checkable by symbol.** To re-check one:
+
+- the pinned `rano` is at `~/.cargo/git/checkouts/rano-e5ff04637e4ffcdb/<rev>/` — the panes, the
+  cards, the diff and the markdown painter live there now, and a citation that names a *function*
+  (`TodosPane`, `wrap_segments`, `user_block`) is found by grep;
+- the reference's own history still has the pre-split tree: `git -C ~/Projects/letibot/letibot show
+  695a9c6^:crates/tui/src/app.rs | sed -n '2650,2660p'` answers a citation to `app.rs` exactly;
+- a citation to a file that never existed in the reference (`bin/letibot-tui.rs`) is an error rather
+  than a drift, and repointing one is a judgement about what it meant.
+
+`scripts/repin-check` walks the reference side of the parity documents; `scripts/repoint-citations`
+walks the subject side (`src/…` paths that pre-date this tree's own split into directories, which it
+rewrites by finding the cited text in the module — measured, never guessed).
+
 ## The other door: the `/lisp` pane
 
 **A *door* is this tree's word for a way IN — one entry point onto a surface, where

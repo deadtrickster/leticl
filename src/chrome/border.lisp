@@ -4,6 +4,11 @@
 ;;;; consecutive, so every reference kept the direction it had and the split
 ;;;; moved no behaviour.
 
+
+;;;; **The `*.rs:NNNN` citations here are to the reference as of 2026-10-08**, before its widget
+;;;; files moved into the `rano` crate — a reading, not a path that can be followed. See HACKING.md,
+;;;; "What a Rust citation means", for how to re-check one.
+
 (in-package #:leticl)
 
 ;;; ---------------------------------------------------------------- border ;;;
@@ -133,7 +138,7 @@ question about the prompt being sent — not about the last one that finished.
 Ours read `state.usage` or `turn.usage` and had no `progress` path at all, so
 through the whole of a long turn the header showed the PREVIOUS turn's context
 while the bar on the composer's edge was expanding a different one. Measured
-against `src/session.lisp:218-223`, which already folds `PromptProgress` onto the
+against `src/session/state.lisp:225-230`, which already folds `PromptProgress` onto the
 turn as `(:total :cache :processed :time-ms)` and had no reader."
   (let* ((turn (session-turn s))
          (state (and turn (getf turn :state)))
@@ -166,7 +171,7 @@ turn as `(:total :cache :processed :time-ms)` and had no reader."
          ;; `:turn-started` replaces with a fresh `(:state "running")`, so `22 tok/s`, the
          ;; duration and `38 out` vanished the instant a turn began and came back when it ended:
          ;; *"the rate comes and goes"*. `:turn-started` carries the finished turn's state onto
-         ;; the new one (src/session.lisp), so this falls back exactly as the reference's does.
+         ;; the new one (src/session/), so this falls back exactly as the reference's does.
          (timings (or (and state (getf state :timings))
                       (and turn (getf turn :timings))))
          (parts nil))
