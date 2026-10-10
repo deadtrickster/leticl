@@ -295,6 +295,10 @@ by a second caller — which is how the reference found this, in its own test."
         ;; knows and this function does not, and two spellings of it drift the first time the
         ;; header above it grows.
         ((eq (head-mode head) :todos) (todo-stop-at-line head line))
+        ;; **AND THE CONFIG PANE, FOR THE SAME REASON** — its rows are not one line apart (a
+        ;; section heading and a blank sit between groups), so `(line - header)` selected a
+        ;; neighbour of the row under the pointer. Asked of the pane, as `todo-stop-at-line` is.
+        ((eq (head-mode head) :config) (config-stop-at-line head line))
         ((and (>= sel 0) (< sel n)) sel)))))
 
 (defun pane-row-count (head mode)

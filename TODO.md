@@ -391,34 +391,11 @@ carry.
   Dead intra-line emphasis; SAPs passed unpinned across the FFI; every visible
   fence re-parsed through the shim on every frame.
 
-## Filed for their own sessions — two projects, deferred on purpose
+## Queued from the reference's own batches — surveyed, not yet built
 
-Both were measured against the reference's current tree before filing, so the next
-session starts from facts and not from a summary's memory. Neither is parity debt:
-the wire half of each is additive (protocol 31+ frames; leticl is 36) and nothing a
-head runs today breaks without them.
-
-- [ ] **the `!term` pane + a VT renderer** — a program that owns the conversation's
-  rectangle. **The wire half is the small half**: client `TermOpen` / `TermInput` /
-  `TermResize {cols rows}` / `TermClose`; server `TermAttached {command}` /
-  `TermStatus {command}` / `TermOutput {bytes}` / `TermEnded {reason}` (protocol 31;
-  `TermAttached` is a new server frame, which is why 31 was a bump). **The renderer
-  is the project.** The reference's pane is `letibot-vt`'s `Screen` — a rectangle of
-  cells, a cursor, a pen, an alternate buffer — plus `letibot_ui::ansi::pane_rows`,
-  and the contract that matters is THE RECTANGLE: `pane_rows` answers EXACTLY
-  `room` rows, so the composer, header and status never move by a line when the
-  pane opens and never lose one when it closes. For this head the renderer is
-  either a Lisp cell-grid VT emulator (cells, cursor, pen, alternate buffer, SGR,
-  CUP/ED/EL, scroll regions) or an FFI to `letibot-vt` — the highlight shim
-  (`native/libleticl_hl.so`) is the existing pattern for the second, and the same
-  trade it made (a native dependency against a live-patchable image) is the first
-  decision to argue. **The way out is `ctrl-\` (0x1c), intercepted on the raw byte
-  stream BEFORE anything is forwarded** — the program never receives it and cannot
-  trap it; Esc is wrong on purpose (it is `cancel` in vi/mc/nano/less and the first
-  byte of every meta sequence). Detach ends NOTHING: the program keeps running on
-  the daemon's pty and nothing is sent at all. This head's input layer reads decoded
-  characters, not raw bytes — where 0x1c arrives and whether the interception can
-  live in the driver is the first thing to measure.
+Two batches of the reference (2026-10-09) were read in full, and everything this head
+must mirror is written down here: the wire and the policy are ported, and each of the
+rest names the commit it comes from.
 
 - [ ] **the reference's head-side mirrors from its 48-commit batch (2026-10-09)** —
   the wire and the policy are ported (`06e0da9`, `c2a5605`: protocol 37's todo
@@ -496,6 +473,36 @@ head runs today breaks without them.
     (`29f2422`, `5d3bfac`), `allow-all`'s answer surviving a restart (`9f09f04`), the stop
     that interrupts the turns it holds (`195a813`), and the term pane born at its size
     (`401e61f`).
+
+
+## Filed for their own sessions — the `!term` pane, and the merge queue
+
+Both were measured against the reference's current tree before filing, so the next
+session starts from facts and not from a summary's memory. Neither is parity debt:
+the wire half of each is additive (protocol 31+ frames; leticl is 36) and nothing a
+head runs today breaks without them.
+
+- [ ] **the `!term` pane + a VT renderer** — a program that owns the conversation's
+  rectangle. **The wire half is the small half**: client `TermOpen` / `TermInput` /
+  `TermResize {cols rows}` / `TermClose`; server `TermAttached {command}` /
+  `TermStatus {command}` / `TermOutput {bytes}` / `TermEnded {reason}` (protocol 31;
+  `TermAttached` is a new server frame, which is why 31 was a bump). **The renderer
+  is the project.** The reference's pane is `letibot-vt`'s `Screen` — a rectangle of
+  cells, a cursor, a pen, an alternate buffer — plus `letibot_ui::ansi::pane_rows`,
+  and the contract that matters is THE RECTANGLE: `pane_rows` answers EXACTLY
+  `room` rows, so the composer, header and status never move by a line when the
+  pane opens and never lose one when it closes. For this head the renderer is
+  either a Lisp cell-grid VT emulator (cells, cursor, pen, alternate buffer, SGR,
+  CUP/ED/EL, scroll regions) or an FFI to `letibot-vt` — the highlight shim
+  (`native/libleticl_hl.so`) is the existing pattern for the second, and the same
+  trade it made (a native dependency against a live-patchable image) is the first
+  decision to argue. **The way out is `ctrl-\` (0x1c), intercepted on the raw byte
+  stream BEFORE anything is forwarded** — the program never receives it and cannot
+  trap it; Esc is wrong on purpose (it is `cancel` in vi/mc/nano/less and the first
+  byte of every meta sequence). Detach ends NOTHING: the program keeps running on
+  the daemon's pty and nothing is sent at all. This head's input layer reads decoded
+  characters, not raw bytes — where 0x1c arrives and whether the interception can
+  live in the driver is the first thing to measure.
 
 - [ ] **the merge queue pane** — the queue is DAEMON-LEVEL, not the session's: the
   snapshot carries none of it by design, and a head that wants the queue asks with

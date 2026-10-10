@@ -267,7 +267,41 @@ can hand the pane rows without a daemon."
                          (setf sec (getf r :section)))
                        (when (= i sel) (return line))
                        (incf line)
-                    finally (return line))))))
+                    finally (return line)))
+            ;; **AND WHERE EVERY OTHER ROW LANDED** — a click needs the row's own line, and a
+            ;; section heading plus a blank sits between groups, so `(line - header)` is wrong by
+            ;; two for every group after the first: `click-row->sel` used `per-row 1` against this
+            ;; pane's variable layout and selected a neighbour of the row under the pointer (found
+            ;; by two reviews, 2026-10-11 — the same defect shape as the subagents pane's Enter).
+            ;; The lines come out of the SAME walk that drew them, which is this file's rule for
+            ;; every pane: the click asks the pane rather than recounting its geometry.
+            (let ((line 2) (sec "") (lines nil))
+              (loop for r in rows
+                    for i from 0
+                    do (unless (string= (getf r :section) sec)
+                         (when (plusp (length sec)) (incf line))
+                         (incf line)
+                         (setf sec (getf r :section)))
+                       (push (cons i line) lines)
+                       (incf line))
+              (nreverse lines)))))
+
+(defun config-stop-at-line (head line)
+  "The config pane's row on LINE, or NIL — the pane's own answer, asked by the click conversion.
+
+**The pane's rows are NOT one line apart**, and that is the whole of this function: a section
+heading and a blank sit between groups and a `from …` line sits under the selected row, so
+`(line - header)` names a neighbouring row for every group after the first. `todos-stops` grew
+`todo-stop-at-line` for exactly this reason and the click path asks it; this is the same door for
+the same fact (found by the panes and editor reviewers, 2026-10-11).
+
+Reads the third value `config-lines` returns — the lines its rows were drawn on, from the walk
+that drew them — so a heading the pane grows moves this with it."
+  (multiple-value-bind (lines sel-line per-row)
+      (config-lines head (head-settings head) 80)
+    (declare (ignore lines sel-line))
+    (let ((hit (find line per-row :key #'cdr)))
+      (and hit (car hit)))))
 
 (defun config-change (head)
   "Enter on the config pane's selected row — the reference's `config_change`.

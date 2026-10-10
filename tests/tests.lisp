@@ -3606,6 +3606,42 @@ and the decision line would have been the second copy")
 
 ;;; ------------------------------------------------------- mouse click (P27) ;;;
 
+(def-test a-config-click-lands-on-the-row-under-the-pointer (:suite leticl)
+  "**The click conversion was the one consumer no pane's test exercised** (the editor reviewer's
+  own note), and the config pane is where that cost something: its rows are NOT one line apart —
+  a `  section` heading and a blank sit between groups, and a `from …` line sits under the
+  selected row — while `click-row->sel` divided `(line - header)` by `per-row` 1. So a click
+  anywhere past the first group selected a neighbour of the row under the pointer: the same
+  defect shape as the subagents pane's Enter, found by two reviews on 2026-10-11.
+
+  The pane now answers `config-stop-at-line`, the way `todos` answers `todo-stop-at-line`, and
+  both are asked rather than recounted."
+  (let ((*pane-scroll* 0) (*pane-lines* 40) (*pane-room* 30)
+        (h (%make-head)))
+    (setf (head-settings (head-session h))
+          (list (list :key "diff" :value "unified" :section "head — this window"
+                      :source "/tmp/head.toml" :edit (list :head "diff"))
+                (list :key "verbosity" :value "reading" :section "head — this window"
+                      :source "/tmp/head.toml" :edit (list :head "verbosity"))
+                (list :key "mode" :value "automode-edits" :section "session — the daemon"
+                      :source "the session" :edit (list :session "mode"))
+                (list :key "sensitive" :value "3 patterns" :section "files — edit with an editor"
+                      :source "sensitive.json" :edit nil))
+          (head-mode h) :config
+          (head-picker-sel h) 0)
+    (multiple-value-bind (lines sel-line per-row)
+        (leticl::config-lines h (head-settings (head-session h)) 80)
+      (declare (ignore lines))
+      (is (= 2 sel-line) "the cursor on row 0 is two lines down: title, blank")
+      (is (equal '((0 . 2) (1 . 3) (2 . 6) (3 . 9)) per-row)
+          "**and every row's own line comes out of the walk that drew them** — a heading and a blank before each new group")
+      ;; the click resolves through the pane's answer, so a line in the SECOND group is that row
+      (is (= 1 (click-row->sel h :config 3)) "row one's line is its own")
+      (is (= 2 (click-row->sel h :config 6))
+          "**and the first row of the second group is ITSELF**, where the old arithmetic said row 4")
+      (is (null (click-row->sel h :config 4))
+          "a section heading is not a row (and is not a neighbour of one)"))))
+
 (def-test a-click-selects-the-row-under-the-pointer (:suite leticl)
   "The reference's own guarded clicks: a click is only trusted for a row the frame
 proved was on screen, because a click into the blank space below a short list must
