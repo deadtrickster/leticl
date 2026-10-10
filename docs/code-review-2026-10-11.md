@@ -82,4 +82,18 @@ again before acting; anything I have already acted on is inline.
 
 ---
 
-<!-- the wire/session, head/edges and dashboard reviewers' reports are appended below when read -->
+## The wire and the session core (`src/protocol/`, `src/session/`, `json.lisp`, `socket.lisp`, `term.lisp`)
+
+- **high — `the-wire.lisp` `Caps.can_decide` could be elided** — FIXED (`bd71bcc`).
+- **high — `operator-line-refusal` diverged from the shared rule on a trailing newline** — FIXED (`bd71bcc`).
+- **high — `session/compaction.lisp:203`: the only writer of `*compaction-sections*` is never called.** `%fold-settings` has zero callers; the `settings` arm sets `head-settings` and stops. So the daemon's section list and the `(not stated)` mark are unreachable, while the docstring promises *"a reader that renders the second as the first has reported silence as a clean bill of health."* The suite hides it by binding the variable by hand. Fix: call it on the settings row and test through a real frame.
+- **high — `protocol/versions.lisp:113-120`: the version record still argues for announcing 25** and cites an ATTACH refusal the daemon no longer performs (*"A differing protocol version is ACCEPTED, and said — never refused on the number alone"*, `f6e66f0`), while the constant is 42.
+- **high — `the-operator-call-door.lisp:166`: `+outcomes-taking-a-reason+` is `("failed")`** on an inference the daemon's enum contradicts: `Abstained{reason}`, `Denied{req_id}`, `NotRun{why}`, `Backgrounded{…}` all carry payload. Building one of those outcomes without its fields is a frame the daemon's read loop answers with `Bye`. Unreachable today only because no tool runners are seated.
+- **medium — `the-wire.lisp:11-12`: the header's elision claim** is right about the mechanism and wrong about the reason (*"serde defaults them daemon-side"* — `Caps.queue`/`can_decide` do not default).
+- **medium — `json.lisp:4-9`: the file header contradicts the encoder it documents** ("never elides… nil becomes null"; the body omits every nil key and has a vector arm so `#()` writes `[]`).
+- **medium — `warnings.lisp:173`: `+failure-warnings+` has drifted.** Five codes with remedies are in neither list (`merge_not_queued`, `operator_run_unreadable`, `operator_shell_failed`, `prompt`, `prompt_late`), so `every-note-code-offers-a-remedy` walks past them.
+- **medium — `events.lisp:29` names `+reading-never-hides+`, which does not exist** (the list is the denylist `+reading-hides+`).
+- **medium — `the-wire.lisp:79-83`: `items` is no longer a required field** (the daemon added `#[serde(default)]` after this head's own failure).
+- **medium — `versions.lisp:3-4`: "the constructors below are the only place that knows what a frame looks like" is false** — `slash`, `mode`, `secret`, `compact_session`, `reseat_session` and `promote` are hand-built at five sites, one of which omits `consented`.
+- **low** — six `+reject-*+`/`+note-compact-queued+` constants are read by nothing; `item-display-text` is dead while another file's comment claims it feeds search; `reset-filling` has no caller (so a resumed restore bar can survive a `/switch`); `appendf-text` copies the whole reply per delta and is unguarded where its neighbours are guarded; `outcome-name`'s fallback reports a string outcome as `"ok"`; four copies of the same settings-row lookup; ~30 `app.rs:NNNN` citations now point at a file the reference deleted.
+

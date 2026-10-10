@@ -57,6 +57,32 @@ before the package exists — the same reader trap `--where` fell into."
    (let ((f (find-symbol "RESTORE-TERMINAL" :leticl)))
      (when f (funcall f)))))
 
+(defun %install-signal-restore ()
+  "Restore the terminal before dying on SIGTERM and SIGHUP, then die the way the signal asked.
+
+**THE COMMENT BESIDE `main` CLAIMED THIS AND NOTHING DID IT** — *\"a SIGTERM the loop turned
+into a condition: the terminal still comes back\"* — while no handler existed anywhere in the
+tree and SBCL's default SIGTERM kills the process without unwinding, so a head killed by a
+harness timeout left the operator on the alternate screen in raw mode (found by the head
+reviewer, 2026-10-11).
+
+**The default is then RE-RAISED rather than replaced.** A handler that only restored and kept
+running would swallow the kill — and a head that cannot be killed by SIGTERM is a worse
+defect than a terminal left raw. The signal is put back to its default disposition and sent
+again, so the exit status is the one the sender expects.
+
+SIGINT is left alone on purpose: Ctrl-C at a terminal belongs to the key reader, which has
+its own meaning for it, and the loop already turns a real SIGINT into a condition."
+  (dolist (sig (list sb-unix:sigterm sb-unix:sighup))
+    (ignore-errors
+     (sb-sys:enable-interrupt
+      sig
+      (lambda (signal code context)
+        (declare (ignore code context))
+        (%restore-terminal)
+        (sb-sys:enable-interrupt signal :default)
+        (sb-unix:unix-kill (sb-unix:unix-getpid) signal))))))
+
 (defun main ()
   ;; A refusal is a sentence, not a backtrace: `no-daemon` is the head saying
   ;; there is nothing here to attach to, and the operator saw it as an
@@ -81,9 +107,13 @@ before the package exists — the same reader trap `--where` fell into."
                               (format *error-output* "leticl: ~a~%" c)
                               (uiop:quit 1))))
                    ;; ctrl-c at the wrong moment, a closed pty, a SIGTERM the
-                   ;; loop turned into a condition: the terminal still comes back
+                   ;; loop turned into a condition: the terminal still comes back.
+                   ;; **THE SIGNAL HALF IS `%install-signal-restore`, BELOW** — this
+                   ;; hook covers the condition paths, and the handler covers the
+                   ;; kill a process never gets to unwind.
                    (serious-condition (lambda (c) (declare (ignore c))
                                         (%restore-terminal))))
+      (%install-signal-restore)
       (%main))))
 
 (defun %replay-args (args)

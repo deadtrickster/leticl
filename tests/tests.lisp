@@ -6153,6 +6153,17 @@ envelope's `session_id`, which is the parent's."
       (is (search "1 subagent running ─╮" (format nil "~{~a~}" edge))
           "and the edge pins it RIGHT and frames it, not hard against the ╭"))))
 
+(def-test a-bare-escape-bracket-is-a-lone-esc (:suite leticl)
+  "**`ESC [` WITH NOTHING AFTER IT SIGNALLED A TYPE-ERROR OUT OF THE KEY READER** (head reviewer,
+  2026-10-11): `%read-csi` answers `\"\"` when no byte follows within the wait window, and
+  `(subseq \"\" 0 -1)` is a type error — reachable from Alt+[ on a slow terminal or a truncated
+  paste. The guard in `%input-loop` turned it into a status note naming an internal binding and
+  then SWALLOWED THE NEXT KEYSTROKE, which is the worse half: a reader who types again has their
+  key eaten by a defect they cannot see."
+  (is (equal '(:type :esc)
+             (leticl::read-key (make-string-input-stream (format nil "~C[" (%ch 27)))))
+      "a lone `ESC [` is a lone Esc, which is a key and not a crash"))
+
 (def-test an-older-daemon-seats-this-head-read-only (:suite leticl)
   "**The operator's ruling, reversing a stated policy** (letibot `f6e66f0`, and the
   measurement behind it is theirs): a 17-day-old daemon speaking protocol 22 against a head's

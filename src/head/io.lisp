@@ -107,8 +107,18 @@ globals a frame reads.")
 secret, a pane's bytes, and the head's own seating asks all come through here, and a
 frame a 22 daemon has never heard of fails its deserialiser and ends the session. The
 REASON is said at the sites a person acts — `%submit-line` and the chord — and silently
-here, because a pane refetching on a timer is not a person to argue with."
-  (when (skew-locked-p)
+here, because a pane refetching on a timer is not a person to argue with.
+
+**AND THE ATTACH IS EXEMPT, BECAUSE IT PREDATES EVERY DAEMON THAT COULD BE OLD.** Holding
+it costs a whole session: `%try-reconnect` sets `connected` and THEN sends its attach, so a
+gate that swallows the frame leaves the head believing it is attached, on a live socket the
+daemon will never be spoken to on (an attach must be the first frame) — and nothing
+retries, because the retry is what already ran. Found by the head reviewer, 2026-10-11, an
+hour after the gate landed; `attach` is protocol 1 and every daemon this rule exists to
+protect knows it, so sending it is the one act a read-only seating must be able to take —
+*it is how the head says who it is*, not how it spends the session."
+  (when (and (skew-locked-p)
+             (not (and (%frame-plist-p frame) (string= (frame-name frame) "attach"))))
     (return-from %send nil))
   ;; ONE PLACE remembers that this head asked for a session. The daemon answers
   ;; a `NewSession` with a `Sessions` frame carrying `created`, and whether that

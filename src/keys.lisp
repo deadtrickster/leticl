@@ -202,8 +202,16 @@ decode; a field with no reader is not a placeholder, it is a claim."
             (list :type :esc))
            ((char= next #\[)
             (let ((body (%read-csi stream)))
-              (%decode-csi stream (subseq body 0 (1- (length body)))
-                           (subseq body (1- (length body))))))
+              ;; **AN EMPTY CSI IS A LONE ESC, NOT A SEQUENCE.** `%read-csi` answers `""`
+              ;; when no byte follows within `*csi-wait-ms*`, and `(subseq "" 0 -1)` signals
+              ;; a TYPE-ERROR out of the key reader — reachable from Alt+[ on a slow terminal
+              ;; or a truncated paste, and measured on this box: the guard in `%input-loop`
+              ;; turned it into a status note naming an internal binding and then swallowed
+              ;; the operator's NEXT keystroke. Found by the head reviewer, 2026-10-11.
+              (if (zerop (length body))
+                  (list :type :esc)
+                  (%decode-csi stream (subseq body 0 (1- (length body)))
+                               (subseq body (1- (length body)))))))
            ((char= next #\O)
             (let ((c (%poll-char stream
                                  (+ (get-internal-real-time)
