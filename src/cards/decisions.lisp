@@ -174,11 +174,13 @@ line when the payload below already carries it verbatim — the operator, counti
 the repeats in one card: *\"how many times is 'nothing ran' needed?\"* The
 oracle's lines are never skipped, because they are nowhere else.
 
-**The oracle block cannot fire today**: `:advice` is carried on the OPEN
-decision and `session.lisp`'s `decision-answered` arm does not copy it onto the
-settled one, so every settled decision renders `no oracle was consulted`. That
-is one line in another strand's file — `:advice (getf req :advice)` beside
-`:basis` — and the shape is here waiting for it."
+**The oracle block fires**: `:advice` is copied onto the settled decision by
+`session/seq-gap.lisp`'s `decision-answered` arm (`:advice (getf req :advice)`, beside
+`:basis`), so the lines below are live on every settled row that had one. This paragraph
+read *'cannot fire today'* and named the missing line as *'one line in another strand's
+file'* — the line landed at `70dfa9f` and the sentence stayed (found by the cards reviewer,
+2026-10-11: a comment that tells a reader a whole branch is dead is worse than no comment,
+because it is the kind of thing a reader deletes)."
   (let ((out nil)
         (by (getf d :by))
         (advice (getf d :advice)))

@@ -354,9 +354,8 @@ render them - only section titles and sub todos count. make sure it follows org
 mode - subtodos shown, when all subtodos checked section becomes also checked\"*."
   (flet ((line-text (line)
            (if (null line) "" (format nil "~{~a~}" (mapcar #'car line)))))
-    (let* ((dir-pathname (make-pathname :name nil :type nil
-                                        :directory '(:absolute "tmp" "leticl-todos-test")))
-           (dir "/tmp/leticl-todos-test")
+    (let* ((dir-pathname (test-temp-dir "todos-test"))
+           (dir (namestring dir-pathname))
            (path (make-pathname :name "TODO" :type "md"
                                 :directory (pathname-directory dir-pathname)))
            (head (%make-head)))
@@ -10243,9 +10242,7 @@ running or known project it brought me to the latest leticl conversation?\"*.
 `discover-daemons` answered the WHOLE run dir when `$LETIBOT_SOCKET` matched
 nothing, and `run` took the first daemon listed. A named socket that is not there
 is no daemon."
-  (let ((dir (uiop:ensure-directory-pathname
-              (format nil "/tmp/claude-1000/-home-dead-Projects-leticl/3603a50c-c42f-4b18-87ce-b917064534c9/scratchpad/daemons-~d/" (random 100000)))))
-    (ensure-directories-exist dir)
+  (let ((dir (test-temp-dir "daemons")))    (ensure-directories-exist dir)
     (with-open-file (o (merge-pathnames "abc.json" dir) :direction :output :if-exists :supersede)
       (write-string "{\"socket\":\"/run/x/abc.sock\",\"workspace\":\"/home/dead/Projects/other\"}" o))
     (let ((real (symbol-function 'leticl::daemon-dir)))
@@ -10365,7 +10362,7 @@ restores from its panic hook (term.rs:191-197)."
 `head.toml` owned by another user, or holding bytes that are not UTF-8, signalled
 out of `load-prefs-into` and the head never started — the operator's own
 preferences file locking them out of the tool."
-  (let* ((dir "/tmp/claude-1000/-home-dead-Projects-leticl/3603a50c-c42f-4b18-87ce-b917064534c9/scratchpad/")
+  (let* ((dir (namestring (test-temp-dir "prefs-bytes")))
          (path (merge-pathnames (format nil "badprefs-~d.toml" (random 100000)) dir)))
     (ensure-directories-exist dir)
     ;; bytes that are not valid UTF-8
@@ -22360,7 +22357,7 @@ refused it with *\"nothing listens at X\"* while something was listening at X.
 Found by starting a scratch daemon to test the stop path and being unable to
 attach to it. The socket is the daemon; the record is only what a launcher left
 beside it."
-  (let ((sock "/tmp/claude-1000/-home-dead-Projects-leticl/3603a50c-c42f-4b18-87ce-b917064534c9/scratchpad/probe.sock"))
+  (let ((sock (namestring (merge-pathnames "probe.sock" (test-temp-dir "probe")))))
     (ignore-errors (delete-file sock))
     (is (not (leticl::%socket-exists-p sock)) "nothing there is nothing")
     (is (not (leticl::%socket-exists-p "/home/dead/Projects/leticl/PARITY.md"))
@@ -23957,11 +23954,10 @@ ONE directory, so the collision it means to check across two directories never h
 the suite has already been caught editing their `head.toml` (`*write-prefs*`' docstring), and a test
 that reads their dashboard directory would be the same defect with worse consequences: it would draw
 their panels into the test's own panel list and call it a result."
-  (let ((dir (merge-pathnames (format nil "leticl-dashtest-~a-~a/" (get-universal-time)
-                                      (incf *dash-test-dir-n*))
-                              (uiop:temporary-directory))))
-    (ensure-directories-exist dir)
-    dir))
+  ;; **AND IT IS THE RUN'S, to take away.** This minted a tree per call and removed none: the
+  ;; operator's /tmp held 10,388 `leticl-dashtest-*` directories when the count was taken (the
+  ;; test-suite reviewer, 2026-10-11). `test-temp-dir` records each one for `run-all`'s sweep.
+  (test-temp-dir "dashtest"))
 
 (defun %dash-write-file (dir name text)
   (let ((path (merge-pathnames name dir)))
@@ -26002,8 +25998,8 @@ acts on a row nobody can see. So the assertions below are about the ROWS and the
 
 **Both sections and both authors**, which is the other half: a done item is done whoever wrote it, and a
 mode that hid only the file's rows or only the operator's would mean two things at once."
-  (let* ((dir-pathname (make-pathname :directory '(:absolute "tmp" "leticl-hide-test")))
-         (dir "/tmp/leticl-hide-test")
+  (let* ((dir-pathname (test-temp-dir "hide-test"))
+         (dir (namestring dir-pathname))
          (path (make-pathname :name "TODO" :type "md" :directory (pathname-directory dir-pathname)))
          (leticl::*todos-hide-done* nil)
          (leticl::*todo-draft* nil)
@@ -26145,13 +26141,18 @@ empty* test, so **deleting a starter todo must not bring it back**; that is the 
 
 The template is a `TODO.md`, parsed by the reader the repo section already uses, so the format is the one
 the operator writes by hand — including an indented body and a box already ticked."
-  (let ((leticl::*store-path-override* (format nil "/tmp/leticl-seed-~a.db" (random 1000000)))
+  (let* ((leticl::*store-path-override* (format nil "/tmp/leticl-seed-~a.db" (random 1000000)))
         ;; **THE OPERATOR'S OWN LEGACY FILE MUST NOT BE IN REACH.** `load-operator-todos` imports
         ;; whatever is at `operator-todos-path`, and that is the REAL one under their config directory:
         ;; MEASURED, this test silently imported their two rows and then asserted about the wrong list.
         ;; A path that is simply not there is the isolation — the import branch then cannot fire.
-        (leticl::*operator-todos-path-override* "/tmp/leticl-seed-test/no-such-todos.sexp")
-        (dir-pathname (make-pathname :directory '(:absolute "tmp" "leticl-seed-test")))
+        (leticl::*operator-todos-path-override*
+         (namestring (merge-pathnames "no-such-todos.sexp" (test-temp-dir "seed-test"))))
+        ;; **`let*`, because the binding below READS this one** — parallel bindings made
+        ;; `*operator-todos-path-override*` here the GLOBAL (nil) while the init form read it, and
+        ;; `(directory-namestring nil)` is a type error. The constant it replaced had no such
+        ;; dependency, so this was one word of the conversion to a temp directory.
+        (dir-pathname (pathname (directory-namestring leticl::*operator-todos-path-override*)))
         (leticl::*operator-todos* nil)
         (leticl::*write-prefs* t)
         (leticl::*prefs* nil))

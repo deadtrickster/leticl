@@ -26,6 +26,33 @@ framing — everything that can be tested without a live daemon.")
 
 (in-suite leticl)
 
+(defvar *test-temp-dirs* nil
+  "Every scratch directory THIS RUN made, so the run can take them all away again.
+
+**ONE PLACE, because twenty-five a run were left behind** (the test-suite reviewer, 2026-10-11):
+`%dash-temp-dir` alone had minted 10,388 `leticl-dashtest-*` trees in the operator's `/tmp`, and
+three more fixtures wrote to FIXED paths (`/tmp/leticl-todos-test`, `-hide-test`, `-seed-test`) that
+survived every run and collided between two concurrent ones. `forget-prefs-file`'s own docstring
+records the first version of this defect — 144 empty directories, one per test per run — so the fix
+is the shape it chose: a directory of the run's own, under a unique name, removed by the run.")
+
+(defun test-temp-dir (&optional (tag "test"))
+  "A unique scratch directory of this run's own, under the system temp dir, recorded for the sweep.
+
+TAG names the fixture in the path so a leak is legible while it lasts. The caller does not delete
+it: `run-all` sweeps every directory this list holds, which is what makes a test that FORGETS to
+clean up cost nothing rather than costing the operator a directory per run for ever."
+  (let ((dir (merge-pathnames (format nil "leticl-~a-~a-~a/" tag (get-universal-time)
+                                      (incf *test-temp-dir-n*))
+                              (uiop:temporary-directory))))
+    (ensure-directories-exist dir)
+    (pushnew dir *test-temp-dirs* :test #'equal)
+    dir))
+
+(defvar *test-temp-dir-n* 0
+  "A counter beside the clock, because two directories made in one second must still differ —
+the collision `*dash-test-dir-n*` was introduced for, one directory over.")
+
 (defun run-all ()
   "Run the suite; return the failure count for run.lisp's exit code.
 
@@ -59,6 +86,12 @@ reason no test can reach the operator's file even by forgetting the fixture."
                            (uiop:temporary-directory))))
     (unwind-protect
          (if (run! 'leticl) 0 1)
+      ;; **AND EVERY SCRATCH DIRECTORY THE RUN MADE GOES TOO.** Each one is removed by its own
+      ;; `unwind-protect` or not at all, and "or not at all" is what left 10,388 trees in /tmp:
+      ;; a test that forgets is a test nobody notices. Swept HERE, which is the one place that
+      ;; knows the run has ended.
+      (dolist (d *test-temp-dirs*)
+        (ignore-errors (uiop:delete-directory-tree d :validate t)))
       (ignore-errors
         (uiop:delete-directory-tree
          (uiop:pathname-directory-pathname leticl:*notes-path-override*)
