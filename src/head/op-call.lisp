@@ -196,10 +196,19 @@ what a reader has otherwise)."
                                    name (or who "you") size)
                            (format nil "`~a` as ~a did not go through (~a) — ~a"
                                    name (or who "you") outcome size))))
-            ;; FIRST on the wire, then the sentence
+            ;; FIRST on the wire, then the sentence.
+            ;;
+            ;; **AND A FAILURE ALWAYS CARRIES A REASON, even when the runner did not write one.**
+            ;; `make-operator-result` refuses a bare `failed` because the daemon does (*missing
+            ;; field `reason`*) and its read loop goes with it — so a runner that answered `failed`
+            ;; with an empty payload would otherwise turn its own report into the end of the session.
+            ;; The stand-in is a fact about this head and says so, rather than a frame that kills
+            ;; the connection.
             (%send head (make-operator-result (getf env :call-id) outcome payload
                                               :reason (and (string= outcome "failed")
-                                                           payload)))
+                                                           (if (and payload (plusp (length payload)))
+                                                               payload
+                                                               "the runner did not say why"))))
             (say head said)))))))
 
 (defun tick-op-calls (head)

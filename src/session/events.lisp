@@ -30,8 +30,8 @@ payloads, reasoning, head arrivals and command attribution all go. It is a rung 
 same ladder rather than a new mechanism, which is why `verbosity-at-least` keeps its
 meaning: every gate written for the three rungs above answers as it did.
 
-**Three things it may NOT hide, and each is a different reason.**
-`+reading-never-hides+` is the list, and this docstring is where the reasons live:
+**Three things it may NOT hide, and each is a different reason.** They are not a list — see the
+next paragraph — and this docstring is where the reasons live:
 
   · **a WARNING.** letibot's own ruling, and the reasoning transfers whole: *a warning
     is a fact the daemon chose to INTERRUPT with, and a level that hides it makes the
@@ -46,6 +46,13 @@ meaning: every gate written for the three rungs above answers as it did.
   · **the live turn's FOOTER.** This is the rung's own risk: with tool rows hidden, a
     ten-minute tool-heavy turn draws NOTHING AT ALL, and a reader cannot tell working
     from wedged. The footer keeps the running state and its elapsed time (R13).
+
+**AND THE THREE ARE NOT A LIST, WHICH IS THE DESIGN RATHER THAN AN OMISSION.** This paragraph
+named a `+reading-never-hides+` that does not exist (found by the wire reviewer, 2026-10-11):
+what exists is `+reading-hides+`, the DENYLIST below, and the three things above survive it by
+being things the denylist never names — a warning is a `:note` kind that is not on it, a card is
+not an item at all, and the footer is chrome rather than a row. A head that grew the allowlist
+would have two lists to keep in step, which is the shape this file's own note warns about.
 
 **It is a VIEW.** Nothing leaves the transcript, the ledger, the corpus or what is sent
 to the model; switching back restores every row, retroactively, including the span the

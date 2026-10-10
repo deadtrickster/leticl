@@ -163,8 +163,39 @@ this file. `+outcomes-taking-a-reason+` is the same measurement one step further
 `failed` WITHOUT a `reason` is refused by name (*missing field `reason`*) while an `ok`
 with one is accepted, so exactly one variant carries it.")
 
-(defparameter +outcomes-taking-a-reason+ '("failed")
-  "The variants whose payload is a FIELD and not just the text handed back.")
+(defparameter +outcome-fields+
+  '(("failed"    . "reason")
+    ("abstained" . "reason")
+    ("not_run"   . "why"))
+  "Every payload-carrying variant THIS head's runners can answer, and the field name the daemon wants.
+
+**THE FIELD NAME IS PER VARIANT, WHICH IS THE WHOLE REASON THIS IS A TABLE.** The daemon's
+`ToolOutcome` (`crates/transcript/src/lib.rs:415`) has `Abstained{reason}`, `Failed{reason}`,
+`Denied{req_id}`, `NotRun{why}` and `Backgrounded{handle, ran_for_ms, how, …}` — so `not_run` wants
+`why` and the other two want `reason`, and a head with one hard-coded spelling would send a frame the
+daemon refuses for the other. MEASURED by the wire-format reviewer against the enum, 2026-10-11: the
+previous table was `(\"failed\")`, which read as *only `failed` carries a field* — it means *only the
+three above are ones a runner here answers*, and `denied`/`backgrounded` are refused by name in
+`%outcome-fields-this-head-cannot-build` because their fields are the daemon's own values.")
+
+(defparameter +outcomes-taking-a-reason+ (mapcar #'car +outcome-fields+)
+  "The variants this head must supply a field for — the table's keys, so the two cannot drift.")
+
+(defun %outcome-field-name (outcome)
+  "The field OUTCOME's payload goes in, or NIL for a variant that carries none."
+  (cdr (assoc outcome +outcome-fields+ :test #'string=)))
+
+(defun %outcome-fields-this-head-cannot-build (outcome)
+  "The variants whose required field this head has no value for, or NIL.
+
+**A FRAME WITH A MISSING REQUIRED FIELD IS NOT ONE FRAME REFUSED — IT IS THE SESSION. The daemon's
+read loop fails the whole `ClientFrame` deserialiser and answers `bye`, which this head leaves on**
+(the same measurement the constructor's own docstring records for a bare outcome word). So an
+outcome this path cannot build COMPLETELY is refused here, where a caller can see it, rather than
+sent and lost."
+  (cond ((string= outcome "denied") "a request id only the daemon's own refusal carries")
+        ((string= outcome "backgrounded") "a job handle and a duration, which are the daemon's to write")
+        (t nil)))
 
 (defun make-operator-result (call-id outcome payload &key reason)
   "Frame 2: the head hands back what happened (R24 part two).
@@ -188,14 +219,26 @@ the live proof of R24 killed its own head by sending the shape this function use
 build. The same probe measured the rest of the vocabulary: `ok`, `abstained`, `failed`,
 `denied`, `timeout`, `not_run`, `backgrounded`, and `failed` REQUIRES a `reason`.
 
+**AND A PAYLOAD-CARRYING VARIANT WITHOUT ITS FIELD IS THE SAME DEATH one step along**: the
+daemon refuses a `failed` with no `reason` by name (*missing field `reason`*), so a runner
+answering `abstained` or `not_run` without one would end the session it was reporting on. A
+`reason` alone cannot say which field a variant wants, so the table is explicit and the two
+variants this path cannot build COMPLETELY are refused rather than guessed.
+
 REASON is that field, and it is passed only for the variants that take one — an `ok`
 carrying a `reason` happens to be accepted today (serde ignores it) and would be the same
 kind of guess one variant later."
-  (list :frame "operator_result"
-        :call-id call-id
-        :outcome (if (and reason (member outcome +outcomes-taking-a-reason+
-                                         :test #'string=))
-                     (list :outcome outcome :reason reason)
-                     (list :outcome outcome))
-        :payload (or payload "")))
+  (let ((impossible (%outcome-fields-this-head-cannot-build outcome))
+        (field (%outcome-field-name outcome)))
+    (when impossible
+      (error "a `~a` outcome is not this head's to build: it needs ~a" outcome impossible))
+    (when (and field (or (null reason) (zerop (length reason))))
+      (error "a `~a` outcome with no ~a is a frame the daemon refuses by name — and its read loop goes with it"
+             outcome field))
+    (list :frame "operator_result"
+          :call-id call-id
+          :outcome (if field
+                       (list :outcome outcome (intern (string-upcase field) :keyword) reason)
+                       (list :outcome outcome))
+          :payload (or payload ""))))
 

@@ -21240,8 +21240,51 @@ looks right to every other test in this file is exactly what went wrong."
   (is (equal '("ok" "abstained" "failed" "denied" "timeout" "not_run" "backgrounded")
              +tool-outcomes+)
       "the daemon's `ToolOutcome` variants, read from its own error message")
-  (is (equal '("failed") +outcomes-taking-a-reason+)
-      "and exactly one of them takes a field"))
+  ;; **THE TABLE IS THE THREE A RUNNER HERE ANSWERS, WITH THE DAEMON'S OWN FIELD NAMES** — it read
+  ;; `("failed")` until the wire-format reviewer quoted the enum (`Abstained{reason}`,
+  ;; `Failed{reason}`, `NotRun{why}`, `Denied{req_id}`, `Backgrounded{…}`) on 2026-10-11: one spelling
+  ;; for all three would send a `not_run` with a `reason` the daemon does not read.
+  (is (equal '("failed" "abstained" "not_run") +outcomes-taking-a-reason+)
+      "a payload-carrying variant this head can build is in the table, and `ok`/`timeout` are not")
+  (is (equal "why" (leticl::%outcome-field-name "not_run"))
+      "**whose field is `why` for one of them** — the daemon's enum, not a spelling this head chose"))
+
+(def-test a-frame-the-daemon-would-refuse-is-refused-here-first (:suite leticl)
+  "**A MISSING FIELD IS NOT ONE FRAME REFUSED — IT IS THE SESSION.** `ToolOutcome` is an internally
+  tagged enum, so the daemon fails its whole `ClientFrame` deserialiser on a variant whose field is
+  absent and answers `bye`, which this head leaves on. It refuses `failed` with no `reason` BY NAME
+  (*missing field `reason`*), measured — so a runner answering `failed` with an empty payload, or a
+  caller building `denied` or `backgrounded` (whose fields are the daemon's own: a request id, a job
+  handle and a duration this path has not got), would end the session it was reporting on.
+
+  The constructor refuses those three shapes where a caller can see them, rather than sending a frame
+  that dies in the other half (the wire-format reviewer's finding, 2026-10-11)."
+  ;; **`signals` IS ITSELF A TESTABLE** — `(is (signals …))` reads as an ordinary form, the error
+  ;; escapes it, and the test reports `Unexpected Error` instead of the refusal it asked about.
+  ;; MEASURED here, first run.
+  (signals error (make-operator-result "c1" "failed" "boom"))
+  (signals error (make-operator-result "c1" "failed" "" :reason ""))
+  (dolist (outcome '("denied" "backgrounded"))
+    (signals error (make-operator-result "c1" outcome "x")))
+  ;; --- and the three this head DOES build are still built, with and without the field
+  (let ((ok (encode-frame (make-operator-result "c1" "ok" "the page"))))
+    (is (search "\"outcome\":{\"outcome\":\"ok\"}" ok) "an `ok` carries its outcome and nothing else")
+    (is (not (search "reason" ok)) "and no reason, which serde would ignore today and guess at tomorrow"))
+  (let ((failed (encode-frame (make-operator-result "c1" "failed" "boom" :reason "boom"))))
+    (is (search "\"reason\":\"boom\"" failed) "a `failed` with a reason is built, field and all"))
+  ;; --- **EACH VARIANT CARRIES THE FIELD THE DAEMON NAMES FOR IT**, which is the table's whole point:
+  ;; `not_run` wants `why`, the other two want `reason`, and `timeout` takes nothing at all.
+  (let ((line (encode-frame (make-operator-result "c1" "abstained" "x" :reason "because"))))
+    (is (search "\"outcome\":\"abstained\"" line) "`abstained` builds")
+    (is (search "\"reason\":\"because\"" line) "with its reason"))
+  (let ((line (encode-frame (make-operator-result "c1" "not_run" "x" :reason "because"))))
+    (is (search "\"outcome\":\"not_run\"" line) "`not_run` builds too")
+    (is (search "\"why\":\"because\"" line)
+        (format nil "**and its payload is the daemon's own `why`** — a head with one hard-coded spelling would send a field the daemon does not read: ~a" line)))
+  (let ((line (encode-frame (make-operator-result "c1" "timeout" "x"))))
+    (is (not (search "reason" line)) "a `timeout` carries no field at all, so it is not in the table"))
+  (signals error (make-operator-result "c1" "abstained" "x"))
+  (signals error (make-operator-result "c1" "not_run" "x")))
 
 (def-test only-the-admission-runs-it-and-it-matches-the-call-id (:suite leticl)
   "The look-up that matters: the event is published to the SESSION, so every head sees

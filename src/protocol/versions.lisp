@@ -110,14 +110,17 @@ added is written down here rather than assumed:
     `ClientFrame::OperatorResult`, `SessionEvent::OperatorCallAllowed`, the
     `head-run.tools` settings row, and `CallOrigin::Operator { who }` on a tool row.
 
-**Why announcing 25 is honest for a head that uses none of it yet**: every one of those is
-additive, this head SENDS only what it sent at 23 unless a feature is being used, and a frame
-or event it does not fold is already reported and survived rather than dropped (R3). The
-version is not a promise to use everything; it is a promise not to be surprised by it.
+**Why announcing 42 is honest, and why 25 was the same argument one batch earlier**: every one
+of those is additive, this head SENDS only what a given daemon can read unless a feature is being
+used, and a frame or event it does not fold is already reported and survived rather than dropped
+(R3). The version is not a promise to use everything; it is a promise not to be surprised by it.
 
-**Measured before the bump, against the daemon on this box** — because a version is a fact
-about a running process, not about a constant in a file I can read: 23 and 24 are refused at
-ATTACH (`bye: protocol version 23, this daemon speaks 25`) and 25 answers `hello`.")
+**AND THE OLD 'REFUSED AT ATTACH' MEASUREMENT IS GONE, WHICH IS THE POINT OF IT.** This paragraph
+read *'23 and 24 are refused at ATTACH (`bye: protocol version 23, this daemon speaks 25`)'* — and
+that refusal was REMOVED at `f6e66f0`: *a differing version is ACCEPTED and SAID, never refused on
+the number alone*, because a head that quits at the handshake never gets to use R3. Two reviewers
+found the sentence still arguing for it on 2026-10-11, one of them quoting the constant it sat
+beside as 42 while the paragraph said 25.")
 ;; 23 is `SessionEvent::Filling { what, unit, done, total }` — a **named** operation
 ;; the daemon is filling rows for, with its own counter (letibot `4d01aca`). It
 ;; replaced `ImportProgress`, which was the same event under a narrower name: four
