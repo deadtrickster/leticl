@@ -98,9 +98,29 @@ wrong, the edge is bare."
         (format nil "~{~a~^ · ~}" parts)
         "")))
 
+(defvar *composer-ranges-cache* nil
+  "`(BUFFER . (INNER . RANGES))` — the last composer buffer wrapped, at the last width.
+
+**THE COMPOSER WAS WRAPPED FIVE TIMES A FRAME** (drawing reviewer, 2026-10-11): `%render` asks
+`%composer-rows`, `composer-line` asks both `composer-box-body` and `composer-window`, and
+`composer-caret` asks `composer-window` and `composer-ranges` again — each call re-consing the
+whole range list. The buffer is a fresh string per keystroke and is not mutated in place (the
+editor concatenates and subseqs), so IDENTITY is the right key, exactly as it is for the
+reasoning count: one wrap per keystroke instead of five per frame.")
+
 (defun composer-ranges (head cols)
-  "The composer buffer's wrapped rows, as index ranges at the box's inner width."
-  (wrap-ranges (composer-buffer (head-composer head)) (composer-inner cols)))
+  "The composer buffer's wrapped rows, as index ranges at the box's inner width.
+
+Memoised on the buffer's IDENTITY and the width — the five callers a frame can share one answer,
+and the key is exact rather than cheap: a buffer that changed is a different string."
+  (let* ((buf (composer-buffer (head-composer head)))
+         (inner (composer-inner cols))
+         (hit *composer-ranges-cache*))
+    (if (and hit (eq (car hit) buf) (eql (cadr hit) inner))
+        (caddr hit)
+        (let ((ranges (wrap-ranges buf inner)))
+          (setf *composer-ranges-cache* (list buf inner ranges))
+          ranges))))
 
 (defun %composer-rows (head cols)
   "How many rows the composer buffer renders to, wrapped at the box's inner width.
