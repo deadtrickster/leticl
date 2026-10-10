@@ -122,40 +122,6 @@ already drawn only when non-empty, so the two cannot both draw the same bytes."
               (emit (raw-call-lines raw cols))))))
       out)))
 
-(defun raw-call-lines (raw cols)
-  "The raw, unparsed text of a tool call, behind `ctrl-x` — the reference's
-`raw_call_lines` (`app.rs:10135-10152`).
-
-    ┌─ raw tool call · ctrl-x
-    │ {\"path\": \"src/cards.lisp\", \"old_string\": \"…\"}
-    └─
-
-**A labelled block and not an inline row**, and the reason is the whole point of the
-control: this is NOT the assistant speaking. Faint frame, and the text itself in the
-code role — it is EVIDENCE, and evidence that looks like prose is how the defect
-started. The seam names the chord, because a block nobody can turn off again is a
-trap.
-
-**One function for both callers**, which is why it is here and not beside either of
-them: the LIVE turn draws the `<function=…>` markup as the model writes it
-(`turn.lines`, from the deltas), and a SETTLED row has no markup left — the parser
-ate it — so it draws `{name} {arguments}` instead. Two renderers would have drifted
-into two different-looking blocks for one control.
-
-**COLS is required, and it is R25's other half.** This wrapped at
-`(1- *target-max-cols*)` — 119 columns whatever the pane was — so a 227-column window
-drew a raw call as a 119-column column of text with a hundred columns of nothing
-beside it. That is the same defect as the headline's and it showed up in the same
-audit: **a wrapper on a display path that does not know its width cannot wrap
-honestly.** The rail costs two columns, so the text gets `(- cols 2)`, and the
-remainder is disclosed by `wrap-text` rather than clipped by the painter."
-  (let ((out (list (list (cons "┌─ raw tool call · ctrl-x" '(:dim t))))))
-    (dolist (l (uiop:split-string (or raw "") :separator '(#\newline)))
-      (dolist (w (wrap-text l (max 1 (- cols 2))))
-        (push (list (cons "│ " '(:dim t)) (cons w nil)) out)))
-    (push (list (cons "└─" '(:dim t))) out)
-    (nreverse out)))
-
 (defun decision-card-lines (head cols)
   "The ask card: transcript visible above, one list on the screen at a time
 (agents.md). A permission has the ladder; a question has choices."
