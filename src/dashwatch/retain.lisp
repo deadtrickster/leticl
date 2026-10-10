@@ -109,6 +109,7 @@ than lose one), but a typo in a FILE is a person sitting in front of the pane, a
 does nothing is the defect this feature keeps naming."
   (let ((errors '())
         (default nil)
+        (per nil)
         (sink-per '())
         (watch-per '())
         (file (getf watcher :file))
@@ -134,6 +135,10 @@ does nothing is the defect this feature keeps naming."
         (when (and (stringp (getf s :name)) (member :retain s))
           (let ((r (take (getf s :retain))))
             (when r (push (cons (qualify (getf s :name)) r) watch-per))))))
+    ;; **`per` WAS AN UNDECLARED FREE VARIABLE** — bound nowhere above and not a `defvar`
+    ;; anywhere in the tree, so this `setf` created a global `LETICL::PER` and the retain tests
+    ;; passed on a value nothing else could see (found by the dashboard reviewer, 2026-10-11).
+    ;; One `let` entry, and the binding is what it always read like.
     (setf per (append (nreverse sink-per) (nreverse watch-per)))
     (values (mapcar (lambda (s)
                       (cons s (or (cdr (assoc s per :test #'string=)) default)))

@@ -82,6 +82,38 @@ again before acting; anything I have already acted on is inline.
 
 ---
 
+## The head and its edges (`src/head/`, `store/`, `prefs/`, `links.lisp`, `keys.lisp`, the scripts, the asd)
+
+- **high — a reconnect under a read-only seating could never complete** — FIXED (`3055edc`). `%send` refused the attach too.
+- **high — `keys.lisp:205`: a bare `ESC [` signalled a TYPE-ERROR out of the key reader** — FIXED (`3055edc`); `(subseq "" 0 -1)`, and the input loop's guard then swallowed the operator's next keystroke.
+- **medium — `freeze.lisp:83`: the terminal was not restored on SIGTERM/SIGHUP while the comment said it was** — FIXED (`3055edc`); the handler restores and re-raises.
+- **medium — `src/head/io.lisp:103`: `%send`'s "Main thread only" is not enforced** — an eval connection runs on its own thread and reaches `%send`, and `write-frame` takes no lock; the wedge recorded in `hack.lisp:153-157` is exactly that.
+- **medium — `run.lisp:4-6`: the dev head is started without `sb-introspect`**, so `tui-eval --where` answers nothing for a head run from source — the tool whose whole job is *did my push land*.
+- **medium — `src/prefs/state.lisp:20`: `*prefs-keys*` is dead** while `TODO.md:42` tells a reader to add to it as a required step; the load/save arms are hand-written `string=` chains and `marker_seam` is missing from the list (which says "Five" and holds seven).
+- **medium — `src/prefs/operator-todos.lisp:130`: `persist-operator-todos` is dead**, superseded by the sqlite store.
+- **medium — `src/links.lisp:235`: `links-said` is dead**, so `/help` never mentions links despite the docstring promising it there.
+- **medium — `freeze.lisp:3`: the entry point's own instructions name the unsafe freeze** (`sbcl --script freeze.lisp`) while `scripts/freeze-safe` exists because `save-lisp-and-die` rewrites a file running heads are executing.
+- **medium — `leticl.asd:81` and `src/head/io.lisp:1-9` describe files that no longer exist**; `run-loop` lives in `op-call.lisp` while `loop.lisp` contains no loop.
+- **low — stale citations and stale numbers**: `demo.lisp:16` prints "protocol 18 ready"; `PLAN.md:62` says the version is 20 (in the document the asd sends a reader to); `frame.lisp:144` says the idle head sleeps 0.03 (it is 0.002); `notes.lisp:376` cites a `--prefs FILE` flag that does not exist; `scripts/tui-eval:42` cites `src/render.lisp` for the paint lock; a failed preference save is swallowed with no note.
+
+**Verified clean by that reviewer**: the asd's component list matches disk exactly (144 names, no dupes or orphans — every `src/**/*.lisp` is pushed by `tui-eval --tree`); the version is 42 in the constant, the header and the asd; `hack-start`'s failure path does not leak an fd; `%reader-loop` is EOF = detach, never abort; `connect-unix` closes its socket on both `ENOENT` and `ECONNREFUSED`.
+---
+
+## The dashboard (`src/dash/`, `dashfiles/`, `dashwatch/`)
+
+- **high — `dash/flatness.lisp:1000`: the job feed always asked for offset 0** — FIXED (`edb1c8b`). The daemon's slice is ABSOLUTE, so a job that outwrote the 16 KiB ring never had a later byte seen; `:next` was stored from the reply and read by nobody, under a comment saying it was handed back. One line.
+- **medium — `dashwatch/jobs.lisp:114,129`: a refused watcher's reason never reaches the pane.** `:note` is absent from the constructor plist, so `(setf (getf w :note) note)` conses onto a local `w`, not the table's value — and the refusal is exactly what those lines exist to make visible.
+- **medium — `dash/window.lisp:41`: a `:feed` panel registered by COMMAND never runs.** The event carries only the id, so a panel registered as `:job "llama-server"` can only match an exact id; `dash-job-matches-p`'s docstring promises the match is asked in both directions.
+- **medium — `dashwatch/jobs.lisp:116`: a `job_output` watcher can never reach `stopped`** (the settle branch is gated on membership in `*dash-samplers*`, and a `job_output` source registers no sampler), so the pane says `running` forever and the collector is kept alive for the life of the head.
+- **medium — the sink tables were shared across threads unsynchronized** — FIXED (`edb1c8b`); `*dash-series*` was made `:synchronized` for exactly this, with the measurement recorded, and the decision was left in place one module over.
+- **medium — `dashwatch/retain.lisp:137`: `per` was an undeclared free variable** — FIXED (`edb1c8b`); the `setf` created a global `LETICL::PER` and the tests passed on a value nothing else could see.
+- **medium** — `dash/flatness.lisp:156`: the series is read three times, so a concurrent publish can pair an old value with a new time and `(aref …)` errors, blanking the panel for a frame; a watcher's own `:interval` is invisible to staleness and flatness (a slow watcher reads `stale` always); the label column is measured in characters while every other column is cells; a file-defined `spark` can never use a shared ceiling, so a flat series draws a solid row of `▄` (the ink the module header says was fixed); `*dash-last-error*` is recorded and drawn nowhere though the design doc says it is; a sink pass runs one command per series serially with a `timeout` each, so a sink can wedge sampling for series × timeout.
+- **low** — `*dash-series*`/`*dash-fed*` grow one entry per job and nothing prunes them; `*dash-file-scope*` is never cleared so the heading counts dead panels; `dash-stop` clears the thread handle even when the join timed out; watcher state 1 (`claimed`) is set by nothing; `*dash-samples-taken*` is incremented and never read; two `{slot}` engines; dead symbols (`dash-bytes-at`, `dash-counter`, `dash-plateaued`, `dash-watcher-count`); a copy-pasted pair of directory readers whose docstring claims one code path; stale measurements and citations (`+dash-col-label+` names a label that never existed; three comments cite pre-split files; "read once here" is three reads; "records nothing on overrun" is false).
+
+<!-- end of the eight reports -->
+
+---
+
 ## The wire and the session core (`src/protocol/`, `src/session/`, `json.lisp`, `socket.lisp`, `term.lisp`)
 
 - **high — `the-wire.lisp` `Caps.can_decide` could be elided** — FIXED (`bd71bcc`).

@@ -68,7 +68,7 @@ complaint was *\"they still dont belong to jobs\"*, and a lifecycle is what belo
   · `refused` — it cannot run at all, and the pane carries the reason: a workspace `command` source
                 while `*dash-workspace-commands*` is NIL is the case that exists today.")
 
-(defvar *dash-sinks* (make-hash-table :test #'equal)
+(defvar *dash-sinks* (make-hash-table :test #'equal :synchronized t)
   "sink name → a plist:
 
   :name    what the pane calls it
@@ -78,11 +78,11 @@ complaint was *\"they still dont belong to jobs\"*, and a lifecycle is what belo
   :command the shell command, run with the body on stdin
   :body    the body template, with `{series}` and `{value}`")
 
-(defvar *dash-sink-errors* (make-hash-table :test #'equal)
+(defvar *dash-sink-errors* (make-hash-table :test #'equal :synchronized t)
   "sink name → the last failure, as a string. **A `defvar` and not a `defparameter`**, for the house
 reason: a live push must not throw away what a running head is holding.")
 
-(defvar *dash-sink-stat* (make-hash-table :test #'equal)
+(defvar *dash-sink-stat* (make-hash-table :test #'equal :synchronized t)
   "sink name → `(:posted N :failed N :at MS)`. The count is what makes a sink that is *quietly*
 failing visible, which is the failure this whole file's discipline exists to prevent.")
 

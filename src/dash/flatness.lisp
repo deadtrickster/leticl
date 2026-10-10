@@ -997,7 +997,16 @@ nothing to match against; this asks `list_jobs` until it does, which stops as so
               ;; **A SETTLED JOB IS NOT ASKED ABOUT AGAIN** — the event told us, and polling a
               ;; finished job for ever is exactly the cost this design exists to avoid.
               (unless (and (getf fed :asked) (not (getf entry :running)))
-                (%send head (make-read-job-output id 0))
+                ;; **THE OFFSET IS THE HANDLE THE REPLY GAVE, AND THIS ALWAYS ASKED FOR 0.**
+                ;; The daemon's slice is ABSOLUTE — `let start = from.max(self.dropped)` — so
+                ;; asking from 0 re-reads the oldest retained window for ever: a job that
+                ;; outwrites the daemon's 16 KiB ring never has a later byte seen, which is the
+                ;; one thing a `job_output`-fed dashboard exists to show. `:next` was stored two
+                ;; lines below and read by nobody, under a comment claiming it was *"taken from
+                ;; the reply and handed back"* — the head's own jobs pane does it right
+                ;; (`pane-keys.lisp`'s `view` offset). Found by the dashboard reviewer,
+                ;; 2026-10-11.
+                (%send head (make-read-job-output id (or (getf fed :next) 0)))
                 (setf (gethash id *dash-fed*)
                       (list :next (getf fed :next) :from (getf fed :from)
                             :state (getf fed :state) :never-ran (getf fed :never-ran)
