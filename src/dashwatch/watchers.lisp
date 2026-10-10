@@ -265,6 +265,18 @@ a line nobody promised a shape for."
   "Is WATCHER's sampler registered right now?"
   (member (getf watcher :name) (mapcar #'car *dash-samplers*) :test #'string=))
 
+(defun dash-watcher-started-p (watcher)
+  "Has WATCHER been STARTED — whether or not it owns a sampler?
+
+**THE TWO ARE NOT THE SAME QUESTION, AND CONFLATING THEM WEDGED A LIFECYCLE.** A `job_output`
+watcher is fed by the EVENT, so it registers no sampler and `dash-watcher-running-p` answers NIL for
+a watcher that is running perfectly — while `dash-watcher-start` sets `:state` 2 for it exactly as
+it does for a sampler one. The settle branch asked `dash-watcher-running-p`, so a `job_output`
+watcher could NEVER reach `stopped` (the pane said `running` for the rest of the head's life), and
+`dash-watchers-active-p` — which reads `:state` 2 — kept the COLLECTOR running for a job that
+settled hours ago (the dashboard reviewer, 2026-10-11)."
+  (= (getf watcher :state) 2))
+
 (defun dash-watcher-stop (watcher)
   "Stop WATCHER's sampler. **Stopped, not unregistered, and what it collected does not evaporate** —
 the series are in `*dash-series*`, which no part of this touches. The panel keeps drawing them, and
@@ -319,7 +331,15 @@ something is claimed or looked at."
              (dash-series-declare (if (search "." sname) sname (format nil "~a.~a" name sname))
                                   unit))))
        (values (list :name name :file path :scope scope :spec spec :watch watch
-                     :source source :series series :interval interval :state 0 :job nil)
+                     :source source :series series :interval interval :state 0 :job nil
+                     ;; **`:note` IS IN THE PLIST FROM THE START, and its absence was a silent bug.**
+                     ;; `tick-dash-watchers` writes a refusal with `(setf (getf w :note) note)`, and
+                     ;; `setf` on an ABSENT key conses a new head onto the LOCAL `w` — the table's
+                     ;; value never changed, so the sentence `dash-watcher-start` returned for a
+                     ;; workspace `command` (the one that names the FILE to edit) reached nothing and
+                     ;; the pane drew a watcher with no complaint at all (the dashboard reviewer,
+                     ;; 2026-10-11; `:state` and `:job` worked for exactly this reason — they exist).
+                     :note nil)
                nil)))))
 
 (defun dash-watcher-load (&optional (head nil) dirs)

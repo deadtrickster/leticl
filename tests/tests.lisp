@@ -24643,6 +24643,114 @@ That is what makes a watcher file safe to commit — and `seat` is a NAME, never
   (dash-sinks-reset)
   (dash-reset-series))
 
+(def-test a-feed-panel-registered-by-command-actually-fills (:suite leticl)
+  "**A `:feed` panel registered the way the format documents NEVER RAN, and nothing said so.**
+
+`dash-note-job` looked its panel up by handing `dash-panel-for-job` a FABRICATED job —
+`(list :id job :command job)` — whose COMMAND was the job's own id. `dash-job-matches-p` matches a
+panel's `:job` against the command line or the exact id, so the only panels a window could ever
+reach were ones registered with that literal id. A file saying `\"job\": \"llama-server\"`, which is
+the documented way to bind a dashboard to a job you have not started yet, matched nothing: its
+`:feed` never ran and the panel drew `waiting` for ever — a dashboard that never fills looks exactly
+like a job that produced nothing (the dashboard reviewer, 2026-10-11).
+
+The daemon's job LIST is where the command lives, so the head is passed down and the real entry is
+consulted. This asserts the whole path: a file-registered panel, a job in the list whose command
+matches the panel's word, a window arriving, and the `:feed` having written a series."
+  (dash-reset-series)
+  (dash-clear-panels)
+  (let* ((dir (test-temp-dir "feed-by-command"))
+         (h (%on-head :cols 100 :rows 30)))
+    (let ((leticl::*dash-file-workspace* nil))
+      (%dash-write-file
+       dir "llama.json"
+       (concatenate 'string
+                    "{ \"format\": 1, \"name\": \"llama\", \"title\": \"the server\","
+                    "  \"watch\": \"llama-server\", \"order\": 2,"
+                    "  \"rows\": [ { \"label\": \"seen\", \"series\": \"llama.seen\" } ] }"))
+      (multiple-value-bind (n errors) (dash-load-file-panels h (list (cons dir :user)))
+        (is (= 1 n) "the file is read and its panel registered")
+        (is (null errors) "without complaint")
+        (let ((panel (gethash "llama" *dash-panels*)))
+          (is (equal "llama-server" (getf panel :job))
+              "**and it is bound to a COMMAND WORD**, not to a job id it could not know"))
+        ;; the daemon's list is where the command is: the panel's word matches THIS job
+        (setf (head-jobs h) (list (list :id "j7" :command "./llama-server -m m.gguf"
+                                        :running t :state "running" :produced 0)))
+        ;; **A FEED THAT RECORDS ITS OWN SERIES** — the panel's `:feed` is a function of the window,
+        ;; which is the documented shape, and the series it writes is the measurement.
+        (setf (getf (gethash "llama" *dash-panels*) :feed)
+              (lambda (window) (list (cons "llama.seen" (float (or (getf window :produced) 0))))))
+        (dash-note-job (list :job "j7" :produced 4096 :dropped 0 :from 0 :to 32
+                             :state "running" :lines nil :next 32)
+                       h)
+        (is (= 4096.0 (dash-last "llama.seen"))
+            "**the panel's `:feed` RAN** — for a panel registered by command, which could never happen before")
+        ;; and the id form still works, so both spellings of the binding are live
+        (let ((by-id (%dash-temp-dir)))
+          (%dash-write-file
+           by-id "byid.json"
+           (concatenate 'string
+                        "{ \"format\": 1, \"name\": \"byid\", \"watch\": \"j8\","
+                        "  \"rows\": [ { \"label\": \"x\", \"series\": \"byid.x\" } ] }"))
+          (dash-load-file-panels h (list (cons by-id :user)))
+          (setf (getf (gethash "byid" *dash-panels*) :feed)
+                (lambda (window) (list (cons "byid.x" (float (or (getf window :produced) 0))))))
+          (dash-note-job (list :job "j8" :produced 7 :dropped 0 :from 0 :to 1
+                               :state "running" :lines nil :next 1)
+                         h)
+          (is (= 7.0 (dash-last "byid.x"))
+              "an exact-id panel still matches, which is the other half of the rule"))))
+    (dash-clear-panels)
+    (dash-reset-series)
+    (setf leticl::*dash-file-workspace* nil)))
+
+(def-test a-job-output-watcher-reaches-stopped-when-its-job-settles (:suite leticl)
+  "**A `job_output` watcher could never reach `stopped`, and the cost was the collector.**
+
+`dash-watcher-running-p` asks whether a SAMPLER is registered; a `job_output` source registers none
+by design (it is fed by the event, not polled), and `dash-watcher-start` still sets `:state` 2 for it.
+The settle branch asked the running test, so for a `job_output` watcher it was false for ever: the
+pane said `running` after the job had exited, and `dash-watchers-active-p` — which reads `:state` 2 —
+kept the COLLECTOR alive for the rest of the head's life, on a job that ended hours ago (the
+dashboard reviewer, 2026-10-11).
+
+`dash-watcher-started-p` is the question the settle branch needed: written by `start`, cleared by
+`stop`, and true whether or not a sampler is involved."
+  (dash-reset-series)
+  (dash-clear-panels)
+  (dash-watchers-reset)
+  (let* ((dir (%dash-temp-dir))
+         (h (%on-head :cols 100 :rows 30)))
+    (%dash-write-file
+     dir "import.json"
+     (concatenate 'string
+                  "{ \"format\": 1, \"name\": \"impt\", \"watch\": \"long-import\","
+                  "  \"series\": [ { \"name\": \"rows\", \"unit\": \"rows\" } ],"
+                  "  \"source\": { \"job_output\": true } }"))
+    (dash-watcher-load h (list (cons dir :user)))
+    (setf (head-jobs h) (list (list :id "j7" :command "./long-import --db x" :running t)))
+    (tick-dash-watchers h)
+    (let ((w (gethash "impt" *dash-watchers*)))
+      (is (= 2 (getf w :state)) "**started** — the state a `job_output` watcher reaches")
+      (is (not (dash-watcher-running-p w))
+          "**and it owns NO sampler**, which is the whole reason the two questions differ")
+      (is (leticl::dash-watcher-started-p w) "while `started` is true, and that is what the settle branch asks")
+      (is (dash-watchers-active-p)
+          "with the collector's run condition true while the job runs, which is the point of it")
+      ;; --- THE JOB SETTLES
+      (setf (head-jobs h) (list (list :id "j7" :command "./long-import --db x" :running nil
+                                      :state "exited 0")))
+      (tick-dash-watchers h)
+      (is (= 3 (getf w :state))
+          (format nil "**the watcher reaches `stopped`** — it could not before, because the branch asked whether a sampler was registered: ~s" w))
+      (is (not (leticl::dash-watcher-started-p w)) "and `started` is what says so")
+      (is (not (dash-watchers-active-p))
+          "**AND THE COLLECTOR STOPS BEING KEPT ALIVE** — this is the half that cost something: a settled job's watcher held the collector open for the life of the head"))
+    (dash-watchers-reset)
+    (dash-clear-panels)
+    (dash-reset-series)))
+
 (def-test a-watcher-belongs-to-a-job-as-a-lifecycle (:suite leticl)
   "**The operator's second complaint, answered as a LIFECYCLE rather than a field.** *\"they still
 dont belong to jobs\"* — and belonging means: found on disk, claimed by a job that appears, started,

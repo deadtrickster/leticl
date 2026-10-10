@@ -16,15 +16,26 @@
 ;;; series cannot be corrupted by a gap at all. The increment would have been wrong on both counts,
 ;;; and the wire was telling us so.
 
-(defun dash-note-job (window)
+(defun dash-note-job (window &optional head)
   "Record WINDOW's own numbers, and run its panel's `:feed`. Returns how many series were written.
 
 Called by the `JobOutput` event arm — which ALSO folds a window into the pane, and the two are
 deliberately separate readers of one fact: the pane wants the LINES, the dashboard wants the
-NUMBERS, and neither is derived from the other."
+NUMBERS, and neither is derived from the other.
+
+**HEAD IS HOW A PANEL REGISTERED BY COMMAND IS FOUND, and its absence was why they never ran.**
+The panel lookup used to be handed a fabricated job — `(list :id job :command job)` — whose COMMAND
+was the job's own id, so `dash-job-matches-p` could only ever match a panel registered with that
+exact id. A panel registered the way the file format documents (`:job \"llama-server\"`, matching
+the command line) never matched an `JobOutput` window, and a `:feed` panel that never fills looks
+exactly like a job that produced nothing (the dashboard reviewer, 2026-10-11). The daemon's job LIST
+is where the command lives, so it is consulted when a head is in hand; the synthesized list stays as
+the fallback for the callers that have none (a test, a resync)."
   (let* ((job (getf window :job))
          (produced (getf window :produced))
          (dropped (getf window :dropped))
+         (entry (and head job
+                     (find-if (lambda (j) (string= job (or (getf j :id) ""))) (head-jobs head))))
          (n 0))
     (when job
       (setf (gethash job *dash-fed*)
@@ -38,7 +49,7 @@ NUMBERS, and neither is derived from the other."
     (when produced (dash-note (format nil "job.~a.produced" job) produced) (incf n))
     (when dropped (dash-note (format nil "job.~a.dropped" job) dropped) (incf n))
     ;; and the panel's own reading, which is a function of the window like a sampler is
-    (let ((panel (dash-panel-for-job (list :id job :command job))))
+    (let ((panel (dash-panel-for-job (or entry (list :id job :command job)))))
       (when (and panel (getf panel :feed))
         (dolist (pair (ignore-errors (funcall (getf panel :feed) window)))
           (when (dash-note (car pair) (cdr pair)) (incf n)))))

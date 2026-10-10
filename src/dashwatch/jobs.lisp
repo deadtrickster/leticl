@@ -112,8 +112,12 @@ clock as the feed's."
                   (declare (ignore state))
                   (when started (incf changes))
                   (when note (setf (getf w :note) note)))))
-             ;; SETTLED — stopped, its history kept in the panel
-             ((and job (not (getf job :running)) (dash-watcher-running-p w))
+             ;; SETTLED — stopped, its history kept in the panel.
+             ;;
+             ;; **ASKED OF `dash-watcher-started-p` AND NOT `-running-p`** — see that function's
+             ;; docstring: a `job_output` watcher registers no sampler, so the running test is NIL for a
+             ;; watcher that is very much running, and this branch could never fire for one.
+             ((and job (not (getf job :running)) (dash-watcher-started-p w))
               (dash-watcher-stop w)
               (incf changes))
              ;; NO JOB YET — and this is the state that has to ASK, because a watcher bound to a job

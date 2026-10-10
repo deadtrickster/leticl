@@ -701,7 +701,7 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
        ;; whichever window arrives — including one answering ANOTHER head's read, because
        ;; `hub.publish` broadcasts. The two readers want different things from one fact and neither
        ;; is derived from the other, which is why this is a call and not a branch in the fold.
-       (dash-note-job env)
+       (dash-note-job env *head*)
        ;; **The answer to the jobs pane's Enter, folded into the overlay that
        ;; asked and nowhere else.** The whole window is kept — job, from, to,
        ;; produced, dropped, state, never-ran, lines, next — because the pane draws
