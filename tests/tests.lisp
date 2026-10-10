@@ -2623,6 +2623,13 @@ of, and a paste that arrives truncated is worse than one that is awkward."
     (leticl::%submit-line h)
     (is (equal "operator_shell" (getf (first (%sent wire)) :frame))
         "a one-line `!` command still runs — the rule guards the block, not the command")
+    ;; --- the SHARED RULE's own arithmetic: a trailing newline is not a line
+    (is (null (leticl::operator-line-refusal (format nil "! ls~%")))
+        "**a single command with the newline a copy took with it is ONE line** — Rust's `lines()` drops one final newline, and counting it raw refused the commonest paste there is")
+    (is (search "5 line" (or (leticl::operator-line-refusal (format nil "! mc~%usage~%it~%so~%/proc")) ""))
+        "a five-line block counts five")
+    (is (search "5 line" (or (leticl::operator-line-refusal (format nil "! mc~%usage~%it~%so~%/proc~%")) ""))
+        "**and five WITH a trailing newline too** — not six")
     ;; --- every ordinary paste is a prompt and never meets the rule, asked of the rule
     ;;     itself (the daemon's own test does the same): multi-line, no bang, nothing said
     (is (null (leticl::operator-line-refusal (format nil "thread 'main' panicked~%at src/main.rs:12~%note: run with")))

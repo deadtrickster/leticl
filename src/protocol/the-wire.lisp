@@ -37,7 +37,18 @@
         :since-seq since-seq
         :kind kind
         :identity (or identity "")
-        :caps (append (list :queue queue :can-decide can-decide)
+        ;; **`queue` AND `can_decide` ARE ALWAYS WRITTEN, WHATEVER THEY HOLD.** They are BARE
+        ;; required fields daemon-side (`protocol.rs`: `queue: usize, can_decide: bool`, and
+        ;; only `features` carries `#[serde(default)]`), and `%encode-object` OMITS every nil
+        ;; value — so `(make-attach :can-decide nil)` emits a `caps` with no `can_decide`, which
+        ;; fails the daemon's whole `ClientFrame` deserialiser: its read loop answers `Bye` and
+        ;; closes the socket. That is the same shape as the `consented: null` this tree has paid
+        ;; for twice, one field over, and it is cheap to make impossible rather than to remember
+        ;; (found by the wire reviewer, 2026-10-11; both callers pass the defaults, so this was a
+        ;; trap and not a live defect). `features` is left optional because the daemon DOES
+        ;; default it.
+        :caps (append (list :queue (or queue 0)
+                            :can-decide (and can-decide t))
                       (when features (list :features features)))))
 
 (defun make-ack (seq rendered filtered)
@@ -344,8 +355,21 @@ but a check in front of it.
 
 A multi-line text that does NOT start with `!` is untouched — a pasted stack trace is a
 prompt, and it is the ordinary reason somebody pastes. A `!` that is not the first
-character of the line is not a `!` line at all. ONE line is a command and passes."
-  (let* ((end (position #\newline text))
+character of the line is not a `!` line at all. ONE line is a command and passes.
+
+**AND A TRAILING NEWLINE IS NOT A LINE** — the reference counts with Rust's `text.lines()`,
+which drops one final newline and never yields a trailing empty line, so a single command
+with the newline a copy took with it is ONE line there and not a block. This counted the
+newlines raw and added one, so `! ls` plus its newline was refused as a two-line block and a
+genuine five-line paste was called six — **the two halves disagreeing about the commonest
+paste there is, inside the one function whose whole purpose is that they cannot** (found by
+the wire reviewer, 2026-10-11). The trailing newline is dropped first, which is what
+`lines()` does."
+  (let* ((text (if (and (plusp (length text))
+                        (char= (char text (1- (length text))) #\newline))
+                   (subseq text 0 (1- (length text)))
+                   text))
+         (end (position #\newline text))
          (first (subseq text 0 (or end (length text)))))
     (when (and end
                (plusp (length (string-left-trim '(#\space #\tab) first)))
