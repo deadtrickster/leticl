@@ -824,9 +824,22 @@ reaches no arm in either decoder, and `Key::CtrlN` does not exist).
   is a second source of truth in a head whose contract is that redefining a
   renderer changes the next frame. Port the counter and a test that bounds
   `item-lines` calls per frame first. Size M.
-- [ ] **T8 · the rest of `docs/parity/`** — every finding not claimed above, each
+- [~] **T8 · the rest of `docs/parity/`** — every finding not claimed above, each
   already carrying its citation, its size and its assertion. Work them by size
   within a strand's files, never across.
+
+  **STARTED 2026-10-11, and the first finding is about the METHOD rather than about the code**:
+  the two strands' headline lists had gone stale in the same direction — `rendering.md`'s
+  *Where they are not* (ten items) and `panes.md`'s *What would stop the operator switching
+  today* (twelve) were EVERY ONE of them closed, so a reader was being sent to verify
+  twenty-two things that were already true. A doc that over-claims work is a doc nobody can
+  use, and the fix is the convention the docs already keep: struck through, each naming the
+  TEST or the site that holds it. Both are reconciled now, and one claim of mine was caught
+  doing it — a test name cited for a fix that had a different test.
+
+  **What is left**: the per-section tables under each list (the `G`-numbered findings in
+  `panes.md`/`keys.md`, the §-numbered ones in `rendering.md`/`wire.md`), worked by size
+  within a strand as this row says.
 
 ## Found while working, and not fixed
 
