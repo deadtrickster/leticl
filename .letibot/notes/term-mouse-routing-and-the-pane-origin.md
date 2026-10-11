@@ -53,3 +53,19 @@ output is the honest way — a constant would be right until the first time the 
 **Do not send a report until that origin is read off the render, or every click is off by however many
 rows the header happens to be** — and a wrong coordinate to a full-screen program is worse than no
 mouse at all, because the program acts on it.
+
+---
+
+## SOLVED — the sending is LANDED (2026-10-11, `1b7b100`)
+
+The block above is gone, and it was ten minutes of looking rather than a design problem:
+**the render already knows the origin.** `render/history-cache.lisp` computes `body-top` and the
+gutter at the pane draw and hands them to `%place-lines`, so they are now ALSO written to
+`*pane-top*` and `*pane-gutter*` beside `*pane-lines*`/`*pane-room*`, and `%term-mouse-bytes`
+subtracts them. The pane's own header lines come from `%term-head-lines`, which is the number
+`pane-lines` itself builds — the same discipline `editor/click.lisp`'s `click-header-lines` uses for
+the other panes, and for the reason that file states.
+
+So: `%term-mouse-bytes` (the filter and both encodings), `make-term-input-bytes` (X10 is not ASCII),
+`%term-key`'s `:mouse` arm, and `a-pane-sends-the-mouse-only-to-a-program-that-asked`. What is still
+missing from the reference's table is only the tracking-OFF wheel, which wants the scrollback.
