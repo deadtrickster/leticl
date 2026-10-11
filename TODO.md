@@ -800,7 +800,12 @@ head runs today breaks without them.
     it must NOT be read as a decision: a reviewer whose turn failed reached no judgement, so
     `decision` is `None` and without this field the pane drew *asked and has not answered* over an
     attempt that had already died**), and `reasons` (*the reviewer's reasons, in its own words*).
-    So the view has three facts to keep apart — a verdict, no verdict yet, and a review that DIED —
+    **AND THE REVIEWS ARE LANDED AND DRAWN (2026-10-11)**: `merge-review-line` keeps the three facts
+    apart — a verdict with the reviewer's own reasons, nothing at all for *asked and has not
+    answered*, and *review failed* in the failure's own words — and `merge-queue-lines` draws them
+    under each entry, so the function is CALLED rather than dead (the shape this session kept
+    finding). Held by `a-reviews-three-facts-are-not-one-rendering` and the queue renderer's own
+    test. So the view has three facts to keep apart — a verdict, no verdict yet, and a review that DIED —
     which is the same three-way distinction the notes and the gate steps each turned on. And
     `/queue reset | clean | restart` — the verbs, each with the sentence that says what it did.
     **AND A SECOND MEASUREMENT, 2026-10-11**: the reference's TUI has NO `/queue` verb either —
