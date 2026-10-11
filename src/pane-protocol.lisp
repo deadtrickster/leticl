@@ -428,7 +428,9 @@ tail's spaces as a ragged gap."
   ;; a string, row-major: cell (r, c) is at (+ (* r cols) c)
   (cells "" :type string)
   (row 0 :type fixnum)
-  (col 0 :type fixnum))
+  (col 0 :type fixnum)
+  ;; the ALTERNATE screen's saved cells, or NIL when the program is on the main one (`?1049`)
+  (main nil))
 
 (defun term-screen-new (rows cols)
   "A blank screen, cursor at home."
@@ -546,7 +548,10 @@ content, which is what makes a shell's redraw land where it should."
 A VT SUBSET and it says so: `CR`, `LF`, `BS`, `TAB`, the cursor moves (`A`–`D`, `H`/`f`), the erases
 (`J`/`K`). SGR (`m`) is dropped on purpose — this head draws ROLES, not terminal colours — and
 everything else is counted, never guessed at, which is the rule the pane keeps."
-  (let ((dropped 0) (args "") (state :text) (n (length output)) (i 0))
+  (let ((dropped 0) (args "") (state :text) (n (length output)) (i 0)
+        ;; `ESC [ ? …` is a PRIVATE sequence — the screen switch and the cursor are spelled that way,
+        ;; and the `?` is not a digit, so it has to be remembered rather than skipped.
+        (private nil))
     (labels ((num () (if (plusp (length args)) (or (parse-integer args :junk-allowed t) 0) 0))
              (arg1 () (if (plusp (length args)) (or (parse-integer args :junk-allowed t) 1) 1))
              (arg2 () (let ((semi (position #\; args)))
@@ -575,8 +580,29 @@ everything else is counted, never guessed at, which is the rule the pane keeps."
                  (#\@ (%ts-insert-chars s (max 1 (num))))
                  (#\L (%ts-insert-lines s (max 1 (num))))
                  (#\M (%ts-delete-lines s (max 1 (num))))
+                 ;; **THE ALTERNATE SCREEN** (`?1049 h`/`l`) — what a full-screen program switches to
+                 ;; so that leaving it restores what was on the screen before. Honoured HERE rather
+                 ;; than left to the caller because it is a fact about the TERMINAL, and a program
+                 ;; that opened one and found its output mixed into the shell's would be drawn wrong.
+                 ;; The sizes are the same and the saved screen is kept whole.
+                 ;; **THE ALT SCREEN IS SWAPPED IN PLACE, inside the ONE struct the pane holds** —
+                 ;; a caller's reference to the screen stays valid, which is the difference between
+                 ;; switching screens and replacing one. The main cells are kept whole and the alt
+                 ;; one starts blank, which is what a full-screen program expects to find.
+                 ((#\h) (when (and private (string= args "1049") (null (term-screen-main s)))
+                           (setf (term-screen-main s) (term-screen-cells s)
+                                 (term-screen-cells s) (make-string (* (term-screen-rows s)
+                                                                        (term-screen-cols s))
+                                                                     :initial-element #\space)
+                                 (term-screen-row s) 0
+                                 (term-screen-col s) 0)))
+                 ((#\l) (when (and private (string= args "1049") (term-screen-main s))
+                           (setf (term-screen-cells s) (term-screen-main s)
+                                 (term-screen-main s) nil
+                                 (term-screen-row s) 0
+                                 (term-screen-col s) 0)))
                  (t nil))
-               (setf args "" state :text)))
+               (setf args "" state :text private nil)))
       (loop while (< i n) do
         (let ((ch (char output i)))
           (case state
@@ -595,6 +621,7 @@ everything else is counted, never guessed at, which is the rule the pane keeps."
             (:csi (cond ((<= 48 (char-code ch) 57)
                          (setf args (concatenate 'string args (string ch)))
                          (incf i))
+                        ((char= ch #\?) (setf private t) (incf i))
                         ((char= ch #\;)
                          (setf args (concatenate 'string args ";"))
                          (incf i))

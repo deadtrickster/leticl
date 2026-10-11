@@ -12082,6 +12082,34 @@ worked for the merge queue.
         (format nil "**a bare `J` clears NOTHING** — it erases below a cursor this head cannot place: ~s" lines))
     (is (= 1 dropped) "and it is counted rather than honoured")))
 
+(def-test a-terminal-has-an-alternate-screen-and-comes-back-from-it (:suite leticl)
+  "**`ESC [ ? 1049 h` and `l`** — what a full-screen program switches to so that leaving it restores
+  what was on the screen before. Honoured inside the screen rather than left to the caller, because it
+  is a fact about the TERMINAL: a program that opened an alternate screen and found its output mixed
+  into the shell's would be drawn wrong, and that is exactly what an editor would do.
+
+  The swap happens IN PLACE, so a caller's reference to the screen stays valid."
+  (flet ((esc (n) (concatenate (quote string) (string (code-char 27)) n)))
+    (let ((s (leticl::term-screen-new 3 10)))
+      (leticl::term-screen-feed s "shell output")
+      ;; **AND THE EXPECTATION IS THE WRAP**: twelve characters on a ten-column screen are two
+      ;; rows, which is the first thing a terminal does and the thing I keep forgetting.
+      (is (equal (list "shell outp" "ut") (subseq (leticl::term-screen-lines s) 0 2))
+          (format nil "the shell's screen first: ~s" (leticl::term-screen-lines s)))
+      ;; the program opens the alternate screen
+      (leticl::term-screen-feed s (esc "[?1049h"))
+      (is (equal '("" "" "") (leticl::term-screen-lines s))
+          (format nil "**the alternate screen starts BLANK** — the shell's output is not in it: ~s"
+                  (leticl::term-screen-lines s)))
+      (leticl::term-screen-feed s "editor here")
+      (is (equal "editor her" (car (leticl::term-screen-lines s))) "and the program draws in it")
+      ;; and it leaves: the shell's screen is back, whole
+      (leticl::term-screen-feed s (esc "[?1049l"))
+      (is (equal "shell outp" (car (leticl::term-screen-lines s)))
+          (format nil "**and leaving restores the shell's screen exactly**: ~s"
+                  (leticl::term-screen-lines s)))
+      (is (null (leticl::term-screen-main s)) "with no alt screen held any more"))))
+
 (def-test a-terminal-deletes-and-erases-differently (:suite leticl)
   "**Erasing blanks cells; deleting MOVES what is left of them** — the distinction a shell depends on
   when it redraws a line shorter than the last one. `X` blanks N characters in place; `P` deletes them
