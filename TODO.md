@@ -733,6 +733,24 @@ rest names the commit it comes from.
     rectangle — and the same client frames. A head that built "a pane drawing a file" would be
     building the wrong thing, which is why the item is left where the ledger already put it: beside
     `!term`, not in the 48-batch's list of small mirrors.
+
+    **AND MEASURED AGAIN 2026-10-11, ON THE LIVE HEAD — WHICH CORRECTS THIS HEADING'S OWN KEY.** The heading
+    says `ctrl-e`; the reference's key is **`ctrl-]`** (`app/editor.rs`'s own header: *"a click on an edit or
+    write row of the conversation, or `ctrl-]` for the newest one, opens rano on that file — on the change,
+    with the change drawn over the text as rano's own review view"*), and **`ctrl-e` is TAKEN here**: it is
+    the composer's end of line in the emacs set (`editor/dispatch.lisp:501`, `panes/help.lisp:26`). A session
+    taking this heading literally would take a key that is already doing something and call it a port.
+    `ctrl-]` is free, and it arrives as `(:ctrl #\})` — the decoder spells a control byte at `(+ 96 code)`,
+    so 0x1d is 125, which is the same trap `%ctrl-backslash-p` documents one byte over at 124.
+
+    **THE NEWEST CHANGED FILE NEEDS NO NEW STATE**: a `tool_result` row's body carries **`:edit`**, and
+    `edit-card.lisp` reads `(getf edit :path)` — asked the live head for a real row and its keys are
+    `:TYPE :CALL-ID :NAME :OUTCOME :PAYLOAD :EDIT :ORIGIN :MEDIA`. And **`rano` IS INSTALLED**
+    (`/home/dead/bin/rano`), so the sibling this box names is now reachable as a PROGRAM in the pane that
+    exists: `TermOpen { line: "!term rano <path>" }` — the file, its syntax, its keys, the mouse and the
+    scrollback, and **not** `open_review`'s overlay, which is a call into a library this head cannot hold.
+    What remains is the key's PLACEMENT in the ladder, which is its own piece of work rather than the tail
+    of a long session. `.letibot/notes/the-editor-key-is-ctrl-bracket-not-ctrl-e.md`.
   - [ ] **standing notes: the agent writes the notes it already reads**
     (`1c9f3a4`, `35670ee`, `1be706b`) — a tool, so the wire is the tool table;
     the head's notes pane is the surface, and every read must say the notes are
