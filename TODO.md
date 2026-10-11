@@ -750,7 +750,7 @@ head runs today breaks without them.
     which is the lie the operator's own rule forbids.** So the renderer draws the four words and
     never an empty list, and that is the whole of what this step needs on this side. The steps drawn in the order the gate
     runs them (which is the gate's own sequence, not the head's), and the standings beside the
-    **AND WHAT THAT STEP IS, PRECISELY**: the standings LINE is landed
+    **AND THE STEP IS LANDED — 2026-10-11**: the standings LINE (`merge-standings-line`: review/merging/parked, *nothing at all while nothing stands, all three with zeroes when something does, the four stopped states parked TOGETHER*) **and its WIRING**: the composer's bottom legend carries it while the queue stands and says nothing when it does not (`composer-wiring`), which is the reference's own rule that a marker always on is furniture — held by `the-queues-standings-are-drawn-only-while-something-stands`. **What remains in this box**: the daemon's own acts (approve/veto/rm — measured: they live in the reference's STORE, not on its wire) and the review queue as two views of one list. (the line below is the earlier, now-superseded statement)
     (`merge-standings-line`: three counts — review/merging/parked — with the reference's own rule,
     *nothing at all while nothing stands, all three with zeroes when something does, the four
     stopped states parked TOGETHER*), **but it is not yet DRAWN**: `composer-wiring` composes the
