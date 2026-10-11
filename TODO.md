@@ -724,7 +724,22 @@ head runs today breaks without them.
     answers, the way `/job` and `/gate` work), and the next session should confirm that in
     `crates/tui/src/keys/` before writing anything: inventing three frames for acts the daemon
     reaches another way is exactly the mistake this ledger keeps catching.
-  · **M — the standings and the gate's steps, in order.** The steps drawn in the order the gate
+  · **M — the standings and the gate's steps, in order. MEASURED 2026-10-11, AND IT IS A RENDERER
+    ADDITION RATHER THAN NEW WIRE**: the wire's own `MergeEntry` already carries
+    `gate_steps: Vec<MergeGateStep>` (`sessionlog/src/event.rs:461`, `serde(default)`, so no
+    version bump — *an older head ignores an unknown key and draws exactly the row it drew
+    before*). Each step is `{ command, outcome, output, started_ms, elapsed_ms }`
+    (`tokencore/src/store.rs:1230`), where `command` is *the command as `main`'s `AGENTS.md`
+    spells it — the string a person would paste into a shell to reproduce the row*, `output` is
+    *the tail of what the step wrote, with the bytes dropped from the front counted* (empty on a
+    step that never ran), and `outcome` is a **closed four-word set** (green / red / never reached
+    / no gate).
+
+    **AND THE RULE THAT MATTERS IS THE REFERENCE'S OWN**: the `no_gate` case is a VARIANT rather
+    than an empty list because *"the gate declared nothing to run"* and *"the gate has not run
+    yet"* are different facts, and **an empty checklist reads as a third one — *all steps passed* —
+    which is the lie the operator's own rule forbids.** So the renderer draws the four words and
+    never an empty list, and that is the whole of what this step needs on this side. The steps drawn in the order the gate
     runs them (which is the gate's own sequence, not the head's), and the standings beside the
     triangle the head already draws.
   · **M — the review queue as TWO VIEWS OF ONE LIST**, riding protocol 38's removal, and
