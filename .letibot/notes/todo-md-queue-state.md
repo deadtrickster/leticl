@@ -62,3 +62,41 @@ And `:timeout` on a socket stream does NOT bound a blocking `write(2)` — measu
 mandatory after every edit); clear `~/.cache/common-lisp` AND `*.fasl` before a suite run; `git
 commit -F <file>` (backticks in `-m` get shell-substituted); and verify a ledger's claims against
 the tree — four of this file's boxes described work that had already landed.
+
+## LATER THE SAME SESSION: the `!term` pane is real now (suite 7809/7809)
+
+The `!term` box went from *"a project"* to a working pane. What is IN, each with its test:
+
+  · the four client frames (`term_open`/`term_input`/`term_resize`/`term_close`) and the three
+    server ones folded (`term_attached`/`term_output`/`term_ended`), the `head-term` slot, and the
+    `/term` verb — which opens the pane rather than sending a second `TermOpen` the daemon refuses;
+  · **the keys a shell needs**: Enter as `#\return`, Tab and Backspace as DEL `#x7f`, all sent as
+    `TermInput`;
+  · **line discipline**: `\r` OVERWRITES (it does not clear), so a progress bar is one line;
+  · **escapes are DROPPED AND COUNTED**, `ESC [ K` is honoured (erase to end of line), `ESC [ 2 J`
+    clears the screen, and every sequence the head cannot honour is counted and said.
+
+What is MISSING is the VT renderer's hard half — cursor addressing, scroll regions, the alternate
+screen — which needs a DECISION before code: `ESC [ H` (home) is ambiguous in a line model (a redraw
+of the whole screen, or a position within one), so honouring it would be guessing. The pane says this
+out loud rather than drawing a confident wrong screen, which is the rule the whole box now holds.
+
+## THREE ORDERING LESSONS FROM ONE PANE (plus the traps above)
+
+1. a pane needs its entry in `%handle-key`'s pane-arm MODE LIST;
+2. an arm must sit ABOVE its siblings in `%pane-key` (a pane's own Enter arm is earlier than the
+   character arms, so a terminal's Enter was eaten by an act the pane does not have);
+3. a key a pane needs must be taken before the paths that assume a composer is the reader — the
+   completer claims `:tab`, so the terminal's arm goes at the TOP of `%handle-key`'s cond.
+
+**AND THE TRAP THAT COST MOST**: there are TWO `dispatch.lisp` files — verb arms in
+`src/commands/dispatch.lisp` (where `%command` is), mode lists in `src/editor/dispatch.lisp` (where
+`%handle-key` is). Three attempts put the arm in the wrong one and read the failure as an anchor
+problem.
+
+**AND AN ESCAPING RECIPE**: to put a control character in a Lisp string from a script, hand `format`
+a `~c` and a literal `#\escape` as an ARGUMENT — a backslash in a Lisp string escapes the next
+character literally, so `"\r"` is the letter `r`. Five attempts died on that.
+
+**AND A SHAPE THAT WORKS**: four FLAT `cond` arms, each saying one thing, rather than one arm with a
+`cond` inside it — the nested form failed twice on a stray paren; the flat form landed first try.
