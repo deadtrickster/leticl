@@ -462,35 +462,40 @@ suppresses it (`src/render/wrapping.lisp:326`); `--new` sends an empty workspace
 
 Ranked by how soon it bites in the first hour of daily use.
 
-1. **The head goes silent.** (G2) Every notice the head produces — including
-   `detached — reconnecting…` and `resync: …` — is written to a row `%render` does not
-   draw on any terminal of 8 rows or more. The first time a socket blips, leticl will
-   reconnect correctly and say nothing at all. *Minutes in.*
-2. **Ctrl+C does nothing inside a pane.** (G1) Open `/help`, press Ctrl+C by habit,
-   nothing happens. Same in every pane, and no chord switches panes either. *Minutes in.*
-3. **Attaching to a real session shows a blank screen.** (G3) The cat is unreachable,
-   there is no deadline and no impatient line, so a slow snapshot looks like a broken
-   head. *First attach to a big session.*
-4. **Ctrl+S, Enter moves you off your session.** (G14) The picker opens at row 0 instead
-   of on the session you are in. *First time you look at the session list.*
-5. **Enter on a jobs row dumps a build log into the chat.** (G4) The pane closes and the
-   output scrolls past — the exact complaint the reference fixed. *First background job.*
-6. **The permission card hides the model's verdict and the option ids.** (G6) Under
-   `/mode supervised` the whole point is to agree or disagree with the model, and the
-   model's answer is not on the card. *First supervised permission.*
-7. **A permission that arrives mid-typing costs you the typed line.** (G7) The arrows
-   do not reach the ladder until the composer is empty. *First permission while typing.*
-8. **`leticl --continue` may not find a session letibot would have resumed.** (G9)
-   *First continue onto an aged-out session.*
-9. **The peek pane advertises three keys and honours one.** (G5) *First subagent read.*
-10. **A crash leaves the terminal raw.** (G8) Low frequency, high cost: an unusable
-    shell, requiring `reset`. *Whenever it happens.*
-11. ~~**The header's context number is stale while a turn runs.**~~ (G12) **CLOSED** —
-    the live prefill path (`turn.progress`) won the header, as the reference's
-    `header_line` has it. See R8 below for the other half of the same screen: the
-    number was also *absent* whenever the head had not seen a turn itself.
-12. **A slash listing scrolls past instead of opening a pane.** (G10) *First `/gate
-    recent`, `/tools` or `/models`.*
+**RECONCILED 2026-10-11: every item below is CLOSED**, which is `TODO.md`'s T8 (*every finding not
+claimed above*) done rather than claimed. Each names the test that holds it, so the reader checks
+rather than trusts — the list below was twelve things to go and verify, and eleven of them were
+already true.
+
+1. ~~**The head goes silent.**~~ (G2) — **CLOSED**: `the-head-says-what-it-has-to-say`, and the
+   notice now has the chrome row the reference gives it.
+2. ~~**Ctrl+C does nothing inside a pane.**~~ (G1) — **CLOSED**: `ctrl-c-closes-what-is-on-the-screen`
+   (and the pane chords toggle: `the-pane-chords-toggle-and-the-globals-reach-under-a-pane`).
+3. ~~**Attaching to a real session shows a blank screen.**~~ (G3) — **CLOSED**:
+   `an-empty-session-says-what-it-is` plus the attach deadline,
+   `an-attach-that-is-never-answered-ends-with-the-two-commands-that-reach-it`.
+4. ~~**Ctrl+S, Enter moves you off your session.**~~ (G14) — **CLOSED**:
+   `the-picker-opens-on-the-session-you-are-in`.
+5. ~~**Enter on a jobs row dumps a build log into the chat.**~~ (G4) — **CLOSED**:
+   `enter-on-a-jobs-row-reads-its-output-into-a-pane`.
+6. ~~**The permission card hides the model's verdict and the option ids.**~~ (G6) — **CLOSED**:
+   `the-permission-card-draws-the-oracles-verdict`, with
+   `the-card-says-which-non-answer-it-was` for the verdict's own vocabulary.
+7. ~~**A permission that arrives mid-typing costs you the typed line.**~~ (G7) — **CLOSED**:
+   `the-ladder-moves-with-a-half-typed-line-and-holds-the-words`,
+   `an-open-ask-owns-enter-even-with-a-line-typed`.
+8. ~~**`leticl --continue` may not find a session letibot would have resumed.**~~ (G9) — **CLOSED**
+   for the head's half: `picking-a-session-on-disk-resumes-it` and T4's `--resume`, which is the
+   frame that brings a session the daemon does not hold into the conversation.
+9. ~~**The peek pane advertises three keys and honours one.**~~ (G5) — **CLOSED**:
+   `the-peek-panes-arrows-and-enter-do-what-it-says`,
+   `the-peek-pane-shows-the-tail-and-names-its-spill-file`.
+10. ~~**A crash leaves the terminal raw.**~~ (G8) — **CLOSED**: `the-terminal-comes-back-from-anywhere`,
+    and the SIGTERM/SIGHUP half added 2026-10-11 (`freeze.lisp`'s `%install-signal-restore`).
+11. ~~**The header's context number is stale while a turn runs.**~~ (G12) — **CLOSED**, the live
+    prefill path (`turn.progress`) won the header (see R8 below for the other half of the screen).
+12. ~~**A slash listing scrolls past instead of opening a pane.**~~ (G10) — **CLOSED**: the `/slash`
+    pane, and `the-diagnostic-verb-asks-for-both-halves-and-opens-the-pane` is one verb using it.
 
 Everything else on the gap list is real and none of it would stop a switch.
 
