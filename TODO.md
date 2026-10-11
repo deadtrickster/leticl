@@ -562,6 +562,17 @@ rest names the commit it comes from.
     `ServerFrame::StandingNotes` carrying `NoteEntry` — one row per note, and the form the
     budget gave each. Two frames, so this is the one item here that adds wire. The reference's
     pane draws it and Enter opens the note in rano (`81749c9`).
+
+    **MEASURED 2026-10-11, SO THE SHAPE IS KNOWN RATHER THAN GUESSED**: the ask rides the
+    **PANE OPEN**, not a verb — `app/standing.rs:133` is `self.standing_pane.then_some(Action::ListNotes)`
+    and `ui/panes/standing.rs:70` queues it on open. The protocol's own docstring says why: *"a list
+    is a question, not an act — a pane that opens must answer while it is open, and a verb that
+    rides the command queue answers after the turn"*, and it is *read-only and unserialised like
+    `ListJobs`*. And the answer is **the harness's mailbox, not a fresh read of the directory**:
+    the form each file has is decided with the session's own token counter, which the server thread
+    does not hold. So this is `ListJobs`' shape one mailbox over — the seam the jobs pane already
+    keeps at `%toggle-pane` — and NOT a `/notes`-style verb, which is what a guess would have
+    produced.
   - [x] **the carry by the row's own words** (`53ac610`, `7b18b1d`) — **LANDED 2026-10-11**, held by
     `a-fork-carries-the-readers-place-by-the-rows-own-words`: a fork captures the anchored row's
     WORDS before removing the parent's rows and re-finds a row that carries them under its new id,
