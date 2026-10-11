@@ -606,9 +606,17 @@ head runs today breaks without them.
   first, never across, and each step leaving the head working):
 
   · **S — the two frames.** `ClientFrame::ListMergeQueue` → `ServerFrame::MergeQueue`, and the two
-    events `MergeEntryAdded`/`MergeEntryMoved`. Wire only: constructors, the folds in
-    `%handle-frame`, and a test per frame (the shape `/todos` already keeps, including the
-    *attaches late and does not ask* rule). Nothing on screen yet, which is what makes it S.
+    events `MergeEntryAdded`/`MergeEntryMoved`. Constructors, the folds in `%handle-frame`, and a
+    test per frame (the shape `/todos` already keeps, including the *attaches late and does not
+    ask* rule).
+
+    **AND IT CANNOT LAND ALONE — MEASURED 2026-10-11, one hour wasted so nobody repeats it.** The
+    suite has an invariant, `every-frame-constructor-is-actually-sent`: *a frame the head defines
+    and never sends is a feature that does not exist*. A wire half with no caller therefore fails
+    the suite by construction — so **step one must be the pane's ASK together with its constructor**
+    (a `/queue` verb or the pane's own open, which is how `/todos` and the jobs pane do it), and the
+    constructor alone is not a landable increment. Written down because the tempting order — wire
+    first, screen after — is exactly the order this tree forbids.
   · **S — the pane, drawing state and EVIDENCE.** One row per entry, the evidence as the reason —
     *the evidence is the reason for the state in the queue's own words*. The five states are
     already a vocabulary this head renders elsewhere; this is one more pane in `src/panes/`.
