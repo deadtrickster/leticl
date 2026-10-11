@@ -676,6 +676,13 @@ rest names the commit it comes from.
   author, the read-only seating of an older daemon, the list-derived child's
   `stored_end`); what remains is head-side UI, each measured against this tree:
 
+   **ONE ITEM BELOW IS OPEN (2026-10-11), AND IT IS A DECISION RATHER THAN WORK** — `726`, *a click on an
+   edit opens its change in a popup*. `88b003d` is a TUI commit and genuinely head-side; what it needs is
+   the operator's choice between the two doors this tree has (the read overlay, which has the excerpt's
+   diff and not the whole file, and the `!term` pane, which has the whole file and is outside the TUI).
+   Everything else in this box is ticked, each by MEASURING it against the tree — six of them turned out
+   to be the daemon's or already landed, which is the defect this ledger keeps recording.
+
   - [x] **scrolled back, the turn's prompt stays pinned on the top row**
     (`26b9e08`) — **LANDED `1cb72ac`**, held by
     `scrolled-back-the-question-stays-pinned-on-top`. The turn is found from the row at the TOP of the window,
@@ -848,11 +855,18 @@ rest names the commit it comes from.
     just as mid-turn — which the test's third case asserts with a call in flight.
     **The daemon half is not this head's** (the retrying turn's own behaviour).
 
-- [ ] **the reference's second 116-commit batch (2026-10-09, protocols 38–42)** — the wire
+- [x] **the reference's second 116-commit batch (2026-10-09, protocols 38–42)** — the wire
   core is ported (`c2a5605`'s successor: 42's todo author and `cancelled`, 40's
   `TranscriptForked` drop, the exit id on stdout, `prefix_stale`); what remains is head-side:
 
-  - [~] **the standing-notes pane** (`ccee82a`, protocol 39): `ClientFrame::ListNotes` →
+  **EVERY ITEM BELOW IS NOW TICKED (2026-10-11), SO THE BATCH IS CLOSED.** Each was closed by MEASURING
+  it against the tree rather than reading its prose — which is what the batch needed, because nine of its
+  items read as head-side work and were the daemon's, already landed, or a one-line gap. The two that
+  genuinely wanted building are named where they sit: the queue's `/queue reset|clean` (`fa7e549`) and the
+  todo plan's `needs` edges (`d160dc2`). One item's remainder is an OPERATOR DECISION rather than work —
+  the standing-notes pane's Enter (read-only view or rano) — and it is recorded in that box.
+
+  - [x] **the standing-notes pane** (`ccee82a`, protocol 39): `ClientFrame::ListNotes` →
     `ServerFrame::StandingNotes` carrying `NoteEntry` — one row per note, and the form the
     budget gave each. Two frames, so this is the one item here that adds wire. The reference's
     pane draws it and Enter opens the note in rano (`81749c9`).
@@ -885,6 +899,18 @@ rest names the commit it comes from.
     caller, a verb its registry row, a pane its mode-list entry, a test that reads a global is
     fragile, and a verb needs its OPEN). **What remains in this row**: `Enter` opening the note in
     rano (`81749c9`) and `NoteForm`'s own vocabulary beyond the two words this head saw.
+
+    **BOTH REMAINDERS SETTLED (2026-10-11), SO THE MARKER IS TICKED.**
+    · *`NoteForm`'s own vocabulary beyond the two words this head saw* — **MEASURED, AND THERE ARE
+    EXACTLY TWO**: `sessionlog/src/protocol.rs:1432` is `enum NoteForm { Verbatim, Indexed }` — *"the
+    file fits what was left of the budget and is injected whole"* and *"it did not fit: the section
+    carries its index instead of its text"*. So this pane draws the whole vocabulary and nothing is
+    owed; a third word would be a wire change, and the box cannot ask for one.
+    · *`Enter` opening the note in rano* (`81749c9`) — **the DECISION this row was waiting on, and it
+    is not machinery**: the door exists (`ctrl-]`'s `!term rano <path>`, `c216549`, and `NoteEntry`
+    carries the `path` it needs), while the pane's Enter opens the note WHOLE in the read overlay and
+    is landed and tested. A read-only view and a full editor want one key between them, so this is the
+    operator's call rather than a session's — recorded here, in the box, where they will find it.
     `the-standing-notes-draw-their-form-and-where-their-abstract-came-from`: one row per note, the
     path whole, the FORM drawn (`[verbatim]`/`[indexed]` in the registers Success/Pending), the
     abstract, and **whether that abstract is the author's own or the harness's derivation** — the
