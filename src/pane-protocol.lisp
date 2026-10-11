@@ -401,6 +401,154 @@ tail's spaces as a ragged gap."
       (emit))
     (values (nreverse out) dropped)))
 
+;;; **THE SCREEN IS LANDED, AND VERIFIED IN ISOLATION: the suite cannot run in this session**
+;;; (the exec memory cap is 64 MiB and SBCL dies under it -- a 56 MiB heap exhausts during GC,
+;;; the default heap is killed by the kernel). So this code was checked by loading IT ALONE
+;;; under a small heap and asserting ten behaviours: text at home, CR OVERWRITING and not
+;;; clearing, three rows, SCROLLING past the bottom, CUP being 1-BASED as the notation is,
+;;; EL and ED erasing WITHOUT MOVING THE CURSOR (two things that first looked like failures
+;;; and were my expectations, not the code), SGR counted and leaving no text, wrapping at the
+;;; right edge, and a bare escape counted. **The suite is owed a run on a box without that
+;;; cap**; nothing calls this yet, so the tree is untouched by it.
+
+;;; ------------------------------------------------------- the terminal's SCREEN ;;;
+;;;
+;;; **A ROWS x COLS GRID WITH A CURSOR — which is what a terminal IS.** The line model above
+;;; (`%term-lines-from-output`) was the honest interim while there was no screen to draw into: it
+;;; could honour an overwrite and an erase because both are expressible on a line, and it had to
+;;; COUNT cursor addressing because a line has nowhere to put a row. This is where rows go.
+;;;
+;;; It is a PORT, not an invention (`rano/src/term/` on this box: 3021 lines across six modules —
+;;; decode, event, features, graphics, links, terminal). The sequences below are the ones that
+;;; matter for a program drawing in a pane; everything else is still COUNTED and still said.
+
+(defstruct (term-screen (:constructor %make-term-screen (rows cols cells)))
+  (rows 0 :type fixnum)
+  (cols 0 :type fixnum)
+  ;; a string, row-major: cell (r, c) is at (+ (* r cols) c)
+  (cells "" :type string)
+  (row 0 :type fixnum)
+  (col 0 :type fixnum))
+
+(defun term-screen-new (rows cols)
+  "A blank screen, cursor at home."
+  (let ((rows (max 1 rows)) (cols (max 1 cols)))
+    (%make-term-screen rows cols (make-string (* rows cols) :initial-element #\space))))
+
+(defun %ts-index (s r c) (+ (* r (term-screen-cols s)) c))
+
+(defun %ts-put (s ch)
+  "Write CH at the cursor and advance, wrapping at the right edge — what a terminal does with a
+full line, and why a program that prints a long line sees it break."
+  (when (>= (term-screen-col s) (term-screen-cols s))
+    (setf (term-screen-col s) 0)
+    (%ts-next-row s))
+  (when (< (term-screen-row s) (term-screen-rows s))
+    (setf (char (term-screen-cells s) (%ts-index s (term-screen-row s) (term-screen-col s))) ch))
+  (incf (term-screen-col s)))
+
+(defun %ts-next-row (s)
+  "Down one row, SCROLLING on the last — the bottom row is where output lives, and a terminal that
+refused to scroll would draw nothing after the first screenful."
+  (if (>= (1+ (term-screen-row s)) (term-screen-rows s))
+      (%ts-scroll s)
+      (incf (term-screen-row s))))
+
+(defun %ts-scroll (s)
+  "Drop the top row, blank the bottom, and leave the cursor on the last row."
+  (let* ((cols (term-screen-cols s)) (rows (term-screen-rows s)) (cells (term-screen-cells s)))
+    (replace cells (subseq cells cols) :start1 0 :end1 (* (1- rows) cols))
+    (fill cells #\space :start (* (1- rows) cols))
+    (setf (term-screen-row s) (1- rows))))
+
+(defun %ts-erase-row (s row from to)
+  (let ((cols (term-screen-cols s)))
+    (loop for c from (max 0 from) below (min cols to)
+          do (setf (char (term-screen-cells s) (%ts-index s row c)) #\space))))
+
+(defun term-screen-cup (s row col)
+  "Cursor position — `H`/`f`. Its arguments are 1-BASED in the notation and 0-based here."
+  (setf (term-screen-row s) (min (1- (term-screen-rows s)) (max 0 (1- row)))
+        (term-screen-col s) (min (1- (term-screen-cols s)) (max 0 (1- col)))))
+
+(defun term-screen-el (s n)
+  "Erase in line — `K`: 0 (default) to the end, 1 from the start, 2 the whole row."
+  (let ((row (term-screen-row s)) (col (term-screen-col s)) (cols (term-screen-cols s)))
+    (case n
+      (0 (%ts-erase-row s row col cols))
+      (1 (%ts-erase-row s row 0 (1+ col)))
+      (2 (%ts-erase-row s row 0 cols)))))
+
+(defun term-screen-ed (s n)
+  "Erase in display — `J`: 0 below-and-right, 1 above-and-left, 2 everything."
+  (let ((row (term-screen-row s)) (col (term-screen-col s)) (rows (term-screen-rows s))
+        (cols (term-screen-cols s)))
+    (case n
+      (0 (%ts-erase-row s row col cols)
+         (loop for r from (1+ row) below rows do (%ts-erase-row s r 0 cols)))
+      (1 (%ts-erase-row s row 0 (1+ col))
+         (loop for r from 0 below row do (%ts-erase-row s r 0 cols)))
+      (2 (loop for r from 0 below rows do (%ts-erase-row s r 0 cols))))))
+
+(defun term-screen-lines (s)
+  "The rows as a reader sees them, right-trimmed — a blank row is an EMPTY line, not a row of spaces."
+  (loop for r from 0 below (term-screen-rows s)
+        collect (string-right-trim '(#\space)
+                                   (subseq (term-screen-cells s) (%ts-index s r 0)
+                                           (+ (%ts-index s r 0) (term-screen-cols s))))))
+
+(defun term-screen-feed (s output)
+  "Feed OUTPUT into SCREEN, honouring what can be honoured. Returns the count of sequences DROPPED.
+
+A VT SUBSET and it says so: `CR`, `LF`, `BS`, `TAB`, the cursor moves (`A`–`D`, `H`/`f`), the erases
+(`J`/`K`). SGR (`m`) is dropped on purpose — this head draws ROLES, not terminal colours — and
+everything else is counted, never guessed at, which is the rule the pane keeps."
+  (let ((dropped 0) (args "") (state :text) (n (length output)) (i 0))
+    (labels ((num () (if (plusp (length args)) (or (parse-integer args :junk-allowed t) 0) 0))
+             (arg1 () (if (plusp (length args)) (or (parse-integer args :junk-allowed t) 1) 1))
+             (arg2 () (let ((semi (position #\; args)))
+                        (if semi (or (parse-integer (subseq args (1+ semi)) :junk-allowed t) 1) 1)))
+             (seq (final)
+               (case final
+                 ((#\H #\f) (term-screen-cup s (arg1) (arg2)))
+                 (#\K (term-screen-el s (num)))
+                 (#\J (term-screen-ed s (num)))
+                 (#\A (setf (term-screen-row s)
+                            (max 0 (- (term-screen-row s) (max 1 (num))))))
+                 (#\B (dotimes (k (max 1 (num))) (%ts-next-row s)))
+                 (#\C (setf (term-screen-col s)
+                            (min (1- (term-screen-cols s))
+                                 (+ (term-screen-col s) (max 1 (num))))))
+                 (#\D (setf (term-screen-col s)
+                            (max 0 (- (term-screen-col s) (max 1 (num))))))
+                 (t nil))
+               (setf args "" state :text)))
+      (loop while (< i n) do
+        (let ((ch (char output i)))
+          (case state
+            (:text (case ch
+                     (#\newline (setf (term-screen-col s) 0) (%ts-next-row s))
+                     (#\return (setf (term-screen-col s) 0))
+                     (#\tab (dotimes (k 8) (%ts-put s #\space)))
+                     (#\backspace (when (plusp (term-screen-col s)) (decf (term-screen-col s))))
+                     (#\escape (setf state :esc))
+                     (t (%ts-put s ch)))
+                   (incf i))
+            (:esc (if (char= ch #\[)
+                      (setf state :csi)
+                      (progn (incf dropped) (setf state :text)))
+                  (incf i))
+            (:csi (cond ((<= 48 (char-code ch) 57)
+                         (setf args (concatenate 'string args (string ch)))
+                         (incf i))
+                        ((char= ch #\;)
+                         (setf args (concatenate 'string args ";"))
+                         (incf i))
+                        ((<= 64 (char-code ch) 126)
+                         (incf dropped) (seq ch) (incf i))
+                        (t (incf i))))))))
+    dropped))
+
 (defmethod pane-lines ((pane term-pane) head cols room)
   "The terminal's bytes, as this head can HONESTLY draw them today, and the pane's own keys.
 
