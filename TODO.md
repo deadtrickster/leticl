@@ -455,9 +455,15 @@ rest names the commit it comes from.
     running`, joined by ` · `), so a click maps to `(:subagents)` or `(:jobs)` and `%open-pane`
     does the rest. `%click`'s existing arms show the shape: a `cond` clause BEFORE the pane arm,
     answering `t` when it took the click.
-  - [ ] **a settling diff card is handed over on the row's body, not its
+  - [x] **a settling diff card is handed over on the row's body, not its
     announcement** (`98a8f11`, the settle-flicker merge: a call is in one half
-    or the other, never neither, so a settling card's frames are identical).
+    or the other, never neither, so a settling card's frames are identical) —
+    **HELD BY TWO TESTS, verified 2026-10-11**: `the-markers-number-hands-over-from-live-work-to-
+    the-row-without-a-dip` (a finished call whose row has not landed is still counted, so the
+    number cannot dip — the operator's own *"2 (in yellow) → 1 (in yellow) → 2 (in white)"*) and
+    `a-call-the-transcript-has-answered-is-not-drawn-executing` (once the row lands the call stops
+    being drawn as executing). The card and the count share `%hidden-run-live-work`, which is why
+    one rule covers both halves of the handover.
   - [ ] **a click on an edit opens its change in a popup** (`88b003d`): the
     whole file, no editor chrome; and **the popup's scroll repaints its rows,
     not the whole screen** (`6fb34d4`).
