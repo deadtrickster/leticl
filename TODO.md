@@ -396,7 +396,23 @@ carry.
   past the right edge without a word — so the hint bar ends `ctrl-q ` where the
   reference ends it `ctrl…`. It is why the bottom row differs in every fixture of the
   1:1 rig, and it is `rendering.md` §6 gap 23.
-- [~] **screens + frame** — `panes.lisp`, `chrome.lisp`, `render.lisp`. The
+- [x] **screens + frame** — `panes.lisp`, `chrome.lisp`, `render.lisp`. **EVERY CLAUSE ON THIS
+  HEAD'S SIDE IS CLOSED, verified 2026-10-11**, each by the test that holds it:
+
+  · the picker opening off your own session — `the-picker-opens-on-the-session-you-are-in`;
+  · the peek pane's dead cursor — `the-peek-panes-arrows-and-enter-do-what-it-says` and
+    `the-peek-pane-shows-the-tail-and-names-its-spill-file`;
+  · the permission card drawing one line of the oracle's five —
+    `the-permission-card-draws-the-oracles-verdict`;
+  · no fit ladder — `the-chrome-is-given-up-in-the-references-order` (and the gutter:
+    `the-gutter-is-the-first-thing-a-narrow-screen-gives-up`);
+  · the carry line — landed (`filling-progress-line`), and **the daemon half is NOT OURS**: the
+    event is ruled to be `SessionEvent::Filling { what, unit, done, total }`, replacing
+    `ImportProgress` inside protocol 23, and that is letibot's tree. This head folds BOTH names,
+    with the old one through a named compatibility arm to delete when the rename lands — which is
+    the correct end to hold, and the reason this box can close here.
+
+  *(Original text kept below for the record.)* The
   picker opening off your own session; the peek pane's dead cursor; the
   permission card drawing one line of the oracle's five; no fit ladder. **The
   carry line landed** (`filling-progress-line`, §2.5) — one renderer, the daemon's
