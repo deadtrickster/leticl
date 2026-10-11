@@ -11984,6 +11984,41 @@ worked for the merge queue.
     ;; --- and the count is on the heading
     (is (search "standing notes  3" (funcall text)) "the heading counts them")))
 
+(def-test a-terminals-output-is-read-the-way-a-terminal-writes-it (:suite leticl)
+  "**Line discipline, not a screen** — `#\\return` overwrites from column 0, which is how a progress bar
+  redraws one line instead of stacking `10%`, `50%`, `100%`.
+
+  **TWO CASES, BECAUSE ONE DOES NOT CHECK IT**: a return followed by MORE TEXT (the overwrite) and a
+  return followed by a NEWLINE (a line ending) demand different behaviour from the same character, and
+  the implementation this replaced passed the first and failed the second — measured, which is why both
+  are here. Note also that a carriage return in a Lisp string is written `#\\return` or `~c`: a
+  backslash escapes the next character literally, so `\\r` in a string is the letter `r`."
+  (is (equal (list "100%") (leticl::%term-lines-from-output
+                         (format nil "10%~c50%~c100%" #\return #\return)))
+      "**a redrawn line is ONE line** — the last write wins, as the program intended")
+  ;; **AND TWO EXPECTATIONS OF MINE WERE WRONG HERE, which is worth keeping**: these are facts about
+  ;; terminals, not about this code.
+  (is (equal (list "a" "") (leticl::%term-lines-from-output (format nil "a~c~%" #\return)))
+      "**a return before a newline is the line ending it is** — the text before it is the line, and the
+ terminal's cursor is left on an empty one")
+  (is (equal (list "abz") (leticl::%term-lines-from-output (format nil "xyz~cab" #\return)))
+      "**an overwrite leaves what it did not cover** — `ab` over `xyz` is `abz`, because the terminal
+ does not erase the columns nobody wrote to, and a renderer that trimmed them would be inventing an
+ erase the program never asked for")
+  (is (equal (list "a" "b") (leticl::%term-lines-from-output (format nil "a~%b")))
+      "a newline still starts a line")
+  (is (equal (list "") (leticl::%term-lines-from-output "")) "empty output is one empty line")
+  (let* ((h (%make-head))
+         (text (progn (setf (head-term h) (list :cols 80 :rows 20
+                                                :output (format nil "$ make~c 50%~c done" #\return #\return)))
+                      (format nil "~{~a~^~%~}"
+                              (mapcar (lambda (l) (if (null l) "" (format nil "~{~a~}" (mapcar #'car l))))
+                                      (leticl::pane-lines (leticl::pane-for :term) h 100 30))))))
+    (is (search "done" text) "the pane draws the redrawn line")
+    (is (not (search "50%" text)) "**with the earlier write gone** — that is what overwriting means")
+    (is (search "line discipline only" text)
+        "**and the pane says what it does NOT do**, so the missing half cannot be mistaken for this one")))
+
 (def-test a-terminal-opens-takes-keys-for-the-program-and-ends-when-asked (:suite leticl)
   "**The `!term` frames, each with the caller the suite's own invariant demands** — and the ordering
   that costs a session if it is guessed: **the pane's KEY PATH is what makes `TermInput` and

@@ -340,6 +340,39 @@ The entry comes from `*merge-detail*`, which `pane-enter` on the queue pane sets
   (declare (ignore head))
   (list (cons "esc returns to the queue" '(:dim t))))
 
+(defun %term-lines-from-output (output)
+  "OUTPUT as the lines a reader sees — LINE DISCIPLINE, not a screen.
+
+**`#\\return` OVERWRITES, IT DOES NOT CLEAR** (measured, `TODO.md`): it moves to column 0 and what
+follows replaces the characters there, column by column. So `'a\\r\\n'` is the line `a` — the return is
+the first half of that line ending — while `'10%\\r50%\\r100%'` is ONE line, `100%`, which is how a
+progress bar redraws itself. A buffer and a column index model both; a string that gets reset models
+only the second.
+
+Cursor addressing, scroll regions and the alternate screen are the VT renderer's job — the pane SAYS
+so rather than drawing a confident wrong screen, because a wrong screen makes the missing half
+invisible, which is worse than missing it.
+
+Trailing blanks are trimmed: a line overwritten by a shorter one would otherwise carry the old
+tail's spaces as a ragged gap."
+  (let ((out nil) (buf (make-string 0)) (col 0))
+    (labels ((put (ch)
+               (when (>= col (length buf))
+                 (setf buf (concatenate 'string buf (make-string (1+ (- col (length buf)))
+                                                                 :initial-element #\space))))
+               (setf (char buf col) ch)
+               (incf col))
+             (emit ()
+               (push (string-right-trim '(#\space) buf) out)
+               (setf buf (make-string 0) col 0)))
+      (loop for ch across output do
+        (cond ((char= ch #\newline) (emit))
+              ((char= ch #\return) (setf col 0))
+              ((char= ch #\tab) (put #\space) (put #\space) (put #\space) (put #\space) (put #\space) (put #\space) (put #\space) (put #\space))
+              (t (put ch))))
+      (emit))
+    (nreverse out)))
+
 (defmethod pane-lines ((pane term-pane) head cols room)
   "The terminal's bytes, as this head can HONESTLY draw them today, and the pane's own keys.
 
@@ -357,11 +390,13 @@ it is not, which is the one thing that would make the missing half invisible."
            (list (list (cons (format nil "  ended: ~a" (getf term :ended)) '(:fg :yellow)))))
          (list nil)
          (let ((out nil))
-           (dolist (line (uiop:split-string (or (getf term :output) "") :separator '(#\newline)))
+           (dolist (line (%term-lines-from-output (or (getf term :output) "")))
              (push (list (cons (format nil "  ~a" line) nil)) out))
            (nreverse out))
          (list nil)
-         (list (list (cons "  keys go to the program · q closes the pane" '(:dim t))))))))
+         (list (list (cons "  keys go to the program · q closes the pane" '(:dim t))))
+         (list (list (cons "  line discipline only — the VT renderer is this pane's remaining half"
+                           '(:dim t))))))))
 
 (defmethod pane-cursor-rows ((pane term-pane) head) (declare (ignore head)) 0)
 
