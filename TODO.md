@@ -662,8 +662,13 @@ rest names the commit it comes from.
     memory. **And `195a813` (a stop interrupts the turns it holds) is MOSTLY the daemon's** —
     `sessionlog/src/{registry,server}.rs` — **with a genuine 20-line head half** (`app/session.rs`):
     this head must let a `Stop` end the turn it holds rather than leaving a running turn's clock and
-    spinner over a daemon that has gone. That last one is the only piece of this row that is
-    head-side and not yet measured in detail; the term pane (`401e61f`) is the `!term` project.
+    spinner over a daemon that has gone. **AND `195a813` IS MEASURED IN DETAIL NOW, and the head's part is already this head's
+    behaviour**: the commit is `Registry::close` interrupting the turns it holds (*CommandKind::
+    Interrupt under DAEMON_SUBMITTER, submitted to every hub whose status().running is true*) plus
+    the launcher's `--stop` sending `--interrupt-all`, and the head's own twenty lines are about not
+    drawing a running turn over a daemon that is going. **This head leaves on `Bye`**, which is the
+    same obligation discharged a different way — and its own `a-bye-is-the-end-of-the-conversation`
+    holds it. So nothing here is owed. The term pane (`401e61f`) remains the `!term` project.
     that interrupts the turns it holds (`195a813`), and the term pane born at its size
     (`401e61f`).
 
