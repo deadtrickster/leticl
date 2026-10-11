@@ -492,6 +492,10 @@ tail's spaces as a ragged gap."
   ;; terminal, so the head is the half that acts on it). A TERMINAL's mode and not a face's: the
   ;; alternate screen has no mouse of its own, which is why the switch below leaves it standing.
   (mouse nil)
+  ;; **THE SCROLLBACK** — the rows the MAIN screen's line feeds pushed off its top, NEWEST FIRST, and
+  ;; `scrolled` counts every push even once the ring is full (see `term-screen-view`).
+  (history nil)
+  (scrolled 0 :type fixnum)
   ;; the ALTERNATE screen when one is up (`?1049`): `(cells top bottom)` saved whole, or NIL on the
   ;; main screen. The region is saved WITH the cells because it is part of what the program expects
   ;; to find unchanged when it comes back.
@@ -586,6 +590,12 @@ height, which is what the pane sent before the three readers were made to agree.
 kept so a later reader (an edge, a hint) can say it without asking again. Said once when it
 arrives; never drawn as a row (`protocol.rs:2557`).")
 
+(defparameter +term-history-rows+ 2000
+  "How many rows the scrollback keeps — the reference's own number (`letibot-vt`'s `HISTORY_ROWS`),
+ and for its reason: the daemon replays at most 256 KiB to a head that attaches, which at a typical
+ 60–120 bytes a line is two to four thousand lines, and a ring much longer than what an attach can
+ refill would be a history a head loses when it switches away and back.")
+
 (defparameter +term-output-cap+ (* 256 1024)
   "How much of a terminal's raw output is KEPT — the last 256 KB. The output is kept so the screen
 can be re-fed if the rectangle changes, and a cap is what keeps a chatty program from growing the
@@ -677,8 +687,15 @@ parking a status line outside its region relies on."
         (incf (term-screen-row s)))))
 
 (defun %ts-scroll (s)
-  "Scroll the REGION up one line — what a line feed on the bottom margin does. The cursor does not
-move; dropping the top row of the region and blanking its bottom is the whole of it."
+  "Scroll the REGION up one line — what a line feed on the bottom margin does.
+
+ **AND THE ONE PLACE A ROW ENTERS THE SCROLLBACK**, which is the reference's own rule
+ (`letibot-vt`'s `Screen::scroll_up`): only on the MAIN screen, and only for a region whose TOP is row
+ 0 — a line printed past the glass. `DL` at the top row moves the same cells and keeps NOTHING, because
+ deleting a line is an EDIT and not a line printed past the glass; that is why the push lives here and
+ not in `%ts-scroll-up-in`, which `%ts-delete-lines` reaches too."
+  (when (and (null (term-screen-main s)) (zerop (term-screen-top s)))
+    (%ts-push-history s 1))
   (%ts-scroll-up-in s (term-screen-top s) (term-screen-bottom s) 1))
 
 (defun %ts-scroll-up-in (s top bot n)
@@ -755,7 +772,48 @@ CURSOR, which is what a full-screen program's next redraw depends on."
          (loop for r from (1+ row) below rows do (%ts-erase-row s r 0 cols)))
       (1 (%ts-erase-row s row 0 (1+ col))
          (loop for r from 0 below row do (%ts-erase-row s r 0 cols)))
-      (2 (loop for r from 0 below rows do (%ts-erase-row s r 0 cols))))))
+      (2 (loop for r from 0 below rows do (%ts-erase-row s r 0 cols)))
+      ;; **`ED 3` IS THE SCROLLBACK** — `clear`'s `E3`, which is what a person means by *clear it all*.
+      ;; The screen goes too, and that is what the same breath asks for: a terminal that kept the glass
+      ;; when told to forget its history would be keeping the one half nobody asked about.
+      (3 (setf (term-screen-history s) nil
+               (term-screen-scrolled s) 0)
+         (loop for r from 0 below rows do (%ts-erase-row s r 0 cols))))))
+
+(defun %ts-row-cells (s r)
+  "Row R's cells, RIGHT-TRIMMED of blank, unstyled cells — what a scrollback row IS, and the same
+ shape the grid holds, so a style survives the trip out of the glass."
+  (let* ((cols (term-screen-cols s)) (cells (term-screen-cells s)) (start (%ts-index s r 0))
+         (end (loop for c from (1- cols) downto 0
+                    when (let ((cell (aref cells (+ start c))))
+                           (not (and (char= (car cell) #\space) (null (cdr cell)))))
+                      return (1+ c)
+                    finally (return 0))))
+    (loop for c from 0 below end collect (aref cells (+ start c)))))
+
+(defun %ts-push-history (s n)
+  "Push the top N rows of the main screen into the scrollback, newest first, dropping the OLDEST when
+ the ring is full and counting every row in `scrolled` whether or not it is still held."
+  (dotimes (r (min n (term-screen-rows s)))
+    (push (%ts-row-cells s r) (term-screen-history s))
+    (incf (term-screen-scrolled s))
+    (when (> (length (term-screen-history s)) +term-history-rows+)
+      (setf (term-screen-history s) (butlast (term-screen-history s))))))
+
+(defun term-screen-view (s back)
+  "The rectangle as it stood BACK rows ago: exactly `term-screen-rows` rows — the last BACK of the
+ scrollback, oldest first, followed by the top of the screen. BACK is CLAMPED, so a reader who scrolled
+ further than there is sees the oldest row at the top rather than a short rectangle, and BACK 0 is the
+ screen itself.
+
+ **The alternate screen has no history**, and this does not pretend otherwise — the reference's own
+ words: with it up, the scrollback belongs to the MAIN screen and is not under this canvas, so this is
+ the canvas."
+  (let* ((alt (term-screen-main s))
+         (back (if alt 0 (min back (length (term-screen-history s)))))
+         (older (nreverse (subseq (term-screen-history s) 0 back)))
+         (screen (loop for r from 0 below (term-screen-rows s) collect (%ts-row-cells s r))))
+    (subseq (append older screen) 0 (term-screen-rows s))))
 
 (defun term-screen-lines (s)
   "The rows as a reader sees them, right-trimmed — a blank row is an EMPTY line, not a row of spaces.

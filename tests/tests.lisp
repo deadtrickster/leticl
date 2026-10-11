@@ -12333,6 +12333,48 @@ worked for the merge queue.
                                         :key #'car :test #'string=)))
           "**the pane draws it** — the cell's style is a name this head's palette holds"))))
 
+(def-test a-terminals-scrollback-keeps-what-scrolled-past-the-glass (:suite leticl)
+  "**The rows the MAIN screen's line feeds push off its top** — the reference's rule
+  (`letibot-vt`'s `Screen::scroll_up`): only the main screen, and only a region whose TOP is row 0,
+  which is *a line printed past the glass*. `DL` at the top row moves the same cells and keeps
+  NOTHING, because deleting a line is an EDIT — which is why the push lives in the region scroll and
+  not in the shift the delete-lines path also reaches.
+
+  **`ED 3` is the scrollback** — `clear`'s `E3` — and the screen goes with it, because that is what
+  the same breath asks for. And **the alternate screen has no history**: the scrollback belongs to the
+  main screen and is not under the alt canvas, so a view taken there is the canvas."
+  (flet ((esc (n) (concatenate 'string (string (code-char 27)) n))
+         (rows (s &optional (back 0))
+           (mapcar (lambda (row) (format nil "~{~a~}" (mapcar #'car row)))
+                   (leticl::term-screen-view s back))))
+    (let ((s (leticl::term-screen-new 3 6)))
+      (leticl::term-screen-feed s (format nil "one~%two~%three~%four~%five"))
+      (is (equal '("three" "four" "five") (rows s)) "what is on the glass last")
+      (is (= 2 (leticl::term-screen-scrolled s)) "**both pushed rows are COUNTED**")
+      (is (equal '("one" "two" "three") (rows s 2))
+          "**two rows back is the top of the scrollback, then the screen's own top**")
+      (is (equal '("one" "two" "three") (rows s 9))
+          "**and asking for more than there is CLAMPS** — the oldest row at the top, never a short rectangle")
+      (is (equal '("three" "four" "five") (rows s 0)) "BACK 0 is the screen itself")
+      ;; a shift of a region that does NOT start at row 0 keeps nothing
+      (leticl::term-screen-feed s (esc "[2;3r"))
+      (let ((before (length (leticl::term-screen-history s))))
+        (leticl::term-screen-feed s (concatenate 'string (esc "[3;1H") (format nil "~%")))
+        (is (= before (length (leticl::term-screen-history s)))
+            "**a scroll of a region whose top is not row 0 keeps nothing** — it is an edit, not a print"))
+      (leticl::term-screen-feed s (esc "[3J"))
+      (is (null (leticl::term-screen-history s)) "**`ED 3` clears the scrollback**")
+      (is (equal '("" "" "") (rows s)) "and the glass with it, which the same breath asked for"))
+    ;; the alternate screen has no scrollback
+    (let ((s (leticl::term-screen-new 3 6)))
+      (leticl::term-screen-feed s (format nil "one~%two~%three~%four"))
+      (leticl::term-screen-feed s (esc "[?1049h"))
+      (is (equal '("" "" "") (rows s 5))
+          "**the alternate screen has no scrollback** — the main screen's is not under this canvas")
+      (leticl::term-screen-feed s (esc "[?1049l"))
+      (is (equal '("one" "two" "three") (rows s 5))
+          "**and it is there again on the way back** — it was the main screen's all along"))))
+
 (def-test a-pane-sends-the-mouse-only-to-a-program-that-asked (:suite leticl)
   "**The filter and both encodings are the reference's** (`term_pane.rs`, `TermPane::mouse` and
   `encode`): with a tracking level on, a wheel is always reported, a press and a release always, a
