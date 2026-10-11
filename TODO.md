@@ -695,7 +695,12 @@ head runs today breaks without them.
   mapped wrongly, but never arriving: they are consumed EARLIER in `%handle-key`'s routing (the
   completer takes `:tab`; something takes `:backspace` before the pane arm), so the `%pane-key` arm
   written for them is dead code and its Backspace comment describes a mapping that never runs. The
-  fix is an arm EARLIER in the key path, not in `%pane-key` — and that is the third time in this
+  **AND IT IS FIXED (2026-10-11)**: the arm sits at the TOP of `%handle-key`'s own `cond`, above every
+  other claim on those keys, and all three reach the program — Enter as `#\return`, Tab as a tab,
+  Backspace as DEL `#x7f`. Asserted with a message naming BOTH sides, which is what the first attempt
+  lacked. **Three ordering lessons came out of this one pane and only one generalises**: a key a PANE
+  needs must be taken before the paths that assume a composer is the reader; the other two (a pane's
+  mode-list entry, an arm above its siblings in `%pane-key`) are instances of it.
   pane's short life that an ORDERING question, not a content question, was the whole problem.
   `q` closes the pane AND ends the terminal; every other key goes to the PROGRAM. **AND THE PANE SAYS
   WHAT IS MISSING**: the bytes are drawn as text because that is what arrived, and the VT EMULATOR is
