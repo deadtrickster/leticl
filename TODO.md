@@ -565,7 +565,11 @@ rest names the commit it comes from.
   - [ ] **the lateral send and the question row** — a message to a session the worker owns is
     a row and a turn (`af218a2`, `3d36cea`), and an answered question leaves the operator's
     answer as their own row, byte-identical and citable (`7179fc6`, `0cf9cce`).
-  - [ ] **the head's smaller mirrors**: a printed path is a link (`5b3843f`), a change detected
+  - [~] **the head's smaller mirrors**: **a printed path IS a link — probed and LANDED
+    2026-10-11** (`src/links.lisp`, held by `a-link-url-is-never-built-from-content`,
+    `an-image-path-becomes-a-link-and-the-url-is-head-authored` and
+    `a-link-is-refused-when-the-path-is-not-honest` — the last being the security half: a URL is
+    never built out of content). Still open in this row: a change detected
     after a command draws its diff (`e09d77c`), a job named in every sentence about it
     (`29f2422`, `5d3bfac`), `allow-all`'s answer surviving a restart (`9f09f04`), the stop
     that interrupts the turns it holds (`195a813`), and the term pane born at its size
