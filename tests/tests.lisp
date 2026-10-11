@@ -12289,8 +12289,49 @@ worked for the merge queue.
       (leticl::term-screen-feed s (esc "[0m"))
       (is (null (leticl::term-screen-pen s)) "**`0 m` is the reset**")
       (is (= 1 (leticl::term-screen-feed s (esc "[31m")))
-          "**a COLOUR is COUNTED, not honoured** — this head draws roles, not terminal colours")
-      (is (null (leticl::term-screen-pen s)) "and it left the pen alone"))))
+          "**a colour is still a SEQUENCE and is COUNTED as one** — what it does to the pen is
+ a-terminal-carries-the-sixteen-slots-a-program-asks-for's subject")
+      (is (equal :red (getf (leticl::term-screen-pen s) :fg))
+          "**and `31` sets the red slot** — the sixteen are carried, the extended forms are not"))))
+
+(def-test a-terminal-carries-the-sixteen-slots-a-program-asks-for (:suite leticl)
+  "**The sixteen slots are carried, the extended forms are consumed WHOLE, and the rest is counted** —
+  the reference's own split (`letibot-vt`'s `crates/vt/src/attr.rs`: *the terminal's vocabulary, and it
+  is the only one of it*). A cell carries the foreground and the background slot a program asked for,
+  and each slot is one of this head's own sixteen colour names.
+
+  **`38;5;1` IS THE TRAP THE REFERENCE NAMES**: its last parameter is the `1` that means bold, so a
+  walk that read the parameters one at a time would turn a colour this palette cannot name into an
+  ATTRIBUTE it can. The form is read as one and dropped, leaving the colour as it was — not guessed at
+  and not reset — and `48;2;255;0;0`'s zero is not a reset either."
+  (flet ((esc (n) (concatenate 'string (string (code-char 27)) n))
+         (pen (s) (leticl::term-screen-pen s)))
+    (let ((s (leticl::term-screen-new 1 8)))
+      (leticl::term-screen-feed s (esc "[31m"))
+      (is (equal :red (getf (pen s) :fg)) "**`31` is the red slot**")
+      (leticl::term-screen-feed s (esc "[91m"))
+      (is (equal :bright-red (getf (pen s) :fg)) "**`91` is the bright half of the same hue**")
+      (leticl::term-screen-feed s (esc "[44m"))
+      (is (equal :blue (getf (pen s) :bg))
+          "**a BACKGROUND is carried** — mc's panels and nano's bar are backgrounds")
+      (leticl::term-screen-feed s (esc "[39;49m"))
+      (is (null (getf (pen s) :fg)) "`39` gives the foreground back to the terminal")
+      (is (null (getf (pen s) :bg)) "and `49` the background")
+      ;; the extended forms: read WHOLE, dropped, and not read as attributes
+      (leticl::term-screen-feed s (esc "[38;5;1m"))
+      (is (null (getf (pen s) :fg)) "**`38;5;1` names no slot this palette has, so no slot is set**")
+      (is (not (getf (pen s) :bold)) "**and its `1` is NOT read as bold** — the trap, named")
+      (leticl::term-screen-feed s (esc "[48;2;255;0;0m"))
+      (is (null (getf (pen s) :bg)) "**`48;2;255;0;0` is consumed whole** — its zero is not a reset")
+      (leticl::term-screen-feed s (esc "[1;31m"))
+      (is (equal :red (getf (pen s) :fg)) "**a colour beside an attribute keeps both**")
+      (is (getf (pen s) :bold) "the bold from `1;31`"))
+    ;; and the slot reaches the pane's segments as a style the renderer knows
+    (let ((s (leticl::term-screen-new 1 8)))
+      (leticl::term-screen-feed s (esc "[31mred"))
+      (is (equal '(:fg :red) (cdr (find "red" (leticl::%term-screen-row-segments s 0)
+                                        :key #'car :test #'string=)))
+          "**the pane draws it** — the cell's style is a name this head's palette holds"))))
 
 (def-test the-pane-frames-name-the-pane-the-daemon-numbered (:suite leticl)
   "**Protocol 44 numbers the panes, and every frame about one carries the number** — `TermInput`,

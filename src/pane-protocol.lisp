@@ -734,44 +734,73 @@ the cursor is inside it."
 (defun %ts-set-pen (s args)
   "Fold an SGR sequence's parameters into the screen's PEN (`ESC [ … m`).
 
- **THE ATTRIBUTES ARE HONOURED AND THE COLOURS ARE STILL COUNTED**, which is a fact about this head
- rather than an omission: a cell here carries a STYLE the head's own renderer understands, and this
- head draws roles out of its palette instead of honouring a terminal's colour numbers. Reading a `31`
- as `:red` would put a colour on a row whose role the head has already decided.
+ **THE SIXTEEN SLOTS ARE CARRIED, THE EXTENDED FORMS ARE CONSUMED WHOLE, AND THE REST IS COUNTED** —
+ which is the reference's own split (`letibot-vt`'s `crates/vt/src/attr.rs`, whose `Attr` is *the
+ terminal's vocabulary, and it is the only one of it*). A cell carries the foreground and the
+ BACKGROUND slot a program asked for, and each slot is one of this head's own sixteen colour names;
+ bold, dim and reverse travel beside them — and so do italic, underline and strikethrough, which that
+ crate leaves out on purpose (*adding one is a field on `Attr` and a decision in the head*) and this
+ head's style vocabulary has.
 
- `0` is the reset and so is an EMPTY parameter list (`ESC [ m`). Parameters are folded in order, so
- `1;31m` bolds and then asks for a red this build does not draw: the bold lands, and the colour is
- still the sequence's own parameter."
-  (let ((pen (copy-list (term-screen-pen s))))
-    (dolist (p (if (plusp (length args))
-                   (loop for x in (uiop:split-string args :separator ";")
-                         collect (or (parse-integer x :junk-allowed t) 0))
-                   '(0)))
-      (case p
-        ((0) (setf pen nil))
-        ((1) (setf (getf pen :bold) t))
-        ((2) (setf (getf pen :dim) t))
-        ((3) (setf (getf pen :italic) t))
-        ((4) (setf (getf pen :underline) t))
-        ((7) (setf (getf pen :reverse) t))
-        ((9) (setf (getf pen :strikethrough) t))
-        ;; the four the program can take back without resetting everything
-        ((22) (remf pen :bold) (remf pen :dim))
-        ((23) (remf pen :italic))
-        ((24) (remf pen :underline))
-        ((27) (remf pen :reverse))
-        ((29) (remf pen :strikethrough))
-        (t nil)))
+ **`38;5;n` AND `38;2;r;g;b` ARE READ AS ONE PARAMETER AND DROPPED**, leaving the colour as it was
+ rather than guessing at it — the reference's own trap: *the last parameter is the `1` that means
+ bold*, so a walk that read the parameters one at a time would turn a colour this palette cannot name
+ into an ATTRIBUTE it can. `48` is the same trap one slot over, and `48;2;255;0;0`'s zero is not a
+ reset.
+
+ **A BACKGROUND IS CARRIED** and is not decoration: `mc`'s panels and `nano`'s status bar ARE
+ backgrounds, and a pane that dropped the slot would draw their words on the transcript's own
+ background — the panel gone and the words left behind.
+
+ `0` is the reset and so is an EMPTY parameter list (`ESC [ m`)."
+  (let* ((pen (copy-list (term-screen-pen s)))
+         (ps (if (plusp (length args))
+                 (loop for x in (uiop:split-string args :separator ";")
+                       collect (or (parse-integer x :junk-allowed t) 0))
+                 '(0)))
+         (n (length ps))
+         (i 0))
+    (loop while (< i n) do
+      (let ((p (nth i ps)))
+        (case p
+          ((0) (setf pen nil))
+          ((1) (setf (getf pen :bold) t))
+          ((2) (setf (getf pen :dim) t))
+          ((3) (setf (getf pen :italic) t))
+          ((4) (setf (getf pen :underline) t))
+          ((7) (setf (getf pen :reverse) t))
+          ((9) (setf (getf pen :strikethrough) t))
+          ;; the five the program can take back without resetting everything
+          ((22) (remf pen :bold) (remf pen :dim))
+          ((23) (remf pen :italic))
+          ((24) (remf pen :underline))
+          ((27) (remf pen :reverse))
+          ((29) (remf pen :strikethrough))
+          ;; **THE SIXTEEN SLOTS** — one name per slot, from the table `%color-sgr` writes from
+          ((30 31 32 33 34 35 36 37) (setf (getf pen :fg) (nth (- p 30) *color-names*)))
+          ((90 91 92 93 94 95 96 97) (setf (getf pen :fg) (nth (+ 8 (- p 90)) *color-names*)))
+          ((39) (remf pen :fg))
+          ((40 41 42 43 44 45 46 47) (setf (getf pen :bg) (nth (- p 40) *color-names*)))
+          ((100 101 102 103 104 105 106 107) (setf (getf pen :bg) (nth (+ 8 (- p 100)) *color-names*)))
+          ((49) (remf pen :bg))
+          ;; **THE EXTENDED FORMS, read as ONE and dropped** — `38;5;n` is three parameters and
+          ;; `38;2;r;g;b` is five, so the walk has to step OVER them or the `5`/`2` and the numbers
+          ;; behind them are read as attributes and colours this palette never set.
+          ((38 48)
+           (let ((form (and (< (1+ i) n) (nth (1+ i) ps))))
+             (incf i (if (eql form 5) 2 4))))
+          (t nil)))
+      (incf i))
     (setf (term-screen-pen s) pen)))
 
 (defun term-screen-feed (s output)
   "Feed OUTPUT into SCREEN, honouring what can be honoured. Returns the count of sequences DROPPED.
 
 A VT SUBSET and it says so: `CR`, `LF`, `BS`, `TAB`, the cursor moves (`A`–`D`, `H`/`f`), the erases
-(`J`/`K`), the region, the alternate screen, DECTCEM, and **SGR's ATTRIBUTES**, which are carried on
-the cells they were in force for. **A COLOUR is still counted rather than guessed at** — this head
-draws roles out of its own palette and a terminal's colour number is not one of them — and so is
-every sequence this build does not know."
+(`J`/`K`), the region, the alternate screen, DECTCEM, and **SGR — the sixteen colour slots and the
+attributes** — which are carried on the cells they were in force for. `38;5;n` and `38;2;r;g;b` are
+consumed whole and dropped rather than guessed at (see `%ts-set-pen`), and so is every sequence this
+build does not know."
   (let ((dropped 0) (args "") (state :text) (n (length output)) (i 0)
         ;; `ESC [ ? …` is a PRIVATE sequence — the screen switch and the cursor are spelled that way,
         ;; and the `?` is not a digit, so it has to be remembered rather than skipped.
