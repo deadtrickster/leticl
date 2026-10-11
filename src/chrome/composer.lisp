@@ -75,6 +75,30 @@ that is a decision to take against a screen, which is the only place it can be t
                     (list (and (plusp subagents) (format nil "~d subagent~:p running" subagents))
                           (and (plusp jobs) (format nil "~d job~:p running" jobs)))))))
 
+(defun %composer-edge-buttons (head)
+  "The edge's count labels as HIT TARGETS: `((:subagents X . END) (:jobs X . END))`, read off the
+LAST PAINTED frame.
+
+**READ FROM THE PAINTED ROW, NOT RECOMPUTED**, which is the same rule the tests' `%ghost-box-top`
+keeps and for the same reason: the box's screen row and the legend's columns are functions of the
+chrome the frame laid out (a status row above it, the hint bar below, a gutter that vanishes at 40
+columns), so a hit test that counted them here would disagree with the drawing the first time any
+of that moved. Searching the painted row for the two labels cannot.
+
+Returns NIL when there is no frame yet, or no legend on it — which is *no buttons*, not *broken*."
+  (let ((rows (head-last-rows head)))
+    (when rows
+      (let ((row (find-if (lambda (r) (and (stringp r) (search "╭" r))) rows)))
+        (when row
+          (let ((out nil))
+            (flet ((span (needle kind)
+                     (let ((at (search needle row)))
+                       (when at
+                         (push (list kind at (+ at (length needle))) out)))))
+              (span "subagent" :subagents)
+              (span " job" :jobs))
+            out))))))
+
 (defun composer-wiring (head &optional (cols 40))
   "The right-hand label of the box's BOTTOM edge: the alarm and the turn's status.
 

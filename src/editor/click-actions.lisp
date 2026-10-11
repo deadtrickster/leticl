@@ -41,6 +41,28 @@ to the composer and was dropped."
       (setf (head-picker-sel head) sel (head-dirty head) t))
     t))
 
+(defun %composer-edge-click (head key)
+  "Did this click land on one of the composer edge's count labels? T when it took the click.
+
+A press only (the mouse grammar's `:press` is what `%click` is called for), and only on the row
+the box's TOP edge was actually painted on — a click one row off is a click on the transcript."
+  (let ((row (getf key :y))
+        (x (getf key :x)))
+    (when (and row x)
+      (let ((edge-row (%composer-edge-row head)))
+        (when (and edge-row (= row edge-row))
+          (let ((hit (find-if (lambda (b) (and (>= x (second b)) (< x (third b))))
+                              (%composer-edge-buttons head))))
+            (when hit
+              (%open-pane head (first hit))
+              t)))))))
+
+
+(defun %composer-edge-row (head)
+  "The screen row the composer's top edge was painted on, or NIL."
+  (let ((rows (head-last-rows head)))
+    (and rows (position-if (lambda (r) (and (stringp r) (search "╭" r))) rows))))
+
 (defun %click (head key)
   "A CLICK selects the row under the pointer. T when the click was a list's.
 
@@ -51,6 +73,11 @@ see, which is why the pane records its room and offset from the last paint rathe
 than from the click."
   (let ((row (getf key :y)))
     (cond
+      ;; **THE COMPOSER EDGE'S COUNT LABELS ARE BUTTONS** (`9ac7dad`), and they are checked FIRST
+      ;; because they are not in a list and not a pane: a click on `2 subagents running` opens the
+      ;; subagents pane, and on `1 job running` the jobs pane. The targets come from the PAINTED
+      ;; row (`%composer-edge-buttons`), so this cannot disagree with what the reader sees.
+      ((%composer-edge-click head key) t)
       (*pick-open* (%pick-click head row))
       ;; **THE DASHBOARD IS A LIST OF PANELS, AND A CLICK PICKS ONE.** It goes ahead of the shared
       ;; pane arm because a panel's row is a LINE and not an index into a per-row list — the boxes

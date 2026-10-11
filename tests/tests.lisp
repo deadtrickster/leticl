@@ -14508,6 +14508,51 @@ the pane's footer and this row both read, so they cannot disagree again."
         (is (search "↑↓ scroll" text) "the key that DOES something is still named")
         (is (search "esc back to jobs" text) "and Esc's meaning is not lost with them")))))
 
+(def-test a-click-on-the-edges-count-labels-opens-the-pane (:suite leticl)
+  "**`9ac7dad`: the composer edge's count labels are BUTTONS** — a click on `2 subagents running`
+opens the subagents pane, `1 job running` the jobs pane.
+
+  The targets are read from the PAINTED frame (`%composer-edge-buttons`), not recomputed here, and
+  for the reason the tests' own `%ghost-box-top` does the same: the box's screen row and the
+  legend's columns are functions of the chrome the frame laid out — a status row above it, the hint
+  bar below, a gutter that vanishes at 40 columns — so a hit test that counted them would disagree
+  with the drawing the first time any of that moved."
+  (let* ((*stdout* (make-string-output-stream))
+         (h (%on-head :cols 100 :rows 24)))
+    (setf (head-connected h) t
+          (head-mode h) :normal
+          (session-subagents (head-session h)) (list (list :subagent-id "s1" :state "running"))
+          (head-jobs h) (list (list :id "j1" :command "cargo test" :running t :state "running")))
+    (leticl::%render-and-paint h)
+    (let* ((row (leticl::%composer-edge-row h))
+           (targets (leticl::%composer-edge-buttons h))
+           (sub (find :subagents targets :key #'first))
+           (job (find :jobs targets :key #'first)))
+      (is (integerp row) "the box's top edge is on the painted frame")
+      (is (not (null sub)) (format nil "**the subagents label is a target** while one runs: ~s" targets))
+      (is (not (null job)) "and so is the jobs label")
+      ;; --- a click on the subagents label opens its pane
+      (leticl::%handle-key h (list :type :mouse :kind :press :x (second sub) :y row))
+      (is (eq :subagents (head-mode h)) "**a click on `N subagents running` opens the subagents pane**")
+      (setf (head-mode h) :normal)
+      ;; --- and on the jobs label, one column inside its span
+      (leticl::%handle-key h (list :type :mouse :kind :press :x (1+ (second job)) :y row))
+      (is (eq :jobs (head-mode h)) "and a click on `N jobs running` the jobs pane")
+      (setf (head-mode h) :normal)
+      ;; --- a click on the EDGE but off the labels is nobody's: the border is not a button
+      (leticl::%handle-key h (list :type :mouse :kind :press :x 8 :y row))
+      (is (eq :normal (head-mode h))
+          "a click elsewhere on the edge opens nothing — the border is not a button")
+      ;; --- and with nothing running there is no label, so no target
+      (setf (session-subagents (head-session h)) nil
+            (head-jobs h) nil)
+      (leticl::%render-and-paint h)
+      (is (null (leticl::%composer-edge-buttons h))
+          "**no legend, no buttons** — a target is what the reader can SEE")
+      (leticl::%handle-key h (list :type :mouse :kind :press :x (second sub) :y row))
+      (is (eq :normal (head-mode h))
+          "and the coordinates of a label that is no longer drawn open nothing"))))
+
 (def-test a-click-on-the-mode-picker-card-marks-a-row (:suite leticl)
   "G17. The click arm tested `head-mode`, and the mode/model picker runs with
 `head-mode` :normal and `*pick-open*` set — so a click on the card fell through to

@@ -475,7 +475,15 @@ rest names the commit it comes from.
     a living stream** (`a950c6e`) — **LANDED `15e17a5`**, held by
     `a-run-of-wheel-notches-outpaces-a-living-stream` (and the page-unit numbers beside it:
     `the-wheel-notch-and-the-page-keystep-are-different-numbers`).
-  - [ ] **the count labels on the composer's edge are BUTTONS** (`9ac7dad`) —
+  - [x] **the count labels on the composer's edge are BUTTONS** (`9ac7dad`) — **LANDED 2026-10-11**,
+    held by `a-click-on-the-edges-count-labels-opens-the-pane`: a click on `N subagents running`
+    opens the subagents pane and on `N jobs running` the jobs pane, a click elsewhere on the edge
+    opens nothing (the border is not a button), and with nothing running there are NO targets
+    because a target is what the reader can see. **The hit test reads the PAINTED frame**
+    (`%composer-edge-buttons` searches the last drawn top edge for the two labels), which is the
+    shape this row's own text prescribed and the reason it cannot disagree with the drawing — the
+    box's row and the legend's columns are functions of the chrome the frame laid out.
+    *(The original finding kept below.)*
     a click on `1 subagent running` opens the subagents pane, `1 job running`
     the jobs pane. This head already converts clicks for panes and rows; this
     is the edge's own hit test.
