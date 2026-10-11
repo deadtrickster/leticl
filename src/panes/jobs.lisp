@@ -69,7 +69,18 @@ entry is Success, a failure or a conflict is Failure, a waiting or stale one is 
 state this build has never met is drawn plain rather than guessed at."
   (cond ((string-equal state "landed") +role-success+)
         ((member state '("failed" "conflict") :test #'string-equal) +role-failure+)
-        ((member state '("waiting" "stale" "running") :test #'string-equal) +role-pending+)
+        ;; **`taken` IS IN FLIGHT, WHICH IS A FACT RATHER THAN A TASTE** — the daemon's own
+        ;; `MergeState::Taken` means a runner has the entry, so it belongs in the register *is
+        ;; happening* beside waiting and stale. MEASURED against `tokencore/src/store.rs`, whose
+        ;; enum has SEVEN states (`Waiting, Taken, Landed, Failed, Conflict, Stale, Vetoed`) while
+        ;; this head's first cut mapped five.
+        ((member state '("waiting" "stale" "taken" "running") :test #'string-equal) +role-pending+)
+        ;; **AND `vetoed` STAYS PLAIN FOR NOW, DELIBERATELY.** It is a PERSON's act rather than a
+        ;; state of the work — the daemon's `veto_entry` *parks the row* with its evidence — and
+        ;; whether that reads as Failure (something went wrong) or Attention (a person must look) is
+        ;; a decision to take against a screen with a real queue on it, not from this desk. A wrong
+        ;; colour mis-states consequence silently, which is what the tree's own rule forbids; plain
+        ;; is the honest register until somebody has seen one.
         (t nil)))
 
 (defun jobs-lines (head cols)
