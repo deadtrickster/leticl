@@ -12161,6 +12161,41 @@ worked for the merge queue.
       (is (search "here" text) "and the pane draws it")
       (is (search "line discipline only" text) "naming the half that is still missing"))))
 
+(def-test a-scroll-region-scrolls-and-the-lines-outside-it-stay-put (:suite leticl)
+  "**`DECSTBM` and scrolling at the region's boundaries** — the region is what keeps a full-screen
+  program's status line still: a line feed on the region's bottom margin scrolls the REGION and
+  nothing else, and the rows outside it do not move.
+
+  **THE SEMANTICS ARE THE REFERENCE'S, NOT INVENTED** (`letibot-vt`'s `crates/vt/src/screen.rs`, whose
+  own test carries this name): the region is 1-based and inclusive in the notation and 0-based here,
+  setting one HOMES THE CURSOR, and an inverted region is IGNORED rather than clamped."
+  (flet ((esc (n) (concatenate 'string (string (code-char 27)) n))
+         (region (s) (list (leticl::term-screen-top s) (leticl::term-screen-bottom s))))
+    (let ((s (leticl::term-screen-new 5 6)))
+      (loop for row in '("one" "two" "three" "four" "five")
+            for n from 1
+            do (leticl::term-screen-feed s (format nil "~c[~d;1H~a" #\escape n row)))
+      (is (equal '("one" "two" "three" "four" "five") (leticl::term-screen-lines s))
+          "five rows to work on")
+      (leticl::term-screen-feed s (esc "[2;4r"))
+      (is (equal '(1 3) (region s)) "**`DECSTBM` is 1-based and inclusive** — `2;4` is rows 1..3 here")
+      (is (= 0 (leticl::term-screen-row s)) "**and it HOMES the cursor**, as the reference does")
+      ;; a line feed at the bottom of the region scrolls the region, not the screen
+      (leticl::term-screen-feed s (concatenate 'string (esc "[4;1H") (format nil "~%") (esc "[4;1H") "X"))
+      (is (equal '("one" "three" "four" "X" "five") (leticl::term-screen-lines s))
+          "**rows 1-3 scrolled inside the region and the rows outside it did not move**")
+      ;; reverse index at the top of the region scrolls the other way
+      (leticl::term-screen-feed s (concatenate 'string (esc "[2;1H") (esc "M")))
+      (is (equal '("one" "" "three" "four" "five") (leticl::term-screen-lines s))
+          "**`ESC M` at the top margin scrolls the region DOWN** — the mirror of the line feed")
+      ;; a line feed outside the region just moves down, and stops at the last row
+      (leticl::term-screen-feed s (concatenate 'string (esc "[5;1H") (format nil "~%~%~%")))
+      (is (= 4 (leticl::term-screen-row s)) "**a line feed below the region moves down and STOPS**")
+      (is (equal "five" (nth 4 (leticl::term-screen-lines s))) "and leaves the last row alone")
+      ;; `CSI r` with no parameters puts the region back to the whole screen
+      (leticl::term-screen-feed s (esc "[r"))
+      (is (equal '(0 4) (region s)) "a bare `r` puts the region back to the whole screen"))))
+
 (def-test a-terminal-opens-takes-keys-for-the-program-and-ends-when-asked (:suite leticl)
   "**The `!term` frames, each with the caller the suite's own invariant demands** — and the ordering
   that costs a session if it is guessed: **the pane's KEY PATH is what makes `TermInput` and

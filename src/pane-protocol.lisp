@@ -429,13 +429,22 @@ tail's spaces as a ragged gap."
   (cells "" :type string)
   (row 0 :type fixnum)
   (col 0 :type fixnum)
-  ;; the ALTERNATE screen's saved cells, or NIL when the program is on the main one (`?1049`)
+  ;; **THE SCROLLING REGION** (`DECSTBM`), 0-based and INCLUSIVE: a line feed on the BOTTOM row
+  ;; scrolls these rows and nothing else, which is how a full-screen program keeps a status line put.
+  ;; The whole screen until a program sets one.
+  (top 0 :type fixnum)
+  (bottom 0 :type fixnum)
+  ;; the ALTERNATE screen when one is up (`?1049`): `(cells top bottom)` saved whole, or NIL on the
+  ;; main screen. The region is saved WITH the cells because it is part of what the program expects
+  ;; to find unchanged when it comes back.
   (main nil))
 
 (defun term-screen-new (rows cols)
-  "A blank screen, cursor at home."
-  (let ((rows (max 1 rows)) (cols (max 1 cols)))
-    (%make-term-screen rows cols (make-string (* rows cols) :initial-element #\space))))
+  "A blank screen, cursor at home, and the WHOLE screen as the scrolling region."
+  (let* ((rows (max 1 rows)) (cols (max 1 cols))
+         (s (%make-term-screen rows cols (make-string (* rows cols) :initial-element #\space))))
+    (setf (term-screen-bottom s) (1- rows))
+    s))
 
 (defun %ts-index (s r c) (+ (* r (term-screen-cols s)) c))
 
@@ -450,18 +459,64 @@ full line, and why a program that prints a long line sees it break."
   (incf (term-screen-col s)))
 
 (defun %ts-next-row (s)
-  "Down one row, SCROLLING on the last — the bottom row is where output lives, and a terminal that
-refused to scroll would draw nothing after the first screenful."
-  (if (>= (1+ (term-screen-row s)) (term-screen-rows s))
+  "Down one row, SCROLLING THE REGION when the cursor is on its BOTTOM margin — the bottom row is
+where output lives, and a terminal that refused to scroll would draw nothing after the first
+screenful. A row BELOW the region just moves down and stops at the last row, which is what a program
+parking a status line outside its region relies on."
+  (if (= (term-screen-row s) (term-screen-bottom s))
       (%ts-scroll s)
-      (incf (term-screen-row s))))
+      (when (< (1+ (term-screen-row s)) (term-screen-rows s))
+        (incf (term-screen-row s)))))
 
 (defun %ts-scroll (s)
-  "Drop the top row, blank the bottom, and leave the cursor on the last row."
-  (let* ((cols (term-screen-cols s)) (rows (term-screen-rows s)) (cells (term-screen-cells s)))
-    (replace cells (subseq cells cols) :start1 0 :end1 (* (1- rows) cols))
-    (fill cells #\space :start (* (1- rows) cols))
-    (setf (term-screen-row s) (1- rows))))
+  "Scroll the REGION up one line — what a line feed on the bottom margin does. The cursor does not
+move; dropping the top row of the region and blanking its bottom is the whole of it."
+  (%ts-scroll-up-in s (term-screen-top s) (term-screen-bottom s) 1))
+
+(defun %ts-scroll-up-in (s top bot n)
+  "Shift the rows TOP..BOT up by N: N dropped off the top, N blank rows at the bottom. INCLUSIVE
+margins, which is why the caller passes them 0-based."
+  (let* ((cols (term-screen-cols s)) (cells (term-screen-cells s))
+         (n (min n (1+ (- bot top)))))
+    (loop for r from top to bot
+          do (if (> (+ r n) bot)
+                 (%ts-erase-row s r 0 cols)
+                 (replace cells cells :start1 (%ts-index s r 0)
+                                    :start2 (%ts-index s (+ r n) 0)
+                                    :end2 (%ts-index s (+ r n) cols))))))
+
+(defun %ts-scroll-down-in (s top bot n)
+  "Shift the rows TOP..BOT down by N: N blank rows at the top, N pushed off the bottom. Copied in
+REVERSE (bottom to top) so a row is read before it is overwritten."
+  (let* ((cols (term-screen-cols s)) (cells (term-screen-cells s))
+         (n (min n (1+ (- bot top)))))
+    (loop for r from bot downto top
+          do (if (< (- r n) top)
+                 (%ts-erase-row s r 0 cols)
+                 (replace cells cells :start1 (%ts-index s r 0)
+                                    :start2 (%ts-index s (- r n) 0)
+                                    :end2 (%ts-index s (- r n) cols))))))
+
+(defun %ts-reverse-index (s)
+  "`ESC M` — up one row, SCROLLING THE REGION DOWN when the cursor is on its top margin, which is the
+mirror of a line feed at the bottom one."
+  (if (= (term-screen-row s) (term-screen-top s))
+      (%ts-scroll-down-in s (term-screen-top s) (term-screen-bottom s) 1)
+      (when (plusp (term-screen-row s))
+        (decf (term-screen-row s)))))
+
+(defun %ts-set-scroll-region (s top bot)
+  "`DECSTBM` — the region a line feed scrolls. 1-BASED and inclusive in the notation, 0-based here.
+An inverted or empty region is IGNORED rather than clamped: a program that sent one made a mistake,
+and inventing a region would move the cursor somewhere it never asked for. Setting one HOMES THE
+CURSOR, which is what a full-screen program's next redraw depends on."
+  (let ((top (max 0 (1- (or top 1))))
+        (bot (min (1- (term-screen-rows s)) (1- (max 1 (or bot (term-screen-rows s)))))))
+    (when (< top bot)
+      (setf (term-screen-top s) top
+            (term-screen-bottom s) bot
+            (term-screen-row s) 0
+            (term-screen-col s) 0))))
 
 (defun %ts-erase-row (s row from to)
   (let ((cols (term-screen-cols s)))
@@ -523,24 +578,19 @@ content, which is what makes a shell's redraw land where it should."
                    (if (>= (- c n) col) (char cells (+ start (- c n))) #\space)))))
 
 (defun %ts-insert-lines (s n)
-  "Insert N blank lines at the cursor (`L`), pushing the lines below DOWN and out of the bottom."
-  (let* ((row (term-screen-row s)) (rows (term-screen-rows s)) (cols (term-screen-cols s)))
-    (loop for r from (1- rows) downto row
-          do (if (>= (- r n) row)
-                 (replace (term-screen-cells s) (term-screen-cells s)
-                          :start1 (%ts-index s r 0) :start2 (%ts-index s (- r n) 0)
-                          :end2 (%ts-index s (- r n) cols))
-                 (%ts-erase-row s r 0 cols)))))
+  "Insert N blank lines at the cursor (`L`), pushing the lines below DOWN — WITHIN THE REGION, and
+ONLY when the cursor is inside it, which is what stops a program's insert-line from touching a
+status line below its region."
+  (let ((row (term-screen-row s)) (bot (term-screen-bottom s)))
+    (when (and (>= row (term-screen-top s)) (<= row bot))
+      (%ts-scroll-down-in s row bot n))))
 
 (defun %ts-delete-lines (s n)
-  "Delete N lines at the cursor (`M`), pulling the lines below UP; the vacated rows are blanked."
-  (let* ((row (term-screen-row s)) (rows (term-screen-rows s)) (cols (term-screen-cols s)))
-    (loop for r from row below rows
-          do (if (< (+ r n) rows)
-                 (replace (term-screen-cells s) (term-screen-cells s)
-                          :start1 (%ts-index s r 0) :start2 (%ts-index s (+ r n) 0)
-                          :end2 (%ts-index s (+ r n) cols))
-                 (%ts-erase-row s r 0 cols)))))
+  "Delete N lines at the cursor (`M`), pulling the lines below UP — within the region and only when
+the cursor is inside it."
+  (let ((row (term-screen-row s)) (bot (term-screen-bottom s)))
+    (when (and (>= row (term-screen-top s)) (<= row bot))
+      (%ts-scroll-up-in s row bot n))))
 
 (defun term-screen-feed (s output)
   "Feed OUTPUT into SCREEN, honouring what can be honoured. Returns the count of sequences DROPPED.
@@ -556,14 +606,28 @@ everything else is counted, never guessed at, which is the rule the pane keeps."
              (arg1 () (if (plusp (length args)) (or (parse-integer args :junk-allowed t) 1) 1))
              (arg2 () (let ((semi (position #\; args)))
                         (if semi (or (parse-integer (subseq args (1+ semi)) :junk-allowed t) 1) 1)))
+             ;; the same, but with a D of its own — `DECSTBM`'s bottom margin defaults to the last
+             ;; row, and a 1 would put the region on the first row.
+             (arg2-or (d) (let ((semi (position #\; args)))
+                            (if semi (or (parse-integer (subseq args (1+ semi)) :junk-allowed t) d) d)))
              (seq (final)
                (case final
                  ((#\H #\f) (term-screen-cup s (arg1) (arg2)))
                  (#\K (term-screen-el s (num)))
                  (#\J (term-screen-ed s (num)))
+                 ;; **`CUU` and `CUD` STOP AT THE REGION'S MARGIN when the cursor is inside it**, and
+                 ;; can reach the screen's own edge when it is outside — which is what a terminal does
+                 ;; and what a program that parks its cursor outside its region relies on.
                  (#\A (setf (term-screen-row s)
-                            (max 0 (- (term-screen-row s) (max 1 (num))))))
-                 (#\B (dotimes (k (max 1 (num))) (%ts-next-row s)))
+                            (max (if (>= (term-screen-row s) (term-screen-top s))
+                                     (term-screen-top s)
+                                     0)
+                                 (- (term-screen-row s) (max 1 (num))))))
+                 (#\B (setf (term-screen-row s)
+                            (min (if (<= (term-screen-row s) (term-screen-bottom s))
+                                     (term-screen-bottom s)
+                                     (1- (term-screen-rows s)))
+                                 (+ (term-screen-row s) (max 1 (num))))))
                  (#\C (setf (term-screen-col s)
                             (min (1- (term-screen-cols s))
                                  (+ (term-screen-col s) (max 1 (num))))))
@@ -580,6 +644,10 @@ everything else is counted, never guessed at, which is the rule the pane keeps."
                  (#\@ (%ts-insert-chars s (max 1 (num))))
                  (#\L (%ts-insert-lines s (max 1 (num))))
                  (#\M (%ts-delete-lines s (max 1 (num))))
+                 ;; **`DECSTBM`** — the scrolling region itself. `#\r` here is the LETTER r (the
+                 ;; sequence's final byte), not a carriage return; a carriage return is `#\return`,
+                 ;; which the text state handles above.
+                 (#\r (%ts-set-scroll-region s (arg1) (arg2-or (term-screen-rows s))))
                  ;; **THE ALTERNATE SCREEN** (`?1049 h`/`l`) — what a full-screen program switches to
                  ;; so that leaving it restores what was on the screen before. Honoured HERE rather
                  ;; than left to the caller because it is a fact about the TERMINAL, and a program
@@ -587,20 +655,28 @@ everything else is counted, never guessed at, which is the rule the pane keeps."
                  ;; The sizes are the same and the saved screen is kept whole.
                  ;; **THE ALT SCREEN IS SWAPPED IN PLACE, inside the ONE struct the pane holds** —
                  ;; a caller's reference to the screen stays valid, which is the difference between
-                 ;; switching screens and replacing one. The main cells are kept whole and the alt
-                 ;; one starts blank, which is what a full-screen program expects to find.
+                 ;; switching screens and replacing one. The main cells AND the region are kept
+                 ;; whole and the alt one starts blank with whole-screen margins, which is what a
+                 ;; full-screen program expects to find.
                  ((#\h) (when (and private (string= args "1049") (null (term-screen-main s)))
-                           (setf (term-screen-main s) (term-screen-cells s)
+                           (setf (term-screen-main s) (list (term-screen-cells s)
+                                                            (term-screen-top s)
+                                                            (term-screen-bottom s))
                                  (term-screen-cells s) (make-string (* (term-screen-rows s)
                                                                         (term-screen-cols s))
                                                                      :initial-element #\space)
+                                 (term-screen-top s) 0
+                                 (term-screen-bottom s) (1- (term-screen-rows s))
                                  (term-screen-row s) 0
                                  (term-screen-col s) 0)))
                  ((#\l) (when (and private (string= args "1049") (term-screen-main s))
-                           (setf (term-screen-cells s) (term-screen-main s)
-                                 (term-screen-main s) nil
-                                 (term-screen-row s) 0
-                                 (term-screen-col s) 0)))
+                           (destructuring-bind (cells top bot) (term-screen-main s)
+                             (setf (term-screen-cells s) cells
+                                   (term-screen-top s) top
+                                   (term-screen-bottom s) bot
+                                   (term-screen-main s) nil
+                                   (term-screen-row s) 0
+                                   (term-screen-col s) 0))))
                  (t nil))
                (setf args "" state :text private nil)))
       (loop while (< i n) do
@@ -614,9 +690,12 @@ everything else is counted, never guessed at, which is the rule the pane keeps."
                      (#\escape (setf state :esc))
                      (t (%ts-put s ch)))
                    (incf i))
-            (:esc (if (char= ch #\[)
-                      (setf state :csi)
-                      (progn (incf dropped) (setf state :text)))
+            (:esc (cond ((char= ch #\[) (setf state :csi))
+                        ;; `ESC M` is REVERSE INDEX — one row up, scrolling the region down at its
+                        ;; top margin. Honoured because the region is what it scrolls, and the
+                        ;; region is now here; every other two-byte `ESC x` is still counted.
+                        ((char= ch #\M) (%ts-reverse-index s) (setf state :text))
+                        (t (incf dropped) (setf state :text)))
                   (incf i))
             (:csi (cond ((<= 48 (char-code ch) 57)
                          (setf args (concatenate 'string args (string ch)))
