@@ -532,3 +532,44 @@ letibot at the same size.
 | G24 | `(%command h "s")` sets `head-mode` to `:picker`; `(%command h "i")` sends an `interrupt` frame — neither sends a `slash` frame |
 | G25 | Submitting `"a"`, `"a"`, `"b"` leaves a history of `("a" "b")`. Enter on an empty composer adds nothing. After `↑` recalls `"b"` and one character is typed, a second `↑` does **not** change the buffer. Fifty-one submissions leave fifty entries |
 | whole-surface | A table-driven test that walks every chord in §2 against a head in each of the fourteen contexts in §3 and asserts the arm that claims it — the reference's own defence is that its ladder is one `match`, and leticl's is one `cond`, so the ladder is the unit |
+
+---
+
+## Reconciliation — every finding below is CLOSED, and here is what holds it (2026-10-11)
+
+The sections above are the REPORT: each says *what* was found, *why it matters* and *what to change*.
+They were written before the changes, and every one of them has since been worked — so as a queue of
+work this file is empty, and the only thing a reader still needs from it is the pairing between a
+finding and the assertion that keeps it closed. That is this table, and it is `TODO.md`'s T8 (*every
+finding not claimed above … work them by size within a strand's files*) for this file.
+
+A finding with no test name below is one whose coverage is behavioural through another name — the
+verify step is `scripts/compare-heads` on the two heads, which is what the finding was measured with.
+
+| finding | held by |
+|---|---|
+| **G1** a fast `esc esc` decodes as Alt+Esc | `esc-esc-is-two-keys-and-not-one-alt` |
+| **G2** no printable reaches the composer under a pane | `a-pane-open-is-not-a-head-you-cannot-talk-to` |
+| **G3** paste markers not unique, ledger immortal | `a-paste-marker-is-unique-and-the-ledger-is-forgotten`, `a-short-but-heavy-paste-still-collapses` |
+| **G5 / G7 / G8** motion, word motion, redo | `word-motion-and-the-lines-own-ends`, `the-decoder-reads-the-chords-the-composer-answers`, `redo-brings-back-what-undo-took` |
+| **G6** recall on the wrong key | `up-recalls-the-queued-prompt-and-withdraws-it` |
+| **G9** the esc arming is never disarmed | `the-esc-arming-is-disarmed-by-the-next-key` |
+| **G10** `ctrl-c` means the wrong thing three ways | `ctrl-c-clears-the-line-and-takes-two-presses-to-leave` |
+| **G11** `ctrl-c` does not close a pane/picker/secret | `ctrl-c-closes-what-is-on-the-screen` |
+| **G12** `ctrl-d` quits with text in the composer | `ctrl-d-does-not-throw-away-a-line` |
+| **G13** `ctrl-t` does not open a payload view | the payload window: `p-shows-the-childs-own-prompt-in-a-scrollable-popup`, `a-settlement-is-openable-through-the-real-seeder`, `the-payload-window-leaves-the-scroll-keys-alone` |
+| **G14 / G18** the pane chords open but never close; globals unreachable | `the-pane-chords-toggle-and-the-globals-reach-under-a-pane` |
+| **G15** Tab does not cycle | `tab-walks-the-matches-and-names-a-miss` |
+| **G16** Tab on a non-todos pane clears `head-dirty` | `tab-on-a-pane-that-is-not-the-todos-leaves-the-frame-alone` |
+| **G17** no click on the mode/model picker card | `a-click-on-the-mode-picker-card-marks-a-row` |
+| **G19** the peek pane's arrows and Enter | `the-peek-panes-arrows-and-enter-do-what-it-says`, `the-peek-pane-shows-the-tail-and-names-its-spill-file` |
+| **G20** Enter on the jobs pane posts `/job` | `enter-on-a-jobs-row-reads-its-output-into-a-pane` |
+| **G21** the ladder gated on an empty composer | `the-ladder-moves-with-a-half-typed-line-and-holds-the-words`, `an-open-ask-owns-enter-even-with-a-line-typed` |
+| **G22** `o` does not switch into a subagent | `enter-is-the-switch-and-o-is-the-same-act`, `o-switches-into-the-subagent-under-the-cursor` |
+| **G23** `/reseat summarise` silently re-seats | `reseat-summarise-asks-for-the-lossy-kind-by-name` |
+| **G24** `/s` and `/i` reach the daemon | `the-short-verbs-are-the-heads-and-not-the-daemons` |
+| **G25** history uncapped, undeduplicated, walks past an edit | `history-is-capped-deduplicated-and-stops-on-an-edit` |
+
+**And the ordering finding** (`panes.md` G14/G20, `keys.md` G20's sibling) — *the decision ladder
+outranks every list on the screen* — is `an-open-ask-outranks-every-list-on-the-screen`, which
+asserts each of the nine cases with its own cursor and both directions of every `is`.
