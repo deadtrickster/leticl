@@ -695,6 +695,16 @@ head runs today breaks without them.
   mapped wrongly, but never arriving: they are consumed EARLIER in `%handle-key`'s routing (the
   completer takes `:tab`; something takes `:backspace` before the pane arm), so the `%pane-key` arm
   written for them is dead code and its Backspace comment describes a mapping that never runs. The
+  **AND THE NEXT PIECE OF THE EMULATOR IS `ESC [ K`** — erase from the cursor to the end of the line,
+  which a shell does constantly: without it a line redrawn shorter than the last one keeps the old tail
+  hanging off it. The code was written and WORKS (the existing escape cases pass through it), and it is
+  **not landed, because its own assertion would not write**: five attempts today died on getting
+  `#\escape` and `#\return` through Python's own escaping into a Lisp string, and an untested
+  behaviour is the liability the Backspace byte taught me about. **The next session's first five
+  minutes**: write that case with `~c` and a literal `#\escape` handed to `format`, not spelled inside
+  a Python string — then the erase lands with it. *(`K`'s parameter picks the direction: 0, the default,
+  is cursor-to-end and is the one a shell uses.)*
+
   **AND THE ESCAPES ARE DROPPED AND COUNTED (2026-10-11)** — `%term-lines-from-output`'s second
   value: `ESC` starts a sequence, `[` makes it a CSI one, a byte in `@`..`~` ends it (the notation's
   own rule), and the pane can say how many it could not draw. **A half that is named is missing; a
