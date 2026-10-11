@@ -73,6 +73,53 @@ Set in the event arm of `%handle-frame` when a fold counts a new gap, cleared by
 arm when the snapshot lands. One outstanding ask at a time: two jumps inside one batch are one
 hole, and the one snapshot fills it. A `defvar` for the usual reason — a struct change is a restart.")
 
+(defvar *short-snapshot-asked* nil
+  "The session id this head has already asked a fresh snapshot for, because the transcript it applied
+ looked SHORTER than the session the daemon describes.
+
+ Keyed by session, and ONE ask each: the two ways the check can be true are *the daemon has not
+ finished sending* and *the daemon will never send it*, and from a head those look exactly alike —
+ so asking again would be a loop, and asking once turns five minutes of a wrong screen into a round
+ trip. A `defvar` for the usual reason.")
+
+(defun %snapshot-looks-short-p (head)
+  "Does the transcript this head now holds look SHORTER than the session the daemon describes?
+
+ **A SNAPSHOT IS NOT ALWAYS THE WHOLE CONVERSATION.** MEASURED 2026-10-11 on the operator's own head:
+ after a restart it applied a snapshot holding ONE row and `items_dropped 0` — the daemon saying *this
+ row is everything* — while the daemon's own store held 184 rows for that transcript. The head sat on
+ that one row for five minutes: `*resyncs*` was 0, so nothing ever asked again, and the operator's
+ messages were simply gone from their screen until a manual `/resync` brought them back.
+
+ **Both numbers are the daemon's and both are already here.** `stored-items` is the session's row
+ count on the session list the `Hello` carries (`chrome/border.lisp` reads it for the picker's
+ `N rows`), and `items + items_dropped` is the conversation this head holds — `items_dropped` counts
+ the rows trimmed off the FRONT of the daemon's window (`session/fetch.lisp`), so the two together
+ are its length and cannot honestly be less than the count the daemon just gave. Measured on a
+ HEALTHY head: 379 held + 1152 dropped against a `stored-items` of 360 — the check does not fire,
+ which is why this is a comparison and not a threshold."
+  (let* ((s (head-session head))
+         (row (find (session-session-id s) (session-sessions s)
+                    :key (lambda (b) (getf b :session-id)) :test #'string=)))
+    (let ((stored (and row (getf row :stored-items))))
+      (and (integerp stored) (plusp stored)
+           (< (+ (length (session-items s)) (or (session-items-dropped s) 0)) stored)))))
+
+(defun %ask-if-short-snapshot (head)
+  "Ask once for a fresh snapshot when the transcript just applied is shorter than the session the
+ daemon describes. Returns T when a `Resync` frame went out. See `%snapshot-looks-short-p`.
+
+ **It rides `*resync-asked*` as well**, the flag the seq-gap path uses: one outstanding ask at a
+ time, and the `resync` arm clears it when the answer lands — so a snapshot that arrives and is STILL
+ short is not re-asked, because `*short-snapshot-asked*` remembers the session."
+  (let ((id (session-session-id (head-session head))))
+    (unless (equal id *short-snapshot-asked*)
+      (when (and (not *resync-asked*) (%snapshot-looks-short-p head))
+        (setf *short-snapshot-asked* id
+              *resync-asked* t)
+        (%send head (make-resync))
+        t))))
+
 (defun %echo-leftover (queued bound)
   "Each queued ENTRY minus the pieces an announced row already draws — oldest first, one block each.
 
@@ -514,6 +561,10 @@ empty pane on every attach, which is the defect the guard exists to prevent, inv
          (when (member (head-mode head) '(:job-out :slash))
            (setf (head-mode head) :normal))))
      (ingest-hello (head-session head) frame)
+      ;; **THE SNAPSHOT IS CHECKED BEFORE ANYTHING IS SAID ABOUT IT** — see
+      ;; `%ask-if-short-snapshot`: a snapshot that is not the whole conversation is the one failure
+      ;; that looks exactly like an empty session, and nothing else in this head would notice it.
+      (%ask-if-short-snapshot head)
      ;; **`--resume ID`, AT THE MOMENT THE LIST EXISTS** (T4 in `TODO.md`). A session the daemon does
      ;; not hold cannot be attached to BY ID: `--session ID` puts the id on the ATTACH, and the daemon
      ;; refuses a session it has never opened (`app.rs:1602-1610` is the reference's own note on why
@@ -814,6 +865,17 @@ empty pane on every attach, which is the defect the guard exists to prevent, inv
          ;; Once per outstanding request: a batch that jumps twice before the snapshot lands
          ;; is one hole, and the snapshot that answers the first ask fills it. The `resync`
          ;; arm clears the flag.
+         ;; **AND A FORK IS THE OTHER MOMENT THE HEAD KNOWS ITS ROWS WERE REPLACED.** The
+         ;; `:transcript-forked` arm drops the PARENT's rows and waits for the child's, published
+         ;; under new ids — and MEASURED 2026-10-11 on the operator's own head they did not all
+         ;; arrive: their own messages were the parent's, so they LEFT THE SCREEN while the head sat
+         ;; at `items-dropped 0` and `*resyncs*` 0, believing itself complete, and a full repaint
+         ;; changed nothing (it had drawn exactly what it meant to). No count can tell the head that
+         ;; the carry did not land — the fork REMOVED the rows, and that is the fact it has — so the
+         ;; fork asks, once, exactly as a counted gap does, and the `resync` arm clears the flag.
+         (when (and (eq name :transcript-forked) (not *resync-asked*))
+           (setf *resync-asked* t)
+           (%send head (make-resync)))
          (when (and (> *seq-gaps* gaps-before) (not *resync-asked*))
            (setf *resync-asked* t)
            (%send head (make-resync)))
