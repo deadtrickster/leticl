@@ -11901,6 +11901,13 @@ answered. The daemon's own `secret_late` warning, which would explain it, is a
                 (head-standing-notes h)))
     (leticl::%handle-frame h (list :frame "standing_notes" :notes nil))
     (is (null (head-standing-notes h)) "and an empty mailbox is empty")))
+    ;; **AND THE PANE'S OPEN IS NOT ASSERTED HERE YET — MEASURED FAILING 2026-10-11.** `%command h
+    ;; "standing"` left the mode `:normal` in this fixture while the same shape works for `:queue`
+    ;; and `:jobs`; the pane IS registered (class, keyword, methods, both mode lists) and draws
+    ;; (`standing-notes-lines` is tested below), so what is unproven is the OPEN. Recorded in
+    ;; `TODO.md` rather than papered over with a weaker assertion: a test bent to pass is the
+    ;; defect this whole session has been about.
+
 
 (def-test the-standing-notes-draw-their-form-and-where-their-abstract-came-from (:suite leticl)
   "**The renderer for the standing-notes pane** (protocol 39, the 116-commit batch's `ccee82a`) —

@@ -48,6 +48,7 @@ through to the conversation, which is what the old `member` test's absence meant
 (defclass config-pane      (pane) ())
 (defclass jobs-pane        (pane) ())
 (defclass merge-queue-pane (pane) ())
+(defclass standing-notes-pane (pane) ())
 (defclass subagents-pane   (pane) ())
 (defclass peek-pane        (pane) ())
 (defclass job-out-pane     (pane) ())
@@ -71,6 +72,7 @@ through to the conversation, which is what the old `member` test's absence meant
     (:config . config-pane)
     (:jobs . jobs-pane)
     (:queue . merge-queue-pane)
+    (:standing . standing-notes-pane)
     (:subagents . subagents-pane)
     (:peek . peek-pane)
     (:job-out . job-out-pane)
@@ -253,7 +255,7 @@ outrank any pane's hint."))
 
 ;;; ------------------------------------------------------- the frame's questions ;;;
 
-(dolist (class '(help-pane status-pane config-pane jobs-pane merge-queue-pane subagents-pane peek-pane
+(dolist (class '(help-pane status-pane config-pane jobs-pane merge-queue-pane standing-notes-pane subagents-pane peek-pane
                  job-out-pane picker-pane todos-pane slash-pane dash-pane lisp-pane))
   (eval `(defmethod pane-replaces-transcript-p ((pane ,class)) t)))
 
@@ -268,6 +270,18 @@ outrank any pane's hint."))
 (defmethod pane-cursor-rows ((pane subagents-pane) head) (length (subagents-stops head)))
 (defmethod pane-cursor-rows ((pane jobs-pane) head) (length (head-jobs head)))
 (defmethod pane-cursor-rows ((pane merge-queue-pane) head) (length (head-merge-queue head)))
+
+(defmethod pane-lines ((pane standing-notes-pane) head cols room)
+  "The standing notes' rows — the drawing is `standing-notes-lines`, landed ahead of this pane."
+  (declare (ignore room))
+  (standing-notes-lines head cols))
+
+(defmethod pane-cursor-rows ((pane standing-notes-pane) head) (length (head-standing-notes head)))
+
+(defmethod pane-hint ((pane standing-notes-pane) head)
+  "What the standing-notes pane's own key does — `q` closes it, as every pane's does."
+  (declare (ignore head))
+  (list (cons "q closes · asked again whenever this pane opens" '(:dim t))))
 
 (defmethod pane-lines ((pane merge-queue-pane) head cols room)
   "The queue's rows — the drawing is `merge-queue-lines`, landed ahead of this pane so the pane is
