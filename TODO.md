@@ -695,6 +695,17 @@ head runs today breaks without them.
   mapped wrongly, but never arriving: they are consumed EARLIER in `%handle-key`'s routing (the
   completer takes `:tab`; something takes `:backspace` before the pane arm), so the `%pane-key` arm
   written for them is dead code and its Backspace comment describes a mapping that never runs. The
+  **AND THE OUTPUT HALF'S SEMANTICS ARE MEASURED, so the renderer that follows is not guessed at.**
+  `#\return` does NOT clear the line — it moves to column 0 and what follows **OVERWRITES**, column by
+  column. So `"a\r\n"` is the line `a` (the `\r` is the line ending's first half), while
+  `"10%\r50%\r100%"` is one line, `100%`. An attempt that treated `\r` as *clear the line* passed the
+  progress-bar case and failed the `\r\n` case, which is how the difference was found: **two cases, and
+  only one of them checks it.** The implementation that follows needs a buffer and a column index
+  rather than a string that gets reset.
+  **AND A LISP GOTCHA THAT COST THREE RUNS**: inside a string, `\r` is the LETTER `r` — a backslash
+  escapes the next character literally — so a test written `(format nil "10%\r50%")` has no carriage
+  return in it at all and measures nothing. Build one with `#\return` or `~c`.
+
   **AND IT IS FIXED (2026-10-11)**: the arm sits at the TOP of `%handle-key`'s own `cond`, above every
   other claim on those keys, and all three reach the program — Enter as `#\return`, Tab as a tab,
   Backspace as DEL `#x7f`. Asserted with a message naming BOTH sides, which is what the first attempt
