@@ -787,6 +787,27 @@ reaches no arm in either decoder, and `Key::CtrlN` does not exist).
 
 ## Found while working, and not fixed
 
+- [ ] **THE EVAL SOCKET CAN WEDGE THE HEAD PERMANENTLY, and it happened on 2026-10-11 at 02:04.**
+  The operator's head answered every `tui-eval` with the pusher's own verdict —
+  *"a previous eval that took the paint lock and then blocked on the session socket leaves every
+  later one waiting in `with-mutex` for ever. NOTHING YOU PUSHED SINCE THEN HAS LANDED … the head
+  must be restarted"*. MEASURED: `(:pid 259603)` alive, `(+ 1 2)` timing out, while the other head
+  on the box answered in 0 ms.
+
+  **The trigger is not established** and that is why this is filed rather than fixed: the last
+  thing done to that head was two `--tree` pushes in quick succession (the first printed nothing,
+  the second timed out), so the shape is *a tree push that takes the paint lock and then blocks
+  writing to the session socket* — the same class `hack.lisp`'s own wedge note records, from the
+  other direction (`%send` called off the main thread). What IS established: the head cannot
+  recover, nothing on its screen says why, and the only cure is a restart — which costs nothing
+  now that `bin/leticl-head` is current and a head resumes from the store, but it costs the
+  session's screen if the operator has not been told.
+
+  **Worth doing**: make the pusher hold the paint lock for the LOAD only and never across a
+  `%send`; give `with-mutex` a deadline with a sentence (*"the head is busy in an eval"*) rather
+  than a silent wait; and have the pusher say which pid wedged rather than that the tree did not
+  land.
+
 Each of these is a DIVERGENCE FROM THE REFERENCE that is currently invisible on the
 screen, so none of them is worth a commit of its own. They are written down here
 because an invisible divergence is exactly what this repo has been bitten by (the
