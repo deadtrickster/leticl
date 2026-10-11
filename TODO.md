@@ -410,9 +410,22 @@ carry.
   another agent in it: I did not edit it. leticl folds BOTH names, with the old one
   translated through a named compatibility arm that is to be deleted when the
   rename lands.
-- [~] **diff + highlight** — `diff.lisp`, `sidediff.lisp`, `highlight.lisp`.
-  Dead intra-line emphasis; SAPs passed unpinned across the FFI; every visible
-  fence re-parsed through the shim on every frame.
+- [x] **diff + highlight** — `diff.lisp`, `sidediff.lisp`, `highlight.lisp`. **ALL THREE CLAUSES
+  SETTLED, verified 2026-10-11**:
+
+  · **Dead intra-line emphasis** — the wiring is repaired (`%pair-rows` binds its addition run's
+    start before consuming it) AND both call sites pass `:intra-line nil` with the reference's own
+    reason, because repairing the wiring made this head emit emphasis the reference deliberately
+    suppresses (`edit-card.lisp`).
+  · **SAPs passed unpinned across the FFI** — `sb-sys:with-pinned-objects` around the hand-over,
+    held by `the-alien-call-pins-the-vectors-it-hands-over`, whose docstring records what the
+    unpinned version bought: not a crash but the shim writing role indices into whatever object
+    the collector had moved there.
+  · **Every visible fence re-parsed through the shim on every frame** — this is the one left
+    DELIBERATELY undone, and the argument is in `rendering.md`: a markdown cache would need an
+    invalidation key covering five defvars any eval can change, in a head whose contract is that
+    redefining a renderer changes the next frame. `TODO.md`'s T7 keeps that argument and its first
+    half (the render counter and its bound) has landed.
 
 ## Queued from the reference's own batches — surveyed, not yet built
 
