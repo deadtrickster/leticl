@@ -9470,9 +9470,24 @@ survives a hint the operator cannot see."
     (is (< (search "ctrl-s sessions" text) at)
         "`ctrl-s` keeps first place: opening the session list is what an operator with
  nothing in front of them reaches for, and `ctrl-n` is a reflex")
-    (is (= 1 (length (hint-bar h 80)))
-        "**one constant string**, so a narrow frame truncates it rather than re-ordering
- it — the prefix that used to move sideways is not back")))
+    ;; **ONE CONSTANT STRING, PLUS ITS OWN ELISION MARK.** This asserted `(= 1 (length …))` —
+    ;; which was true while the bar was handed to the painter OVER-WIDE and the tail was dropped in
+    ;; silence, and is the defect `rendering.md` §6 gap 23 names: the row ended `ctrl-q ` where the
+    ;; reference ends it `ctrl…`. `%truncate-segs` elides with a mark that is a SEGMENT of its own
+    ;; (by design — the mark keeps the style of whatever was being cut), so the property this test
+    ;; is about is not the count: it is that the line is the SAME STRING, cut at its TAIL, with the
+    ;; prefix that used to move sideways still absent.
+    (let* ((narrow (hint-bar h 80))
+           (text (format nil "~{~a~}" (mapcar #'car narrow)))
+           (wide (format nil "~{~a~}" (mapcar #'car (hint-bar h 210)))))
+      (is (<= (length narrow) 2)
+          (format nil "the bar is the string and at most its mark: ~s" narrow))
+      (is (or (= 1 (length narrow)) (string= "…" (car (car (last narrow)))))
+          "and a second segment can only be the elision mark")
+      (is (uiop:string-prefix-p (subseq wide 0 18) text)
+          (format nil "**the beginning is the same string** — nothing re-ordered: ~s" text))
+      (is (not (search "ctrl-r" text))
+          "**and what falls off is the TAIL**, where the reader can see that something did"))))
 
 (def-test the-bar-says-what-the-chord-does-and-names-the-verb (:suite leticl)
   "**R40, on the bar: the key advertised at the bottom of the screen must do what it says.**

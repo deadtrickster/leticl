@@ -391,11 +391,19 @@ carry.
   closed**: W1 landed the wrapping rules, and the structural commit after it merged
   the two breakpoint scanners into one (`%break-ranges`, used by `wrap-segments` AND
   `wrap-ranges`) and deleted the third truncator, which was per-character and silent.
-  **What is left is the same shape one level up and is NOT closed**: a row composed
-  wider than the frame is cut by the PAINTER — `screen-put-string` drops every cell
-  past the right edge without a word — so the hint bar ends `ctrl-q ` where the
-  reference ends it `ctrl…`. It is why the bottom row differs in every fixture of the
-  1:1 rig, and it is `rendering.md` §6 gap 23.
+  **AND THE LAST CLAUSE IS CLOSED TOO** (2026-10-11): a row composed wider than the frame was
+  cut by the PAINTER — `screen-put-string` drops every cell past the right edge without a word —
+  so the hint bar ended `ctrl-q ` where the reference ends it `ctrl…`. The bar now composes to the
+  width it is drawn in (`%truncate-segs`, the composer the transcript's own rows use), so the
+  elision is the head's usual `…` and the reader can tell a key that is missing from one that never
+  existed. `rendering.md` §6 gap 23, and the reason the bottom row differed in every fixture of the
+  1:1 rig.
+
+  Its test had to be corrected rather than merely kept green: `ctrl-n-is-in-the-hint-bar-…`
+  asserted `(= 1 (length (hint-bar h 80)))` — true only WHILE the tail was being dropped in
+  silence — and it now asserts the property it was always about: same string, cut at the TAIL,
+  with the mark allowed to be a segment of its own (which is how `%truncate-segs` keeps the style
+  of whatever was being cut) and the prefix nothing has re-ordered.
 - [x] **screens + frame** — `panes.lisp`, `chrome.lisp`, `render.lisp`. **EVERY CLAUSE ON THIS
   HEAD'S SIDE IS CLOSED, verified 2026-10-11**, each by the test that holds it:
 

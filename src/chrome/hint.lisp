@@ -23,8 +23,15 @@
 
 The reference's `hint_bar`: ONE constant string per context — a key that closes
 a card is not the key that interrupts a turn, and a hint that names the wrong key
-is worse than no hint at all."
-  (declare (ignore cols))
+is worse than no hint at all.
+
+**AND IT IS COMPOSED TO ITS WIDTH, which it was not** (`rendering.md` §6 gap 23, and the reason
+the bottom row differs in every fixture of the 1:1 rig): `cols` was DECLARED IGNORED and the bar was
+handed to the painter as one over-wide segment, so `screen-put-string` dropped every cell past the
+right edge **without a word** — the bar ended `ctrl-q ` where the reference ends it `ctrl…`. The
+reference elides; a silent cut is the one thing a row full of keys must not do, because the reader
+cannot tell a key that is missing from a key that never existed. `%truncate-segs` is the composer
+the transcript's own rows use, so the ellipsis is the head's usual one rather than a second spelling."
   ;; **ONE CONSTANT STRING, no prefix.** It used to open with the keys that
   ;; change — `enter send` idle, `esc interrupt` while a turn runs — and those
   ;; are three different lengths in front of the same tail, so the line moved
@@ -113,9 +120,14 @@ is worse than no hint at all."
                  ;; has no other affordance on a 40-column screen, which is why it takes the
                  ;; slot ahead of it.
                  (t "ctrl-s sessions · ctrl-n notes · /t row window · ctrl-t todos · ctrl-g subagents · ctrl-r reasoning · ctrl-j jobs · tab completes /commands · /help"))))
-    (if armed
-        (list armed (cons (format nil " · ~a" tail) '(:dim t)))
-        (list (cons tail '(:dim t))))))
+    ;; the composed bar, ELIDED to the width it is drawn in: at 210 nothing is lost, at 80 the
+    ;; tail gives way with the head's own ellipsis, which is the reference's behaviour and the
+    ;; thing the painter could not do for itself.
+    (%truncate-segs
+     (if armed
+         (list armed (cons (format nil " · ~a" tail) '(:dim t)))
+         (list (cons tail '(:dim t))))
+     (max 1 cols))))
 
 (defparameter +turn-status-head+ " Responding · "
   "The words between the spinner and the first measured field, in one place.")
