@@ -601,7 +601,26 @@ head runs today breaks without them.
   characters, not raw bytes — where 0x1c arrives and whether the interception can
   live in the driver is the first thing to measure.
 
-- [ ] **the merge queue pane** — the queue is DAEMON-LEVEL, not the session's: the
+- [ ] **the merge queue pane** — **STEPS, BY SIZE, taken from this box's own list** (added
+  2026-10-11 so the next session takes them in the file's own order — smallest verifiable thing
+  first, never across, and each step leaving the head working):
+
+  · **S — the two frames.** `ClientFrame::ListMergeQueue` → `ServerFrame::MergeQueue`, and the two
+    events `MergeEntryAdded`/`MergeEntryMoved`. Wire only: constructors, the folds in
+    `%handle-frame`, and a test per frame (the shape `/todos` already keeps, including the
+    *attaches late and does not ask* rule). Nothing on screen yet, which is what makes it S.
+  · **S — the pane, drawing state and EVIDENCE.** One row per entry, the evidence as the reason —
+    *the evidence is the reason for the state in the queue's own words*. The five states are
+    already a vocabulary this head renders elsewhere; this is one more pane in `src/panes/`.
+  · **M — the person's hand: approve, veto, rm.** The reference's own three acts on a row, each
+    naming the entry by id and each answered by a `MergeEntryMoved` a head already folds.
+  · **M — the standings and the gate's steps, in order.** The steps drawn in the order the gate
+    runs them (which is the gate's own sequence, not the head's), and the standings beside the
+    triangle the head already draws.
+  · **M — the review queue as TWO VIEWS OF ONE LIST**, riding protocol 38's removal, and
+    `/queue reset | clean | restart` — the verbs, each with the sentence that says what it did.
+
+  The box's own detail below is the specification for all five; nothing here is invented.
   snapshot carries none of it by design, and a head that wants the queue asks with
   `ListMergeQueue` and is answered by `MergeQueue` (the whole queue as of now);
   from then on `MergeEntryAdded {entry}` and `MergeEntryMoved {id, state, evidence}`
