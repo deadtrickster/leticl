@@ -119,6 +119,35 @@ state this build has never met is drawn plain rather than guessed at."
         ;; is the honest register until somebody has seen one.
         (t nil)))
 
+(defun merge-review-line (review)
+  "One review of one queue entry, as a string — `REVIEW` as the wire sends it.
+
+**THE THREE FACTS ARE KEPT APART, WHICH IS THE WHOLE POINT OF THE FIELDS** (measured,
+`event.rs:516`): a `decision` is a verdict (*accept*, *reject* or *needs_human*), `decision` nil
+with an empty `failure` is *asked and has not answered yet*, and a non-empty `failure` is a review
+that DIED — *a reviewer whose turn failed reached no judgement, so `decision` is None*, and the
+daemon's own note says the field exists because the pane drew *has not answered* over an attempt
+that was already dead. A pane built from `decision` alone cannot tell the second from the third,
+which is the mistake the field was added to end.
+
+Returns NIL for a review with nothing to say — no entry id and no decision and no failure — so a
+caller can filter rather than draw a blank row."
+  (let ((decision (getf review :decision))
+        (failure (getf review :failure))
+        (reasons (getf review :reasons))
+        (answered (getf review :answered-ms)))
+    (when (or decision (and (stringp failure) (plusp (length failure))))
+      (cond
+        ;; a DIED review is not a quiet one, and says so in its own words rather than the head's
+        ((and (stringp failure) (plusp (length failure)))
+         (format nil "review failed — ~a" failure))
+        ;; a verdict, with the reviewer's own reasons when it gave any — and `answered` is not
+        ;; drawn: a verdict that is THERE is by definition answered, so a timestamp beside it is
+        ;; furniture (the rule this tree keeps for every marker).
+        (t (format nil "review: ~a~@[ · ~a~]"
+                   decision
+                   (and (stringp reasons) (plusp (length reasons)) reasons)))))))
+
 (defun job-label (job)
   "JOB as the reader should be told about it: its NAME when the daemon sent one, else its command.
 

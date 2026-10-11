@@ -11984,6 +11984,33 @@ worked for the merge queue.
     ;; --- and the count is on the heading
     (is (search "standing notes  3" (funcall text)) "the heading counts them")))
 
+(def-test a-reviews-three-facts-are-not-one-rendering (:suite leticl)
+  "**A verdict, no verdict YET, and a review that DIED are three facts** — measured against
+  `MergeReview` (`event.rs:516`): `decision` is *accept*/*reject*/*needs_human*, `decision` nil with
+  nothing else is *asked and has not answered*, and a non-empty `failure` is a review **whose turn
+  failed, so it reached no judgement at all**.
+
+  The daemon's own note says why the field exists: *without it the head had only `decision: None` to
+  go on and drew 'the reviewer has been asked and has not answered' over an attempt that had already
+  died — the failure was invisible on the pane unless somebody opened the store.* A pane built from
+  `decision` alone cannot tell the second fact from the third, which is the mistake this holds shut."
+  (is (equal "review: accept" (merge-review-line (list :decision "accept" :answered-ms 5)))
+      "a verdict is drawn as one")
+  (is (equal "review: needs_human · it touches the renderer"
+             (merge-review-line (list :decision "needs_human" :reasons "it touches the renderer")))
+      "with the reviewer's own reasons when it gave any")
+  ;; **THE THIRD FACT, which `decision` alone cannot carry**
+  (is (search "review failed" (merge-review-line (list :failure "the reviewer's turn died")))
+      (format nil "**a DIED review says so in its own words** — not *has not answered*: ~s"
+              (merge-review-line (list :failure "the reviewer's turn died"))))
+  (is (not (equal (merge-review-line (list :decision nil :failure "died"))
+                  (merge-review-line (list :decision nil))))
+      "**and the two are NOT the same rendering** — which is the whole reason the field exists")
+  ;; asked, not answered: nothing to draw is a fact too, and the caller can filter it
+  (is (null (merge-review-line (list :entry-id "e1" :asked-ms 3)))
+      "a review that has been asked and has not answered draws nothing yet — and is not a failure")
+  (is (null (merge-review-line nil)) "no review, no row"))
+
 (def-test a-job-is-called-by-its-name-and-falls-back-to-its-command (:suite leticl)
   "**`5d3bfac`: the transcript calls a job by its name — every sentence about a job uses the label.**
   MEASURED (`sessionlog/src/protocol.rs:1268`): `JobEntry.name` is *the name the caller gave this
