@@ -484,6 +484,14 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
                      ;; ask already open drew 56 years of countdown for it.
                      :deadline (getf env :deadline)
                      :on-timeout (getf env :on-timeout)
+                     ;; **`asked-ts` IS THE WIRE'S `ts` AND THE REFERENCE MAKES IT 0.** The reference
+                     ;; stores `asked_ts: 0` on this path and says why (`app.rs:2617`: *the snapshot
+                     ;; path at `apply` carries the real `asked_ts`*). Read by NEITHER codebase —
+                     ;; the reference writes the field in three places and reads it in none — so it
+                     ;; is a value waiting for a feature, and if that feature is the *waiting 40s*
+                     ;; edge then the number must come from THIS head's clock rather than from the
+                     ;; wire, which is what makes the difference worth writing down (TODO.md,
+                     ;; 'Found while working').
                      :asked-ts (getf env :ts)))
              (session-open-decisions session))
        :dirty)

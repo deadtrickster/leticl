@@ -869,6 +869,12 @@ screen, so none of them is worth a commit of its own. They are written down here
 because an invisible divergence is exactly what this repo has been bitten by (the
 `endp-open` that promised a cursor reset and was `(declare (ignore …))`).
 
+**All three of the items below are now RECORDED AT THEIR SITES in the code** (2026-10-11), which
+is what each of them asks for — a note and not a change. `asked-ts`'s note is at the fold that
+stores it (`seq-gap.lisp`), the decision list's is at the slot (`session/state.lisp`), and the
+quit card's is at the arm that takes the key (`editor/dispatch.lisp`), including what to change
+FIRST if it is ever made to fall through.
+
 - **`asked-ts` is the wire's `ts`, and the reference makes it 0.** `session.lisp`
   stores `:asked-ts (getf env :ts)` where the reference stores `asked_ts: 0` and says
   why (app.rs:2617: *"the snapshot path at `apply` carries the real `asked_ts`"*).

@@ -66,6 +66,15 @@ for the lists)."
       ;; the `allow-all` question owns every key while it is up
       (*mode-confirm* (mode-confirm-key head key))
       ;; the quit card: leave, or leave and stop the daemon (v20)
+      ;;
+      ;; **AND IT TAKES EVERY KEY, WHICH THE REFERENCE'S DOES NOT** (TODO.md, 'Found while
+      ;; working'). The reference matches its GLOBAL chords at `app.rs:3152`, BEFORE the card at
+      ;; `:3698`, so `ctrl-t` still folds the thinking under its quit card; here the clause is taken
+      ;; for every key and the body's NIL is discarded, so `ctrl-t` does nothing while the card is
+      ;; up. **Fail-closed is the deliberate reading** — a card asking *leave?* is the last place a
+      ;; key should have a second meaning — and the one thing that must not happen is a reader
+      ;; believing the two heads agree about it. If it is ever made to fall through, this comment
+      ;; is the finding to change first.
       ((head-quit-open head) (%quit-card-key head key type))
       ;; the head's own chords, before any view — see `%global-chord`
       ((%global-chord head key))
