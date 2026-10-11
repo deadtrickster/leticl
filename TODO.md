@@ -695,6 +695,15 @@ head runs today breaks without them.
   mapped wrongly, but never arriving: they are consumed EARLIER in `%handle-key`'s routing (the
   completer takes `:tab`; something takes `:backspace` before the pane arm), so the `%pane-key` arm
   written for them is dead code and its Backspace comment describes a mapping that never runs. The
+  **AND THE OUTPUT HALF IS LANDED (2026-10-11)** — `%term-lines-from-output`, held by
+  `a-terminals-output-is-read-the-way-a-terminal-writes-it`: `#\return` moves to column 0 and what
+  follows OVERWRITES column by column, so a progress bar that redrew itself is the one line the
+  program drew rather than three. **Two test cases, because one does not check it** (a return before
+  more text, and a return before a newline) — the implementation that cleared the line on `\r` passed
+  the first and failed the second. **What remains in this project: the VT renderer** — cursor
+  addressing, scroll regions, the alternate screen — which the pane names as missing rather than
+  drawing a confident wrong screen. *(The semantics, and three mistakes of mine, are below.)*
+
   **AND THE OUTPUT HALF'S SEMANTICS ARE MEASURED, so the renderer that follows is not guessed at.**
   `#\return` does NOT clear the line — it moves to column 0 and what follows **OVERWRITES**, column by
   column. So `"a\r\n"` is the line `a` (the `\r` is the line ending's first half), while
