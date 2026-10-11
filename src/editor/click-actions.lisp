@@ -159,6 +159,27 @@ the box's TOP edge was actually painted on — a click one row off is a click on
   (let ((rows (head-last-rows head)))
     (and rows (position-if (lambda (r) (and (stringp r) (search "╭" r))) rows))))
 
+(defun %show-edit-change (head item)
+  "An edit row's CHANGE in the read overlay — the whole of what this head holds about it: the excerpt
+ the daemon sent (both sides, and the excerpt's place in each file) through `edit-lines`, the same
+ renderer the inline diff under the row uses.
+
+ **NOT the whole file, and the title does not pretend otherwise.** The reference's popup draws rano's
+ review view OVER the file (`88b003d`), and a head holding an excerpt cannot; `ctrl-]` is this head's
+ door to the file itself, so the title names it rather than leaving the reader to find out which half
+ they got."
+  (let ((edit (getf (item-body item) :edit)))
+    (if (null edit)
+        (say head "that row carries no change to open")
+        ;; **THE MODE IS THE PANE IT IS DRAWN OVER, and the transcript's is `:normal`** — not a word
+        ;; of its own. `read-overlay-open-p` asks the two to be EQUAL ("a record for another mode is
+        ;; not a view"), so an overlay opened with a borrowed name would be invisible: the state would
+        ;; be set and the screen unchanged, which is the defect the test beside this caught.
+        (open-read-overlay head (head-mode head)
+                           (format nil "change — ~a · ctrl-] opens the file"
+                                   (or (getf edit :path) "?"))
+                           (edit-lines edit (max 20 (- (head-cols head) +gutter+ +right-margin+)))))))
+
 (defun %click (head key)
   "A CLICK selects the row under the pointer. T when the click was a list's.
 
@@ -201,5 +222,29 @@ than from the click."
                (setf (head-picker-sel head) sel
                      (head-dirty head) t)))))
        t)
-      (t nil))))
+      (t
+       ;; **A CLICK ON AN EDIT ROW OPENS ITS CHANGE** — the reference's popup (`88b003d`) through the
+       ;; door this head has. The row→item map is `*hist-bounds*` (`(ITEM-ID START END)`, counted in the
+       ;; list `*view-start*` indexes), so a mouse ROW becomes a LINE and then an item; the change is the
+       ;; row's own `:edit` excerpt.
+       ;;
+       ;; **A click that lands on no row does nothing** — the ordinary answer for the space below a short
+       ;; conversation — and neither does one on a row that is not an edit: the transcript has no CURSOR
+       ;; for a reader to select with, and inventing one here would be a second way to walk it.
+       ;;
+       ;; **AND THE LINE MUST BE INSIDE THE ITEM'S OWN ROWS.** `%bound-covering` answers *the last item
+       ;; that starts at or before this line*, which is right for the anchor (a window's top row belongs
+       ;; to the item it is in) and WRONG for a click: every line past the walk would resolve to the last
+       ;; item, and a click into the empty space below a short conversation would open a change from a row
+       ;; nobody can see — the defect this router's own docstring is written against. So the bound's END
+       ;; is the other half of the test.
+       (when (and (integerp row) (> row 0))
+         (let* ((line (+ *view-start* (1- row)))
+                (bound (%bound-covering line))
+                (item (and bound (< line (third bound))
+                           (find (first bound) (session-items (head-session head))
+                                 :key #'item-id :test #'string=))))
+           (when (and item (item-shows-an-edit-p item))
+             (%show-edit-change head item))))
+       t))))
 

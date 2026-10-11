@@ -774,6 +774,15 @@ it. `%anchor-end` is what re-finds it, `%anchor-forget` is what says a row is go
 against the list it was counted in: the bounds and the lines come out of one walk, so the answer
 to *which row is line 812* is derived from the same arithmetic that made the lines.")
 
+(defvar *view-start* 0
+  "The index, in the SAME list `*hist-bounds*` was counted in, of the first line of the window
+ `%viewport-lines` drew last — so a mouse ROW can be turned into an item.
+
+ **SET BESIDE THE BOUNDS AND FOR THE SAME REASON**: a line index means nothing without the list it was
+ counted in, and the painter only knows the ROW. `*hist-bounds*` says where each item starts and ends;
+ this says which of those lines the top of the glass is showing, which is the one fact the click router
+ cannot derive from anything else it holds.")
+
 (defvar *anchor-lost-said* nil
   "The item id this head has already told the reader it can no longer carry.
 
@@ -1071,7 +1080,8 @@ reach the window) — the pin must not fight the row it copies."
              (out (if empty
                       (subseq empty-lines start end)
                       (%window-of hist tail start end))))
-        ;; **PARKED IN THE SCROLLBACK, the last row says so** — the reference's
+        (setf *view-start* start)
+       ;; **PARKED IN THE SCROLLBACK, the last row says so** — the reference's
         ;; banner, in yellow, in the transcript's own last row: how far behind
         ;; the tail is, and how to follow it again. Without it a scrolled head is
         ;; indistinguishable from a quiet one, which is the shape the operator

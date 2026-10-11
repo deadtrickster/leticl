@@ -12339,6 +12339,43 @@ worked for the merge queue.
                                         :key #'car :test #'string=)))
           "**the pane draws it** — the cell's style is a name this head's palette holds"))))
 
+(def-test a-click-on-an-edit-row-opens-its-change (:suite leticl)
+  "**A click on the conversation was routed to nobody** — `%click`'s last arm was `(t nil)` — so an edit
+  row's change had no door but the inline diff already under it, and the reference's popup (`88b003d`)
+  had no counterpart here. **The row→item map was there all along**: `*hist-bounds*` is
+  `(ITEM-ID START END)` per item, counted in the list `*view-start*` indexes, so a mouse ROW becomes a
+  LINE and then an item.
+
+  **A click that lands on no row does nothing**, and neither does one on a row that is not an edit: the
+  transcript has no CURSOR for a reader to select with, and inventing one here would be a second way to
+  walk the conversation."
+  (let* ((h (%make-head))
+         (edit (list :path "src/fib.lisp" :created nil
+                     :before-start 10 :after-start 10
+                     :before-lines 20 :after-lines 20 :truncated nil
+                     :before (format nil "a~%b~%c") :after (format nil "a~%B~%c")))
+         (items (list (list :item-id "i7" :kind "tool_result"
+                            :item (list :type "tool_result" :edit edit))
+                      (list :item-id "i8" :kind "tool_result"
+                            :item (list :type "text" :text "no change here")))))
+    (setf (session-items (head-session h)) (leticl::%items-vector items))
+    ;; the glass starts at line 5, so the click on its SECOND line lands on full-list line 6 — the
+    ;; line `i7` starts at
+    (let ((leticl::*view-start* 5) (leticl::*hist-bounds* '(("i7" 6 9) ("i8" 9 12))))
+      (leticl::%click h (list :type :mouse :kind :press :x 3 :y 2))
+      (is (leticl::read-overlay-open-p h) "**a click on an edit row opens its change**"))
+    ;; the same click where the row under it carries no change
+    (setf leticl::*read-overlay* nil)
+    (let ((leticl::*view-start* 8) (leticl::*hist-bounds* '(("i7" 6 9) ("i8" 9 12))))
+      (leticl::%click h (list :type :mouse :kind :press :x 3 :y 2))
+      (is (not (leticl::read-overlay-open-p h))
+          "**a row that carries no change opens nothing** — and neither does a click on no row"))
+    (setf leticl::*read-overlay* nil)
+    (let ((leticl::*view-start* 40) (leticl::*hist-bounds* '(("i7" 6 9))))
+      (leticl::%click h (list :type :mouse :kind :press :x 3 :y 30))
+      (is (not (leticl::read-overlay-open-p h))
+          "a click past every bound resolves to no item, and does nothing"))))
+
 (def-test a-todo-row-says-what-it-waits-for (:suite leticl)
   "**`TodoNeed` rides the row and this pane drew NONE of it** — a plan is a GRAPH, and a row that waits
   on another row, on a CHILD session or on a job is a row whose edges a reader needs to see. The wire's
