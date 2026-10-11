@@ -12020,6 +12020,35 @@ worked for the merge queue.
         (is (search "high" t4) "the queue's own priority is drawn")
         (is (search "needs e2, e3" t4) "**and what the entry WAITS FOR, by id** — the fact that makes it not-ready")
         (is (search "needs: topic-b, topic-c" t4) "with the evidence as well, which is the queue's words for it"))
+      ;; --- **AND THE GATE'S STEPS, in `main`'s own order, with the four words**
+      (setf (head-merge-queue h)
+            (list (list :id "e9" :branch "topic-z" :state "failed" :evidence "gate: fmt"
+                        :gate-steps (list (list :command "cargo fmt --check" :outcome "red")
+                                          (list :command "cargo test" :outcome "not_reached")))))
+      (let ((t5 (funcall text)))
+        (is (search "red cargo fmt --check" t5)
+            (format nil "**the step's outcome and its COMMAND** — the string a person would paste to reproduce the row: ~s" t5))
+        (is (search "not_reached cargo test" t5) "and the step the gate never reached, in order")
+        (is (< (search "cargo fmt --check" t5) (search "cargo test" t5))
+            "**in the order `main` DECLARED them** — the array's own order, not sorted here"))
+      ;; **THE RULE THIS STEP TURNS ON: an empty checklist is never drawn as one** — it reads as
+      ;; *all steps passed*, which is the third fact the reference's `no_gate` variant exists to
+      ;; keep apart from *declared nothing* and *has not run yet*.
+      (setf (head-merge-queue h)
+            (list (list :id "e10" :branch "t" :state "landed" :evidence "tip 4f2a"
+                        :gate-steps (list (list :command "" :outcome "no_gate")))))
+      (let ((t6 (funcall text)))
+        (is (search "no gate — nothing declared to run" t6)
+            "**`no_gate` is its own sentence** — not a blank checklist")
+        (is (not (search "the gate has not run" t6)) "and it is not confused with *has not run yet*"))
+      (setf (head-merge-queue h) (list (list :id "e11" :branch "t" :state "waiting" :evidence "…")))
+      (is (search "the gate has not run on this entry" (funcall text))
+          "**an entry whose steps have not arrived SAYS so** — the third fact, kept apart from the other two")
+      ;; (restore the earlier fixture for the count below)
+      (setf (head-merge-queue h)
+            (list (list :id "e1" :branch "topic-a" :state "waiting" :evidence "needs: topic-b, topic-c")
+                  (list :id "e2" :branch "topic-b" :state "landed" :evidence "tip 4f2a1c9")
+                  (list :id "e3" :branch "topic-c" :state "failed" :evidence "gate: format")))
       ;; an entry with neither draws no line for them, rather than an empty one
       (setf (head-merge-queue h) (list (list :id "e2" :branch "b" :state "taken")))
       (is (not (search "needs" (funcall text)))

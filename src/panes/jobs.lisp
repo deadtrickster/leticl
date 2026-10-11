@@ -68,7 +68,31 @@ out of a renderer."
             ;; reason given* about a row that has one.
             (push (list (cons (format nil "         ~a" (or evidence "no reason given"))
                               '(:dim t)))
-                  out))))
+                  out)
+            ;; **AND THE GATE'S STEPS, IN THE ORDER `main` DECLARED THEM.** They are already on the
+            ;; wire — `MergeEntry.gate_steps` (`event.rs:461`, `serde(default)`, no version bump) —
+            ;; each `{command, outcome, output, started_ms, elapsed_ms}`, where the command is *the
+            ;; string a person would paste into a shell to reproduce the row*.
+            ;;
+            ;; **AND AN EMPTY CHECKLIST IS NEVER DRAWN, WHICH IS THE RULE THIS STEP TURNS ON**: the
+            ;; reference makes `no_gate` a VARIANT rather than an empty list because *"the gate
+            ;; declared nothing to run"* and *"the gate has not run yet"* are different facts — and
+            ;; an empty list reads as a third one, *all steps passed*, which is the lie the
+            ;; operator's own rule forbids. So a `no_gate` row is drawn as its own sentence, and an
+            ;; entry whose steps have not arrived says that rather than showing a blank.
+            (dolist (step (getf e :gate-steps))
+              (let ((outcome (or (getf step :outcome) "?"))
+                    (command (or (getf step :command) "")))
+                (push (list (cons (format nil "         ~a ~a"
+                                          (if (string-equal outcome "no_gate") "no gate —" outcome)
+                                          (if (string-equal outcome "no_gate")
+                                              "nothing declared to run"
+                                              command))
+                                  (merge-state-style (if (string-equal outcome "green") "landed" outcome))))
+                      out)))
+            ;; nothing at all: said, not shown as a checklist that looks complete
+            (when (null (getf e :gate-steps))
+              (push (list (cons "         the gate has not run on this entry" '(:dim t))) out)))))
     (push nil out)
     (push (list (cons (format nil "    ~d entries — `q` closes · the gate runs when a branch is picked"
                               (length entries)) '(:dim t)))
