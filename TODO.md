@@ -1079,6 +1079,18 @@ head runs today breaks without them.
     answers, the way `/job` and `/gate` work), and the next session should confirm that in
     `crates/tui/src/keys/` before writing anything: inventing three frames for acts the daemon
     reaches another way is exactly the mistake this ledger keeps catching.
+
+    **CONFIRMED IN THE REFERENCE AND ALREADY LANDED HERE (2026-10-11).** `crates/tui/src/app/keys/bindings.rs:203-205`
+    binds the pane's letters to the verbs — `Text("approve")`, `On::Char('v') | Empty => Act::Verb(Verb::Veto),
+    Text("veto")` — and `keys/panes.rs:412-420` states the rule this box predicted, verbatim: *"each sends the
+    SAME verb its typed spelling sends (`/queue approve|veto|rm|restart`)"*. This head's `queue-verb`
+    (`panes/jobs.lisp:255`) sends that same slash line; `queue-verb-refusal` (`:224`) mirrors the daemon's own
+    rule so a row it would refuse is SAID rather than sent; and the pane's `a`/`v`/`d`/`r` letters and
+    `/queue VERB ID` are ONE path, so the key and the typed verb cannot drift. Held by
+    `slash-queue-verbs-send-the-daemons-line-or-say-why-not` (`tests/sweep-wire.lisp:279`): approve and veto go
+    out as the daemon's line, a merge row cannot be approved and SAYS so with nothing sent, and a verb with no
+    id asks for one. **So nothing is owed here** — the acts were reachable the whole time through the path this
+    box named, which is why it was right to refuse the three invented frames.
   · **M — the standings and the gate's steps, in order. MEASURED 2026-10-11, AND IT IS A RENDERER
     ADDITION RATHER THAN NEW WIRE**: the wire's own `MergeEntry` already carries
     `gate_steps: Vec<MergeGateStep>` (`sessionlog/src/event.rs:461`, `serde(default)`, so no
