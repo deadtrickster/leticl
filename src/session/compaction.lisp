@@ -41,20 +41,29 @@
 ;;; cases where none will). `context_wall` is ruled separately below.
 
 (defparameter +compaction-row-codes+
-  '("compacted" "auto_compact" "auto_compact_no_progress" "auto_compact_failed")
+  '("compacted" "auto_compact" "auto_compact_no_progress" "auto_compact_failed"
+    "compact_half" "reseated")
   "The warning codes this head renders as a TOOL ROW rather than as a note.
 
 Each reports a compaction that was attempted: `compacted` and `auto_compact` their
 reports, `auto_compact_no_progress` one that ran and did not help,
 `auto_compact_failed` one that was tried and did not run.
 
-**`reseated` is deliberately not here.** A re-seat publishes that code AND a
-`compacted` whose detail is the token account, so the note carries the tools the model
-gained and lost and the row carries the numbers — two facts, two shapes.
+**`compact_half` and `reseated` joined the list in the 2026-10-11 sweep**, because the
+reference's notes pane treats both as compaction rows and this head drew them as notes
+beside the row they belong to. `compact_half` is a half of the fold saying what it is
+doing — a daemon from letibot `a33655d` on sends `CompactionProgress` instead, so the
+code is here for the daemons and logs from before that. `reseated` was *deliberately not
+here* once: the argument was that a re-seat publishes the code AND a `compacted` whose
+detail is the token account, so the note carried the tools and the row the numbers. The
+daemon's own sentence for a re-seat (`re-seated: N tokens of conversation carried …`) is
+the account itself now, and two shapes for one fact drew the same event twice. Both still
+go through `compaction-row-p`'s second half — the sentence must be READABLE — so a
+`reseated` whose detail this head cannot parse is a note, as before.
 
 **`auto_compact` does double duty** — it is the ANNOUNCEMENT (`N of M tokens resident …
-compacting now`) and, after the fork, a second REPORT (`compacted: N tokens resident
-now, was M`). One code, two facts, which is why `compaction-facts` reads the SENTENCE
+compacting now`) and, after the fork, a second REPORT (`compacted: A → B {unit}
+resident`). One code, two facts, which is why `compaction-facts` reads the SENTENCE
 and not the code: the same warning code is a row saying *Compacting* and a row saying
 *Compacted*, and only the words tell them apart. Filed as an observation for the
 daemon's side rather than fixed here — the daemon naming one thing twice is its
@@ -125,42 +134,56 @@ numbers want to be fields, and the ask is filed. Two things make it safe meanwhi
     with invented numbers.
 
 Returns a plist whose `:kind` is `:compacted`, `:compacting`, `:no-progress`, `:failed`
-or `:reseat`. NIL means *this head cannot read that sentence*."
+or `:reseat`. NIL means *this head cannot read that sentence*.
+
+**PARSED BY SHAPE, NOT BY ONE SPELLING OF THE UNIT** (the 2026-10-11 sweep, section A). The
+sentences grew a `{unit}` the day the daemon started counting in the provider's tokens (letibot
+R72): it is `tokens` on a local model, `deepseek tokens` on a metered one, and `ledger tokens
+(unscaled: no round on deepseek has measured yet)` before the first round — and the announcement
+grew a `{basis}` clause after `resident` (*` (740000 at the last round + 3000 appended since)`*).
+Every arm here keyed on ` tokens …`, so a deepseek session's compactions were notes again and the
+operator saw no numbers on the one head that should have shown them. So each arm below reads the
+NUMBERS by their position around the daemon's fixed words — `compacted: A → B`, `R of W`,
+`leaving less than the H` — and lets whatever stands between be the unit. The dead arm
+` tokens resident now, was ` went with it: that sentence goes to stderr only now, and the closing
+line of an automatic compaction is `compacted: A → B {unit} resident{estimated}.`
+(`harness.rs`, `compacted_line`)."
   (let ((d (or detail "")))
     (cond
       ;; the failure, which has no numbers to give: "the automatic compaction did not run"
       ((search "the automatic compaction did not run" d)
        (list :kind :failed))
       ;; "compacted from R to A tokens and that is STILL within H of the W window, …"
-      ((search " tokens and that is STILL within " d)
+      ((search " and that is STILL within " d)
        (list :kind :no-progress
              :was (%number-after d "compacted from")
              :after (%number-after d " to " (search "compacted from" d))
-             :headroom (%number-after d " tokens and that is STILL within ")
+             :headroom (%number-after d " and that is STILL within ")
              :window (%number-after d " of the ")))
-      ;; "compacted: W → A tokens, on transcript ID."
-      ((search " tokens, on transcript " d)
-       (let* ((mark " tokens, on transcript ")
-              (at (search mark d))
-              (from (+ at (length mark))))
-         (list :kind :compacted
-               :was (%number-after d "compacted: ")
-               :after (%number-after d " → ")
-               :transcript (subseq d from (or (position #\. d :start from) (length d))))))
-      ;; the re-seat's own account: "re-seated: N tokens of conversation carried …"
+      ;; the re-seat's own account: "re-seated: N {unit} of conversation carried …"
       ((search "re-seated: " d)
        (list :kind :reseat :tokens (%number-after d "re-seated: ")))
-      ;; the second report after the fork: "compacted: A tokens resident now, was W."
-      ((search " tokens resident now, was " d)
-       (list :kind :compacted
-             :after (%number-after d "compacted: ")
-             :was (%number-after d " tokens resident now, was ")))
-      ;; the announcement: "R of W tokens resident, leaving less than the H …"
-      ((search " tokens resident, leaving less than the " d)
+      ;; "compacted: W → A {unit}, on transcript ID."  and the closing line
+      ;; "compacted: W → A {unit} resident{estimated}." — the numbers sit around the arrow and the
+      ;; unit is whatever stands after the second one
+      ((and (uiop:string-prefix-p "compacted: " d) (search " → " d))
+       (let* ((mark ", on transcript ")
+              (at (search mark d))
+              (from (and at (+ at (length mark)))))
+         (append (list :kind :compacted
+                       :was (%number-after d "compacted: ")
+                       :after (%number-after d " → "))
+                 (when from
+                   (list :transcript (subseq d from (or (position #\. d :start from) (length d))))))))
+      ;; "compacted: R {unit} resident before." — the daemon could not measure a base
+      ((and (uiop:string-prefix-p "compacted: " d) (search " resident before" d))
+       (list :kind :compacted :was (%number-after d "compacted: ")))
+      ;; the announcement: "R of W {unit} resident{basis}, leaving less than the H the next turn needs"
+      ((and (%digits-at d 0) (search " of " d) (search ", leaving less than the " d))
        (list :kind :compacting
              :resident (nth-value 0 (%digits-at d 0))
              :window (%number-after d " of ")
-             :headroom (%number-after d " tokens resident, leaving less than the ")))
+             :headroom (%number-after d ", leaving less than the ")))
       (t nil))))
 
 ;;; ### R27's record: the structure the wire now carries beside the sentence
@@ -528,7 +551,14 @@ the screen, and a count of what is hidden is the one count that may not be wrong
     ;; door and — if this head ever has fetchers — the network, none of which the
     ;; session's folder can reach. Named here so a frame this head reads and acts
     ;; on is not reported as one it has never heard of.
-    :operator-call-allowed)
+    :operator-call-allowed
+    ;; **`QueueMoved` (protocol 43) is folded by the head's frame hook**, because what it moves
+    ;; lives on the HEAD — `head-merge-queue` and `*queues*` are daemon-level and not session
+    ;; state — and the folder has no head. It is broadcast to EVERY session's log (the queues
+    ;; are daemon-level and a pane may be open on any session), so without this line each move
+    ;; filed an *unknown event* row on every head, bumped the ⚠ alarm, and replayed on reattach
+    ;; (the 2026-10-11 sweep, section A).
+    :queue-moved)
   "Events this head KNOWS and does not fold into session state.
 
 Two kinds, and both have to be named or the counter cries wolf:

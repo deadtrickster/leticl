@@ -1,4 +1,4 @@
-;;;; protocol.lisp — the head frame vocabulary, protocol version 42.
+;;;; protocol.lisp — the head frame vocabulary, protocol version 43.
 ;;;; Source of truth: crates/sessionlog/src/protocol.rs. Frames are plists in
 ;;;; the image (PLAN.md §7, D4); the constructors below are the only place
 ;;;; that knows what a frame looks like on the wire.
@@ -11,13 +11,29 @@
 
 (in-package #:leticl)
 
-(defparameter +protocol-version+ 42
+(defparameter +protocol-version+ 43
   "The version this head announces at ATTACH, and the number is a CLAIM rather than a flag.
 
 The protocol's only compatibility check is EQUALITY at ATTACH, so a head that announces a
 version is saying *I know what those frames are* — and a head that announces a number it does
 not understand has traded a clear refusal for a mid-session surprise. So what 24, 25 and 27
 added is written down here rather than assumed:
+
+  · **43** IS TWO QUEUES (letibot R61, `protocol.rs` §43): *'review is review and merge is
+    merge. separate steps. separate queues.'* `ServerFrame::MergeQueue {entries}` became
+    `Queues {snapshot}` — one `QueueSnapshot` carrying the REVIEW queue and the MERGE queue,
+    each repository's lease (owner, pid, host, build, heartbeat), the target branches' health
+    (a `red` target is the emergency the pane leads with), the last moves (`recent`), the
+    archived count of the pre-split queue, and `unreadable` when the store could not be read —
+    *never drawn as an empty queue*. `MergeEntryAdded`/`MergeEntryMoved`/`MergeEntryRemoved`
+    became ONE event, `QueueMoved {queue, id, to, why}`, broadcast to EVERY session's log and
+    meaning *ask again* rather than *apply this delta*. **States travel as WORDS**, which is the
+    decision this number records: the v23 queue's seventh state (`vetoed`) took every older
+    head's whole frame down because a closed enum cannot decode a word it does not know, and a
+    pane that draws the word it is given cannot be broken that way again. `ClientFrame::
+    ListMergeQueue` keeps its name. MEASURED on this head before the bump (sweep 2026-10-11):
+    the `merge_queue` arm matched a frame no daemon sends, so `/queue` drew nothing, and every
+    `queue_moved` filed an *unknown event* row on every head and bumped the alarm.
 
   · **42** IS THE FOURTH AUTHOR (letibot `5e53434`): `TodoBy` gains `Queue` — the review
     queue's own session writes the board (*'reviews are subagents managed by the main

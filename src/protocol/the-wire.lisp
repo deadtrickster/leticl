@@ -71,8 +71,38 @@ not — there is deliberately no other way to obtain one (protocol.rs on Ack)."
         :expected-seq expected-seq
         :reason reason))
 
-(defun make-set-operator-todos (expected-seq items)
+(defparameter +todo-statuses+ '("pending" "in_progress" "completed" "postponed" "cancelled")
+  "The five words `TodoStatus` spells on the wire (`event.rs:82`, `rename_all = \"snake_case\"`):
+`pending`, `in_progress`, `completed`, `postponed` (protocol 36) and `cancelled` (protocol 41).
+
+**EVERY ONE OF THEM IS SENT AS IT IS, and the list exists because two were not.** The map in
+`make-set-operator-todos` knew `completed` and `postponed` and wrote `pending` for anything
+else — so `/todo rm N`, which sets `cancelled` in the head's store (the daemon's own word for a
+row struck off), went out as `pending`, the board stored pending, and the next `todos_updated`
+folded pending back over the head's `cancelled`: **the row the operator struck off came back**
+(the 2026-10-11 sweep, section A). A word the daemon's enum does not know fails the whole
+frame — serde has no catch-all on `TodoStatus` — so the map still has to be closed, and it is
+closed by this list rather than by a `cond` that has to grow one arm per word. `open`, the
+head's own word for a lifted row, is not a wire word and goes out as `pending`.")
+
+(defun %wire-todo-status (status)
+  "STATUS as the wire spells it: one of `+todo-statuses+` unchanged, anything else `pending`."
+  (if (member status +todo-statuses+ :test #'equal) status "pending"))
+
+(defun make-set-operator-todos (expected-seq items &optional moved)
   "The operator's todos, to the daemon that keeps the board — **ONE list, two authors.**
+
+**AND `MOVED`, the operator's hand on rows that are NOT theirs** (protocol 41,
+`ClientFrame::SetOperatorTodos.moved: Vec<TodoState>`): each is `(:content WORDS :status S)` — the
+row's exact words, because the board has no ids, and the state the operator asked for. It rides
+this frame rather than one of its own because the daemon's docstring says why: *they are one act
+of the operator's — the board as I want it — and one frame for one act is what keeps a head from
+accumulating a difference between its copy and the store.* `#[serde(default)]`, so it is OMITTED
+when there is nothing to move (`%encode-object` drops a NIL) and a daemon older than 41 draws the
+board it drew before. **Why it exists**: a row the MODEL wrote, accurate and waiting on a person,
+had no door — `todo_write` refuses `postponed`, and `/todo postpone N` numbered only the
+operator's own rows — and the daemon measured a model restating one true sentence for fourteen
+turns because nothing could silence it.
 
 The operator's ruling: *\"the existing getter should return mine and yours, and the rest is also the
 same. the only difference is who created and that is it.\"* So the daemon's board holds one list, the
@@ -112,14 +142,13 @@ the operator's rows reach it, a reminder can only ever be about something the MO
         ;; this head keeps saying it: a mapping that collapsed a set-aside row back to `pending`
         ;; would undo the act on the next push — any add, any delete — while the head's own list
         ;; still drew `[p]`, which is the same two-mappings defect the `completed` constant was,
-        ;; one spelling further along. Every other status is the wire's `pending`, as before.
+        ;; one spelling further along.
+        ;; **AND THEN `cancelled` WAS THE FOURTH, AND THE `cond` WAS THE DEFECT** — see
+        ;; `+todo-statuses+`: every word the enum spells goes out as it is, and only a word the
+        ;; wire does not have (`open`) becomes `pending`.
         :items (coerce (mapcar (lambda (item)
                                  (list :content (or (getf item :content) "")
-                                       :status (cond ((equal (getf item :status) "completed")
-                                                      "completed")
-                                                     ((equal (getf item :status) "postponed")
-                                                      "postponed")
-                                                     (t "pending"))
+                                       :status (%wire-todo-status (getf item :status))
                                        :by "operator"
                                        ;; **AND THE CONDITION, WHEN THERE IS ONE.** `when` is
                                        ;; `#[serde(default)]` on the wire, so it is OMITTED
@@ -132,7 +161,13 @@ the operator's rows reach it, a reminder can only ever be about something the MO
                                        ;; map learning anything.
                                        :when (getf item :when)))
                                items)
-                       'vector)))
+                       'vector)
+        ;; a LIST and not a vector, deliberately: NIL is elided, which is what an older daemon
+        ;; wants and what `#[serde(default)]` accepts — the opposite of `items`' case above
+        :moved (mapcar (lambda (m)
+                         (list :content (or (getf m :content) "")
+                               :status (%wire-todo-status (getf m :status))))
+                       moved)))
 
 (defun make-withdraw-prompts (expected-seq)
   "Take back what this head queued — the original leaves the daemon's queue so
@@ -222,15 +257,48 @@ for \"nothing to say\", and *deferring is not sending*."
 (defun make-list-todos ()
   (list :frame "list_todos"))
 
-(defun make-term-open (cols rows)
-  "Open a terminal in this session at COLS x ROWS. The daemon refuses a SECOND while one is live
-(`protocol.rs:404`), which is why the verb checks `head-term` rather than being told."
-  (list :frame "term_open" :cols cols :rows rows))
+(defun make-term-open (line cols rows)
+  "Open a terminal in this session: LINE is the operator's own `!term …` line, VERB INCLUDED, at
+COLS x ROWS.
 
-(defun make-term-input (data)
+**`line` IS A REQUIRED FIELD AND THIS FRAME WENT OUT WITHOUT IT** (`TermOpen { line: String, cols,
+rows }`, protocol.rs:2131). Measured in the 2026-10-11 sweep: the constructor sent `{cols,rows}`,
+serde refused the whole `ClientFrame`, the daemon answered `Bye` and dropped the socket — so
+`/term` cost a reconnect every time and never opened anything. The line carries the verb because
+the daemon strips it at the execution site (`term_command`, the one rule for `!` lines), and its
+three readings are the daemon's: `!term` alone ATTACHES to the pane this session already has,
+`!term close` ENDS it, and `!term nano notes.txt` runs that line in a new pane. The daemon refuses a
+SECOND open while one is live (`protocol.rs:404`), which is why the verb checks `head-term` rather
+than being told."
+  (list :frame "term_open" :line (or line "!term") :cols cols :rows rows))
+
+(defun %utf8-octets (text)
+  "TEXT as a vector of its UTF-8 byte values — the shape `Vec<u8>` takes on a JSON wire."
+  (coerce (sb-ext:string-to-octets (or text "") :external-format :utf-8) 'simple-vector))
+
+(defun make-term-input (text)
   "A keystroke for the PROGRAM — the pane's key path. A terminal that takes no keystroke for the
-program is not a terminal, which is why this frame and that path land together."
-  (list :frame "term_input" :data data))
+program is not a terminal, which is why this frame and that path land together.
+
+**`bytes: Vec<u8>`, and the caller still hands a STRING.** The daemon wants the operator's keys as a
+byte vector (`protocol.rs:2151` — *a head that decoded `ESC [ A` into up and re-encoded it would be
+a keymap in front of a program*), and a `Vec<u8>` is a JSON array of integers; this head's input
+layer reads decoded characters, so the UTF-8 encoding happens HERE, once, and every key path keeps
+passing the text it has. The old frame sent `data: STRING`, which serde refused with the whole
+`ClientFrame` — the same `Bye` `make-term-open` records (sweep 2026-10-11, section A). A vector and
+never a list, so an empty keystroke is `[]` rather than an elided required field."
+  (list :frame "term_input" :bytes (%utf8-octets text)))
+
+(defun make-term-status ()
+  "**Is something running in this session's pane, and what?** — `TermStatus` (protocol 34), answered
+on this connection with `term_status {command}`, `null` when nothing is.
+
+The daemon's own reason it is a READ and not a pushed row: a head that detached or switched
+session must still be able to learn that a program is there, and *the alternative is a transcript
+row for a fact that is not an event*. Asked by `/term status`, and the answer is said once rather
+than drawn — a `null` draws nothing at all, which is the ordinary state of a session nobody has
+run `!term` in."
+  (list :frame "term_status"))
 
 (defun make-term-resize (cols rows)
   "The rectangle, told to the PROGRAM rather than to the daemon — sent when a terminal attaches at
@@ -254,11 +322,15 @@ fresh read of the directory."
   (list :frame "list_notes"))
 
 (defun make-list-merge-queue ()
-  "The merge queue as of NOW — daemon-level, and the first thing a head asks for.
+  "The review queue AND the merge queue as of NOW — daemon-level, and the first thing a head asks
+for. The frame kept its name at protocol 43 (`ClientFrame::ListMergeQueue`, protocol.rs:1790);
+what changed is the ANSWER: `queues {snapshot}` — one `QueueSnapshot` of both queues, each
+repository's lease, the target branches' health and the last moves — in place of `merge_queue
+{entries}`, and every change after it arrives as ONE event, `QueueMoved {queue,id,to,why}`, which
+is a hint to ask again rather than a delta to apply.
 
 **THE SNAPSHOT CARRIES NONE OF IT BY DESIGN, so a head that never asks draws nothing** — the same
-bootstrap rule `/todos` keeps. The reply is the whole queue and every change after it arrives as
-`MergeEntryAdded`/`MergeEntryMoved`.
+bootstrap rule `/todos` keeps.
 (`TODO.md`'s merge-queue box, step one of five: the frames and the ASK together — the suite's
 `every-frame-constructor-is-actually-sent` refuses a wire half with no caller, which is the
 invariant doing its job.)"

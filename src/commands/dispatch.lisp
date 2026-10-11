@@ -179,10 +179,39 @@ on ClientFrame::Slash)."
        ;; **ASK AND OPEN.** The ask is `TermOpen` and the daemon answers `TermAttached`. A terminal
        ;; already live opens the PANE rather than sending a second open: ONE pane per session is the
        ;; daemon's rule, and a refused second open would be a keystroke that did nothing.
-       (if (head-term head)
-           (setf (head-mode head) :term (head-dirty head) t)
-           (progn (%send head (make-term-open (head-cols head) (1- (head-rows head))))
-                  (say head "asking the daemon for a terminal…")))
+       ;;
+       ;; **AND THE LINE GOES WITH IT, VERB INCLUDED** — `TermOpen { line, cols, rows }`
+       ;; (protocol.rs:2131; the sweep of 2026-10-11 measured this frame going out with no
+       ;; `line` and the daemon dropping the socket). `/term CMD` runs CMD in a new pane;
+       ;; `/term` alone with no live pane is the daemon's ATTACH reading (`!term` bare: *give
+       ;; me the pane this session has*, answered `TermAttached` or `TermEnded`); `/term status`
+       ;; asks what is running without opening anything — `TermStatus`, the read the daemon
+       ;; keeps for a head that detached. The rectangle is `%term-rectangle`'s, the same one
+       ;; `TermResize` tells the program.
+       ;;
+       ;; **`/term close` IS THE ENDING, AND THE ONLY ONE** (the daemon's own correction at protocol
+       ;; 34: `ctrl-\` DETACHES and sends nothing; *ending has to be said*). It sends `TermClose`,
+       ;; which kills the program and everything it started, and the daemon answers `TermEnded`.
+       ;; Idempotent and quiet daemon-side when there is no pane, so it is sent whether or not this
+       ;; head holds one: the daemon may hold a pane this head detached from.
+       (cond
+         ((string= rest "status")
+          (%send head (make-term-status))
+          (say head "asking the daemon what is running in this session's pane…"))
+         ((string= rest "close")
+          (%send head (make-term-close))
+          (say head "ending the terminal — the program and everything it started go with it"))
+         ((and (head-term head) (zerop (length rest)))
+          (setf (head-mode head) :term (head-dirty head) t))
+         (t
+          (multiple-value-bind (cols rows) (%term-rectangle head)
+            (%send head (make-term-open (if (plusp (length rest))
+                                            (format nil "!term ~a" rest)
+                                            "!term")
+                                        cols rows)))
+          (say head (if (plusp (length rest))
+                        "asking the daemon for a terminal…"
+                        "asking the daemon for a terminal — the pane this session already has, if any…"))))
        t)
       ((string= verb "standing")
        ;; **ASK AND OPEN.** The ask belongs to the pane's OPEN — measured in the reference, where
@@ -200,8 +229,29 @@ on ClientFrame::Slash)."
        ;; could not land before it.
        ;; ASK **and** open, the jobs pane's own shape: a pane that appears only when the answer
        ;; lands is a pane the reader stared at an empty screen for.
-       (%toggle-pane head :queue (lambda () (%send head (make-list-merge-queue))))
-       (say head "asking the daemon for the merge queue…")
+       ;;
+       ;; **AND THE ARGUMENTS ARE READ** (R61; the sweep of 2026-10-11 measured `/queue` ignoring
+       ;; them). `/queue approve|veto|rm|restart ID` is the person's verb on one row, sent as the
+       ;; SAME slash line the reference's `a`/`v`/`d`/`r` keys send (`queue VERB ID`, an
+       ;; `Action::Slash` — `app/keys/panes.rs:queue_verb`), so the key and the typed spelling
+       ;; cannot drift; a row the daemon would refuse is SAID rather than sent (`queue-verb`).
+       ;; `/queue review|merge` picks the view — the typed door for the pane's Tab.
+       (let* ((words (uiop:split-string rest :separator " "))
+              (sub (string-downcase (or (first words) "")))
+              (arg (second words)))
+         (cond
+           ((zerop (length rest))
+            (%toggle-pane head :queue (lambda () (ask-queues head)))
+            (say head "asking the daemon for the queues…"))
+           ((member sub '("review" "merge") :test #'string=)
+            (queue-switch-view head (if (string= sub "review") :review :merge))
+            (unless (eq (head-mode head) :queue)
+              (%toggle-pane head :queue (lambda () (ask-queues head)))))
+           ((member sub '("approve" "veto" "rm" "restart") :test #'string=)
+            (if (and arg (plusp (length arg)))
+                (queue-verb head sub arg)
+                (say head (format nil "which row? /queue ~a ID — the queue pane prints each row's id" sub))))
+           (t (say head "usage: /queue · /queue review|merge · /queue approve|veto|rm|restart ID"))))
        t)
       ((string= verb "jobs")
        ;; ASK, then open. The jobs pane drew `N out` from JobSettled events, which

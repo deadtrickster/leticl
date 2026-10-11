@@ -301,7 +301,40 @@ The entry comes from `*merge-detail*`, which `pane-enter` on the queue pane sets
                      (cons (format nil "  [~a]" (or (getf e :state) "?"))
                            (merge-state-style (or (getf e :state) ""))))
                nil)
-         (let ((out nil))
+         (let ((out nil)
+               (now (queue-now-ms)))
+           ;; **THE FIELDS PROTOCOL 43 PUT ON A ROW**, each on its own line when the row has it:
+           ;; which queue, the repository and target, how long the row has been IN its state, the
+           ;; daemon working it, the shas and the verdict. A hand-made or v23 row has none and draws
+           ;; none — the view says nothing it was not told.
+           (when (getf e :queue)
+             (push (list (cons (format nil "  queue ~a~@[ · ~a~]~@[ onto `~a`~]"
+                                       (getf e :queue)
+                                       (and (getf e :repository) (%repo-name (getf e :repository)))
+                                       (getf e :target))
+                               '(:dim t)))
+                   out))
+           (when (getf e :state-ms)
+             (push (list (cons (format nil "  ~a in this state~@[ · by ~a~]"
+                                       (%dur-human (- now (getf e :state-ms)))
+                                       (let ((o (getf e :owner))) (and (stringp o) (plusp (length o)) (%owner-word o))))
+                               '(:dim t)))
+                   out))
+           (when (getf e :head-sha)
+             (push (list (cons (format nil "  head ~a~@[ · verdict ~a~]~@[ at ~a~]~@[ by ~a~]"
+                                       (getf e :head-sha) (getf e :verdict) (getf e :reviewed-sha) (getf e :verdict-by))
+                               '(:dim t)))
+                   out))
+           (when (getf e :approved-sha)
+             (push (list (cons (format nil "  approved ~a~@[ by ~a~]~@[ (review ~a)~]~@[ · rebased ~a~]~@[ · landed ~a~]"
+                                       (getf e :approved-sha) (getf e :approved-by) (getf e :review-id)
+                                       (getf e :rebased-sha) (getf e :landed-sha))
+                               '(:dim t)))
+                   out))
+           (dolist (reason (getf e :reasons))
+             (push (list (cons (format nil "  reason: ~a" reason) '(:dim t))) out))
+           (when (getf e :fixes)
+             (push (list (cons (format nil "  fixes ~a" (getf e :fixes)) '(:dim t))) out))
            (when (getf e :priority)
              (push (list (cons (format nil "  priority ~a" (getf e :priority)) '(:dim t))) out))
            (when (getf e :needs)
@@ -326,6 +359,13 @@ The entry comes from `*merge-detail*`, which `pane-enter` on the queue pane sets
                                  (merge-state-style (if (string-equal (getf step :outcome) "green")
                                                         "landed" (getf step :outcome)))))
                      out)))
+           ;; **EVERY MOVE OF THE ROW** — the whole transition history, where the list view shows
+           ;; the last three (R61 requirement 2). Only with a snapshot: without the history there is
+           ;; nothing honest to say.
+           (when *queues*
+             (push nil out)
+             (push (list (cons "  its moves" '(:bold t))) out)
+             (dolist (l (%queue-move-lines (or (getf e :id) "") nil now "    ")) (push l out)))
            (push nil out)
            (push (list (cons "  esc returns to the queue, on the row you chose" '(:dim t))) out)
            (nreverse out))))))
@@ -452,9 +492,74 @@ tail's spaces as a ragged gap."
   ;; to find unchanged when it comes back.
   (main nil))
 
+(defun %term-rectangle (head)
+  "The rectangle this head's terminal pane draws into — `(values cols rows)` — and the ONE place it
+is computed: `TermOpen` asks with it, `TermAttached` defaults to it (the frame carries only the
+command, `protocol.rs:2572`), and `TermResize` tells the program it. One row under the head's
+height, which is what the pane sent before the three readers were made to agree."
+  (values (max 1 (head-cols head)) (max 1 (1- (head-rows head)))))
+
+(defvar *term-status* nil
+  "The last `term_status` answer — the command this session's pane is running, or NIL for none —
+kept so a later reader (an edge, a hint) can say it without asking again. Said once when it
+arrives; never drawn as a row (`protocol.rs:2557`).")
+
+(defparameter +term-output-cap+ (* 256 1024)
+  "How much of a terminal's raw output is KEPT — the last 256 KB. The output is kept so the screen
+can be re-fed if the rectangle changes, and a cap is what keeps a chatty program from growing the
+head without bound (the 2026-10-11 stability pass: *`!term` output grows without bound and each
+append copies it all*).")
+
+(defun %term-append-output (term text)
+  "Append TEXT to TERM's `:output`, through an ADJUSTABLE buffer rather than `concatenate` of the
+whole string — an append is amortised constant, not a copy of everything so far — and drop the
+front past `+term-output-cap+`. Answers the buffer. `equal` compares a fill-pointered string by its
+active characters, so a reader that holds a literal to compare against sees what it expects."
+  (let ((buf (getf term :output)))
+    (unless (and (stringp buf) (adjustable-array-p buf) (array-has-fill-pointer-p buf))
+      (let ((new (make-array (max 4096 (* 2 (length (or buf ""))))
+                             :element-type 'character :adjustable t :fill-pointer 0)))
+        (when (stringp buf) (loop for c across buf do (vector-push-extend c new)))
+        (setf (getf term :output) new
+              buf new)))
+    (loop for c across text do (vector-push-extend c buf (max 4096 (length buf))))
+    (when (> (fill-pointer buf) +term-output-cap+)
+      (let ((excess (- (fill-pointer buf) +term-output-cap+)))
+        (replace buf buf :start1 0 :start2 excess)
+        (setf (fill-pointer buf) +term-output-cap+)))
+    buf))
+
+(defun %utf8-complete-prefix (octets)
+  "How many of OCTETS end on a UTF-8 character boundary — everything but a trailing sequence that is
+still waiting for its continuation bytes. A program's bytes arrive in frames cut wherever the pty
+read stopped, so a multi-byte glyph (every box-drawing character `top` draws) can straddle two
+`term_output`s; decoding each frame alone would print a replacement character for both halves."
+  (let ((len (length octets)))
+    (loop for i from (1- len) downto (max 0 (- len 3))
+          do (let ((b (aref octets i)))
+               (cond ((< b #x80) (return len))
+                     ((>= b #xC0)
+                      (let ((need (cond ((>= b #xF0) 4) ((>= b #xE0) 3) (t 2))))
+                        (return (if (< (- len i) need) i len))))))
+          finally (return len))))
+
+(defun %term-decode-bytes (term bytes)
+  "BYTES — the `Vec<u8>` of a `term_output`, a list or vector of integers — as TEXT, UTF-8 decoded,
+holding an incomplete trailing character back in TERM's `:pending` for the next frame. A byte that
+is not UTF-8 at all becomes `?` rather than an error: the pane's job is to keep drawing."
+  (let* ((pending (getf term :pending))
+         (all (concatenate '(vector (unsigned-byte 8))
+                           (or pending #())
+                           (remove-if-not (lambda (b) (and (integerp b) (<= 0 b 255)))
+                                          (coerce bytes 'list))))
+         (keep (%utf8-complete-prefix all)))
+    (setf (getf term :pending) (if (< keep (length all)) (subseq all keep) nil))
+    (sb-ext:octets-to-string all :external-format '(:utf-8 :replacement #\?) :end keep)))
+
 (defun term-screen-new (rows cols)
-  "A blank screen, cursor at home, and the WHOLE screen as the scrolling region."
-  (let* ((rows (max 1 rows)) (cols (max 1 cols))
+  "A blank screen, cursor at home, and the WHOLE screen as the scrolling region. A NIL dimension —
+a frame that did not carry one — is one row or one column, never a type error."
+  (let* ((rows (max 1 (or rows 1))) (cols (max 1 (or cols 1)))
          (s (%make-term-screen rows cols (%blank-cells (* rows cols)))))
     (setf (term-screen-bottom s) (1- rows))
     s))
@@ -856,7 +961,12 @@ it is not, which is the one thing that would make the missing half invisible."
     (if (null term)
         (list (list (cons "no terminal — `!term` opens one in this session" '(:dim t))))
         (append
-         (list (list (cons (format nil "term ~dx~d" (getf term :cols) (getf term :rows)) '(:bold t))))
+         ;; **AND WHAT IS RUNNING IN IT**, the operator's own requirement for an attach — *"attaching
+         ;; … saying what is running in it"* — with the verb put back on, because the daemon was
+         ;; handed the command with the verb stripped and never saw the spelling they typed.
+         (list (list (cons (format nil "term ~dx~d~@[ · !term ~a~]"
+                                   (getf term :cols) (getf term :rows) (getf term :command))
+                           '(:bold t))))
          (when (getf term :ended)
            (list (list (cons (format nil "  ended: ~a" (getf term :ended)) '(:fg :yellow)))))
          (list nil)
@@ -904,9 +1014,13 @@ registration rather than a pile of drawing (see `TODO.md`'s merge-queue box)."
   (merge-queue-lines head cols))
 
 (defmethod pane-hint ((pane merge-queue-pane) head)
-  "What the queue pane's own keys do — `q` closes it, and the gate runs when a branch is picked."
+  "What the queue pane offers — `q` closes it, Enter opens the row whole, and the verbs are TYPED
+(`/queue approve|veto|rm|restart ID`, `/queue review|merge`): the reference's `a`/`v`/`d`/`r` and
+Tab are an arm in `%pane-key` this head does not have yet, and a hint that offers a key which does
+nothing is worse than a shorter hint."
   (declare (ignore head))
-  (list (cons "q closes · the gate runs when a branch is picked" '(:dim t))))
+  (list (cons "↑↓ moves · enter opens the row · /queue review|merge · /queue approve|veto|rm|restart ID · q closes"
+              '(:dim t))))
 (defmethod pane-cursor-rows ((pane todos-pane) head)
   (length (repo-todo-rows-cached
            (getf (session-wiring (head-session head)) :workspace))))

@@ -241,6 +241,14 @@ answered together or not at all.")
     ;; in the queue, said to the parent that started it. A sentence about something
     ;; the operator asked for that worked.
     "merge_queued"
+    ;; **`merge_queue_recovered` and `queue_lease_lost`** — letibot R61's two routine codes
+    ;; (`warning.rs`): the store that could not be read is readable again, and *the queues are
+    ;; still served, by the daemon that took the lease over*. Both receipts for the queue
+    ;; recovering by itself; their failing siblings (`queue_blocked`, `target_red`,
+    ;; `queue_needs_human`, `queue_settings_unreadable`, `queue_wrong_build`) stay out of this
+    ;; list and draw red. Caught by `a-routine-warning-code-is-one-letibot-calls-routine` in
+    ;; the 2026-10-11 sweep, which is the guard working.
+    "merge_queue_recovered" "queue_lease_lost"
     ;; **`daemon_stopping_runs`** — the daemon is stopping and there are runs in
     ;; flight; a receipt for the wait. Routine because the daemon said it would
     ;; stop and did.

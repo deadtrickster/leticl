@@ -704,37 +704,16 @@ empty pane on every attach, which is the defect the guard exists to prevent, inv
                           :key (lambda (d) (getf d :req-id)) :test #'string=)
             (setf (head-decision-sel head) 0
                   (head-dirty head) t)))
-         ;; **THE TWO EVENTS THAT MAKE THE QUEUE LIVE RATHER THAN A SNAPSHOT** (the merge queue's
-         ;; first step, `TODO.md`): a head that asked once and folded nothing after would draw the
-         ;; queue as it was at the ask.
-         ;;
-         ;; `:merge-entry-added` INSERTS by id, REPLACING an entry it already holds: an event can
-         ;; arrive twice through a reconnect's replay (the read mark is a seq, so a redelivery is a
-         ;; duplicate by design), and a queue that doubles on every reconnect is a pane nobody can
-         ;; read.
-         ((:merge-entry-added)
-          (let* ((entry (getf env :entry))
-                 (id (and entry (getf entry :id)))
-                 (queue (head-merge-queue head)))
-            (when (and id queue)
-              (let ((at (position id queue :key (lambda (e) (getf e :id)) :test #'equal)))
-                (if at
-                    (setf (nth at queue) entry)
-                    (setf (head-merge-queue head) (append queue (list entry))))
-                (setf (head-dirty head) t))))
-          :dirty)
-         ;; `:merge-entry-moved` is STATE PLUS EVIDENCE, folded onto the row the reply gave us —
-         ;; never invented. An entry this head has not been told about arrives with the next ask,
-         ;; which is the rule `:job-settled` keeps one event over.
-         ((:merge-entry-moved)
-          (let ((row (find (getf env :id) (head-merge-queue head)
-                           :key (lambda (e) (getf e :id)) :test #'equal)))
-            (when row
-              (setf (getf row :state) (getf env :state))
-              ;; **AND AN EVENT THAT CARRIES NO EVIDENCE DOES NOT ERASE THE REASON WE HAVE** — a
-              ;; move with nothing saying why is the defect the field exists to prevent.
-              (when (getf env :evidence) (setf (getf row :evidence) (getf env :evidence)))
-              (setf (head-dirty head) t)))
+         ;; **THE ONE EVENT THAT MAKES THE QUEUES LIVE RATHER THAN A SNAPSHOT** (protocol 43):
+         ;; `QueueMoved {queue, id, to, why}` replaced `MergeEntryAdded`/`MergeEntryMoved`/
+         ;; `MergeEntryRemoved`, whose arms sat here matching tags no daemon sends while every real
+         ;; move filed an *unknown event* row on every head (the 2026-10-11 sweep, section A). It is
+         ;; STATE PLUS EVIDENCE folded onto the row the snapshot gave us — never invented — and a hint
+         ;; to ask again; `queue-moved` does both and stays quiet, because the daemon broadcasts it
+         ;; to every session's log. A redelivery through a reconnect's replay sets the same state
+         ;; twice, which is the duplicate-by-design the read mark allows.
+         ((:queue-moved)
+          (queue-moved head env)
           :dirty)
          ((:job-settled)
           ;; FOLDED INTO THE ROW THE DAEMON GAVE US, never invented. The jobs
@@ -982,30 +961,64 @@ empty pane on every attach, which is the defect the guard exists to prevent, inv
     ((string= (frame-name frame) "term_attached")
      ;; the daemon accepted the open; the pane is live, and the PROGRAM is told the size the pane has
      ;; rather than the size it asked with — the window may have changed between the two.
-     ;; **THE TERMINAL GETS A SCREEN AT ATTACH, and the sizes are the DAEMON'S**, because that is the
-     ;; rectangle the program was told about and the pane draws into it.
-     (setf (head-term head) (list :cols (getf frame :cols) :rows (getf frame :rows) :output ""
-                                  :screen (term-screen-new (getf frame :rows) (getf frame :cols))
-                                  :dropped 0)
-           (head-mode head) :term
-           (head-dirty head) t)
-     (%send head (make-term-resize (head-cols head) (1- (head-rows head))))
+     ;; **THE TERMINAL GETS A SCREEN AT ATTACH, AND THE RECTANGLE IS THE PANE'S OWN.** The frame
+     ;; carries ONLY the command (`TermAttached { command }`, protocol.rs:2572 — *a command and not
+     ;; the line*: the daemon never saw the verb) — the daemon has no screen, so the size is this
+     ;; head's fact and `%term-rectangle` is where it is computed. This arm read `:cols`/`:rows` off
+     ;; the frame and `(max 1 nil)` was a type error on every real attach (the 2026-10-11 sweep,
+     ;; section A). A frame that does carry them (a fixture) is honoured, because a daemon that said
+     ;; a size meant it.
+     (multiple-value-bind (cols rows) (%term-rectangle head)
+       (let ((cols (or (getf frame :cols) cols))
+             (rows (or (getf frame :rows) rows)))
+         (setf (head-term head) (list :cols cols :rows rows :output ""
+                                      :command (getf frame :command)
+                                      :screen (term-screen-new rows cols)
+                                      :dropped 0 :pending nil)
+               (head-mode head) :term
+               (head-dirty head) t)
+         ;; the PROGRAM is told the size the pane has — the window may have changed between the
+         ;; ask and the answer
+         (%send head (make-term-resize cols rows))))
      :control)
     ((string= (frame-name frame) "term_output")
      ;; **THE BYTES, APPENDED** — the pane draws from this and nothing else, so it cannot disagree
      ;; with what arrived. A frame for a terminal this head is not showing is DROPPED, not buffered:
      ;; one pane per session, and the daemon's own refusal is why.
+     ;;
+     ;; **`bytes: Vec<u8>` — a JSON array of byte values, UTF-8 decoded HERE** (protocol.rs:2597:
+     ;; *raw: cursor addressing, `\r`, a partial UTF-8 character and all*). This arm read `:data` as
+     ;; a string and always got `""`, so a live terminal drew nothing (the sweep, section A). A
+     ;; character cut across two frames waits in `:pending` for its tail (`%term-decode-bytes`).
      (when (head-term head)
-       ;; **THE BYTES GO INTO THE SCREEN AND ARE ALSO KEPT.** The screen is what the pane DRAWS —
-       ;; a program that moved the cursor is drawn where it moved it — and the raw text is kept
-       ;; because it is the only thing that can be re-fed if the rectangle changes.
-       (setf (getf (head-term head) :output)
-             (concatenate 'string (getf (head-term head) :output) (or (getf frame :data) ""))
-             (head-dirty head) t)
-       (let ((scr (getf (head-term head) :screen)))
-         (when scr
-           (incf (getf (head-term head) :dropped)
-                 (term-screen-feed scr (or (getf frame :data) ""))))))
+       (let* ((term (head-term head))
+              (text (cond ((getf frame :bytes) (%term-decode-bytes term (getf frame :bytes)))
+                          ;; a fixture's string, for the readers that build one by hand
+                          ((stringp (getf frame :data)) (getf frame :data))
+                          (t ""))))
+         ;; **THE BYTES GO INTO THE SCREEN AND ARE ALSO KEPT — CAPPED.** The screen is what the pane
+         ;; DRAWS — a program that moved the cursor is drawn where it moved it — and the raw text is
+         ;; kept because it is the only thing that can be re-fed if the rectangle changes; kept
+         ;; through an adjustable buffer and to the last `+term-output-cap+`, because the
+         ;; `concatenate` that was here copied the whole history on every frame and never let go
+         ;; of any of it.
+         (%term-append-output term text)
+         (setf (head-dirty head) t)
+         (let ((scr (getf term :screen)))
+           (when scr
+             (incf (getf term :dropped) (term-screen-feed scr text))))))
+     :control)
+    ((string= (frame-name frame) "term_status")
+     ;; **WHAT THIS SESSION'S PANE IS RUNNING, OR NOTHING** — the answer to `/term status`
+     ;; (`TermStatus { command: Option<String> }`, protocol.rs:2557). `null` is *no live pane*, the
+     ;; ordinary state of a session nobody ran `!term` in, and the daemon's own rule is that a head
+     ;; draws it as NOTHING rather than as a row — so both answers are said once on the status
+     ;; line and nothing is filed.
+     (let ((command (getf frame :command)))
+       (setf *term-status* command)
+       (say head (if (and (stringp command) (plusp (length command)))
+                     (format nil "a pane is running `!term ~a` — /term attaches to it" command)
+                     "nothing is running in this session's pane")))
      :control)
     ((string= (frame-name frame) "term_ended")
      ;; the ENDING, and which one — a person's `TermClose` and the daemon ending it are different
@@ -1023,14 +1036,14 @@ empty pane on every attach, which is the defect the guard exists to prevent, inv
              (head-dirty head) t)
        (say head (format nil "the harness is reading ~d note~:p into this session" (length notes))))
      :control)
-    ((string= (frame-name frame) "merge_queue")
-     ;; **THE QUEUE AS OF NOW, and the two events keep it from here.** `MergeQueue` is the WHOLE
-     ;; queue, so this REPLACES rather than merges — folding it into what the head held would let a
-     ;; landed entry survive a reset. Not scoped to this head's session: the queue is daemon-level.
-     (let ((entries (getf frame :entries)))
-       (setf (head-merge-queue head) entries
-             (head-dirty head) t)
-       (say head (format nil "the merge queue holds ~d ~:p" (length entries))))
+    ((string= (frame-name frame) "queues")
+     ;; **BOTH QUEUES AS OF NOW** (protocol 43, `ServerFrame::Queues { snapshot }`), replacing the
+     ;; `merge_queue {entries}` arm that matched a frame no daemon sends any more — so `/queue` drew
+     ;; nothing (the 2026-10-11 sweep, section A). The snapshot is the WHOLE of both queues, each
+     ;; repository's lease, the targets' health and the recent moves, so `fold-queues` REPLACES
+     ;; rather than merges — folding it into what the head held would let a landed row survive a
+     ;; reset. Not scoped to this head's session: the queues are daemon-level.
+     (fold-queues head (getf frame :snapshot))
      :control)
     ((string= (frame-name frame) "jobs")
      ;; **A REPLY WHOSE SESSION IS NOT THIS ONE IS NOT THIS HEAD'S COPY** (T6 in `TODO.md`).
@@ -1202,11 +1215,17 @@ empty pane on every attach, which is the defect the guard exists to prevent, inv
      :control)))
 
 (defun %poll-resize (head)
+  "The loop's per-tick poll: the terminal's size, and — riding the same tick, because this is the
+one function in this file the loop calls every round — the queue pane's 5 s re-read
+(`tick-queues`). The honest home for that second call is the loop's own tick list beside
+`tick-peek` (`op-call.lisp`); it is here so the pane re-reads without that file changing hands,
+and a reader looking for who asks the daemon for the queues every five seconds finds it by name."
   (multiple-value-bind (cols rows) (terminal-size 1)
     (when (or (/= cols (head-cols head)) (/= rows (head-rows head)))
       (setf (head-cols head) cols (head-rows head) rows)
       (screen-resize (head-screen head) cols rows)
       (screen-resize (head-prev-screen head) cols rows)
       (setf (head-full-repaint head) t
-            (head-dirty head) t))))
+            (head-dirty head) t)))
+  (tick-queues head))
 

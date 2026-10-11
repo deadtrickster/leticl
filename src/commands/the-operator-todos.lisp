@@ -293,6 +293,14 @@ which is the same behaviour as before that store existed."
 (defvar *todo-file-unreadable* nil
   "Set when the todo file existed and could not be read, so a save must not overwrite it.")
 
+(defvar *todo-moves* nil
+  "The state moves waiting for the next `set_operator_todos` — `((:content WORDS :status S) …)` —
+the operator's `/todo postpone|resume|rm WORDS` on a row the MODEL wrote (protocol 41's `moved`).
+
+**By the row's words, because the board has no ids** (the operator ruled out a protocol bump for
+one), and the daemon's `TodoBoard::set_operator_states` resolves a row by its exact trimmed text.
+A `defvar` for HACKING.md's reason; one-shot, see `push-operator-todos`.")
+
 (defun push-operator-todos (head)
   "Send this head's operator rows to the daemon's board — the ONE sender.
 
@@ -308,9 +316,25 @@ sending, which is the honest answer for a test or a replay."
   (when (and head (session-session-id (head-session head)))
     ;; **THE ITEMS GO AS THEY ARE** — `make-set-operator-todos` owns the mapping into the wire's
     ;; shape, and mapping them here as well is how a hardcoded status hid for a whole session.
-    (%send head (make-set-operator-todos
-                 (session-expected-seq (head-session head))
-                 *operator-todos*))))
+    ;; **AND THE MOVES GO WITH THEM, ONCE** — `*todo-moves*` is the operator's hand on rows that are
+    ;; not theirs (protocol 41, `moved`); the board applies a move when it arrives and keeps the
+    ;; status the model cannot spell, so sending it again on the next push would re-apply a state
+    ;; the operator may since have lifted. Sent on the push that carries the act, then cleared.
+    (let ((moves *todo-moves*))
+      (setf *todo-moves* nil)
+      (%send head (make-set-operator-todos
+                   (session-expected-seq (head-session head))
+                   *operator-todos*
+                   moves)))))
+
+(defun todo-move-model-row (head words status)
+  "Queue a state move for the MODEL's row whose exact words are WORDS, and push it. The daemon's
+own reason this door exists: *the model spent fourteen turns restating one true sentence because
+nothing could silence a row that was correct* — `todo_write` refuses `postponed`, and the operator's
+numbered verbs reached only their own rows."
+  (push (list :content words :status status) *todo-moves*)
+  (push-operator-todos head)
+  (setf (head-dirty head) t))
 
 (defun fold-board-statuses (todos)
   "The BOARD's status for each of this head's own rows, taken by content — the model's returns.
@@ -492,8 +516,22 @@ line that silently created a row titled `postpone` would be a row nobody meant t
       (t
        (let ((at (ignore-errors (parse-integer n :junk-allowed t))))
          (cond
+           ;; **NOT A NUMBER: THE ROW'S OWN WORDS, which is how a row the MODEL wrote is named.**
+           ;; `/todo postpone fix the flaky test` reaches the board as a `moved` entry (protocol
+           ;; 41) rather than as a refusal: the pane numbers only the operator's half, and a model
+           ;; row has no number here. `resume` lifts it back to `pending`; `rm` strikes it off as
+           ;; `cancelled`, the daemon's own word. The daemon answers `todo_move_unresolved` when no
+           ;; row has those words, which is the refusal — not this head's guess.
            ((null at)
-            (say head (format nil "`~a` is not a row number — the todos pane numbers your rows" n))
+            (let ((words (string-trim " " (subseq (string-trim " " (or rest "")) (length verb)))))
+              (todo-move-model-row head words
+                                   (cond ((string= verb "postpone") "postponed")
+                                         ((string= verb "rm") "cancelled")
+                                         (t "pending")))
+              (say head (format nil "asked the board to mark the model's row `~a` ~a — a row with other words is refused by name"
+                                words (cond ((string= verb "postpone") "postponed")
+                                            ((string= verb "rm") "cancelled")
+                                            (t "pending")))))
             t)
            ((or (< at 1) (> at (length *operator-todos*)))
             (say head (format nil "there is no row ~d of yours — you have ~d"

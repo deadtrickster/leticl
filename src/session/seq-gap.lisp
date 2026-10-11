@@ -503,6 +503,14 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
                      ;; else; an ABSENT field is an older daemon and draws nothing either,
                      ;; because the head does not know.
                      :access (getf env :access)
+                     ;; **THE FILES A `bash` CALL WAS SEEN TO WRITE** (`DecisionRequested.write_targets`,
+                     ;; event.rs:1338, `#[serde(default)]`): `[{path, unresolved}]`, display-only,
+                     ;; and the permission card and the write card already read `:write-targets`
+                     ;; off the decision. This arm DROPPED it — the snapshot's `open_decisions`
+                     ;; carried it, so the card showed a write's targets only after a resync
+                     ;; (the 2026-10-11 sweep, section A). An absent field is an older daemon
+                     ;; and draws nothing, which is what every head drew before the field.
+                     :write-targets (getf env :write-targets)
                      ;; **converted through the ONE rule, and not at the card** — see
                      ;; `%decision-clock-rule`. This arm and the snapshot's
                      ;; `open_decisions` are the two places a decision is folded,

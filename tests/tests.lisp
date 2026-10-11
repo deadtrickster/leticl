@@ -8280,8 +8280,10 @@ SENTENCE is still a note, because a note is all there is."
   "The re-seat branch of the same function: nothing was summarised.")
 
 (defparameter +letibot-compacted-cut+
-  "compacted: 9449 tokens resident now, was 938669. The summary was CUT OFF at the model's length limit — it is incomplete, and the base says so too."
-  "The post-fork re-measure, with the truncation sentence.")
+  "compacted: 938669 → 9449 deepseek tokens resident (the new base sized as it will be sent; the next round measures it)."
+  "The post-fork re-measure — `compacted_line` (harness.rs), in the provider's unit, with the
+estimate clause. Re-pinned in the 2026-10-11 sweep: the sentence this held before (`A tokens
+resident now, was W`) goes to stderr only now.")
 
 (defun %collapse-rust-continuations (source)
   "SOURCE with Rust's string continuations collapsed — a `\\` at end of line, the newline,
@@ -8354,8 +8356,7 @@ invented numbers."
   (let ((f (compaction-facts +letibot-compacted-cut+)))
     (is (eq :compacted (getf f :kind)) "the post-fork re-measure is a compaction report")
     (is (= 938669 (getf f :was))
-        "**and its numbers run the other way in the sentence** (`A resident now, was W`) —
-read correctly rather than assumed")
+        "**read by shape around the arrow, whatever the unit says** (`deepseek tokens resident (…)`)")
     (is (= 9449 (getf f :after)))
     (is (null (getf f :transcript)) "and it invents no transcript it was not told"))
   (let ((f (compaction-facts +letibot-reseated+)))
@@ -8618,34 +8619,51 @@ has never been exercised is not a fallback."
 (def-test every-compaction-sentence-this-head-parses-is-still-the-one-letibot-writes (:suite leticl)
   "**The assumption, CHECKED rather than believed** — §11.5's shape a third time.
 
-`compaction-facts` reads letibot's sentences, and they live in
-`crates/harnessd/src/sessions.rs`. A reword there would silently turn every compaction
-back into a note — quiet, correct-looking, and the headline gone. So this reads that file
-and fails when a format string the parser keys on moves.
+`compaction-facts` reads letibot's sentences, and they live in TWO files now:
+`crates/harnessd/src/sessions.rs` (the fork's account and the re-seat) and
+`crates/harnessd/src/harness.rs` (the announcement, `compacted_line`, the no-progress and the
+failure). A reword there would silently turn every compaction back into a note — quiet,
+correct-looking, and the headline gone. So this reads both files and fails when a format string the
+parser keys on moves.
+
+**Re-pinned in the 2026-10-11 sweep to the strings letibot writes NOW**: every sentence carries a
+`{unit}` placeholder (`tokens`, `deepseek tokens`, `ledger tokens (unscaled: …)`), the announcement
+carries `{basis}` after `resident`, and the closing line is `compacted: {before} → {} {unit}
+resident{estimated}.`; the sentence ` tokens resident now, was ` is gone from the wire (stderr
+only), so it is deliberately NOT in this list and `compaction-facts` has no arm for it.
 
 **Rust splits a long format string across lines with a `\\` continuation**, which strips
 the newline and the next line's leading whitespace, so the source is collapsed the way the
 compiler does before anything is searched for. A guard that searched the raw file would
 pass on a string that only LOOKS right."
-  (let* ((path "/home/dead/Projects/letibot/letibot/crates/harnessd/src/sessions.rs")
-         (raw (and (probe-file path) (uiop:read-file-string path)))
-         (src (and raw (%collapse-rust-continuations raw))))
-    (if (null src)
-        (skip "letibot's sessions.rs is not on this box")
+  (let* ((root "/home/dead/Projects/letibot/letibot/crates/harnessd/src/")
+         (sessions (and (probe-file (concatenate 'string root "sessions.rs"))
+                        (%collapse-rust-continuations
+                         (uiop:read-file-string (concatenate 'string root "sessions.rs")))))
+         (harness (and (probe-file (concatenate 'string root "harness.rs"))
+                       (%collapse-rust-continuations
+                        (uiop:read-file-string (concatenate 'string root "harness.rs"))))))
+    (if (or (null sessions) (null harness))
+        (skip "letibot's harnessd sources are not on this box")
         (progn
-          (is (> (length src) 10000)
+          (is (> (length sessions) 10000)
               "**a plausible source, so a bad read cannot pass vacuously** — ~d bytes"
-              (length src))
-          (dolist (marker '("compacted: {} → {} tokens, on transcript {}."
-                            "re-seated: {} tokens of conversation carried"
-                            "tokens resident, leaving less than the "
-                            "tokens and that is STILL within "
-                            "compacted: {after} tokens resident now, was {resident}."
-                            "the automatic compaction did not run"))
-            (is (search marker src)
-                (format nil "**letibot still writes `~a`** — the sentence this head reads
+              (length sessions))
+          (dolist (marker '("compacted: {} → {} {unit}, on transcript {}."
+                            "re-seated: {} {unit} of conversation carried"
+                            "compacted: {resident} {unit} resident before."))
+            (is (search marker sessions)
+                (format nil "**letibot's sessions.rs still writes `~a`** — the sentence this head reads
 the facts on a compaction row from. If it moved, `compaction-facts` moves with it; until
-then every compaction is a note again." marker)))))))
+then every compaction is a note again." marker)))
+          (dolist (marker '("{r} of {w} {unit} resident{basis}, leaving less than the {h} the next turn needs"
+                            "compacted: {before} → {} {unit} resident{estimated}."
+                            "compacted from {r} to {} tokens and that is STILL within {h} of the {w} window"
+                            "the automatic compaction did not run"))
+            (is (search marker harness)
+                (format nil "**letibot's harness.rs still writes `~a`** — see above." marker)))
+          (is (not (search "detail: format!(\"compacted: {after} tokens resident now, was {resident}." harness))
+              "**and the dead sentence stays dead**: `A tokens resident now, was W` is no longer a warning's detail, so this head has no arm for it")))))
 
 (defun %warning-frame (code detail &optional (ts 0))
   "The frame the daemon publishes a warning as — a full event envelope."
@@ -11811,17 +11829,21 @@ answered. The daemon's own `secret_late` warning, which would explain it, is a
           "**asking for the session you are already in sends no switch** — the Hello's settings request is all this frame owes"))))
 
 (def-test the-merge-queue-is-asked-for-and-its-answer-is-kept (:suite leticl)
-  "**The merge queue's step one: the frames AND the ask** (`TODO.md`'s merge-queue box).
+  "**The queues' step one: the frames AND the ask** (`TODO.md`'s merge-queue box, re-pinned to
+  protocol 43 in the 2026-10-11 sweep — the first version of this test pinned `merge_queue {entries}`
+  and `merge_entry_added`/`merge_entry_moved`, which no daemon sends any more).
 
   Two things this holds, and the second is the reason the step cannot be split: the app has no
   snapshot of the queue by design (it is daemon-level), so a head that does not ASK draws nothing —
   and the suite's `every-frame-constructor-is-actually-sent` refuses a constructor with no caller,
   which is how the tempting order (wire first, screen after) was measured to be wrong.
 
-  The reply REPLACES rather than merges: `MergeQueue` is the whole queue as of now, so folding it
-  into what the head held would let a landed entry survive a reset."
+  The reply REPLACES rather than merges: `Queues` is the whole of both queues as of now, so folding
+  it into what the head held would let a landed entry survive a reset."
   (let* ((h (%make-head))
          (wire (%wire h)))
+    (setf leticl::*queues* nil leticl::*queue-view* :review
+          leticl::*queues-got-ms* 0 leticl::*queues-asked-ms* 0)
     ;; --- the ask
     (leticl::%command h "queue")
     (let ((sent (%sent wire)))
@@ -11831,58 +11853,27 @@ answered. The daemon's own `secret_late` warning, which would explain it, is a
       (is (search "asking the daemon" (head-status-note h))
           "and says it is asking, because the answer is not instant"))
     ;; --- the answer: kept, whole, and it SAYS how many
-    (leticl::%handle-frame h (list :frame "merge_queue"
-                                   :entries (list (list :id "e1" :branch "topic-a" :state "waiting"
-                                                        :evidence "needs: topic-b")
-                                                  (list :id "e2" :branch "topic-b" :state "landed"
-                                                        :evidence "tip 4f2a1c9"))))
-    (is (= 2 (length (head-merge-queue h))) "**the queue is on the head** — where a pane will draw it")
+    (leticl::%handle-frame h (list :frame "queues"
+                                   :snapshot (list :at-ms 1000
+                                                   :reviews (list (list :id "r1" :branch "topic-a" :state "waiting"
+                                                                        :kind "branch" :evidence "needs: topic-b"
+                                                                        :created-ms 1 :state-ms 1))
+                                                   :merges (list (list :id "m2" :branch "topic-b" :state "landed"
+                                                                       :evidence "tip 4f2a1c9" :created-ms 1 :state-ms 900)))))
+    (is (= 1 (length (head-merge-queue h))) "**the review view's rows are on the head** — where the pane draws them")
     (is (equal "topic-a" (getf (first (head-merge-queue h)) :branch)) "in the daemon's order")
     (is (equal "needs: topic-b" (getf (first (head-merge-queue h)) :evidence))
         "**with the evidence**, which is the reason for the state in the queue's own words")
-    (is (search "holds 2" (head-status-note h)) "and the head says how many arrived")
+    (is (search "review queue holds 1" (head-status-note h)) "and the head says how many arrived")
+    (leticl::queue-switch-view h :merge)
+    (is (equal "topic-b" (getf (first (head-merge-queue h)) :branch)) "the merge view lists the merge rows")
     ;; --- a second reply REPLACES: a landed entry must not survive a reset
-    (leticl::%handle-frame h (list :frame "merge_queue" :entries (list (list :id "e2" :branch "topic-b"
-                                                                            :state "landed"))))
-    (is (= 1 (length (head-merge-queue h)))
+    (leticl::%handle-frame h (list :frame "queues" :snapshot (list :at-ms 2000 :reviews nil :merges nil)))
+    (is (null (head-merge-queue h))
         (format nil "**the reply REPLACES what the head held** — a queue is a snapshot, not a log: ~s"
                 (head-merge-queue h)))
-    ;; --- an empty queue is a fact, not an absence
-    (leticl::%handle-frame h (list :frame "merge_queue" :entries nil))
-    (is (null (head-merge-queue h)) "an empty queue is empty")
-    ;; --- **AND THE TWO EVENTS MAKE IT LIVE RATHER THAN A SNAPSHOT** (the same step's other half)
-    (leticl::%handle-frame h (list :frame "merge_queue"
-                                   :entries (list (list :id "e1" :branch "a" :state "waiting"
-                                                        :evidence "needs: b"))))
-    (leticl::%handle-frame h (list :frame "event" :seq 2 :event "merge_entry_added"
-                                   :entry (list :id "e2" :branch "b" :state "waiting"
-                                                :evidence "needs: c")))
-    (is (= 2 (length (head-merge-queue h))) "an added entry joins the queue")
-    (is (equal "b" (getf (second (head-merge-queue h)) :branch)) "at the END, in arrival order")
-    ;; a REDELIVERY — a reconnect's replay — replaces rather than doubles
-    (leticl::%handle-frame h (list :frame "event" :seq 2 :event "merge_entry_added"
-                                   :entry (list :id "e2" :branch "b" :state "waiting"
-                                                :evidence "needs: c")))
-    (is (= 2 (length (head-merge-queue h)))
-        (format nil "**the same id twice is one row** — a replay must not double the queue: ~s"
-                (head-merge-queue h)))
-    ;; a MOVE carries state and its reason
-    (leticl::%handle-frame h (list :frame "event" :seq 3 :event "merge_entry_moved"
-                                   :id "e2" :state "failed" :evidence "gate: fmt"))
-    (let ((row (find "e2" (head-merge-queue h) :key (lambda (e) (getf e :id)) :test #'equal)))
-      (is (equal "failed" (getf row :state)) "the move's state lands on the row the reply gave us")
-      (is (equal "gate: fmt" (getf row :evidence)) "**with the reason** — the evidence is WHY"))
-    ;; a move for an entry this head was never told about invents nothing
-    (leticl::%handle-frame h (list :frame "event" :seq 4 :event "merge_entry_moved"
-                                   :id "never-heard-of" :state "landed"))
-    (is (= 2 (length (head-merge-queue h))) "a move for an unknown entry invents no row")
-    ;; and a move carrying no evidence keeps the reason we have
-    (leticl::%handle-frame h (list :frame "event" :seq 5 :event "merge_entry_moved"
-                                   :id "e2" :state "conflict"))
-    (let ((row (find "e2" (head-merge-queue h) :key (lambda (e) (getf e :id)) :test #'equal)))
-      (is (equal "conflict" (getf row :state)) "the state moves")
-      (is (equal "gate: fmt" (getf row :evidence))
-          "**and the evidence we have is kept** — a move that says nothing must not erase the reason"))))
+    (leticl::queue-switch-view h :review)
+    (setf leticl::*queues* nil leticl::*queues-got-ms* 0 leticl::*queues-asked-ms* 0)))
 
 (def-test the-standing-pane-opens-at-the-keypress-and-draws-the-mailbox (:suite leticl)
   "**The pane, as its own test** — and the reason it is its own: the first attempt bolted these
@@ -12356,10 +12347,12 @@ a b c
     (dolist (pair (list (cons :enter (string #\return)) (cons :tab (string #\tab))
                         (cons :backspace (string (code-char 127)))))
       (leticl::%handle-key h (list :type (car pair)))
-      (is (equal (cdr pair)
+      ;; `TermInput { bytes }` — the key as its UTF-8 bytes, a JSON number array (protocol.rs:2151;
+      ;; re-pinned in the 2026-10-11 sweep from the `data` string serde refused)
+      (is (equal (map 'list #'char-code (cdr pair))
                  (getf (car (last (remove-if-not (lambda (f) (equal "term_input" (leticl::frame-name f)))
                                                  (%sent wire))))
-                       :data))
+                       :bytes))
           (format nil "**`~a` reaches the program as ~s** — the byte a terminal sends, not the key" (car pair) (cdr pair)))
       (is (eq :term (head-mode h)) "and the pane does not take it as its own"))
     ;; --- `q` closes the pane AND ends the terminal: two facts, two acts
@@ -17317,9 +17310,11 @@ to anything that does not look at the bytes that actually leave the process."
          ;; `%encode`'s vector arm, and the un-restartable head it fixes).
          (items (coerce (getf frame :items) 'list))
          (json (encode-frame frame)))
-    (is (equal '("completed" "pending" "pending" "postponed")
+    ;; `in_progress` is one of the five words `TodoStatus` spells (event.rs:82), so it travels as
+    ;; itself — the 2026-10-11 sweep closed the map that collapsed it (and `cancelled`) to pending
+    (is (equal '("completed" "pending" "in_progress" "postponed")
                (mapcar (lambda (i) (getf i :status)) items))
-        "**the head's status reaches the wire** — completed, pending, and now POSTPONED: a row set\n  aside reaches the daemon's board as set aside, which is the whole point of the state — the\n  idle check reads THAT board")
+        "**the head's status reaches the wire** — completed, pending, in_progress and POSTPONED: a row set\n  aside reaches the daemon's board as set aside, which is the whole point of the state — the\n  idle check reads THAT board")
     (is (equal '("done already" "still to do" "being worked" "push once CI lands")
                (mapcar (lambda (i) (getf i :content)) items))
         "and every row is carried, in order")
@@ -17333,8 +17328,8 @@ to anything that does not look at the bytes that actually leave the process."
       (is (search text json) (format nil "~s is in the encoded frame" text)))
     (is (= 1 (count-substring "completed" json))
         "**exactly one row is completed** — a constant would make it zero")
-    (is (= 2 (count-substring "pending" json))
-        "and exactly two are pending, so the status is per-row and not one value for the list")
+    (is (= 1 (count-substring "pending" json))
+        "and exactly one is pending, so the status is per-row and not one value for the list")
     (is (= 1 (count-substring "postponed" json))
         "**and exactly one is postponed** — a map that collapsed it to pending would undo the\n  operator's `/todo postpone` on the next push")))
 
@@ -17471,8 +17466,9 @@ to anything that does not look at the bytes that actually leave the process."
     (is (search "there is no row 9" (head-status-note h))
         "and the refusal names the row and the count")
     ;; --- not a number at all
+    ;; a WORD is a model row's words (protocol 41's `moved`, the 2026-10-11 sweep): the board is asked
     (leticl::%command h "todo postpone soon")
-    (is (search "not a row number" (head-status-note h)) "said, not a silence")
+    (is (search "asked the board to mark the model's row `soon` postponed" (head-status-note h)) "said, not a silence")
     ;; --- a bare verb is a usage note, NOT a row titled `postpone`
     (leticl::%command h "todo postpone")
     (is (= 2 (length leticl::*operator-todos*)) "no row was added")
@@ -17517,7 +17513,8 @@ to anything that does not look at the bytes that actually leave the process."
     (is (string= "open" (getf (second leticl::*operator-todos*) :status)) "nothing changed")
     (is (search "there is no row 9" (head-status-note h)) "and the refusal names the row")
     (leticl::%command h "todo rm all")
-    (is (search "not a row number" (head-status-note h)) "a word is not a row")
+    (is (search "asked the board to mark the model's row `all` cancelled" (head-status-note h))
+        "a word names a MODEL row, and the board is asked (protocol 41's `moved`)")
     ;; --- a bare verb is a usage note that names the verb, not a row titled `rm`
     (leticl::%command h "todo rm")
     (is (= 2 (length leticl::*operator-todos*)) "no row was added")
