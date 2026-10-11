@@ -436,6 +436,11 @@ tail's spaces as a ragged gap."
   ;; The whole screen until a program sets one.
   (top 0 :type fixnum)
   (bottom 0 :type fixnum)
+  ;; **WHETHER THE PROGRAM WANTS A CURSOR ON THE GLASS** (`?25h`/`?25l`, DECTCEM). This is what the
+  ;; program ASKED FOR and not what the head must draw — a pane shows a cursor only while it holds the
+  ;; keyboard, which is the pane's fact and not the screen's — but a full-screen program that hid its
+  ;; cursor while redrawing and never showed it again must not leave one this head invented.
+  (visible t :type boolean)
   ;; the ALTERNATE screen when one is up (`?1049`): `(cells top bottom)` saved whole, or NIL on the
   ;; main screen. The region is saved WITH the cells because it is part of what the program expects
   ;; to find unchanged when it comes back.
@@ -660,7 +665,13 @@ everything else is counted, never guessed at, which is the rule the pane keeps."
                  ;; switching screens and replacing one. The main cells AND the region are kept
                  ;; whole and the alt one starts blank with whole-screen margins, which is what a
                  ;; full-screen program expects to find.
-                 ((#\h) (when (and private (string= args "1049") (null (term-screen-main s)))
+                 ;; **PRIVATE MODES, each on its own clause** — `?1049` is the alternate screen and
+                 ;; `?25` is DECTCEM, the cursor itself. A private mode this build does not know is
+                 ;; still counted with the sequence that carried it (`seq`'s caller does that).
+                 ((#\h) (cond
+                          ;; DECTCEM: a full-screen program shows the cursor when it is done drawing.
+                          ((and private (string= args "25")) (setf (term-screen-visible s) t))
+                          ((and private (string= args "1049") (null (term-screen-main s)))
                            (setf (term-screen-main s) (list (term-screen-cells s)
                                                             (term-screen-top s)
                                                             (term-screen-bottom s))
@@ -670,15 +681,17 @@ everything else is counted, never guessed at, which is the rule the pane keeps."
                                  (term-screen-top s) 0
                                  (term-screen-bottom s) (1- (term-screen-rows s))
                                  (term-screen-row s) 0
-                                 (term-screen-col s) 0)))
-                 ((#\l) (when (and private (string= args "1049") (term-screen-main s))
+                                 (term-screen-col s) 0))))
+                 ((#\l) (cond
+                          ((and private (string= args "25")) (setf (term-screen-visible s) nil))
+                          ((and private (string= args "1049") (term-screen-main s))
                            (destructuring-bind (cells top bot) (term-screen-main s)
                              (setf (term-screen-cells s) cells
                                    (term-screen-top s) top
                                    (term-screen-bottom s) bot
                                    (term-screen-main s) nil
                                    (term-screen-row s) 0
-                                   (term-screen-col s) 0))))
+                                   (term-screen-col s) 0)))))
                  (t nil))
                (setf args "" state :text private nil)))
       (loop while (< i n) do
@@ -716,6 +729,30 @@ everything else is counted, never guessed at, which is the rule the pane keeps."
                         (t (incf i))))))))
     dropped))
 
+(defun %term-screen-row-segments (s row)
+  "One row of SCREEN as pane SEGMENTS, with the CURSOR CELL reversed when the program asked for a
+cursor (`?25h`).
+
+**The characters are the same either way.** The cursor is a STYLE on one cell and never a character,
+so a reader (or a test) that reads the text out of the pane still reads exactly what the program
+wrote — and a cursor past the end of the trimmed line is drawn in the space it would occupy, which
+is where a shell's cursor sits after a command it has already drawn."
+  (let* ((cols (term-screen-cols s))
+         (text (string-right-trim '(#\space)
+                                  (subseq (term-screen-cells s) (%ts-index s row 0)
+                                          (+ (%ts-index s row 0) cols))))
+         (line (format nil "  ~a" text))
+         (at (+ 2 (min (term-screen-col s) (length text)))))
+    (if (not (and (term-screen-visible s) (= row (term-screen-row s))))
+        (list (cons line nil))
+        (cond ((< at (length line))
+               (append (list (cons (subseq line 0 at) nil)
+                             (cons (string (char line at)) '(:reverse t)))
+                       (let ((after (subseq line (1+ at))))
+                         (when (plusp (length after)) (list (cons after nil))))))
+              ;; the cursor is past the text this row has: the cell it would overwrite is a blank
+              (t (list (cons line nil) (cons " " '(:reverse t))))))))
+
 (defmethod pane-lines ((pane term-pane) head cols room)
   "The terminal's bytes, as this head can HONESTLY draw them today, and the pane's own keys.
 
@@ -737,10 +774,14 @@ it is not, which is the one thing that would make the missing half invisible."
            ;; where it put it, which is the whole difference between this and the line model the
            ;; first cut used. The line model stays below as the fallback for a terminal that has no
            ;; screen (a frame from a daemon that never attached a rectangle).
-           (dolist (line (if (getf term :screen)
-                             (term-screen-lines (getf term :screen))
-                             (%term-lines-from-output (or (getf term :output) ""))))
-             (push (list (cons (format nil "  ~a" line) nil)) out))
+           (let ((screen (getf term :screen)))
+             (if screen
+                 ;; **EVERY ROW, AS SEGMENTS, so the cursor cell can carry its own style** — see
+                 ;; `%term-screen-row-segments`. The header and the footer below are the pane's own.
+                 (dotimes (r (term-screen-rows screen))
+                   (push (%term-screen-row-segments screen r) out))
+                 (dolist (line (%term-lines-from-output (or (getf term :output) "")))
+                   (push (list (cons (format nil "  ~a" line) nil)) out))))
            (nreverse out))
          (list nil)
          (list (list (cons "  keys go to the program · q closes the pane" '(:dim t))))

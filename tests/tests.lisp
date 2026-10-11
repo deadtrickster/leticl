@@ -12214,6 +12214,40 @@ worked for the merge queue.
   (is (equal (list "ab      Z") (leticl::%term-lines-from-output (format nil "ab~cZ" #\tab)))
       "**the line model lands on the same column** — one rule, two renderers"))
 
+(def-test a-terminal-cursor-follows-what-the-program-asked-for (:suite leticl)
+  "**`?25h`/`?25l` (DECTCEM) is the program's wish, carried on the screen and drawn on the cursor
+  cell** — ported from the reference's `Face.visible` (`letibot-vt`'s `crates/vt/src/screen.rs`). A
+  full-screen program hides the cursor while it redraws and shows it when it is done, so a head that
+  ignored the sequence would draw a cursor where the program said there is none.
+
+  **The cursor is a STYLE and never a character**: the text is exactly what the program wrote, so a
+  reader who copies a line out of the pane gets the program's output and not a cursor."
+  (flet ((esc (n) (concatenate 'string (string (code-char 27)) n))
+         (segs (s) (leticl::%term-screen-row-segments s 0)))
+    (let ((s (leticl::term-screen-new 1 8)))
+      (leticl::term-screen-feed s (esc "[1;3H"))
+      (is (= 2 (leticl::term-screen-col s)) "the cursor is where the program put it")
+      (is (leticl::term-screen-visible s) "**and it starts VISIBLE**, as the reference's face does")
+      (is (member '(:reverse t) (mapcar #'cdr (segs s)) :test #'equal)
+          "**the cursor cell is drawn** — reverse video on the cell the next write lands in")
+      (leticl::term-screen-feed s (esc "[?25l"))
+      (is (not (leticl::term-screen-visible s)) "**`?25l` hides it**")
+      (is (not (member '(:reverse t) (mapcar #'cdr (segs s)) :test #'equal))
+          "and the cell goes back to plain")
+      (leticl::term-screen-feed s (esc "[?25h"))
+      (is (leticl::term-screen-visible s) "and `?25h` shows it again")
+      ;; THE TEXT IS THE PROGRAM'S, whichever way the wish goes. The two columns CUP skipped are real
+      ;; blank CELLS, so the row draws them — which is why the line starts four spaces in.
+      (leticl::term-screen-feed s "ab")
+      (let ((joined (lambda ()
+                      (string-right-trim '(#\space)
+                                         (format nil "~{~a~}" (mapcar #'car (segs s)))))))
+        (is (equal "    ab" (funcall joined))
+            "**the characters are the program's own** — a cursor added none of them")
+        (leticl::term-screen-feed s (esc "[?25l"))
+        (is (equal "    ab" (funcall joined))
+            "**and hiding the cursor does not change one character of the row**")))))
+
 (def-test a-terminal-opens-takes-keys-for-the-program-and-ends-when-asked (:suite leticl)
   "**The `!term` frames, each with the caller the suite's own invariant demands** — and the ordering
   that costs a session if it is guessed: **the pane's KEY PATH is what makes `TermInput` and
