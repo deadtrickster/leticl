@@ -982,7 +982,11 @@ empty pane on every attach, which is the defect the guard exists to prevent, inv
     ((string= (frame-name frame) "term_attached")
      ;; the daemon accepted the open; the pane is live, and the PROGRAM is told the size the pane has
      ;; rather than the size it asked with — the window may have changed between the two.
-     (setf (head-term head) (list :cols (getf frame :cols) :rows (getf frame :rows) :output "")
+     ;; **THE TERMINAL GETS A SCREEN AT ATTACH, and the sizes are the DAEMON'S**, because that is the
+     ;; rectangle the program was told about and the pane draws into it.
+     (setf (head-term head) (list :cols (getf frame :cols) :rows (getf frame :rows) :output ""
+                                  :screen (term-screen-new (getf frame :rows) (getf frame :cols))
+                                  :dropped 0)
            (head-mode head) :term
            (head-dirty head) t)
      (%send head (make-term-resize (head-cols head) (1- (head-rows head))))
@@ -992,9 +996,16 @@ empty pane on every attach, which is the defect the guard exists to prevent, inv
      ;; with what arrived. A frame for a terminal this head is not showing is DROPPED, not buffered:
      ;; one pane per session, and the daemon's own refusal is why.
      (when (head-term head)
+       ;; **THE BYTES GO INTO THE SCREEN AND ARE ALSO KEPT.** The screen is what the pane DRAWS —
+       ;; a program that moved the cursor is drawn where it moved it — and the raw text is kept
+       ;; because it is the only thing that can be re-fed if the rectangle changes.
        (setf (getf (head-term head) :output)
              (concatenate 'string (getf (head-term head) :output) (or (getf frame :data) ""))
-             (head-dirty head) t))
+             (head-dirty head) t)
+       (let ((scr (getf (head-term head) :screen)))
+         (when scr
+           (incf (getf (head-term head) :dropped)
+                 (term-screen-feed scr (or (getf frame :data) ""))))))
      :control)
     ((string= (frame-name frame) "term_ended")
      ;; the ENDING, and which one — a person's `TermClose` and the daemon ending it are different

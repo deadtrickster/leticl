@@ -566,7 +566,13 @@ it is not, which is the one thing that would make the missing half invisible."
            (list (list (cons (format nil "  ended: ~a" (getf term :ended)) '(:fg :yellow)))))
          (list nil)
          (let ((out nil))
-           (dolist (line (%term-lines-from-output (or (getf term :output) "")))
+           ;; **THE SCREEN IS WHAT IS DRAWN NOW** — a program that addressed its cursor is drawn
+           ;; where it put it, which is the whole difference between this and the line model the
+           ;; first cut used. The line model stays below as the fallback for a terminal that has no
+           ;; screen (a frame from a daemon that never attached a rectangle).
+           (dolist (line (if (getf term :screen)
+                             (term-screen-lines (getf term :screen))
+                             (%term-lines-from-output (or (getf term :output) ""))))
              (push (list (cons (format nil "  ~a" line) nil)) out))
            (nreverse out))
          (list nil)

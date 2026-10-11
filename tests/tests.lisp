@@ -12082,6 +12082,28 @@ worked for the merge queue.
         (format nil "**a bare `J` clears NOTHING** — it erases below a cursor this head cannot place: ~s" lines))
     (is (= 1 dropped) "and it is counted rather than honoured")))
 
+(def-test a-terminal-draws-where-the-program-addressed-the-cursor (:suite leticl)
+  "**The difference the screen makes**, and the reason the line model had to go: a program that moves
+  its cursor is drawn WHERE it moved it. The line model could honour an overwrite and an erase —
+  both expressible on a line — and had to COUNT cursor addressing because a line has nowhere to put
+  a row. This asserts the row."
+  (let ((h (%make-head)))
+    (leticl::%handle-frame h (list :frame "term_attached" :cols 20 :rows 4))
+    (is (getf (head-term h) :screen) "**the attach makes a SCREEN**, at the daemon's rectangle")
+    (leticl::%handle-frame h (list :frame "term_output"
+                                   :data (concatenate (quote string) (string (code-char 27)) "[3;5Hhere")))
+    (let ((rows (leticl::term-screen-lines (getf (head-term h) :screen))))
+      (is (equal "    here" (third rows))
+          (format nil "**the text is on ROW 3, COLUMN 5, as addressed** — a line model could not: ~s" rows)))
+    (is (= 1 (getf (head-term h) :dropped))
+        "**and the sequence is counted** — the pane says how many it could not draw, which is the rule it keeps")
+    ;; the pane draws the screen
+    (let ((text (format nil "~{~a~^~%~}"
+                        (mapcar (lambda (l) (if (null l) "" (format nil "~{~a~}" (mapcar #'car l))))
+                                (leticl::pane-lines (leticl::pane-for :term) h 100 30)))))
+      (is (search "here" text) "and the pane draws it")
+      (is (search "line discipline only" text) "naming the half that is still missing"))))
+
 (def-test a-terminal-opens-takes-keys-for-the-program-and-ends-when-asked (:suite leticl)
   "**The `!term` frames, each with the caller the suite's own invariant demands** — and the ordering
   that costs a session if it is guessed: **the pane's KEY PATH is what makes `TermInput` and
