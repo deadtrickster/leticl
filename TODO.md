@@ -750,6 +750,13 @@ head runs today breaks without them.
     which is the lie the operator's own rule forbids.** So the renderer draws the four words and
     never an empty list, and that is the whole of what this step needs on this side. The steps drawn in the order the gate
     runs them (which is the gate's own sequence, not the head's), and the standings beside the
+    **AND WHAT THAT STEP IS, PRECISELY**: the standings LINE is landed
+    (`merge-standings-line`: three counts — review/merging/parked — with the reference's own rule,
+    *nothing at all while nothing stands, all three with zeroes when something does, the four
+    stopped states parked TOGETHER*), **but it is not yet DRAWN**: `composer-wiring` composes the
+    alarm and the turn status on the bottom edge and knows nothing about it, so the wiring — and
+    what it displaces when a completion is open — is what remains. A line nobody calls is the shape
+    this session kept finding; said here rather than rediscovered.
     triangle the head already draws.
   · **M — the review queue as TWO VIEWS OF ONE LIST**, riding protocol 38's removal, and
     `/queue reset | clean | restart` — the verbs, each with the sentence that says what it did.
