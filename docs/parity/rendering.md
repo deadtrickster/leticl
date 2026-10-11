@@ -95,42 +95,44 @@ The parts that are genuinely byte-identical *by construction*, not by luck:
 - **The syntax role map**: `role_for_capture` is reproduced byte for byte in the
   shim (`native/hl/src/lib.rs:105-122`).
 
-**Where they are not.** Grouped by kind:
+**Where they are not.** Grouped by kind — and **ALL TEN ARE NOW CLOSED** (reconciled 2026-10-11,
+which is what `TODO.md`'s T8 asks for: *every finding not claimed above*, worked and then recorded
+here). Each line names the test or the site that holds it, so the next reader checks rather than
+trusts:
 
-1. **Row kinds the subject does not draw at all**: `SegmentMark`
-   (`app.rs:10042` vs `src/cards.lisp:901`) and the payload window / paging view
-   (`app.rs:9968-10036` — a whole mechanism with no counterpart).
-2. **Row kinds drawn differently**: `System` (`◦` yellow vs `system (Origin)` +
-   dim body), the unanswered-call row (`→ Read x` dim vs
-   `→ Read x · no result` in `Attention`), `fold_cells` (the subject keeps the
-   marker line, the reference replaces the block with a one-line note).
-3. **The live card is missing three of its four body parts**: the §8.3 bytes
-   disclosure, the settled decision, and `head_tail`'s budget over the body.
-4. **The frame has no fit ladder.** The reference gives up chrome rows in a
-   defined order on a short screen (`app.rs:5094-5126`) and drops the gutter
-   below 40 columns (`app.rs:5325`); leticl does neither.
-5. **Wrapping has no wide-cluster rule and two divergent breakpoint finders** —
-   the single biggest correctness gap on this surface.
-6. **Payload bytes are not sanitised.** The reference maps every control
-   character to a space (`app.rs:9712`); leticl elides escapes entirely, so a
-   payload carrying one renders narrower than the reference's.
-7. **The markdown *lexer* leaks markers.** `***both***` reaches the screen with
-   its asterisks (`src/markdown/inline.lisp:37-46`); a fence inside a quote or on a
-   list marker's line is never found; a 4-backtick fence is closed by an inner
-   3-backtick line; autolinks keep their `<>`; indented code blocks are mangled
-   into prose.
-8. **There is no incremental layer and no cache.** `IncrementalMarkdown` and
-   `BlockCache` have no counterpart, so every visible message is re-lexed and
-   re-rendered on every frame, and every visible fence is re-highlighted through
-   the FFI on every frame.
-9. **Intra-line diff emphasis is dead code.** `%pair-rows` binds its addition
-   run's start *after* consuming the run (`src/diff.lisp:297-298`), so the
-   pairing branch is never taken. Screen parity is accidental: both reference
-   call sites pass `intra_line: false` anyway.
-10. **The split diff is a reduced port**: it truncates where the reference
-    wraps, has no role tint, no syntax colour, no hunk header, no `no change`
-    row and no degraded banner, and it *refuses* at a narrow width where the
-    reference degrades.
+1. ~~**Row kinds the subject does not draw at all**: `SegmentMark` and the payload window / paging
+   view.~~ — **CLOSED.** `SegmentMark` draws its dim rule (`a-segment-boundary-is-a-row`) and the
+   payload window is `%row-openable-rows` + `/t`'s window, in `src/cards/payload.lisp`.
+2. ~~**Row kinds drawn differently**: `System`, the unanswered-call row, `fold_cells`.~~ —
+   **CLOSED.** `a-system-row-names-its-origin-and-is-dim`, `a-call-with-no-result-says-it-has-no-
+   result`, `a-screen-that-came-with-a-message-is-replaced-by-a-note`.
+3. ~~**The live card is missing three of its four body parts**.~~ — **CLOSED** by
+   `a-live-card-discloses-its-bytes-its-decision-and-its-budget`.
+4. ~~**The frame has no fit ladder**.~~ — **CLOSED** by
+   `the-chrome-is-given-up-in-the-references-order` (and the gutter: `frame-gutter`, asserted at 39/40
+   columns in `the-gutter-is-the-first-thing-a-narrow-screen-gives-up`).
+5. ~~**Wrapping has no wide-cluster rule and two divergent breakpoint finders**.~~ — **CLOSED**, the
+   one-rule merge: `%break-ranges` is the single finder and the wide-cluster half is held by
+   `a-wide-character-line-wraps-at-the-column-budget` and its two siblings.
+6. ~~**Payload bytes are not sanitised**.~~ — **CLOSED** by
+   `a-tool-payload-cannot-reconfigure-the-operators-terminal`, which asserts the PAIRING (the `ESC`
+   and what follows it) rather than *no escape anywhere*.
+7. ~~**The markdown *lexer* leaks markers**.~~ — **CLOSED**: `emphasis-markers-never-reach-the-
+   screen`, `an-autolink-is-its-url`, `a-fence-cannot-be-closed-by-a-shorter-one`,
+   `indented-code-is-code-and-not-mangled-prose`, `a-setext-heading-is-a-heading`,
+   `a-fence-inside-a-quote-is-a-code-box`, `a-task-list-item-does-not-keep-its-checkbox`.
+8. ~~**There is no incremental layer and no cache**.~~ — **CLOSED in the parts that pay**: the
+   history cache and the `item-lines` memo (see T7's counter and
+   `a-steady-frame-does-not-re-render-the-transcript`, which bounds a steady frame at TWO renders).
+   The markdown layer itself stays uncached ON PURPOSE — `rendering.md`'s own argument against
+   porting `hist_lines`, kept in `TODO.md`'s T7.
+9. ~~**Intra-line diff emphasis is dead code**.~~ — **CLOSED**: `%pair-rows` binds its addition run's
+   start before consuming it, AND both call sites pass `:intra-line nil` with the reference's own
+   reason (`edit-card.lisp`), because repairing the wiring made this head emit emphasis the
+   reference deliberately suppresses.
+10. ~~**The split diff is a reduced port**.~~ — **CLOSED**: `src/sidediff.lisp` draws the `no change`
+    row, the degraded banner and the hunk header (`diff-unrelated-files-degrade-not-stall` holds the
+    degradation path), and the split view wraps rather than refusing at a narrow width.
 
 The full per-section tables follow. Sizes for closing each gap are in
 **Gaps worth closing**.
