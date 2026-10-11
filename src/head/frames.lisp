@@ -393,6 +393,43 @@ empty pane on every attach, which is the defect the guard exists to prevent, inv
          (plusp (length (or theirs "")))
          (not (equal mine theirs)))))
 
+(defun %term-frame-is-mine-p (frame)
+  "Is FRAME about the pane this head is DRAWING?
+
+ **A 44 daemon fans every pane's output out to EVERY head of the session** (`TermOutput { pane,
+ bytes }`, and `TermEnded { pane, reason }` with it), so a head that fed them all would mix two
+ programs' bytes into one screen — the second pane's redraw landing on the first's, which looks
+ exactly like a terminal going mad. The frame's own `pane` is the test, and a head draws ONE pane at
+ a time: `!term N` changes which, and `*term-pane*` follows the `TermAttached` that answers it.
+
+ **A frame without a `pane` is this head's**, which is the 43 daemon's whole vocabulary: that
+ session held one pane by construction, and a REFUSAL carries `pane: null` (`TermEnded` for a pane
+ that never started) and must still reach the head that asked, or a failed `!term` would sit silent."
+  (let ((pane (getf frame :pane)))
+    (or (null pane) (eql pane *term-pane*))))
+
+(defun %term-status-command (panes has-panes command)
+  "What a `TermStatus` answer says, as one string — **a LIST of panes since 44**, a bare command before.
+
+ A 44 daemon answers with every pane the session holds (`{panes: [{pane, command}]}`), and a head
+ that read only the old `command` would say *nothing is running* over a session with three programs
+ in it. One pane keeps the old sentence; SEVERAL are named with their numbers, because a head drawing
+ one of them must not let the others go unsaid.
+
+ **`panes` ABSENT AND `panes` EMPTY ARE NOT THE SAME FACT, and `listp` cannot tell them apart** —
+ it is true of `nil`, so a head that tested `(listp panes)` reads a 43 daemon's bare `command` as *no
+ panes* and says nothing is running over a program that is. Hence HAS-PANES, which is whether the key
+ is there at all: the field's presence is the disclosure, the same rule `dropped` and `created` are
+ written under."
+  (cond (has-panes
+         (cond ((null panes) nil)
+               ((null (cdr panes)) (getf (first panes) :command))
+               (t (format nil "~{~a~^, ~}"
+                          (mapcar (lambda (p) (format nil "#~d ~a" (getf p :pane) (getf p :command)))
+                                  panes)))))
+        ((stringp command) command)
+        (t nil)))
+
 (defun %handle-frame (head frame)
   (cond
     ((and (consp frame) (eq (car frame) :disconnected))
@@ -1054,7 +1091,7 @@ empty pane on every attach, which is the defect the guard exists to prevent, inv
      ;; *raw: cursor addressing, `\r`, a partial UTF-8 character and all*). This arm read `:data` as
      ;; a string and always got `""`, so a live terminal drew nothing (the sweep, section A). A
      ;; character cut across two frames waits in `:pending` for its tail (`%term-decode-bytes`).
-     (when (head-term head)
+     (when (and (head-term head) (%term-frame-is-mine-p frame))
        (let* ((term (head-term head))
               (text (cond ((getf frame :bytes) (%term-decode-bytes term (getf frame :bytes)))
                           ;; a fixture's string, for the readers that build one by hand
@@ -1078,16 +1115,19 @@ empty pane on every attach, which is the defect the guard exists to prevent, inv
      ;; ordinary state of a session nobody ran `!term` in, and the daemon's own rule is that a head
      ;; draws it as NOTHING rather than as a row — so both answers are said once on the status
      ;; line and nothing is filed.
-     (let ((command (getf frame :command)))
+     (let* ((panes (getf frame :panes))
+            (has (and (member :panes frame) t))
+            (command (%term-status-command panes has (getf frame :command)))
+            (n (if has (length panes) (if command 1 0))))
        (setf *term-status* command)
-       (say head (if (and (stringp command) (plusp (length command)))
-                     (format nil "a pane is running `!term ~a` — /term attaches to it" command)
-                     "nothing is running in this session's pane")))
+       (say head (cond ((zerop n) "nothing is running in this session's pane")
+                       ((= n 1) (format nil "a pane is running `!term ~a` — /term attaches to it" command))
+                       (t (format nil "~d panes are running: ~a — `!term N` attaches to one" n command)))))
      :control)
     ((string= (frame-name frame) "term_ended")
      ;; the ENDING, and which one — a person's `TermClose` and the daemon ending it are different
      ;; facts, and the pane says which rather than falling silent.
-     (when (head-term head)
+     (when (and (head-term head) (%term-frame-is-mine-p frame))
        (setf (getf (head-term head) :ended) (or (getf frame :reason) "the daemon ended it")
              (head-dirty head) t))
      :control)

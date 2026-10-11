@@ -12333,6 +12333,37 @@ worked for the merge queue.
                                         :key #'car :test #'string=)))
           "**the pane draws it** — the cell's style is a name this head's palette holds"))))
 
+(def-test a-head-feeds-only-the-pane-it-is-drawing (:suite leticl)
+  "**A 44 daemon fans every pane's output out to every head of the session**, so a head that fed them
+  all would mix two programs' bytes into one screen — the second pane's redraw landing on the first's,
+  which looks exactly like a terminal going mad. The frame's own `pane` is the test, and a head draws
+  ONE pane at a time: `!term N` changes which, and `*term-pane*` follows the `TermAttached` that
+  answers it.
+
+  **A frame with no `pane` is this head's** — that is the whole of a 43 daemon's vocabulary, and a
+  REFUSAL (a pane that never started) carries a null one and must still reach the head that asked."
+  (let ((h (%make-head)) (leticl::*term-pane* 1))
+    (leticl::%handle-frame h (list :frame "term_attached" :pane 2 :command "mc" :cols 20 :rows 5))
+    (is (= 2 (getf (head-term h) :pane)) "**the head is drawing pane 2**")
+    (let ((term (head-term h)))
+      (leticl::%handle-frame h (list :frame "term_output" :pane 1 :bytes #(88)))
+      (is (equal "" (first (leticl::term-screen-lines (getf term :screen))))
+          "**pane 1's bytes are NOT fed to the screen drawing pane 2**")
+      (leticl::%handle-frame h (list :frame "term_output" :pane 2 :bytes #(89)))
+      (is (equal "Y" (first (leticl::term-screen-lines (getf term :screen))))
+          "**and pane 2's are** — the program this head is drawing")
+      (leticl::%handle-frame h (list :frame "term_output" :bytes #(90)))
+      (is (equal "YZ" (first (leticl::term-screen-lines (getf term :screen))))
+          "**a frame with NO pane is this head's** — a 43 daemon's whole vocabulary")
+      ;; **READ THROUGH THE HEAD, not through the list captured above.** `setf`-on-`getf` of a key that
+      ;; is not there yet PREPENDS a cons, so the plist this test captured a moment ago does not grow
+      ;; it — a trap that made the second ending look ignored when it had landed.
+      (leticl::%handle-frame h (list :frame "term_ended" :pane 1 :reason "somebody else's pane went"))
+      (is (null (getf (head-term h) :ended)) "**another pane's ending is not this pane's**")
+      (leticl::%handle-frame h (list :frame "term_ended" :pane 2 :reason "the program exited with 3"))
+      (is (equal "the program exited with 3" (getf (head-term h) :ended))
+          "and its own ending is said"))))
+
 (def-test the-pane-frames-name-the-pane-the-daemon-numbered (:suite leticl)
   "**Protocol 44 numbers the panes, and every frame about one carries the number** — `TermInput`,
   `TermResize` and `TermClose` say WHICH pane they are for, and the daemon refuses the whole
@@ -12344,17 +12375,17 @@ worked for the merge queue.
   comes from `TermAttached { pane }`, which is how a head learns which of a session's panes it is
   drawing."
   (flet ((panes (f) (getf f :pane)))
-    (let ((*daemon-protocol* 44))
+    (let ((leticl:*daemon-protocol* 44) (leticl::*term-pane* 1))
       (is (= 1 (panes (make-term-input "a"))) "**44: the keystroke names its pane**")
       (is (= 1 (panes (make-term-resize 80 24))) "and so does the rectangle")
       (is (= 1 (panes (make-term-close))) "and the ending"))
-    (let ((*daemon-protocol* 43))
+    (let ((leticl:*daemon-protocol* 43))
       (is (null (panes (make-term-input "a")))
           "**43: the field is not sent at all** — an unknown field there ends the daemon's read loop")
       (is (null (panes (make-term-resize 80 24))) "nor on the rectangle")
       (is (null (panes (make-term-close))) "nor on the ending"))
     ;; THE NUMBER IS THE DAEMON'S, and the attach is where it arrives
-    (let ((h (%make-head)) (*daemon-protocol* 44) (*term-pane* 1))
+    (let ((h (%make-head)) (leticl:*daemon-protocol* 44) (leticl::*term-pane* 1))
       (leticl::%handle-frame h (list :frame "term_attached" :pane 3 :command "mc" :opened t
                                      :cols 40 :rows 10))
       (is (= 3 (getf (head-term h) :pane)) "**the ATTACH says which pane arrived**")
