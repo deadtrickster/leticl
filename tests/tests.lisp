@@ -12040,7 +12040,8 @@ a b c
     ;; written in the code with its reason and is NOT asserted here, because the fixture that tried
     ;; it compared a byte this test cannot see in a failure message — an assertion that cannot say
     ;; what went wrong is worse than none, and asserting the code against itself proves nothing.
-    (dolist (pair (list (cons :enter (string #\return))))
+    (dolist (pair (list (cons :enter (string #\return)) (cons :tab (string #\tab))
+                        (cons :backspace (string (code-char 127)))))
       (leticl::%handle-key h (list :type (car pair)))
       (is (equal (cdr pair)
                  (getf (car (last (remove-if-not (lambda (f) (equal "term_input" (leticl::frame-name f)))

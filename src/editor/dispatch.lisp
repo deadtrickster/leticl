@@ -48,6 +48,16 @@ for the lists)."
       ;; a bare line is HELD (see `%submit-line`), which is the window the operator's
       ;; `y` fell through on the reference: card away, bare line submitted, the words
       ;; reached the model while their own command waited and died at its deadline.
+      ;; **A TERMINAL TAKES TAB AND BACKSPACE BEFORE ANYTHING ELSE CLAIMS THEM.** MEASURED with a
+      ;; probe that printed what actually left the head: `PROBE enter="<CR>" tab=NIL backspace=NIL`
+      ;; — Enter reached the program and the other two never arrived, because they are claimed
+      ;; EARLIER than the pane arm (the completer takes `:tab`; something takes `:backspace`), so the
+      ;; arm written for them inside `%pane-key` is dead code. This one is above every other claim,
+      ;; which is the third ordering lesson on this pane and the only one that generalises: a key a
+      ;; PANE needs must be taken before the paths that assume a composer is the reader.
+      ((and (eq (head-mode head) :term) (head-term head) (member type '(:tab :backspace)))
+       (%send head (make-term-input (case type (:tab (string #\tab)) (t (string (code-char 127))))))
+       t)
       ((and (head-prompt-req head) (not *prompt-away*) (eq type :esc))
        (setf *prompt-away* t
              (head-dirty head) t)
