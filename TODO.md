@@ -896,6 +896,24 @@ reaches no arm in either decoder, and `Key::CtrlN` does not exist).
   than a silent wait; and have the pusher say which pid wedged rather than that the tree did not
   land.
 
+  **TWO OF THE THREE ARE ALREADY IN, MEASURED 2026-10-11.** The paint lock HAS a deadline
+  (`+hack-lock-timeout+`, five seconds, `%with-paint-lock`) — it predates this wedge, added after
+  the same shape on 2026-09-24, and it is why the pusher could say *the channel is blocked* instead
+  of hanging: the eval surface survives even though the process cannot. And the pusher does name
+  the pid (`--list`/`--pid`, used here to find 259603 wedged while the box's other head answered in
+  0 ms). What is NOT in is the lock being held across a `%send`.
+
+  **AND `:timeout` ON THE SOCKET STREAM DOES NOT FIX THE BLOCKING WRITE — MEASURED, so nobody
+  spends the hour again.** The remedy that looks obvious is `sb-bsd-sockets:socket-make-stream
+  ... :timeout N` on the daemon socket, and it does not do it: a probe with a peer that never reads
+  wrote 20 000 × 200-byte strings through a stream made with `:timeout 1` and was still blocked a
+  MINUTE later (the probe had to be killed). So the deadline is not available as a stream keyword on
+  this SBCL for a blocking `write(2)` on a Unix socket, and the real fix has to be one of: put the fd
+  in non-blocking mode and drive the write from a loop that handles `EAGAIN` (`O_NONBLOCK` +
+  `sb-unix:unix-write`, which is a change to the stream layer and wants its own test), or give the
+  head a WRITER THREAD with a queue so the main loop never blocks on the fd at all. The second is
+  what the reference does.
+
 Each of these is a DIVERGENCE FROM THE REFERENCE that is currently invisible on the
 screen, so none of them is worth a commit of its own. They are written down here
 because an invisible divergence is exactly what this repo has been bitten by (the
