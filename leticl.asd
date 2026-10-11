@@ -228,6 +228,10 @@ protocol goldens, wire framing (see PLAN.md §11)."
   :serial t
   :components ((:file "tests/package")
                (:file "tests/tests")
+               (:file "tests/sweep-wire")
+               (:file "tests/sweep-input")
+               (:file "tests/sweep-transcript")
+               (:file "tests/sweep-stability")
                ;; the net under `scripts/compare-1-1`: a fixture in, a screen out
                (:file "tests/replay"))
   :perform (asdf:test-op (o c)
