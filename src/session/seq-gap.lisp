@@ -581,6 +581,10 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
                              :key (lambda (r) (getf r :key)) :test #'string=)))
                (when row
                  (setf (getf row :value) detail))))))
+       ;; **AND A FOLD'S CLOSING WARNING ENDS ITS LINE** (letibot R73): the walking
+       ;; `CompactionProgress` line has no `done` of its own, so `compacted`, `reseated` or
+       ;; `auto_compact_failed` is what takes it off the screen. See `+fold-ending-codes+`.
+       (note-fold-ended (getf env :code))
        (let ((w (list :code (getf env :code) :detail (getf env :detail)
                       :ts (getf env :ts)
                       :compaction (getf env :compaction))))

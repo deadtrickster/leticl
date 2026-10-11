@@ -28176,6 +28176,70 @@ Three claims, and the third is what makes the second safe:
     (is (null leticl::*compaction*) "a finished turn clears the fold")
     (is (not (leticl::compaction-active-p)) "so nothing spins on after the turn it ran in")))
 
+(defun %screen-lines-with (head needle)
+  "The rows of HEAD's last-drawn screen that contain NEEDLE."
+  (remove-if-not (lambda (l) (search needle l))
+                 (uiop:split-string (%screen-text head) :separator '(#\Newline))))
+
+(def-test a-compaction-is-one-line-updated-in-place-and-its-closing-warning-clears-it (:suite leticl)
+  "**letibot R73: *\"this is how much text i get for a compaction in leticl\"*.**
+
+The operator pasted one fold as four `compact_half` notes, each with a remedy line under it. Since
+letibot `a33655d` the daemon sends a half as `CompactionProgress` from its first event to its last —
+*half 1 of 2* as it begins, the count as the server writes, a final count — and one closing
+`compacted` warning. So the whole of a fold on the glass is **one line that changes, then the closing
+row**, and the line must be gone once that row is there.
+
+Driven through `%handle-frame` with real envelopes, and read off the RENDERED screen, because the
+claim is about what the operator sees: one row saying *compacting*, whatever it has been told so far."
+  (let* ((leticl::*compaction* nil)
+         (leticl::*now-ms* 1000)
+         (h (%on-head :cols 100 :rows 30))
+         (seq 0))
+    (flet ((send (event &rest fields)
+             (leticl::%handle-frame h (list* :frame "event" :seq (incf seq) :ts (* 10 seq)
+                                             :event event fields)))
+           (compacting () (%screen-lines-with h "compacting")))
+      ;; a turn first, so the screen is a conversation and not the empty-session placeholder
+      (send "turn_started" :turn-id "t1")
+      ;; ---------- the halves, as the daemon sends them now ----------
+      (loop for (half written) in '((1 0) (1 2100) (1 6189) (2 0) (2 3500) (2 7357))
+            do (send "compaction_progress" :half half :halves 2 :prompt-tokens 976900
+                     :processed 0 :written written :unit "chars")
+               (leticl::%render h)
+               (let ((rows (compacting)))
+                 (is (= 1 (length rows))
+                     (format nil "**ONE line for the fold, at every tick** (half ~d, ~d written): ~s"
+                             half written rows))
+                 (is (and rows (search (format nil "half ~d of 2" half) (first rows)))
+                     (format nil "**updated in place**: the line names the half it is on now: ~s" rows))
+                 (is (and rows (search (leticl::thousands written) (first rows)))
+                     (format nil "and the count it was just told: ~s" rows))))
+      (is (null (%warning-rows h))
+          "**no note was filed for a half** — progress is a line, never a row in the record")
+      ;; ---------- the closing warning ----------
+      (send "warning" :code "compacted"
+            :detail "compacted: 937686 → 75012 tokens, on transcript s-1#t2.")
+      (leticl::%render h)
+      (is (null leticl::*compaction*) "**the closing `compacted` ends the fold**")
+      (is (null (compacting))
+          (format nil "**and its line is gone from the screen**, not left beside its own report: ~s"
+                  (compacting)))
+      ;; ---------- the other two codes that end a fold ----------
+      (dolist (code '("reseated" "auto_compact_failed"))
+        (send "compaction_progress" :half 1 :halves 1 :prompt-tokens 100 :processed 0
+              :written 5 :unit "chars")
+        (is (leticl::compaction-active-p) (format nil "a fold is running again before ~a" code))
+        (send "warning" :code code :detail "x")
+        (is (null leticl::*compaction*)
+            (format nil "**`~a` ends it too** — the reference clears on the same three" code)))
+      ;; ---------- and a routine warning that is NOT a fold's end leaves it alone ----------
+      (send "compaction_progress" :half 1 :halves 2 :prompt-tokens 100 :processed 0
+            :written 5 :unit "chars")
+      (send "warning" :code "cache_reuse_shortfall" :detail "x")
+      (is (leticl::compaction-active-p)
+          "**only a fold's own ending clears it** — a note about something else is not one"))))
+
 (def-test a-routine-note-draws-no-remedy-line (:suite leticl)
   "**letibot R73's third defect, which was this head's: a remedy line belongs to a fault.**
 

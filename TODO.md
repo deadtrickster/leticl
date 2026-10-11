@@ -326,6 +326,38 @@ four work. `%command` has arms the registry does not list (`verbosity`, `jobs`) 
 anything else to the daemon, where `/gate`, `/flowy` and `/job ID` live. **An audit of *what a
 head can do* has to ask the dispatcher and the wire, not the list it completes from.**
 
+## R73 (letibot) — a compaction is one line, and a routine note carries no remedy — DONE (branch `routine-notes-and-compaction`)
+
+letibot's R73 filed this head's half in its own TODO: the operator pasted one fold as four
+`compact_half` notes, each with *→ nothing to fix — the conversation is being summarised …*
+under it.
+
+- [x] **A remedy line belongs to a fault** — R29 rule one, amended. `note-remedy` answers NIL for
+  every `+routine-warnings+` code and the routine entries are gone from `+note-remedies+`;
+  `every-note-code-offers-a-remedy` now asserts both halves (every failure code has an entry, no
+  routine code has one). `slash_refused` and `mode_unknown` KEEP theirs — letibot classes them
+  `Refused`, and */help lists the ones that do* is the reader's way forward. The one routine code
+  that can still name an act is `interrupt_idle`, and only from the state: over a turn busy on a
+  call it says which key reaches it; idle, it draws nothing.
+- [x] **A fold is one line updated in place, ended by its closing warning.** The line was already
+  here (`compaction-progress-line`, protocol 27); what was missing was the END — only a turn's end
+  or a stalled tick cleared it. `compacted`, `reseated` and `auto_compact_failed` now clear it
+  (`+fold-ending-codes+`, the reference's three). `compact_half` stays in the routine table: a
+  daemon from before `a33655d` speaks the same protocol number and still sends it.
+- [ ] **Protocol 43 (letibot `955a7fc`, R61) is NOT claimed here.** This head says 42. Against a 43
+  daemon it attaches and reads (a newer daemon is a reading problem, R3): what it cannot read is
+  `ServerFrame::Queues` (the reply to `/queue`'s `list_merge_queue`, replacing `merge_queue`) and
+  `SessionEvent::QueueMoved` (replacing `merge_entry_added/moved/removed`) — both reported and
+  skipped, so the merge-queue pane stays EMPTY rather than breaking. Moving to 43 means porting
+  `QueueSnapshot` (reviews, merges, leases, targets, recent, `unreadable`) into the pane and
+  treating `QueueMoved` as *ask again*; until then the number is a claim this head cannot make.
+- [ ] **Two guards were red on `main` before this branch, both from letibot's last two days and
+  neither touched here:** `a-routine-warning-code-is-one-letibot-calls-routine` (R61 added
+  `queue_lease_lost` and `merge_queue_recovered` as `Routine`) and six markers of
+  `every-compaction-sentence-this-head-parses-is-still-the-one-letibot-writes` (R72/`e834316`
+  reworded the wall and compaction sentences into the provider's units, so `compaction-facts` no
+  longer finds its numbers and a `compacted` falls back to a note).
+
 ## R38 — a setting with more than two values is CHOSEN, not cycled
 
 **Landed `dfad931`, the verbosity half.** `/verbosity` opened a four-rung cycle: with R37's rung the

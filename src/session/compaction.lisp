@@ -741,3 +741,25 @@ for both would be a lie about one."
   "Forget the fold. For its own end, a session change, and a dead socket."
   (setf *compaction* nil))
 
+(defparameter +fold-ending-codes+
+  '("compacted" "reseated" "auto_compact_failed")
+  "The warning codes that END a fold, so the line `compaction-progress-line` draws goes with them.
+
+**A progress event has no `done`** — it is ephemeral by construction (letibot's
+`scrub::is_interactive`) — so what ends the walking line is the durable warning that says how the
+fold came out: `compacted`/`reseated` that the fork landed, `auto_compact_failed` that it did not
+run. The reference head clears its `compacting` on exactly these three
+(`crates/tui/src/app/events/warnings.rs`, `on_warning`).
+
+**And it is the CLOSING line of a fold now, not a turn's end** (letibot R73, `a33655d`): a
+compaction is one line updated in place and one closing `compacted` row. This head cleared only on a
+turn's end and on a stalled tick, so an overrun fold that lands MID-turn left its line up — over the
+turn's own progress, which `carry-line` ranks below a fold — beside its own closing report, until the
+stall window (`*stall-ms*`) ran out.")
+
+(defun note-fold-ended (code)
+  "Clear the fold when CODE is one that ends it (`+fold-ending-codes+`). Returns whether it did."
+  (when (and code (member code +fold-ending-codes+ :test #'string=))
+    (reset-compaction)
+    t))
+
