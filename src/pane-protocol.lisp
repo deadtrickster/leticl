@@ -343,7 +343,7 @@ The entry comes from `*merge-detail*`, which `pane-enter` on the queue pane sets
 (defun %term-lines-from-output (output)
   "OUTPUT as the lines a reader sees — LINE DISCIPLINE, not a screen.
 
-**`#\\return` OVERWRITES, IT DOES NOT CLEAR** (measured, `TODO.md`): it moves to column 0 and what
+**`#\return` OVERWRITES, IT DOES NOT CLEAR** (measured, `TODO.md`): it moves to column 0 and what
 follows replaces the characters there, column by column. So `'a\\r\\n'` is the line `a` — the return is
 the first half of that line ending — while `'10%\\r50%\\r100%'` is ONE line, `100%`, which is how a
 progress bar redraws itself. A buffer and a column index model both; a string that gets reset models
@@ -497,6 +497,49 @@ refused to scroll would draw nothing after the first screenful."
                                    (subseq (term-screen-cells s) (%ts-index s r 0)
                                            (+ (%ts-index s r 0) (term-screen-cols s))))))
 
+(defun %ts-erase-chars (s n)
+  "Erase N characters from the cursor without moving it (`X`) — the screen keeps its shape and the
+cells become blanks, which is different from DELETING them."
+  (let ((row (term-screen-row s)))
+    (%ts-erase-row s row (term-screen-col s) (+ (term-screen-col s) n))))
+
+(defun %ts-delete-chars (s n)
+  "Delete N characters at the cursor (`P`), pulling the rest of the row LEFT — the row gets shorter in
+content, which is what makes a shell's redraw land where it should."
+  (let* ((row (term-screen-row s)) (col (term-screen-col s)) (cols (term-screen-cols s))
+         (cells (term-screen-cells s)) (start (%ts-index s row 0)))
+    (loop for c from col below cols
+          do (setf (char cells (+ start c))
+                   (if (< (+ c n) cols) (char cells (+ start c n)) #\space)))))
+
+(defun %ts-insert-chars (s n)
+  "Insert N blanks at the cursor (`@`), pushing the rest of the row RIGHT and losing the far end."
+  (let* ((row (term-screen-row s)) (col (term-screen-col s)) (cols (term-screen-cols s))
+         (cells (term-screen-cells s)) (start (%ts-index s row 0)))
+    (loop for c from (1- cols) downto col
+          do (setf (char cells (+ start c))
+                   (if (>= (- c n) col) (char cells (+ start (- c n))) #\space)))))
+
+(defun %ts-insert-lines (s n)
+  "Insert N blank lines at the cursor (`L`), pushing the lines below DOWN and out of the bottom."
+  (let* ((row (term-screen-row s)) (rows (term-screen-rows s)) (cols (term-screen-cols s)))
+    (loop for r from (1- rows) downto row
+          do (if (>= (- r n) row)
+                 (replace (term-screen-cells s) (term-screen-cells s)
+                          :start1 (%ts-index s r 0) :start2 (%ts-index s (- r n) 0)
+                          :end2 (%ts-index s (- r n) cols))
+                 (%ts-erase-row s r 0 cols)))))
+
+(defun %ts-delete-lines (s n)
+  "Delete N lines at the cursor (`M`), pulling the lines below UP; the vacated rows are blanked."
+  (let* ((row (term-screen-row s)) (rows (term-screen-rows s)) (cols (term-screen-cols s)))
+    (loop for r from row below rows
+          do (if (< (+ r n) rows)
+                 (replace (term-screen-cells s) (term-screen-cells s)
+                          :start1 (%ts-index s r 0) :start2 (%ts-index s (+ r n) 0)
+                          :end2 (%ts-index s (+ r n) cols))
+                 (%ts-erase-row s r 0 cols)))))
+
 (defun term-screen-feed (s output)
   "Feed OUTPUT into SCREEN, honouring what can be honoured. Returns the count of sequences DROPPED.
 
@@ -521,6 +564,17 @@ everything else is counted, never guessed at, which is the rule the pane keeps."
                                  (+ (term-screen-col s) (max 1 (num))))))
                  (#\D (setf (term-screen-col s)
                             (max 0 (- (term-screen-col s) (max 1 (num))))))
+                 ;; **THE REST OF THE COMMON SET** — the column and row jumps, the character
+                 ;; operations, and the line operations. Each is a few lines because the screen keeps
+                 ;; its own shape: a program that deletes a character expects the row to CLOSE UP, and
+                 ;; one that inserts a blank expects it to OPEN, which is why these are not erases.
+                 (#\G (setf (term-screen-col s) (min (1- (term-screen-cols s)) (max 0 (1- (arg1))))))
+                 (#\d (setf (term-screen-row s) (min (1- (term-screen-rows s)) (max 0 (1- (arg1))))))
+                 (#\X (%ts-erase-chars s (max 1 (num))))
+                 (#\P (%ts-delete-chars s (max 1 (num))))
+                 (#\@ (%ts-insert-chars s (max 1 (num))))
+                 (#\L (%ts-insert-lines s (max 1 (num))))
+                 (#\M (%ts-delete-lines s (max 1 (num))))
                  (t nil))
                (setf args "" state :text)))
       (loop while (< i n) do

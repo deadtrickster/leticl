@@ -12082,6 +12082,35 @@ worked for the merge queue.
         (format nil "**a bare `J` clears NOTHING** — it erases below a cursor this head cannot place: ~s" lines))
     (is (= 1 dropped) "and it is counted rather than honoured")))
 
+(def-test a-terminal-deletes-and-erases-differently (:suite leticl)
+  "**Erasing blanks cells; deleting MOVES what is left of them** — the distinction a shell depends on
+  when it redraws a line shorter than the last one. `X` blanks N characters in place; `P` deletes them
+  and pulls the rest of the row LEFT; `@` inserts blanks and pushes the rest RIGHT. And the line
+  operations do the same to rows: `L` opens a hole and pushes the lines below down, `M` closes one."
+  (flet ((scr (&rest text)
+           (let ((s (leticl::term-screen-new 3 8)))
+             ;; `t` is a CONSTANT in CL and cannot be a loop variable -- measured as a
+               ;; COMPILED-PROGRAM-ERROR that named the form rather than the reason.
+             (dolist (piece text) (leticl::term-screen-feed s piece))
+             s))
+         (esc (n) (concatenate (quote string) (string (code-char 27)) n)))
+    (is (equal (list "   def" "" "") (leticl::term-screen-lines (scr "abcdef" (esc "[H") (esc "[3X"))))
+        (format nil "**`X` blanks in place** — the row keeps its shape: ~s" (leticl::term-screen-lines (scr "abcdef" (esc "[H") (esc "[3X")))))
+    (is (equal (list "def" "" "") (leticl::term-screen-lines (scr "abcdef" (esc "[H") (esc "[P") (esc "[P") (esc "[P"))))
+        (format nil "**`P` closes the row up** — three deletes from home leave `def` against the left: ~s"
+                (leticl::term-screen-lines (scr "abcdef" (esc "[H") (esc "[P") (esc "[P") (esc "[P")))))
+    (is (equal (list "  abcdef" "" "") (leticl::term-screen-lines (scr "abcdef" (esc "[H") (esc "[2@"))))
+        (format nil "**and `@` opens it** — two blanks at home push the text right: ~s"
+                (leticl::term-screen-lines (scr "abcdef" (esc "[H") (esc "[2@")))))
+    (is (equal (list "one" "two" "three") (leticl::term-screen-lines (scr "one" (format nil "~%two~%three"))))
+        "three rows to work on")
+    (is (equal (list "one" "" "two") (leticl::term-screen-lines (scr "one" (format nil "~%two~%three") (esc "[2;1H") (esc "[L"))))
+        (format nil "**`L` opens a hole at the cursor and pushes the rest down**: ~s"
+                (leticl::term-screen-lines (scr "one" (format nil "~%two~%three") (esc "[2;1H") (esc "[L")))))
+    (is (equal (list "one" "three" "") (leticl::term-screen-lines (scr "one" (format nil "~%two~%three") (esc "[2;1H") (esc "[M"))))
+        (format nil "**and `M` closes one, pulling them up**: ~s"
+                (leticl::term-screen-lines (scr "one" (format nil "~%two~%three") (esc "[2;1H") (esc "[M")))))))
+
 (def-test a-terminal-draws-where-the-program-addressed-the-cursor (:suite leticl)
   "**The difference the screen makes**, and the reason the line model had to go: a program that moves
   its cursor is drawn WHERE it moved it. The line model could honour an overwrite and an erase —
