@@ -52,6 +52,7 @@
 
 (defconstant +tiocgwinsz+ #x5413)       ; Linux x86-64
 (defconstant +tcsadrain+ 1)             ; glibc: drain output, then apply
+(defconstant +tcsanow+ 0)               ; glibc: apply now, drain nothing
 
 ;; Allocated on first use, not at load: sb-alien:make-alien is a malloc, and
 ;; malloc'd memory is not part of a save-lisp-and-die image, so a load-time
@@ -89,8 +90,21 @@ termios aliens are malloc'd on first use (see *saved-termios*), never at load."
   (setf *raw-fd* fd))
 
 (defun leave-raw ()
+  "Put the saved termios back — NOW, not after a drain.
+
+**`TCSADRAIN` waits for every byte queued on the pty to be written, and a stalled pty
+never finishes writing them.** A terminal that has stopped reading its slave — a tmux
+pane whose client is gone, an ssh session whose link dropped, a byobu window mid-resize —
+left `leave-raw` blocked inside `tcsetattr(3)` on the way out, which is the main thread
+blocked on exit with the terminal half-restored. The exit path is where this runs, after
+`leave-tui` has already written its escapes; it is also where a crash hook runs. Neither
+may wait on a terminal that is not listening. `TCSANOW` applies the attributes to the
+line discipline at once and leaves the queued output to drain on its own, which it does
+the moment the terminal reads again — the same bytes, the same order; only the wait is
+gone (the 2026-10-11 stability pass, `TODO.md` B.11). `enter-raw` keeps `TCSADRAIN`: it
+runs at startup, when the queue is empty and nothing has stalled."
   (when (and *raw-fd* *saved-termios*)
-    (%tcsetattr *raw-fd* +tcsadrain+ *saved-termios*)
+    (%tcsetattr *raw-fd* +tcsanow+ *saved-termios*)
     (setf *raw-fd* nil)))
 
 (defmacro with-raw-mode ((&key (fd 0)) &body body)

@@ -454,6 +454,144 @@ to be the bytes it was given."
     (setf *peek-asked-at* *now-ms*)
     (%send head (make-peek *peeked-session*))))
 
+(defvar *tick-failures* nil
+  "The ticks that have signalled in this head's life — an alist of `(NAME . COUNT)`.
+
+**A tick failing is SAID ONCE AND COUNTED EVERY TIME.** The loop runs ten of them a pass
+(`tick-notice`, the stop and op-call waits, the dash feed, git, the peek, the watchers, the
+attach deadline, the screen answers), each a measurement this head takes for itself, and
+until 2026-10-11 none of them was guarded: an error in a dash watcher or in `git status`
+against a half-pushed tree went straight out of `run-loop` and, in a `--disable-debugger`
+image, took the head down. One `handler-case` per tick now (`%run-tick`); the first failure
+of each is a status note naming the tick and the condition, and a tick that fails on every
+pass — five hundred times a second — is counted here instead of said again, because a
+note that is re-set on every pass is a status line nobody else can use. Read it from the
+eval socket: `*tick-failures*` is the answer to *why is the header's git line stale*.
+
+A `defvar`: it counts this process's lifetime, and a live push of this file must not clear
+the count that says what went wrong before the push.")
+
+(defun %run-tick (head name fn)
+  "Run FN, one of the loop's ticks, so that its failure costs this pass of that tick and
+nothing else. NAME is the tick's symbol, for the note and the count — see
+`*tick-failures*`. `serious-condition` and not `error`: a stack exhaustion inside a tick
+is a `STORAGE-CONDITION`, which an `error` arm lets through to the debugger hook."
+  (handler-case (funcall fn head)
+    (serious-condition (e)
+      (let ((cell (assoc name *tick-failures*)))
+        (cond (cell (incf (cdr cell)))
+              (t (push (cons name 1) *tick-failures*)
+                 (ignore-errors
+                  (say head (format nil "~(~a~) failed: ~a (said once; `*tick-failures*` counts the rest)"
+                                    name e))))))
+      nil)))
+
+(defun %fold-frame (head frame)
+  "Fold one FRAME from the mailbox; `(values OUTCOME SEQ)`, where OUTCOME is what
+`%handle-frame` answered and SEQ the event's seq WHEN AND ONLY WHEN the fold succeeded.
+
+**THE READ MARK MOVES AFTER THE FOLD, NOT BEFORE** (2026-10-11, `TODO.md` B.11). The loop
+used to take the seq off the frame first and fold second, so a frame whose fold signalled
+was acked as read — and acked is *the daemon may forget it*. That is a silence, and the
+rule the whole loop is built on is *a crash costs a duplicate, never a silence* (§13.2b).
+Now a frame that failed to fold contributes no seq: if it was the last of the pass, the
+mark stays where the previous pass left it and the daemon resends from there — a
+duplicate; if a later frame in the same pass folded, the mark passes over it, and the
+ROW this files is what remains. Either way the loss is visible: `note-unreadable` puts a
+row in the conversation at the point it happened, naming the condition and carrying the
+wire line, and counts it in `*unreadable-total*` beside the frames the decoder could not
+read — the same bucket, because to the operator it is the same fact: *the daemon sent
+something this head did not take in*. `*last-render-error*` is set too, as before, because
+the render gate reads it."
+  (handler-case
+      (values (%handle-frame head frame)
+              (and (%frame-plist-p frame)
+                   (string= (frame-name frame) "event")
+                   (getf frame :seq)))
+    (error (e)
+      (setf *last-render-error* e
+            (head-dirty head) t)
+      (ignore-errors
+       (note-unreadable (head-session head)
+                        (format nil "the fold signalled ~a: ~a" (type-of e) e)
+                        (and (%frame-plist-p frame) (getf frame :wire-line))))
+      (values nil nil))))
+
+(defun %fold-pass (head)
+  "Steps 1 and 1b of a pass — drain the frames, then the keys — UNDER THE PAINT LOCK.
+`(values RENDERED FILTERED LAST-SEQ)`, or `(values 0 0 0 :busy)` when the lock was held
+and nothing was folded.
+
+**AN EVAL AND A FOLD MUST NOT INTERLEAVE.** The paint lock used to cover painting only, so
+an eval on the hack socket — which holds the lock for its duration — ran concurrently with
+the fold on this thread: `push-item` on the session while a `defun` it calls was being
+redefined, a `setf` of a slot the eval was reading. The lock is widened to the fold and the
+key handling, with the SAME zero-wait acquisition the painter uses (`%render-and-paint`):
+when an eval holds it this pass skips the drain, the frames and keys stay in their
+mailboxes, and the loop sleeps its idle wait rather than spin. Nothing is lost — a
+mailbox holds what arrived — and the first pass after the eval releases folds it all.
+
+**MEASURED, because the loop's idle wait is 2 ms and this must not be what a key waits
+on**: an uncontended `grab-mutex`/`release-mutex` pair with two empty drains cost
+**0.05 us a pass** on this box (20,000 passes, 2026-10-11) — the idle wait is 40,000 times
+that, so the lock is not where a key's latency is. The test
+`the-fold-pass-costs-less-than-the-idle-wait` re-takes the number on every suite run.
+
+The ordering inside is unchanged (driver.rs:1): every frame that has arrived, in arrival
+order; then the non-wheel keys in arrival order and the wheel notches coalesced into one
+move (`%wheel-batch` holds that rule). The guards are unchanged too — nothing a frame or a
+key can do may take the head down."
+  (unless (sb-thread:grab-mutex (paint-lock) :waitp nil)
+    (sleep *idle-poll-ms*)
+    (return-from %fold-pass (values 0 0 0 :busy)))
+  (let ((rendered 0) (filtered 0) (last-seq 0))
+    (unwind-protect
+         (progn
+           ;; 1. drain. An error while FOLDING a frame must not kill the loop
+           ;; either: a frame this head cannot handle is one bad frame, not a
+           ;; reason to lose the session — see `%fold-frame` for what it costs.
+           (dolist (frame (%drain (head-frames head)))
+             (%run-tick head 'note-frame-arrived (lambda (h) (declare (ignore h)) (note-frame-arrived)))
+             ;; `(%frame-plist-p frame)`, not `(consp frame)`: the reader pushes
+             ;; `(:disconnected STREAM)` — not a plist with a `:frame` — and `frame-name`
+             ;; on it is a TYPE-ERROR in the main thread. With --disable-debugger that is
+             ;; not a wrong frame, it is a head that refuses to start: measured,
+             ;; `leticl` exited at launch for 45 minutes of this session.
+             (multiple-value-bind (outcome seq) (%fold-frame head frame)
+               (case outcome
+                 (:rendered (incf rendered) (incf *rendered-total*))
+                 (:filtered (incf filtered) (incf *filtered-total*))
+                 (t nil))
+               (when seq (setf last-seq seq))))
+           ;; **WHEEL NOTCHES ARE COALESCED INTO ONE MOVE PER PASS** — `%wheel-batch` holds the rule
+           ;; and its measurements; this is only the ordering that rule requires. The non-wheel keys
+           ;; go first, in arrival order, so an `esc` or a printable key that changes what a notch
+           ;; MEANS is applied BEFORE the gesture — the gesture lands on the view it was made on.
+           ;;
+           ;; **AND THE WHOLE BATCH IS INSIDE A GUARD, WHICH IS A REGRESSION THIS EXTRACTION CAUSED
+           ;; AND ITS OWN REPORT CAUGHT.** The inline version had every key inside a `handler-case`;
+           ;; writing the batch as a call put `%drain` and `%wheel-batch` OUTSIDE it, so an error
+           ;; raised while merely READING or CLASSIFYING a key escaped `run-loop` — and with
+           ;; `--disable-debugger` an unhandled error on the main thread prints the condition and
+           ;; QUITS THE HEAD. The operator's report was *"it was complaining about wrong character
+           ;; code while i was typing"* and a restart. The outer `handler-case` is the fix: nothing
+           ;; a KEY can do — being malformed, unreadable, or unclassifiable — may take the head down,
+           ;; which is the same rule `%handle-key`'s own guard has always followed.
+           (handler-case
+               (multiple-value-bind (others wheel-kind wheel-notches)
+                   (%wheel-batch (%drain (head-keys head)))
+                 (dolist (key others)
+                   (handler-case (%handle-key head key)
+                     (error (e) (ignore-errors (say head (format nil "key error: ~a" e))))))
+                 (when (and wheel-kind (plusp wheel-notches))
+                   (handler-case
+                       (%handle-key head (list :type :mouse :kind wheel-kind
+                                               :notches wheel-notches :x 0 :y 0))
+                     (error (e) (ignore-errors (say head (format nil "key error: ~a" e)))))))
+             (error (e) (ignore-errors (say head (format nil "key batch error: ~a" e))))))
+      (sb-thread:release-mutex (paint-lock)))
+    (values rendered filtered last-seq)))
+
 (defun run-loop (head)
   (loop while (head-running head)
         do (let ((rendered 0)
@@ -464,85 +602,38 @@ to be the bytes it was given."
              ;; frame to land, on OUR clock and not on the event's own `ts`
              (setf *now-ms* (internal-real-time-ms))
              (incf *loop-passes*)
-             (tick-notice head)
+             ;; **EVERY TICK IS GUARDED, ONE `handler-case` EACH** — `%run-tick`, and
+             ;; `*tick-failures*` for what a failure costs. The order is the order it was.
+             (%run-tick head 'tick-notice #'tick-notice)
              ;; **the wait for a daemon this head asked to stop** — before the
              ;; drain, so the row it marks dirty is painted in THIS pass, and so
              ;; the pass that ends the loop is the one that says why
-             (tick-stop-request head)
+             (%run-tick head 'tick-stop-request #'tick-stop-request)
              ;; **the wait for an operator call this head asked for** — beside the stop's
              ;; wait, for the same reason: a silence with a deadline has to be said, and
              ;; the pass that says it must be the pass that paints it
-             (tick-op-calls head)
+             (%run-tick head 'tick-op-calls #'tick-op-calls)
              ;; **THE DASHBOARD'S JOB FEED** — and it runs HERE, on the main loop, because that is
              ;; the thread that owns the socket. A job's ENDING arrives as an event; its PROGRESS
              ;; has no push path at all (`JobOutput` is published only in reply to a read), so it
              ;; has to be asked for, and the asking cannot come from the collector thread
              ;; (`leticl-dash-collector`) without writing a frame from a thread that does not own
              ;; the connection. See `tick-dash-feeds`.
-             (tick-dash-feeds head)
+             (%run-tick head 'tick-dash-feeds #'tick-dash-feeds)
              ;; **AND A SUBAGENT'S SCROLLBACK, WHILE ITS PANE IS OPEN** — the same shape of absence as
              ;; the job feed above: the daemon has no subscription for a session this head is not
              ;; attached to, so a peek is a read and the pane tails by asking again.
              ;; the header's git reading, on the same beat as the peek's tail — both are
              ;; measurements this head takes for itself, and neither belongs in a paint
-             (tick-git head)
-             (tick-peek head)
+             (%run-tick head 'tick-git #'tick-git)
+             (%run-tick head 'tick-peek #'tick-peek)
              ;; **AND THE WATCHERS' LIFECYCLE** (R56), on the same thread for the same reason: it asks
              ;; for the job list while something is waiting, and asking is `%send`. It is also where a
              ;; job-bound watcher STARTS the collector — an import that runs for hours cannot have its
              ;; history begin when somebody happens to open the pane and looks at it.
-             (tick-dash-watchers head)
-             ;; 1. drain. An error while FOLDING a frame must not kill the loop
-             ;; either: a frame this head cannot handle is one bad frame, not a
-             ;; reason to lose the session. The failure is remembered so the
-             ;; gate can say so, and the loop reads the next one.
-             (dolist (frame (%drain (head-frames head)))
-               (note-frame-arrived)
-               ;; `(%frame-p frame)`, not `(consp frame)`: the reader pushes
-               ;; `(:disconnected)` — a ONE-element list — and `frame-name` calls
-               ;; `(getf frame :frame)` on it, which is a malformed plist and a
-               ;; TYPE-ERROR in the main thread. With --disable-debugger that is
-               ;; not a wrong frame, it is a head that refuses to start: measured,
-               ;; `leticl` exited at launch for 45 minutes of this session.
-               ;; A frame is a plist whose car is `:frame`; nothing else is one.
-               (when (%frame-plist-p frame)
-                 (when (and (string= (frame-name frame) "event")
-                            (getf frame :seq))
-                   (setf last-seq (getf frame :seq))))
-               (handler-case
-                   (case (%handle-frame head frame)
-                     (:rendered (incf rendered) (incf *rendered-total*))
-                     (:filtered (incf filtered) (incf *filtered-total*))
-                     (t nil))
-                 (error (e)
-                   (setf *last-render-error* e
-                         (head-dirty head) t))))
-             ;; **WHEEL NOTCHES ARE COALESCED INTO ONE MOVE PER PASS** — `%wheel-batch` holds the rule
-             ;; and its measurements; this is only the ordering that rule requires. The non-wheel keys
-             ;; go first, in arrival order, so an `esc` or a printable key that changes what a notch
-             ;; MEANS is applied BEFORE the gesture — the gesture lands on the view it was made on.
-             ;;
-             ;; **AND THE WHOLE BATCH IS INSIDE A GUARD, WHICH IS A REGRESSION THIS EXTRACTION CAUSED
-             ;; AND ITS OWN REPORT CAUGHT.** The inline version had every key inside a `handler-case`;
-             ;; writing the batch as a call put `%drain` and `%wheel-batch` OUTSIDE it, so an error
-             ;; raised while merely READING or CLASSIFYING a key escaped `run-loop` — and with
-             ;; `--disable-debugger` an unhandled error on the main thread prints the condition and
-             ;; QUITS THE HEAD. The operator's report was *"it was complaining about wrong character
-             ;; code while i was typing"* and a restart. The outer `handler-case` is the fix: nothing
-             ;; a KEY can do — being malformed, unreadable, or unclassifiable — may take the head down,
-             ;; which is the same rule `%handle-key`'s own guard has always followed.
-             (handler-case
-                 (multiple-value-bind (others wheel-kind wheel-notches)
-                     (%wheel-batch (%drain (head-keys head)))
-                   (dolist (key others)
-                     (handler-case (%handle-key head key)
-                       (error (e) (ignore-errors (say head (format nil "key error: ~a" e))))))
-                   (when (and wheel-kind (plusp wheel-notches))
-                     (handler-case
-                         (%handle-key head (list :type :mouse :kind wheel-kind
-                                                 :notches wheel-notches :x 0 :y 0))
-                       (error (e) (ignore-errors (say head (format nil "key error: ~a" e)))))))
-               (error (e) (ignore-errors (say head (format nil "key batch error: ~a" e)))))
+             (%run-tick head 'tick-dash-watchers #'tick-dash-watchers)
+             ;; 1. the frames and then the keys, under the paint lock — `%fold-pass`
+             (multiple-value-setq (rendered filtered last-seq) (%fold-pass head))
              (handler-case (%poll-resize head)
                (error (e) (ignore-errors (say head (format nil "resize error: ~a" e)))))
              ;; `*replaying*`: a replay has no socket to come back to, and
@@ -555,7 +646,8 @@ to be the bytes it was given."
              ;; reach a daemon from outside (`attach-gave-up-said`). Set AFTER the
              ;; reconnect attempt: a socket that died mid-wait is the reconnect
              ;; path's business, and this is about one that is alive and mute.
-             (when (attach-overdue-p)
+             (when (%run-tick head 'attach-overdue-p
+                              (lambda (h) (declare (ignore h)) (attach-overdue-p)))
                (setf (head-farewell head) (attach-gave-up-said)
                      (head-running head) nil))
              ;; 2. draw (guarded in %render-and-paint: a render error paints
@@ -582,7 +674,7 @@ to be the bytes it was given."
                  ;; skipped the sleep would spin a core for as long as the reader holds the screen.
                  (sleep *idle-poll-ms*))
              ;; 2b. answer every screen request with the frame just painted
-             (%answer-screen-requests head)
+             (%run-tick head '%answer-screen-requests #'%answer-screen-requests)
              ;; 3. ack, and only when a frame was actually read this pass: an
              ;; idle tick has no seq to report and must not invent one
              (when (plusp last-seq)

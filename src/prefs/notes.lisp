@@ -439,8 +439,19 @@ Returns the path written, or NIL for a head with nowhere to write."
         (unless (member (car pair) written :test #'string=)
           (push (format nil "~a = ~a" (car pair) (cdr pair)) out)))
       (ensure-directories-exist path)
-      (with-open-file (f path :direction :output :if-exists :supersede
-                              :if-does-not-exist :create)
-        (dolist (l (nreverse out))
-          (write-line l f)))
+      ;; **WRITTEN BESIDE AND RENAMED OVER, never in place.** `:if-exists :supersede` opens
+      ;; the file for writing and empties it first, so a head that died between the open
+      ;; and the last `write-line` — or two heads saving at once, which `head.toml` invites
+      ;; because letibot shares it — left a truncated or interleaved file that the next
+      ;; start read as *no preferences*. `rename(2)` is atomic on one filesystem: a reader
+      ;; sees the old file whole or the new file whole, never the gap. The retired-notes
+      ;; writer in this file did this already (`save-retired-keys`); the choice is the same
+      ;; and so is the temp name's shape (the 2026-10-11 stability pass, `TODO.md` B.11).
+      (let ((tmp (merge-pathnames (format nil ".~a.tmp" (file-namestring path))
+                                  (uiop:pathname-directory-pathname path))))
+        (with-open-file (f tmp :direction :output :if-exists :supersede
+                               :if-does-not-exist :create)
+          (dolist (l (nreverse out))
+            (write-line l f)))
+        (rename-file tmp path))
       path)))

@@ -67,7 +67,8 @@ direction."
         (let ((conn (sb-bsd-sockets:socket-accept (head-hack-listener head))))
           (sb-thread:make-thread (lambda () (hack-serve head conn))
                                  :name "leticl hack conn"))
-      (error ()
+      ;; `serious-condition`, as every guard in this file: see `hack-serve`
+      (serious-condition ()
         (unless (null (head-hack-listener head))
           (incf *hack-accept-errors*)
           ;; a persistent failure would otherwise spin a core
@@ -114,11 +115,21 @@ connection. The guard has to be a `handler-case`."
                    (handler-case
                        (progn (write-line (hack-handle head line) stream)
                               (force-output stream))
-                     (error () (return)))))))
+                     (serious-condition () (return)))))))
          ;; anything the eval itself could not survive: this connection is over, the
          ;; head is not. Not printed — see `hack-accept-loop` on why a line on the
          ;; error stream under a TUI is worse than a silence.
-         (error () nil))
+         ;;
+         ;; **`serious-condition`, because `CONTROL-STACK-EXHAUSTED` IS NOT AN `ERROR`.** It is
+         ;; a `STORAGE-CONDITION` (verified on this box: `(subtypep 'control-stack-exhausted
+         ;; 'error)` is NIL), so a form that recursed without end went straight past an
+         ;; `error` arm, out of this non-main thread, and into `--disable-debugger`'s exit —
+         ;; the head reviewer's finding, 2026-10-11. The same spelling at every guard in
+         ;; this file. (The suite cannot exercise the exhaustion itself: `sbcl --script`
+         ;; implies `--lose-on-corruption`, under which a guard-page hit is a fatal lossage
+         ;; and not a condition — measured, it took the whole suite down. The frozen head
+         ;; is saved without that flag.)
+         (serious-condition () nil))
     (ignore-errors (close conn))))
 
 (defun hack-mute (condition)
@@ -181,6 +192,31 @@ is blocked rather than joining it."
        (unwind-protect (progn ,@body)
          (sb-thread:release-mutex ,m)))))
 
+(defparameter +hack-eval-timeout+ 5
+  "Seconds one eval may RUN before it is interrupted and reported.
+
+**A SLOW EVAL WAS A FROZEN SCREEN, and a runaway one a frozen head.** The socket takes the
+paint lock for the eval's whole duration (`hack-handle`), and until 2026-10-11 the painter
+took the same lock with no timeout — so `(loop)` pushed by mistake held the lock for ever,
+the next paint waited on it for ever, and the head drew nothing again while every key was
+read and never shown. The painter now skips a frame when the lock is busy
+(`%render-and-paint`); this is the other half, the one that gets the lock BACK.
+
+Five, the number `+hack-lock-timeout+` already uses for the wait on the lock: a legitimate
+form — a `defun`, a `--file` push, one of `--tree`'s fifty — runs in milliseconds, so five
+seconds is a wedge and not a slow push.
+
+**`sb-ext:with-timeout` and NOT `sb-sys:with-deadline`, and that is a measurement.** A
+deadline fires only where Lisp itself blocks — a sleep, a wait, a read — and a tight
+`(loop)` has no such point: `(with-deadline (:seconds 0.2) (loop))` was still running
+after a minute on this box. `with-timeout` arms a timer that INTERRUPTS the thread, and
+the same loop ended at 0.2 s with `sb-ext:timeout`, which is the condition the eval
+reports. It is a `SERIOUS-CONDITION` and not an `ERROR`, which is why the arm below
+catches the former.
+
+A `defparameter`: a push whose compile genuinely needs longer can raise it from the
+socket, and a test lowers it.")
+
 (defun hack-eval-form (head form)
   "FORM evaluated in this head's own image: `(values VALUE CONDITION MS)`.
 
@@ -215,12 +251,18 @@ an eval that raised is the one an operator most needs to see."
                              (*error-output* (make-string-output-stream)))
                          (handler-bind ((style-warning #'hack-mute)
                                         (warning #'hack-mute))
-                           (eval form)))))
+                           ;; the deadline — see `+hack-eval-timeout+` for why it is
+                           ;; `with-timeout` and what it was measured against
+                           (sb-ext:with-timeout +hack-eval-timeout+
+                             (eval form))))))
             (setf *code-generation*
                   (1+ (if (boundp '*code-generation*) *code-generation* 0)))
             (setf (head-dirty head) t)
             (values value nil (ms)))
-        (error (e) (setf (head-dirty head) t) (values nil e (ms)))))))
+        ;; `serious-condition`: the timeout above, a stack exhaustion, a heap exhaustion —
+        ;; none of them is an `error`, and every one of them must come back as a reply
+        ;; rather than take the thread (and, in a saved image, the process) with it
+        (serious-condition (e) (setf (head-dirty head) t) (values nil e (ms)))))))
 
 (defun hack-handle (head line)
   "One request, one JSON reply. `eval <form>` — the rest of the line is one
@@ -242,7 +284,7 @@ to *standard-output* would corrupt the TUI and desync it from the screen."
                 (format nil "{\"ok\":true,\"value\":~a,\"ms\":~a}"
                         (json-encode-to-string (prin1-to-string value))
                         ms)))))
-    (error (e)
+    (serious-condition (e)
       (format nil "{\"ok\":false,\"error\":~a}"
               (json-encode-to-string (prin1-to-string e))))))
 

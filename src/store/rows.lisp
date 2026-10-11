@@ -55,6 +55,22 @@ take this one; the loop never takes this lock and then waits for paint. So there
 worth stating because a lock added here without that argument is how a head hangs instead of
 corrupting.")
 
+(defparameter *store-busy-timeout-ms* 2000
+  "How long a statement waits on another connection's write lock before it is BUSY.
+
+**TWO HEADS ON ONE FILE, and until 2026-10-11 the second one lost.** `head.db` is one file
+under `~/.local/share/leticl`, and two heads — two windows, a replay beside a live head,
+`tui-eval` on its own thread — open it as two connections. SQLite with no `busy_timeout`
+returns `SQLITE_BUSY` the INSTANT another connection holds the write lock, and every
+caller here read a non-`DONE` step as *the statement did not run* and answered NIL — so a
+save that collided with another head's save, for the microseconds a WAL commit takes,
+was silently not a save. `sqlite3_busy_timeout` makes the library wait and retry for this
+long before it gives up, which turns a collision into a delay nobody can see.
+
+Two seconds: a WAL write transaction is milliseconds, so anything that holds the lock
+longer is a wedged head, and the operator's keystroke should not wait on one for ever.
+Applied at open (`%store-db`), so a test lowers it by binding and reopening.")
+
 (defvar *store-handle* nil "The open database handle, or NIL. One per process.")
 (defvar *store-file* nil "The path `*store-handle*` was opened from, so a path change reopens.")
 (defvar *store-unavailable* nil
@@ -124,6 +140,9 @@ replace the error being reported with its own."
                      ;; WAL, because a head and a test may both touch this file and the default
                      ;; rollback journal takes a write lock for the whole transaction.
                      (%sq-exec db "pragma journal_mode=wal" (sb-sys:int-sap 0) (sb-sys:int-sap 0) err)
+                     ;; and the wait on another connection's lock — see `*store-busy-timeout-ms*`
+                     (%sq-exec db (format nil "pragma busy_timeout=~d" *store-busy-timeout-ms*)
+                               (sb-sys:int-sap 0) (sb-sys:int-sap 0) err)
                      (if (/= +sqlite-ok+
                              (%sq-exec db
                                        "create table if not exists operator_todo (
@@ -219,6 +238,30 @@ process — the failure mode being invisible until the NEXT write."
               ,@body)
          (when ,var (%sq-finalize ,var))
          (sb-alien:free-alien ,cell)))))
+
+(defun %store-exec (db sql)
+  "Run SQL on DB, signalling with sqlite's own message when it does not return OK. For the
+statements that take no parameters and return no rows — the transaction verbs."
+  (let ((rc (%sq-exec db sql (sb-sys:int-sap 0) (sb-sys:int-sap 0) (sb-sys:int-sap 0))))
+    (unless (= rc +sqlite-ok+)
+      (error "~a: ~a (sqlite ~d)" sql (or (ignore-errors (%sq-errmsg db)) "?") rc))
+    t))
+
+(defun %step-done (stmt db)
+  "Step a statement that is expected to finish; T when it did, an ERROR naming sqlite's
+reason when it did not.
+
+**A step that is not `DONE` is a FAILURE, not a NIL.** Every writer here read `(=
++sqlite-done+ (%sq-step stmt))` and answered the comparison, so `SQLITE_BUSY` (another
+head holding the write lock past the busy timeout), `SQLITE_FULL`, `SQLITE_READONLY` and
+`SQLITE_CONSTRAINT` all came back as a quiet NIL that most callers do not look at — the
+operator's row *looked* saved and was not there after the restart. Signalling here puts
+the reason through the one path that records it (`%store-failed` → `*store-unavailable*`),
+where `save-operator-todos` reads it out loud as *todo not saved: database is locked*."
+  (let ((rc (%sq-step stmt)))
+    (unless (= rc +sqlite-done+)
+      (error "~a (sqlite ~d)" (or (ignore-errors (%sq-errmsg db)) "the statement did not finish") rc))
+    t))
 
 (defun %bind-text (stmt index value)
   "Bind VALUE at INDEX as TEXT, taking sqlite's own copy of it.
@@ -450,25 +493,38 @@ keep a stale owner after a rename. NIL is stored as the empty string, which is t
     (let ((db (%store-db)))
     (when db
       (handler-case
-          (with-statement (stmt db "insert or replace into operator_todo
-                                     (id, seq, title, detail, status, workspace, when_handle)
-                                     values (?,?,?,?,?,?,?)")
-            (%bind-text stmt 1 (getf item :id))
-            (%sq-bind-int64 stmt 2 (or seq
-                                       (ignore-errors (parse-integer (or (getf item :id) "")
-                                                                     :junk-allowed t))
-                                       0))
-            (%bind-text stmt 3 (getf item :content))
-            (%bind-text stmt 4 (getf item :detail))
-            (%bind-text stmt 5 (or (getf item :status) "open"))
-            (%bind-text stmt 6 (or workspace ""))
-            ;; **THE HANDLE, and empty is *unconditional*** — the column's default is the
-            ;; statement every row already written made. One variant exists on the wire
-            ;; (`kind = "job"`), so the KIND is not stored: a second variant would add its
-            ;; own column rather than overloading this one.
-            (%bind-text stmt 7 (or (getf (getf item :when) :handle) ""))
-            (= +sqlite-done+ (%sq-step stmt)))
+          (%insert-todo db item seq workspace)
+        ;; a BUSY past the timeout, a full disk, a read-only file: RECORDED in
+        ;; `*store-unavailable*` (and the handle reopened on the next call), NIL answered —
+        ;; see `%step-done` for why the step signals rather than compares
         (error (e) (%store-failed e)))))))
+
+(defun %insert-todo (db item seq workspace)
+  "The one `insert or replace` behind `store-save-todo` and `store-replace-todos`, on an
+open DB, SIGNALLING on failure rather than recording it.
+
+Split out so the wholesale rewrite can run it INSIDE its transaction: `store-save-todo`'s
+own guard ends in `%store-failed`, which CLOSES the handle — and a handle closed in the
+middle of a `begin immediate … commit` is the use-after-free `*store-lock*`'s docstring
+measured as a corruption warning. The guard belongs to whoever owns the transaction."
+  (with-statement (stmt db "insert or replace into operator_todo
+                             (id, seq, title, detail, status, workspace, when_handle)
+                             values (?,?,?,?,?,?,?)")
+    (%bind-text stmt 1 (getf item :id))
+    (%sq-bind-int64 stmt 2 (or seq
+                               (ignore-errors (parse-integer (or (getf item :id) "")
+                                                             :junk-allowed t))
+                               0))
+    (%bind-text stmt 3 (getf item :content))
+    (%bind-text stmt 4 (getf item :detail))
+    (%bind-text stmt 5 (or (getf item :status) "open"))
+    (%bind-text stmt 6 (or workspace ""))
+    ;; **THE HANDLE, and empty is *unconditional*** — the column's default is the
+    ;; statement every row already written made. One variant exists on the wire
+    ;; (`kind = "job"`), so the KIND is not stored: a second variant would add its
+    ;; own column rather than overloading this one.
+    (%bind-text stmt 7 (or (getf (getf item :when) :handle) ""))
+    (%step-done stmt db)))
 
 (defun store-todo-id-ceiling ()
   "The highest `tN` id anywhere in the table, whatever project it belongs to — or 0.
@@ -506,7 +562,7 @@ counter skip a range it never used."
       (handler-case
           (with-statement (stmt db "delete from operator_todo where id = ?")
             (%bind-text stmt 1 id)
-            (= +sqlite-done+ (%sq-step stmt)))
+            (%step-done stmt db))
         (error (e) (%store-failed e)))))))
 
 (defun store-replace-todos (items workspace)
@@ -518,26 +574,43 @@ window in which the list is not on disk at all.
 
 **It deletes only ITS OWN project's rows.** A `delete from operator_todo` with no key was the shape
 that made this file's list one list; keeping it here would mean a migration in one workspace silently
-emptying every other project's todos."
+emptying every other project's todos.
+
+**AND IT IS ONE TRANSACTION** (2026-10-11, `TODO.md` B.11): `begin immediate` takes the write
+lock up front — waiting `*store-busy-timeout-ms*` for another head to let go of it — then the
+delete and every insert, then `commit`; anything that signals in between rolls back, so the
+file holds the OLD list whole or the NEW list whole and never the gap between a delete that
+ran and inserts that did not. That gap was real: the delete-then-N-inserts this replaced
+ran with autocommit, so a second head reading between the two saw an empty list, and a
+failed insert left one on disk. The inserts go through `%insert-todo` and not
+`store-save-todo`, because the latter's guard closes the handle on failure — inside a
+transaction that is a use-after-free, not a rollback."
   (sb-thread:with-recursive-lock (*store-lock*)
     (let ((db (%store-db)))
     (when db
       (handler-case
           (progn
-            (with-statement (stmt db "delete from operator_todo where workspace = ?")
-              (%bind-text stmt 1 (or workspace ""))
-              (%sq-step stmt))
-            ;; **AND EVERY INSERT IS CHECKED, BECAUSE THIS FUNCTION IS A DELETE FIRST.** It ran as
-            ;; written even when the inserts failed: the rows came out, nothing went back, and it
-            ;; answered T. MEASURED — that is how a probe emptied this table and reported success.
-            ;; A wholesale rewrite that cannot report a failed rewrite is worse than no rewrite,
-            ;; because the caller has already lost the old rows by the time it asks.
-            (let ((lost nil))
-              (loop for item in items for i from 1
-                    unless (store-save-todo item i workspace)
-                      do (setf lost t))
-              (if lost
-                  (progn (setf *store-unavailable* "the list could not be written back")
-                         nil)
-                  t)))
-        (error (e) (%store-failed e)))))))
+            (%store-exec db "begin immediate")
+            (handler-case
+                (progn
+                  (with-statement (stmt db "delete from operator_todo where workspace = ?")
+                    (%bind-text stmt 1 (or workspace ""))
+                    (%step-done stmt db))
+                  ;; **AND EVERY INSERT IS CHECKED, BECAUSE THIS FUNCTION IS A DELETE FIRST.**
+                  ;; It ran as written even when the inserts failed: the rows came out, nothing
+                  ;; went back, and it answered T. MEASURED — that is how a probe emptied this
+                  ;; table and reported success. Now a failed insert SIGNALS, the transaction
+                  ;; rolls back, and the old rows are still there to be asked for.
+                  (loop for item in items for i from 1
+                        do (%insert-todo db item i workspace))
+                  (%store-exec db "commit")
+                  t)
+              (error (e)
+                ;; the rollback's own failure must not hide the reason the rewrite failed
+                (ignore-errors (%store-exec db "rollback"))
+                (error e))))
+        (error (e)
+          (%store-failed e)
+          (setf *store-unavailable*
+                (format nil "the list could not be written back — ~a; the old list is still on disk" e))
+          nil))))))

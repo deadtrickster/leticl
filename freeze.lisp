@@ -96,13 +96,24 @@ its own meaning for it, and the loop already turns a real SIGINT into a conditio
   ;; staircase on a raw screen — the reference's own note. The hook covers the
   ;; path `unwind-protect` cannot: an unhandled error in a saved executable does
   ;; not unwind, it enters the debugger.
-  (let ((sb-ext:*invoke-debugger-hook*
-          (lambda (condition hook)
-            (declare (ignore hook))
-            (%restore-terminal)
-            (format *error-output* "~&leticl: ~a~%~%" condition)
-            (ignore-errors (sb-debug:print-backtrace :stream *error-output* :count 20))
-            (uiop:quit 70))))
+  ;; **`setf` THE GLOBAL, NOT `let` A BINDING.** This was a `let`, and a `let` of a special
+  ;; is a binding the MAIN thread sees: every other thread — the reader, the input loop,
+  ;; the hack listener, each eval connection — reads the global value, which was SBCL's
+  ;; default. So a helper thread dying on a condition its own guard did not catch (a
+  ;; `STORAGE-CONDITION` is not an `ERROR`) went through the default hook, which in a
+  ;; `--disable-debugger` image prints and quits — with the terminal raw, on the alternate
+  ;; screen, which is exactly the shape this hook exists to prevent (the 2026-10-11
+  ;; stability pass, `TODO.md` B.11). The `handler-bind` below stays a dynamic binding
+  ;; because that is all a `handler-bind` can be; the threads' own guards catch
+  ;; `serious-condition` for the same reason, and this hook is the net under all of them.
+  (setf sb-ext:*invoke-debugger-hook*
+        (lambda (condition hook)
+          (declare (ignore hook))
+          (%restore-terminal)
+          (format *error-output* "~&leticl: ~a~%~%" condition)
+          (ignore-errors (sb-debug:print-backtrace :stream *error-output* :count 20))
+          (uiop:quit 70)))
+  (progn
     (handler-bind ((error (lambda (c)
                             (when (typep c (find-symbol "NO-DAEMON" :leticl))
                               (format *error-output* "leticl: ~a~%" c)

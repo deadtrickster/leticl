@@ -102,7 +102,18 @@ uses, so the two doors cannot disagree about which frame brings a session in (T4
     (with-tui-terminal (*stdout*)
       (unwind-protect
            (run-loop head)
-        (ignore-errors (%send head (make-detach)))
+        ;; **THE DETACH HAS A DEADLINE OF ITS OWN, AND THE TERMINAL DOES NOT WAIT ON IT.**
+        ;; Before 2026-10-11 this was an unbounded `write(2)`: a daemon that had stopped
+        ;; reading made `/quit` hang on its own goodbye, on the alternate screen, in raw mode,
+        ;; with the only way out a `kill -9` from another window. One second, not the loop's
+        ;; five: a head that is LEAVING owes the operator their terminal more than it owes a
+        ;; dead daemon a courtesy — the daemon notices the closed socket anyway, which is the
+        ;; same detach by another route. `with-tui-terminal`'s own `unwind-protect` runs
+        ;; `leave-tui` after this cleanup whatever it did, and the `ignore-errors` is what
+        ;; makes "whatever it did" include a `write-timeout`.
+        (ignore-errors
+         (let ((*write-timeout-secs* 1))
+           (%send head (make-detach))))
         (hack-stop head)))
     ;; the head's CURRENT stream, not the one this function opened: a reconnect replaced it, and
     ;; closing the original a second time left the live socket open at exit

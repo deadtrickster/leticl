@@ -1723,8 +1723,23 @@ failure now paints itself and the loop continues.
 And it holds `paint-lock` for the whole frame, so a live redefinition cannot
 land in the middle of one. Without that, a push races the paint and an
 in-flight call reaches a function that changed under it — an error in the main
-thread, which is a dead head. `--tree` takes the same lock per file."
-  (sb-thread:with-mutex ((paint-lock))
+thread, which is a dead head. `--tree` takes the same lock per file.
+
+**The lock is TRIED, not waited for** (2026-10-11, `TODO.md` B.11). An eval holds it for
+the eval's whole duration, and a painter that waited inherited that duration: one slow
+form was a frozen screen, one `(loop)` a head that never drew again while it kept reading
+keys. `grab-mutex :waitp nil` answers NIL at once when the lock is held, the frame is
+SKIPPED and `head-dirty` is left as it was — so the next pass asks again, and the first
+pass after the eval releases paints the whole accumulated state. The skip sleeps the
+loop's idle wait, because `paint-wanted-p` is still true and a pass that neither paints
+nor sleeps spins a core for as long as the eval runs. `:busy` is returned for a caller
+that wants to know; nothing below the lock runs, so the paint stamp and the render
+counters describe only frames that were drawn."
+  (unless (sb-thread:grab-mutex (paint-lock) :waitp nil)
+    (sleep *idle-poll-ms*)
+    (return-from %render-and-paint :busy))
+  (unwind-protect
+   (progn
     (incf *frames-painted*)
     (setf *item-lines-renders-this-frame* 0)
     (handler-case
@@ -1763,6 +1778,7 @@ thread, which is a dead head. `--tree` takes the same lock per file."
         ;; remember it (the gate reads this) AND draw it (the operator reads it)
         (setf *last-render-error* e)
         (%paint-failure head e))))
+   (sb-thread:release-mutex (paint-lock)))
   ;; ONE place, on every path including the failure one — a paint that fell back to
   ;; the failure frame is still a frame, and a stamp that did not move would ask for
   ;; another one immediately, which is a head that spins on a broken renderer.

@@ -130,9 +130,22 @@ daemon will never be spoken to on (an attach must be the first frame) — and no
 retries, because the retry is what already ran. Found by the head reviewer, 2026-10-11, an
 hour after the gate landed; `attach` is protocol 1 and every daemon this rule exists to
 protect knows it, so sending it is the one act a read-only seating must be able to take —
-*it is how the head says who it is*, not how it spends the session."
+*it is how the head says who it is*, not how it spends the session.
+
+**AND SO IS THE ACK, for the daemon's side of the same contract.** An ack is protocol 1 as
+the attach is, and it is the one frame the daemon WAITS on: its cursor for this head moves
+only when the head says what it has read, so a locked head that read frames and acked none
+of them left the daemon holding every event since the lock as unread — a gap the next attach
+is handed again. The ack spends nothing of the operator's; it is the head's receipt, and a
+seating that may read must be able to sign for what it read (found in the 2026-10-11
+stability pass, `TODO.md` B.11).
+
+**AND THE WRITE IS BOUNDED** (`write-frame`, `*write-timeout-secs*`): a daemon that has
+stopped reading is a disconnect, said here as one, and the reconnect path takes it from
+there — the frame is dropped, which is what a frame to a dead peer always was."
   (when (and (skew-locked-p)
-             (not (and (%frame-plist-p frame) (string= (frame-name frame) "attach"))))
+             (not (and (%frame-plist-p frame)
+                       (member (frame-name frame) '("attach" "ack") :test #'string=))))
     (return-from %send nil))
   ;; ONE PLACE remembers that this head asked for a session. The daemon answers
   ;; a `NewSession` with a `Sessions` frame carrying `created`, and whether that
@@ -144,6 +157,11 @@ protect knows it, so sending it is the one act a read-only seating must be able 
   (when (and (head-stream head) (head-connected head))
     (handler-case
         (write-frame (encode-frame frame) (head-stream head))
+      (write-timeout (e)
+        ;; the daemon took nothing for the whole deadline: not slow, gone. Said as the
+        ;; disconnect it is, and the frame is dropped rather than written late.
+        (setf (head-connected head) nil)
+        (say head (format nil "send dropped — ~a; reconnecting…" e)))
       (error (e)
         (setf (head-connected head) nil)
         (say head (format nil "send failed: ~a" e))))))
@@ -205,7 +223,14 @@ the decode that would otherwise have dropped the line on the floor."
                       (list :unreadable t
                             :detail (format nil "~a" (wire-error-detail e))
                             :line (wire-error-line e))))))))
-      (error (e)
+      ;; **`serious-condition`, NOT `error`.** This is a helper thread, and an unhandled
+      ;; condition in one is the whole process in `--disable-debugger` mode — with the
+      ;; terminal raw. `CONTROL-STACK-EXHAUSTED` and `HEAP-EXHAUSTED-ERROR` are
+      ;; `STORAGE-CONDITION`s, which are `SERIOUS-CONDITION`s and NOT `ERROR`s (verified on
+      ;; this box, 2026-10-11): a guard spelled `error` let exactly the conditions that
+      ;; kill a thread through. The marker names the stream, as the EOF arm does, so a
+      ;; stale reader's goodbye is not taken for the live connection's.
+      (serious-condition (e)
         (sb-concurrency:send-message (head-frames head) (list :disconnected stream))
         (sb-concurrency:send-message
          (head-frames head)
@@ -310,7 +335,10 @@ an error, and a guard that swallowed it would leave a thread spinning on a dead 
             (progn
               (setf key (read-key in))
               (sb-concurrency:send-message (head-keys head) key))
-          (error (e)
+          ;; `serious-condition` and not `error`, for the reason `%reader-loop` gives: a stack
+          ;; or heap exhaustion is a STORAGE-CONDITION, not an ERROR, and this thread dying
+          ;; is a head with no keyboard — or, unhandled, a dead process on a raw terminal.
+          (serious-condition (e)
             ;; said, not swallowed: a reader whose keys are being dropped must be told, and the
             ;; expiry means the message does not have to be cleaned up
             (ignore-errors (say head (format nil "input: ~a" e)))
