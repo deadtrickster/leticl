@@ -688,7 +688,18 @@ head runs today breaks without them.
   the pair that carry the bytes, and the two frames that are neither a line nor an answer are the
   rectangle and the ending. So the project's first increment is the four constructors WITH the pane
   that opens one (the caller rule), and the VT renderer is the second — the wire is not the hard
-  part. — a program that owns the conversation's
+  part.
+
+  **AND AN ATTEMPT AT THE FIRST INCREMENT MEASURED WHERE IT ACTUALLY STARTS — 2026-10-11**: the four
+  client frames were written (with the pane that opens one, so the caller rule was satisfied), and
+  the suite refused the result in exactly the place that matters: **`every-frame-constructor-is-
+  actually-sent` refuses `TermInput` and `TermResize`, because their caller IS THE INPUT PATH and
+  there isn't one.** That is the invariant doing its job rather than being an obstacle: a terminal
+  pane that cannot accept a keystroke for the program is not a terminal pane, so the honest first
+  increment is the pane's KEY PATH (a key in `:term` becomes `TermInput`, and a resize becomes
+  `TermResize`) — and only then the frames it feeds. Reverted so the tree is green; what was learned
+  is that **the VT renderer is not the first step, the input path is**, and that the frames' own
+  shapes are four lines each once it exists. — a program that owns the conversation's
   rectangle. **The wire half is the small half**: client `TermOpen` / `TermInput` /
   `TermResize {cols rows}` / `TermClose`; server `TermAttached {command}` /
   `TermStatus {command}` / `TermOutput {bytes}` / `TermEnded {reason}` (protocol 31;
