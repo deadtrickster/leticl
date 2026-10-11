@@ -12339,6 +12339,36 @@ worked for the merge queue.
                                         :key #'car :test #'string=)))
           "**the pane draws it** — the cell's style is a name this head's palette holds"))))
 
+(def-test a-second-pane-is-asked-for-by-number-and-the-head-follows-it (:suite leticl)
+  "**Choosing a pane is the DAEMON's reading of the LINE** (protocol 44): `!term N` attaches to pane N,
+  bare `!term` to the most recent, and this head invents no frame for it — it sends the operator's own
+  line and follows the `TermAttached { pane }` that comes back.
+
+  So this holds the two halves the head owns: `/term 2` goes out as `term_open` carrying `!term 2`,
+  and the answer for pane 2 makes THIS head draw pane 2 — which is what `*term-pane*` is for, and what
+  every later frame about the pane is matched against."
+  (let* ((h (%make-head))
+         (leticl::*term-pane* 1)
+         (wire (%wire h)))
+    (leticl::%command h "term 2")
+    (let ((sent (%sent wire)))
+      (is (find "term_open" sent :key #'frame-name :test #'string=)
+          (format nil "**`/term 2` asks the daemon**: ~s" (mapcar #'frame-name sent)))
+      (is (equal "!term 2" (getf (find "term_open" sent :key #'frame-name :test #'string=) :line))
+          "**and the LINE is the operator's own** — reading the number off it is the daemon's job"))
+    ;; the daemon answers with the pane's number
+    (leticl::%handle-frame h (list :frame "term_attached" :pane 2 :command "mc" :cols 20 :rows 5))
+    (is (= 2 (getf (head-term h) :pane)) "**the answer NAMES the pane**")
+    (is (= 2 leticl::*term-pane*)
+        "**and this head now draws it** — which is the whole of the choice")
+    ;; and a program's bytes for it are this pane's, because the frame says so
+    (leticl::%handle-frame h (list :frame "term_output" :pane 1 :bytes #(90)))
+    (is (equal "" (first (leticl::term-screen-lines (getf (head-term h) :screen))))
+        "**pane 1's bytes are not drawn** — the head followed the number it was given")
+    (leticl::%handle-frame h (list :frame "term_output" :pane 2 :bytes #(89)))
+    (is (equal "Y" (first (leticl::term-screen-lines (getf (head-term h) :screen))))
+        "**and pane 2's are**")))
+
 (def-test a-wheel-scrolls-the-scrollback-and-a-key-comes-back (:suite leticl)
   "**With tracking OFF the wheel is the READER's** — the reference's other arm (`TermPane::mouse`):
   on the MAIN screen it moves this head's view and sends NOTHING, because the program is at its prompt
