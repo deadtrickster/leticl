@@ -175,6 +175,15 @@ on ClientFrame::Slash)."
                                  (or (getf (session-turn (head-session head)) :model)
                                      "the model it started with")))))
            (open-pick head :model)))
+      ((string= verb "term")
+       ;; **ASK AND OPEN.** The ask is `TermOpen` and the daemon answers `TermAttached`. A terminal
+       ;; already live opens the PANE rather than sending a second open: ONE pane per session is the
+       ;; daemon's rule, and a refused second open would be a keystroke that did nothing.
+       (if (head-term head)
+           (setf (head-mode head) :term (head-dirty head) t)
+           (progn (%send head (make-term-open (head-cols head) (1- (head-rows head))))
+                  (say head "asking the daemon for a terminal…")))
+       t)
       ((string= verb "standing")
        ;; **ASK AND OPEN.** The ask belongs to the pane's OPEN — measured in the reference, where
        ;; the pane queues the read itself (`app/standing.rs:133`) — so the pane appears at the

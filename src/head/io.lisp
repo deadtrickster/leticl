@@ -78,6 +78,9 @@ globals a frame reads.")
   ;; the STANDING notes the harness is reading into this session (protocol 39): asked when the
   ;; `:standing` pane opens, as `ListJobs` is — a list is a question, not an act.
   (standing-notes nil)
+  ;; the terminal a `:term` pane is attached to: `(:cols N :rows N :output "…" :ended KIND)`, or NIL
+  ;; when none. ONE per session — the daemon refuses a second `TermOpen`.
+  (term nil)
   (subagents nil)
   (prefs (list :show-reasoning nil :show-tools nil :diff "split" :links t))
   (status-note nil)

@@ -979,6 +979,30 @@ empty pane on every attach, which is the defect the guard exists to prevent, inv
          ;; the first wants one; the command that asks for a list opens it itself.
          (t nil)))
      :control)
+    ((string= (frame-name frame) "term_attached")
+     ;; the daemon accepted the open; the pane is live, and the PROGRAM is told the size the pane has
+     ;; rather than the size it asked with — the window may have changed between the two.
+     (setf (head-term head) (list :cols (getf frame :cols) :rows (getf frame :rows) :output "")
+           (head-mode head) :term
+           (head-dirty head) t)
+     (%send head (make-term-resize (head-cols head) (1- (head-rows head))))
+     :control)
+    ((string= (frame-name frame) "term_output")
+     ;; **THE BYTES, APPENDED** — the pane draws from this and nothing else, so it cannot disagree
+     ;; with what arrived. A frame for a terminal this head is not showing is DROPPED, not buffered:
+     ;; one pane per session, and the daemon's own refusal is why.
+     (when (head-term head)
+       (setf (getf (head-term head) :output)
+             (concatenate 'string (getf (head-term head) :output) (or (getf frame :data) ""))
+             (head-dirty head) t))
+     :control)
+    ((string= (frame-name frame) "term_ended")
+     ;; the ENDING, and which one — a person's `TermClose` and the daemon ending it are different
+     ;; facts, and the pane says which rather than falling silent.
+     (when (head-term head)
+       (setf (getf (head-term head) :ended) (or (getf frame :reason) "the daemon ended it")
+             (head-dirty head) t))
+     :control)
     ((string= (frame-name frame) "standing_notes")
      ;; **THE LIST OF WHAT THE HARNESS IS READING IN**, one row per note. REPLACES, for the
      ;; reason the queue's own fold does: this is a snapshot of a mailbox, and folding it into

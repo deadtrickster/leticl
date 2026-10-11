@@ -86,7 +86,7 @@ for the lists)."
             (or *pick-open*
                 (member (head-mode head)
                         '(:help :status :config :jobs :subagents :peek :job-out :todos :picker
-                          :slash :lisp :queue :standing :merge-detail))))
+                          :slash :lisp :queue :standing :merge-detail :term))))
        (if *pick-open*
            (close-pick head)
            (progn
@@ -140,7 +140,7 @@ for the lists)."
       ;; can be typed under the card
       ((and *pick-open* (pick-key-event head key)))
       ((and (member (head-mode head)
-                    '(:help :status :jobs :subagents :todos :picker :slash :dash :lisp :queue :standing :merge-detail))
+                    '(:help :status :jobs :subagents :todos :picker :slash :dash :lisp :queue :standing :merge-detail :term))
             (%pane-key head key type)))
       (t (%normal-key head key)))))
 

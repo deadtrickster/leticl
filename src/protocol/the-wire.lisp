@@ -222,6 +222,26 @@ for \"nothing to say\", and *deferring is not sending*."
 (defun make-list-todos ()
   (list :frame "list_todos"))
 
+(defun make-term-open (cols rows)
+  "Open a terminal in this session at COLS x ROWS. The daemon refuses a SECOND while one is live
+(`protocol.rs:404`), which is why the verb checks `head-term` rather than being told."
+  (list :frame "term_open" :cols cols :rows rows))
+
+(defun make-term-input (data)
+  "A keystroke for the PROGRAM — the pane's key path. A terminal that takes no keystroke for the
+program is not a terminal, which is why this frame and that path land together."
+  (list :frame "term_input" :data data))
+
+(defun make-term-resize (cols rows)
+  "The rectangle, told to the PROGRAM rather than to the daemon — sent when a terminal attaches at
+a size the program has not heard, which is the only resize this head knows about so far."
+  (list :frame "term_resize" :cols cols :rows rows))
+
+(defun make-term-close ()
+  "The ending a PERSON asked for. The daemon can end one by itself too, and that arrives as
+`TermEnded`: two different facts, and the pane draws which."
+  (list :frame "term_close"))
+
 (defun make-list-notes ()
   "The STANDING notes — what the harness is reading into this session's prompt right now.
 

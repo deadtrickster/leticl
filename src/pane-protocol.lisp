@@ -50,6 +50,7 @@ through to the conversation, which is what the old `member` test's absence meant
 (defclass merge-queue-pane (pane) ())
 (defclass standing-notes-pane (pane) ())
 (defclass merge-detail-pane (pane) ())
+(defclass term-pane (pane) ())
 
 (defvar *merge-detail* nil
   "The queue entry the `:merge-detail` VIEW is about — set by `pane-enter` on the queue pane.
@@ -82,6 +83,7 @@ reader came from.")
     (:jobs . jobs-pane)
     (:queue . merge-queue-pane)
     (:merge-detail . merge-detail-pane)
+    (:term . term-pane)
     (:standing . standing-notes-pane)
     (:subagents . subagents-pane)
     (:peek . peek-pane)
@@ -265,7 +267,7 @@ outrank any pane's hint."))
 
 ;;; ------------------------------------------------------- the frame's questions ;;;
 
-(dolist (class '(help-pane status-pane config-pane jobs-pane merge-queue-pane standing-notes-pane merge-detail-pane subagents-pane peek-pane
+(dolist (class '(help-pane status-pane config-pane jobs-pane merge-queue-pane standing-notes-pane merge-detail-pane term-pane subagents-pane peek-pane
                  job-out-pane picker-pane todos-pane slash-pane dash-pane lisp-pane))
   (eval `(defmethod pane-replaces-transcript-p ((pane ,class)) t)))
 
@@ -337,6 +339,35 @@ The entry comes from `*merge-detail*`, which `pane-enter` on the queue pane sets
 (defmethod pane-hint ((pane merge-detail-pane) head)
   (declare (ignore head))
   (list (cons "esc returns to the queue" '(:dim t))))
+
+(defmethod pane-lines ((pane term-pane) head cols room)
+  "The terminal's bytes, as this head can HONESTLY draw them today, and the pane's own keys.
+
+**THE WIRE IS NOT THE HARD PART** (measured, `TODO.md`): four client frames and three server ones,
+four lines each — what turns BYTES into a screen is the EMULATOR, and this draws the bytes as text
+because that is exactly what arrived. Inventing a screen would be a head pretending to be a terminal
+it is not, which is the one thing that would make the missing half invisible."
+  (declare (ignore room))
+  (let ((term (head-term head)))
+    (if (null term)
+        (list (list (cons "no terminal — `!term` opens one in this session" '(:dim t))))
+        (append
+         (list (list (cons (format nil "term ~dx~d" (getf term :cols) (getf term :rows)) '(:bold t))))
+         (when (getf term :ended)
+           (list (list (cons (format nil "  ended: ~a" (getf term :ended)) '(:fg :yellow)))))
+         (list nil)
+         (let ((out nil))
+           (dolist (line (uiop:split-string (or (getf term :output) "") :separator '(#\newline)))
+             (push (list (cons (format nil "  ~a" line) nil)) out))
+           (nreverse out))
+         (list nil)
+         (list (list (cons "  keys go to the program · q closes the pane" '(:dim t))))))))
+
+(defmethod pane-cursor-rows ((pane term-pane) head) (declare (ignore head)) 0)
+
+(defmethod pane-hint ((pane term-pane) head)
+  (declare (ignore head))
+  (list (cons "keys go to the program · q closes the pane and ends the terminal" '(:dim t))))
 
 (defmethod pane-lines ((pane standing-notes-pane) head cols room)
   "The standing notes' rows — the drawing is `standing-notes-lines`, landed ahead of this pane."

@@ -464,6 +464,17 @@ one thing this head must not need."
                    ;; say it is on.
                    ((and (eq mode :todos) empty (eql ch #\h)) (%todo-toggle-hide-done head) t)
                    ((not empty) nil)
+                   ;; **`q` CLOSES THE PANE AND ENDS THE TERMINAL** — two facts, so two acts: this head's
+                   ;; panes all close on `q`, and a reader who closes a terminal means the program to end
+                   ;; as well.
+                   ((and (eq mode :term) (head-term head) (eql ch #\q))
+                    (%send head (make-term-close))
+                    (shut))
+                   ;; **EVERY OTHER KEY GOES TO THE PROGRAM** — including the bytes a shell wants. A
+                   ;; pane holding a program must not eat the keys the program is for.
+                   ((and (eq mode :term) (head-term head) (characterp ch))
+                    (%send head (make-term-input (string ch)))
+                    t)
                    ((eql ch #\q) (shut))
                    ((and (eql ch #\o) (eq mode :subagents)) (subagent-switch head) t)
                    ;; **`p` IS THE PROMPT, ALONE, IN A POPUP THAT SCROLLS.** The operator: *"when i select

@@ -11984,6 +11984,68 @@ worked for the merge queue.
     ;; --- and the count is on the heading
     (is (search "standing notes  3" (funcall text)) "the heading counts them")))
 
+(def-test a-terminal-opens-takes-keys-for-the-program-and-ends-when-asked (:suite leticl)
+  "**The `!term` frames, each with the caller the suite's own invariant demands** — and the ordering
+  that costs a session if it is guessed: **the pane's KEY PATH is what makes `TermInput` and
+  `TermResize` real**, so it lands with them rather than after. A terminal that takes no keystroke
+  for the program is not a terminal.
+
+  The other rules are the protocol's own (`protocol.rs:344-460`): ONE pane per session, so a live
+  terminal opens the pane instead of asking again; `TermResize` is the pane's rectangle told to the
+  PROGRAM; and an ending a person asked for (`TermClose`) is a different fact from the daemon ending
+  it (`TermEnded`), which the pane says rather than falling silent."
+  (let* ((h (%make-head))
+         (wire (%wire h)))
+    ;; --- the verb asks, and the ask is TermOpen
+    (leticl::%command h "term")
+    (is (find "term_open" (%sent wire) :key #'frame-name :test #'string=)
+        "**`!term` asks the daemon** — and that ask is what makes the four constructors real")
+    (is (search "asking the daemon for a terminal" (head-status-note h)) "saying it is a wait")
+    ;; --- the daemon answers: the pane opens, and the PROGRAM hears the rectangle
+    (leticl::%handle-frame h (list :frame "term_attached" :cols 80 :rows 20))
+    (is (eq :term (head-mode h)) "the pane opens on the answer")
+    (is (= 80 (getf (head-term h) :cols)) "at the rectangle the daemon heard")
+    (let ((sent (%sent wire)))
+      (is (find "term_resize" sent :key #'frame-name :test #'string=)
+          "**and the PROGRAM is told the size**, which is the frame that has no other caller"))
+    ;; --- bytes arrive and are kept; the pane draws from them
+    (leticl::%handle-frame h (list :frame "term_output" :data "$ ls
+"))
+    (leticl::%handle-frame h (list :frame "term_output" :data "a b c
+"))
+    (is (equal "$ ls
+a b c
+" (getf (head-term h) :output))
+        "**the bytes are APPENDED in arrival order** — the pane's only source")
+    (let ((text (format nil "~{~a~^~%~}" (mapcar (lambda (l) (if (null l) "" (format nil "~{~a~}" (mapcar #'car l))))
+                                                 (leticl::pane-lines (leticl::pane-for :term) h 100 30)))))
+      (is (search "$ ls" text) "and drawn")
+      (is (search "keys go to the program" text) "with the pane's own keys named"))
+    ;; --- a KEY goes to the program, not to the pane
+    (leticl::%handle-key h (list :type :char :ch #\l))
+    (is (find "term_input" (%sent wire) :key #'frame-name :test #'string=)
+        "**a keystroke becomes `TermInput`** — the pane passes keys to the program")
+    (is (eq :term (head-mode h)) "and the pane stays up, because a program is running in it")
+    ;; --- `q` closes the pane AND ends the terminal: two facts, two acts
+    (leticl::%handle-key h (list :type :char :ch #\q))
+    (is (find "term_close" (%sent wire) :key #'frame-name :test #'string=)
+        "**`q` tells the daemon as well** — closing the pane is not ending the program")
+    (is (eq :normal (head-mode h)) "and the screen returns to the conversation")
+    ;; --- one pane per session: a live terminal opens the pane rather than asking again
+    (setf (head-term h) (list :cols 80 :rows 20 :output "") (head-mode h) :normal)
+    (let ((before (length (%sent wire))))
+      (leticl::%command h "term")
+      (is (eq :term (head-mode h)) "a live terminal opens its pane")
+      (is (= before (length (%sent wire)))
+          "**and sends NOTHING** — a second `TermOpen` is refused by the daemon, and a keystroke that would be refused is a keystroke that did nothing"))
+    ;; --- an ending by the daemon is a different fact, and is said
+    (leticl::%handle-frame h (list :frame "term_ended" :reason "the program exited 0"))
+    (is (equal "the program exited 0" (getf (head-term h) :ended)) "the ending is kept, with its reason")
+    (is (search "ended: the program exited 0"
+                (format nil "~{~a~^~%~}" (mapcar (lambda (l) (if (null l) "" (format nil "~{~a~}" (mapcar #'car l))))
+                                                 (leticl::pane-lines (leticl::pane-for :term) h 100 30))))
+        "and the pane says it rather than falling silent")))
+
 (def-test enter-on-a-queue-row-opens-the-entry-in-full-and-esc-returns (:suite leticl)
   "**The second view of one list** (`e9eb358`'s *TWO VIEWS OF ONE LIST*): Enter on a queue row opens
   that entry in full — its facts, its reviews and its gate steps — over the list, and Esc returns to
