@@ -193,7 +193,7 @@
    #:slash-out-row-count #:+slash-listing-lines+
    #:job-out-lines #:job-out-body #:job-out-row-count
    #:subagent-switch
-   #:jobs-lines #:merge-queue-lines #:subagent-lines #:subagent-rows #:pick-card-lines #:open-pick #:close-pick
+   #:jobs-lines #:merge-queue-lines #:standing-notes-lines #:subagent-lines #:subagent-rows #:pick-card-lines #:open-pick #:close-pick
    #:take-pick #:pick-by-text #:pick-key-event #:mode-action #:mode-confirm-key
    #:%resolve-session #:%switch-to
    #:mode-confirm-lines #:pick-choices #:pick-current
@@ -284,7 +284,7 @@
    #:head-farewell #:head-quit-open #:head-secret-req #:head-connected #:head-status-note
    #:head-settings #:head-queued #:head-scroll #:head-screen-reqs #:head-want-new
    #:*queued-unconfirmed* #:%resolve-queued #:%re-resolve-queued
-   #:head-jobs #:head-merge-queue #:head-subagents #:head-peeked #:head-picker-sel
+   #:head-jobs #:head-merge-queue #:head-standing-notes #:head-subagents #:head-peeked #:head-picker-sel
    ;; the operator-call door (R24 part two), the head's half
    #:*head-tool-runners* #:*op-calls* #:+op-call-wait-ms+ #:tick-op-calls #:%op-call-ask
    #:*op-call-draft* #:op-call-draft-open-p #:op-call-card-lines #:%op-call-draft-key

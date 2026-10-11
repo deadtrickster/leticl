@@ -563,6 +563,15 @@ rest names the commit it comes from.
     budget gave each. Two frames, so this is the one item here that adds wire. The reference's
     pane draws it and Enter opens the note in rano (`81749c9`).
 
+    **THE RENDERER IS LANDED (2026-10-11)** — `standing-notes-lines`, held by
+    `the-standing-notes-draw-their-form-and-where-their-abstract-came-from`: one row per note, the
+    path whole, the FORM drawn (`[verbatim]`/`[indexed]` in the registers Success/Pending), the
+    abstract, and **whether that abstract is the author's own or the harness's derivation** — the
+    field's own reason, since *a reader who cannot tell them apart is taking a guess for a
+    statement*. A file with no prose says *nothing but headings* rather than drawing a blank line.
+    **What remains is the same as the queue's next step**: the two frames (`list_notes` →
+    `standing_notes`) with their fold, the pane's registration, and the ask on open.
+
     **MEASURED 2026-10-11, SO THE SHAPE IS KNOWN RATHER THAN GUESSED**: the ask rides the
     **PANE OPEN**, not a verb — `app/standing.rs:133` is `self.standing_pane.then_some(Action::ListNotes)`
     and `ui/panes/standing.rs:70` queues it on open. The protocol's own docstring says why: *"a list

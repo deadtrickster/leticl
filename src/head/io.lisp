@@ -75,6 +75,9 @@ globals a frame reads.")
   ;; the merge queue is DAEMON-LEVEL (not per session, and not in any snapshot): a head asks with
   ;; `make-list-merge-queue` and the two events keep it after that.
   (merge-queue nil)
+  ;; the STANDING notes the harness is reading into this session (protocol 39): asked when the
+  ;; `:standing` pane opens, as `ListJobs` is — a list is a question, not an act.
+  (standing-notes nil)
   (subagents nil)
   (prefs (list :show-reasoning nil :show-tools nil :diff "split" :links t))
   (status-note nil)

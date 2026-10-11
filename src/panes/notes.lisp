@@ -64,3 +64,60 @@ should redraw it: a daemon slash reply that happens to be up is not this head's 
 replace."
   (and (consp *slash-out*) (equal (car *slash-out*) "/notes")))
 
+(defun standing-notes-lines (head cols)
+  "The STANDING notes — what the harness is reading into this session's prompt right now, one row
+per note, and the rows the `:standing` pane will draw (landed ahead of the pane, as
+`merge-queue-lines` was, so the pane is registration rather than a pile of drawing).
+
+**THE FIELDS ARE THE DAEMON'S, MEASURED 2026-10-11** (`sessionlog/src/protocol.rs:1352`,
+`NoteEntry`): `path` (the file as the index names it — *the absolute path the section's heading
+carries, so a `read` of it and this row are the same file*), `abstract` (the index's line for the
+note, ABSENT for a file that is nothing but headings), `abstract_written` (true when that line is
+the author's own `<!-- abstract: … -->`, false when the harness derived it from the first
+sentence), and `form` (verbatim or indexed — *what fits what is left of the budget is injected
+verbatim; what does not arrives indexed*).
+
+**AND `abstract_written` IS DRAWN, which is the field's own reason**: *a derived abstract is the
+harness's reading of a note, and a reader who cannot tell it from the author's is taking a guess
+for a statement.* So the row says which it is rather than showing the line bare.
+
+COLS is accepted and unused for now: the row's own truncation belongs to the pane's drawing, and a
+renderer that wrapped here would wrap twice."
+  (declare (ignore cols))
+  ;; **`let*` AND NOT `let`**: the heading's initialiser READS `notes`, and a parallel `let` binds
+  ;; the name only for the body — MEASURED on this function's first run as `UNBOUND-VARIABLE NOTES`.
+  (let* ((notes (head-standing-notes head))
+         (out (list (list (cons "standing notes" '(:bold t))
+                         (cons (format nil "  ~d" (length (or notes nil))) '(:dim t))))))
+    (push nil out)
+    (if (null notes)
+        (push (list (cons "    none — the harness is reading no notes into this session" '(:dim t))) out)
+        (dolist (n notes)
+          (let ((path (or (getf n :path) "?"))
+                (abstract (getf n :abstract))
+                (written (getf n :abstract-written))
+                (form (or (getf n :form) "?")))
+            (push (list (cons "  ▸ " '(:dim t))
+                        (cons path nil)
+                        (cons (format nil "  [~a]" form)
+                              (if (string-equal form "verbatim") +role-success+ +role-pending+)))
+                  out)
+            (push (list (cons "         " '(:dim t))
+                        (cond ((null abstract)
+                               (cons "no abstract — nothing but headings" '(:dim t)))
+                              (written (cons (format nil "~a" abstract) nil))
+                              (t (cons (format nil "~a" abstract) '(:dim t)))))
+                  out)
+            ;; **AND IT SAYS WHICH KIND OF LINE IT IS**, because the difference is a fact about
+            ;; authority: the author's words, or the harness's reading of them.
+            (push (list (cons (format nil "         ~a"
+                                      (cond ((null abstract) "")
+                                            (written "— the author's own abstract")
+                                            (t "— derived by the harness from the first sentence")))
+                              '(:dim t)))
+                  out))))
+    (push nil out)
+    (push (list (cons "    asked when this pane opens, as ListJobs is — a list is a question, not an act"
+                      '(:dim t)))
+          out)
+    (nreverse out)))

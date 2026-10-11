@@ -11874,6 +11874,46 @@ answered. The daemon's own `secret_late` warning, which would explain it, is a
       (is (equal "gate: fmt" (getf row :evidence))
           "**and the evidence we have is kept** — a move that says nothing must not erase the reason"))))
 
+(def-test the-standing-notes-draw-their-form-and-where-their-abstract-came-from (:suite leticl)
+  "**The renderer for the standing-notes pane** (protocol 39, the 116-commit batch's `ccee82a`) —
+the rows, landed ahead of the pane so the pane is registration rather than drawing, the split that
+worked for the merge queue.
+
+  The fields are the daemon's, measured in `sessionlog/src/protocol.rs:1352`: `path`,
+  `abstract` (ABSENT for a file that is nothing but headings), `abstract_written` (the author's own
+  marker vs the harness's derivation), and `form` (verbatim or indexed — what fits the budget is
+  injected whole, what does not arrives indexed). **Both of the last two are drawn**, and each for
+  its own reason: a reader who cannot tell a derived abstract from the author's is *taking a guess
+  for a statement*, and the form is the difference between the note itself and an index entry for
+  it."
+  (let* ((h (%make-head))
+         (text (lambda () (format nil "~{~a~^~%~}"
+                                  (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l)))
+                                          (standing-notes-lines h 100))))))
+    ;; --- nothing read in is a FACT, and says so rather than drawing an empty screen
+    (is (search "none — the harness is reading no notes" (funcall text)) "an empty set says so")
+    (is (search "asked when this pane opens" (funcall text))
+        "**and it names the ask's shape**: a list is a question, not an act")
+    ;; --- the three shapes of row
+    (setf (head-standing-notes h)
+          (list (list :path "/home/dead/.letibot/notes/one.md" :form "verbatim"
+                      :abstract "the author's own line" :abstract-written t)
+                (list :path "/home/dead/.letibot/notes/two.md" :form "indexed"
+                      :abstract "a line the harness made" :abstract-written nil)
+                (list :path "/home/dead/.letibot/notes/three.md" :form "verbatim")))
+    (let ((t3 (funcall text)))
+      (is (search "/home/dead/.letibot/notes/one.md" t3) "the PATH, whole — a read of it is the same file")
+      (is (search "[verbatim]" t3) "the form, as the daemon spells it")
+      (is (search "[indexed]" t3) "and the other form for the other row")
+      (is (search "the author's own line" t3) "the abstract")
+      (is (search "the author's own abstract" t3) "**said to be the AUTHOR's**")
+      (is (search "derived by the harness" t3)
+          "**and a derived one is SAID to be derived** — a reader taking a guess for a statement is the defect the field exists for")
+      (is (search "no abstract — nothing but headings" t3)
+          "a file with no prose says that, rather than drawing a blank line"))
+    ;; --- and the count is on the heading
+    (is (search "standing notes  3" (funcall text)) "the heading counts them")))
+
 (def-test the-merge-queue-draws-its-states-and-why-each-one-is-that-state (:suite leticl)
   "**The renderer for the queue pane** — the rows, landed ahead of the pane so the pane is
   registration rather than a pile of drawing.
