@@ -105,6 +105,53 @@ guesses."
        (list (list (cons "  it cannot remove your row — that is yours alone, with the delete key"
                          '(:dim t))))))))
 
+(defparameter +todo-title-max+ 135
+  "The longest title the todos pane draws a row at — the reference's `TODO_TITLE_MAX`
+(`app/todos.rs:390`, `title_refusal`): *a title is at most 135 — the width the todos pane draws a
+row at. The rest is the DETAIL.*
+
+**Applied where this head WRITES a title, not where the half is sent.** `SetOperatorTodos`
+replaces the operator's half wholesale, so a check at the door would refuse `/todo done 2` because
+some OLD row is long and make a row older than the cap impossible to close. The card is the
+moment the words are written, and `%split-todo-title` is the cut.")
+
+(defun %split-todo-title (title &optional (max +todo-title-max+))
+  "TITLE as two values: the part that stays the title, and the REST — which becomes the detail.
+
+Nothing to cut when it fits: `(values title nil)`. Past the cap the cut lands on the last space
+inside the cap so a word is not torn in two, or at the cap itself when there is no space to land
+on. Both halves come back trimmed. **The reference REFUSES a long title and tells the operator to
+put the rest after ` — `** (`title_refusal`); this head does the move for them, because the card
+already has a detail field and a refusal that says *type it again, shorter* is a keystroke tax on
+a sentence the operator has already written."
+  (let ((title (string-trim " " (or title ""))))
+    (if (<= (length title) max)
+        (values title nil)
+        (let* ((space (position #\space title :end max :from-end t))
+               (cut (if (and space (plusp space)) space max)))
+          (values (string-trim " " (subseq title 0 cut))
+                  (string-trim " " (subseq title cut)))))))
+
+(defun todo-item-whole-lines (item cols)
+  "ONE of the operator's todo rows, whole — the read overlay's body (sweep 2026-10-11, B.4;
+the reference's `todos_open_lines`, `ui/panes/todos.rs:144`).
+
+The pane draws a row at its width and CUTS it at the right edge; this draws the same facts with
+nothing cut: the title wrapped, the status, the detail wrapped under it, and whose row it is. The
+row is the head's own (`*operator-todos*`), so every field is already here — no frame goes out."
+  (let* ((w (max 20 cols))
+         (title (or (getf item :content) ""))
+         (detail (or (getf item :detail) ""))
+         (status (or (getf item :status) "open")))
+    (append
+     (mapcar (lambda (l) (list (cons (format nil "  ~a" l) '(:bold t))))
+             (wrap-text (if (plusp (length title)) title "(no title)") (max 8 (- w 2))))
+     (list (list (cons (format nil "  ~a · yours~@[ · ~a~]" status (getf item :id)) '(:dim t))))
+     (when (plusp (length detail))
+       (cons nil
+             (mapcar (lambda (l) (list (cons (format nil "    ~a" l) nil)))
+                     (wrap-text detail (max 8 (- w 4)))))))))
+
 (defun %size-said (n)
   "N BYTES as a person reads it, with the unit named. Nothing for zero, which is not a
 size — a zero-byte body is the *recorded and empty* fact and its own sentence says so."

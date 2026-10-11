@@ -193,12 +193,104 @@ so the view draws what the head holds rather than asking the daemon for what it 
   (setf *dash-nav* (dash-nav *dash-nav* "\r") (head-dirty head) t)
   t)
 
+;;; ------------------------------------------------------------ the read overlay ;;;
+;;;
+;;; **A SECOND VIEW OF ONE ROW, OVER THE LIST THAT HOLDS IT** (sweep 2026-10-11, B.4 and B.5;
+;;; the reference's `todos_open_lines`, `ui/panes/todos.rs:144`). The pattern is the merge
+;;; queue's `:merge-detail` and the jobs pane's `:job-out`: Enter on a row opens the row whole,
+;;; the list stays behind it, and Esc returns to the row the reader chose. **Unlike those two it is
+;;; NOT a mode of its own**: a new mode is a class in `pane-protocol.lisp`, and this view needs
+;;; nothing a class would give it — the mode stays `:todos` or `:standing`, so `head-picker-sel`
+;;; is never touched and *Esc returns with the cursor where it was* costs nothing to keep. The
+;;; pane's own `pane-lines` and `pane-hint` are wrapped (`:around`, below) while the overlay is
+;;; up, and `%pane-key` takes the keys at its top so the list's arrows and letters do not act on
+;;; a row nobody can see.
+;;;
+;;; **Here and not in `src/panes/`** for the dependency fact the `pane-enter` methods above state:
+;;; the classes are `pane-protocol.lisp`'s and that file loads after the panes, so a method on
+;;; `todos-pane` written beside `todos-lines` would name a class that does not exist yet.
+
+(defvar *read-overlay* nil
+  "The row being read whole, or NIL: `(:mode M :title S :lines L :scroll N)`.
+
+M is the pane it is over (`:todos` or `:standing`), so a mode change under it — a `ctrl-s`, a
+`/jobs` — leaves it inert rather than drawing a todo over the session list; `shut-overlays`
+clears it with the pane. L are segment lines, drawn by the `:around` method; N is the pane's own
+scroll offset at the moment the row was opened, given back on close so the list comes back where
+it was. A `defvar`, like `*job-out*` and `*merge-detail*`: a head slot is a restart.")
+
+(defun open-read-overlay (head mode title lines)
+  "Open the read overlay over MODE's pane. Scroll starts at the view's top."
+  (setf *read-overlay* (list :mode mode :title title :lines lines :scroll *pane-scroll*)
+        (head-dirty head) t)
+  (reset-pane-scroll)
+  t)
+
+(defun close-read-overlay (head)
+  "Back to the list, on the row the reader chose — the cursor was never moved, and the pane's
+scroll offset comes back from the overlay's record."
+  (when *read-overlay*
+    (setf *pane-scroll* (or (getf *read-overlay* :scroll) 0)
+          *read-overlay* nil
+          (head-dirty head) t))
+  t)
+
+(defun read-overlay-open-p (head)
+  "Is the overlay up OVER THE PANE ON THE SCREEN? A record for another mode is not a view."
+  (and *read-overlay* (eq (getf *read-overlay* :mode) (head-mode head))))
+
+(defun read-overlay-lines (head cols)
+  "The overlay's screen: a bold title, the row's lines, and the way back — the merge-detail
+pane's own closing sentence, so the two views of a row teach the same key."
+  (declare (ignore cols))
+  (append (list (list (cons (or (getf *read-overlay* :title) "one row") '(:bold t)))
+                nil)
+          (getf *read-overlay* :lines)
+          (list nil
+                (list (cons "  esc returns to the list, on the row you chose" '(:dim t))))))
+
+(defmethod pane-lines :around ((pane todos-pane) head cols room)
+  (declare (ignore room))
+  (if (read-overlay-open-p head) (read-overlay-lines head cols) (call-next-method)))
+
+(defmethod pane-lines :around ((pane standing-notes-pane) head cols room)
+  (declare (ignore room))
+  (if (read-overlay-open-p head) (read-overlay-lines head cols) (call-next-method)))
+
+(defmethod pane-hint :around ((pane todos-pane) head)
+  (if (read-overlay-open-p head)
+      (list (cons "esc returns to the list · ↑↓ scrolls" '(:dim t)))
+      (call-next-method)))
+
+(defmethod pane-hint :around ((pane standing-notes-pane) head)
+  (if (read-overlay-open-p head)
+      (list (cons "esc returns to the list · ↑↓ scrolls" '(:dim t)))
+      (call-next-method)))
+
+(defmethod pane-enter ((pane standing-notes-pane) head)
+  ;; **ENTER OPENS THE NOTE WHOLE** (B.5): the row under the cursor, in the read overlay, with
+  ;; nothing truncated. No frame goes out — the fields are the ones `standing_notes` delivered.
+  ;; An empty list opens nothing, and says so rather than drawing an empty view.
+  (let* ((notes (head-standing-notes head))
+         (note (nth (min (max 0 (head-picker-sel head)) (max 0 (1- (length notes)))) notes)))
+    (if (null note)
+        (progn (say head "no standing notes to open — the harness is reading none into this session") t)
+        (open-read-overlay head :standing
+                           (format nil "standing note — ~a" (or (getf note :path) "?"))
+                           (standing-note-whole-lines
+                            note (max 20 (- (head-cols head) +gutter+ +right-margin+)))))))
+
 (defmethod pane-enter ((pane todos-pane) head)
   ;; **Enter acts on WHAT THE CURSOR IS ON**, asked of the one enumeration rather than
   ;; re-derived (R44): the add control opens the card — the operator's *"add todo item … a
   ;; modal dialog"* — and a repo row unfolds, which is what they asked for directly (*"if a
-  ;; todo has some associated text? should i be able to expand it somehow?"*). The operator's
-  ;; own rows have nothing for Enter to do yet; the model's are not stops at all.
+  ;; todo has some associated text? should i be able to expand it somehow?"*).
+  ;;
+  ;; **AND THE OPERATOR'S OWN ROW OPENS WHOLE** (sweep 2026-10-11, B.4) in the read overlay —
+  ;; the pane cuts a row at its right edge and a title or a detail longer than the width was read
+  ;; by nobody. **The model's rows are still not stops** (`todos-stops`' R44 boundary: no key acts
+  ;; on one), so Enter cannot reach them here; making them stops is `todos-stops`' change
+  ;; (repo-todo.lisp), filed rather than made in this pass.
   ;;
   ;; `todo-stop-at` is the single answer to *which row is the cursor on*, with the clamp the
   ;; pane makes when it draws — so a key pressed against a list that just changed acts on a real
@@ -207,7 +299,97 @@ so the view draws what the head holds rather than asking the daemon for what it 
     (case (car stop)
       (:add (%todo-draft-open head))
       (:repo (setf *repo-todo-open* (not *repo-todo-open*)))
+      (:mine
+       (let ((item (find (cdr stop) *operator-todos*
+                         :key (lambda (i) (getf i :id)) :test #'equal)))
+         (if (null item)
+             (progn (say head "that row is gone — the list moved under the cursor") t)
+             (open-read-overlay head :todos "todos — one row"
+                                (todo-item-whole-lines
+                                 item (max 20 (- (head-cols head) +gutter+ +right-margin+)))))))
       (t nil))))
+
+(defun %todo-draft-cap (head)
+  "Cap the new-todo card's TITLE at `+todo-title-max+` before it is written, moving the rest into
+the DETAIL. Returns the sentence that says so, or NIL when the title fit.
+
+The composer holds the field being typed and the draft holds the other, so the draft is brought
+up to date first (`%todo-draft-store`), both fields are rewritten, and the composer is given the
+field it is showing back — a title cut in the draft but not in the composer would be cut once
+more by `%todo-draft-submit`'s own store. The sentence is RETURNED rather than said here because
+the submit that follows says `added …`, and one status line holds one sentence: the caller joins
+them, so a row that comes out shorter than what was typed is not a silent edit of the operator's
+words."
+  (%todo-draft-store head)
+  (let ((title (string-trim " " (or (getf *todo-draft* :title) ""))))
+    (when (> (length title) +todo-title-max+)
+      (multiple-value-bind (kept rest) (%split-todo-title title)
+        (let ((detail (string-trim " " (or (getf *todo-draft* :detail) ""))))
+          (setf (getf *todo-draft* :title) kept
+                (getf *todo-draft* :detail)
+                (if (plusp (length detail)) (format nil "~a ~a" rest detail) rest))
+          (let ((c (head-composer head)))
+            (setf (composer-buffer c) (or (getf *todo-draft* (%todo-draft-field)) "")
+                  (composer-cursor c) (length (composer-buffer c))))
+          (format nil "the title was ~d characters and a title is at most ~d — the rest went into the detail"
+                  (length title) +todo-title-max+))))))
+
+(defun %todo-draft-key* (head key type)
+  "The new-todo card's keys, with the title cap ahead of Enter — the door `%handle-key` calls.
+
+Enter is capped first (`%todo-draft-cap`) and then handed to `%todo-draft-key`, which writes the
+row and says `added …`; when a cap happened and the row landed (the card is down), the cap's own
+sentence is joined onto that note so the operator reads both from one line. Every other key is
+`%todo-draft-key`'s as before, and NIL from it still hands the key to the composer."
+  (if (eq type :enter)
+      (let ((capped (%todo-draft-cap head)))
+        (prog1 (%todo-draft-key head key type)
+          (when (and capped (null *todo-draft*))
+            (say head (format nil "~a — ~a" (or (head-status-note head) "added") capped)))))
+      (%todo-draft-key head key type)))
+
+;;; ------------------------------------------------------------ the terminal's keys ;;;
+
+(defun %ctrl-backslash-p (key)
+  "Is KEY `ctrl-\\`? The byte is 0x1c, and the decoder spells a control byte as `(:ctrl CH)` with
+CH at `(+ 96 code)` (`keys.lisp`) — so 0x1c arrives as `#\\|` (124), which nothing else in this
+head binds. The reference's own choice of key, and its reasons (`app/term_pane.rs`): it is not a
+tty control character in raw mode, not a chord either head binds, and not a key any program
+expects to be typed at it — *one unambiguous way out*."
+  (and (eq (getf key :type) :ctrl) (eql (getf key :ch) #\|)))
+
+(defun %term-detach (head)
+  "Leave the terminal pane and LEAVE THE PROGRAM RUNNING — no frame goes out.
+
+**Detaching is not ending** (reference `app/term_pane.rs`, and the operator's own words there:
+*\"but i dont want it to exit\"*). The pane goes, the conversation comes back, the daemon keeps
+the program on its pty and the screen it has been keeping, and `/term` attaches back to the same
+run. Ending is the explicit `/term close`, and the two acts share no key. `head-term` is kept,
+because it is the fact the next `/term` reads to attach rather than open a second one."
+  (setf (head-mode head) :normal (head-dirty head) t)
+  (shut-overlays)
+  (reset-pane-scroll)
+  (say head "detached — the program is still running; /term returns to it, /term close ends it")
+  t)
+
+(defun %term-key (head key type)
+  "A key for the PROGRAM in the terminal pane, or the one key that is the head's. T always.
+
+Tab and Backspace go as their bytes; **every ctrl chord goes as its byte** — `ctrl-c` is ETX
+(0x03), which is how a shell user stops a runaway program, and `ctrl-x`, `ctrl-o`, `ctrl-r` are
+what `nano` reads. The chord's byte is the decoder's arithmetic reversed: `(- (char-code ch) 96)`.
+The one exception is `ctrl-\\`, which detaches (see `%term-detach`). Passing a STRING to
+`make-term-input` is the constructor's contract; how it goes on the wire is the constructor's."
+  (cond
+    ((%ctrl-backslash-p key) (%term-detach head))
+    ((eq type :tab) (%send head (make-term-input (string #\tab))) t)
+    ((eq type :backspace) (%send head (make-term-input (string (code-char 127)))) t)
+    ((eq type :ctrl)
+     (let ((code (- (char-code (getf key :ch)) 96)))
+       (when (<= 0 code 31)
+         (%send head (make-term-input (string (code-char code)))))
+       t))
+    (t nil)))
 
 (defmethod pane-enter ((pane picker-pane) head)
   (let ((hit (nth (head-picker-sel head)
@@ -244,6 +426,9 @@ touch the MODE** — where Esc goes is `pane-escape-target`'s decision and each 
 makes it, and the two keys that call this want different places."
   (close-slash-out)
   (close-job-out)
+  ;; the read overlay is the third — a row kept open over a list that has closed would be drawn
+  ;; again the next time that pane opened, over whatever row the cursor then sat on
+  (setf *read-overlay* nil)
   t)
 
 (defun %pane-key (head key type)
@@ -319,17 +504,45 @@ one thing this head must not need."
         ;; Its keys are the ones it ACTS on and no more: a printable key it does not handle
         ;; falls through to `:char` below and reaches the composer, which is this file's own
         ;; rule (a pane that claimed every key was a head you could not talk to).
-        (if (and (eq mode :dash)
-                 (member type '(:esc :up :down :enter :page-up :page-down)))
-            (let ((next (dash-nav *dash-nav*
-                                  (case type
-                                    (:esc "esc") (:up "k") (:down "j")
-                                    (:enter "\r") (:page-up "K") (:page-down "J")))))
-              (if next
-                  (progn (setf *dash-nav* next (head-dirty head) t) t)
-                  ;; NIL means NOT MINE AT DEPTH ZERO — the nav's own contract — so the pane
-                  ;; leaves. That is also the only way out that is a way in.
-                  (shut)))
+        (cond
+          ;; **THE READ OVERLAY'S KEYS, AHEAD OF THE LIST'S** (sweep 2026-10-11, B.4/B.5): while a
+          ;; row is open whole, the arrows scroll the VIEW and not the cursor behind it, Esc and
+          ;; Enter close the view and nothing else — the list's own Esc below would close the
+          ;; PANE, and a reader pressing Esc on a row they opened is asking for the list back.
+          ;; The list's letters (`space`, `i`, `h`, `delete`) are inert here: a key that acted on
+          ;; a row nobody can see is the defect this pane has been fixed for twice.
+          ((read-overlay-open-p head)
+           (case type
+             ((:esc :q-press :enter) (close-read-overlay head))
+             ((:up :down) (scroll (if (eq type :up) -1 1)))
+             ((:page-down) (scroll (max 1 (- *pane-room* 1))))
+             ((:page-up) (scroll (- (max 1 (- *pane-room* 1)))))
+             ((:wheel-down) (scroll (* (%wheel-notches key) *scroll-notch*)))
+             ((:wheel-up) (scroll (- (* (%wheel-notches key) *scroll-notch*))))
+             ((:char) (cond ((and empty (eql (getf key :ch) #\q)) (close-read-overlay head))
+                            (empty t)
+                            (t nil)))
+             (t t)))
+          ((and (eq mode :dash)
+                (member type '(:esc :up :down :enter :page-up :page-down)))
+           (let ((next (dash-nav *dash-nav*
+                                 (case type
+                                   (:esc "esc") (:up "k") (:down "j")
+                                   (:enter "\r") (:page-up "K") (:page-down "J")))))
+             (if next
+                 (progn (setf *dash-nav* next (head-dirty head) t) t)
+                 ;; NIL means NOT MINE AT DEPTH ZERO — the nav's own contract — so the pane
+                 ;; leaves. That is also the only way out that is a way in.
+                 (shut))))
+          ;; **ESC IN THE TERMINAL DETACHES** (B.2): the pane goes and the program stays, which
+          ;; is `%term-detach`'s whole sentence — the generic `(shut)` below did the same thing
+          ;; silently, and a reader who had just lost sight of a running `nano` needs to be told
+          ;; it is still there and how to get back. (The reference forwards Esc to the program
+          ;; and keeps `ctrl-\` as the only way out; this head's ruling is Esc detaches too, and
+          ;; the hint says so.)
+          ((and (eq mode :term) (head-term head) (eq type :esc))
+           (%term-detach head))
+          (t
         (case type
           ((:esc :q-press) (shut))
           ;; **The todos pane opens where it always did** (R44) — on the repo's first row, which is
@@ -478,14 +691,12 @@ one thing this head must not need."
                    ;; say it is on.
                    ((and (eq mode :todos) empty (eql ch #\h)) (%todo-toggle-hide-done head) t)
                    ((not empty) nil)
-                   ;; **`q` CLOSES THE PANE AND ENDS THE TERMINAL** — two facts, so two acts: this head's
-                   ;; panes all close on `q`, and a reader who closes a terminal means the program to end
-                   ;; as well.
-                   ((and (eq mode :term) (head-term head) (eql ch #\q))
-                    (%send head (make-term-close))
-                    (shut))
-                   ;; **EVERY OTHER KEY GOES TO THE PROGRAM** — including the bytes a shell wants. A
-                   ;; pane holding a program must not eat the keys the program is for.
+                   ;; **`q` IS THE PROGRAM'S, LIKE EVERY OTHER LETTER** (sweep 2026-10-11, B.2). An
+                   ;; arm here sent `term_close` and shut the pane on `q` with an empty composer —
+                   ;; so `q` typed at a shell prompt, or to leave `less`, ENDED THE SHELL. The way out
+                   ;; is `ctrl-\` (detach, `%term-key`) and the ending is `/term close`; a letter is
+                   ;; never either. **EVERY KEY GOES TO THE PROGRAM** — including the bytes a shell
+                   ;; wants. A pane holding a program must not eat the keys the program is for.
                    ((and (eq mode :term) (head-term head) (characterp ch))
                     (%send head (make-term-input (string ch)))
                     t)
@@ -537,5 +748,5 @@ one thing this head must not need."
                           (head-dirty head) t)
                     t)
                    (t nil))))
-          (t nil)))))))
+          (t nil))))))))
 

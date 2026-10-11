@@ -87,18 +87,26 @@ renderer that wrapped here would wrap twice."
   ;; **`let*` AND NOT `let`**: the heading's initialiser READS `notes`, and a parallel `let` binds
   ;; the name only for the body — MEASURED on this function's first run as `UNBOUND-VARIABLE NOTES`.
   (let* ((notes (head-standing-notes head))
+         ;; **THE CURSOR'S ROW IS DRAWN**, because Enter acts on it now (sweep 2026-10-11, B.5): a
+         ;; pane whose cursor walks rows nobody can see is a selection the operator cannot make.
+         ;; Clamped the way every pane clamps when it draws, so a list that shrank under the
+         ;; cursor still marks a real row.
+         (sel (if notes (min (max 0 (head-picker-sel head)) (1- (length notes))) 0))
          (out (list (list (cons "standing notes" '(:bold t))
                          (cons (format nil "  ~d" (length (or notes nil))) '(:dim t))))))
     (push nil out)
     (if (null notes)
         (push (list (cons "    none — the harness is reading no notes into this session" '(:dim t))) out)
-        (dolist (n notes)
+        (loop for n in notes
+              for i from 0
+              do
           (let ((path (or (getf n :path) "?"))
                 (abstract (getf n :abstract))
                 (written (getf n :abstract-written))
-                (form (or (getf n :form) "?")))
-            (push (list (cons "  ▸ " '(:dim t))
-                        (cons path nil)
+                (form (or (getf n :form) "?"))
+                (here (= i sel)))
+            (push (list (cons "  ▸ " (if here '(:bold t) '(:dim t)))
+                        (cons path (and here '(:reverse t)))
                         (cons (format nil "  [~a]" form)
                               (if (string-equal form "verbatim") +role-success+ +role-pending+)))
                   out)
@@ -120,4 +128,42 @@ renderer that wrapped here would wrap twice."
     (push (list (cons "    asked when this pane opens, as ListJobs is — a list is a question, not an act"
                       '(:dim t)))
           out)
+    (when notes
+      (push (list (cons "    ↑↓ moves · enter opens the row whole · esc returns to the list"
+                        '(:dim t)))
+            out))
     (nreverse out)))
+
+(defun standing-note-whole-lines (note cols)
+  "ONE standing note, whole — the read overlay's body (sweep 2026-10-11, B.5).
+
+The reference opens the note's FILE in rano; this head embeds no editor (TODO.md, section C), so
+what it can show whole is **what the daemon sent about the note**: the path, the form, and the
+abstract unwrapped and untruncated — the row's own truncation is the pane's, and this is the
+view that has none. The abstract's authority is said in the same words the row uses, because the
+difference between the author's line and the harness's reading of it is the fact this field
+exists for."
+  (let* ((w (max 20 cols))
+         (path (or (getf note :path) "?"))
+         (abstract (getf note :abstract))
+         (written (getf note :abstract-written))
+         (form (or (getf note :form) "?")))
+    (append
+     (list (list (cons "  path  " '(:dim t)) (cons path nil))
+           (list (cons "  form  " '(:dim t))
+                 (cons form (if (string-equal form "verbatim") +role-success+ +role-pending+))
+                 (cons (if (string-equal form "verbatim")
+                           "  — injected into the prompt as written"
+                           "  — an index entry; the model reads the file when it needs it")
+                       '(:dim t)))
+           nil)
+     (cond ((null abstract)
+            (list (list (cons "  no abstract — the file is nothing but headings" '(:dim t)))))
+           (t (append
+               (mapcar (lambda (l) (list (cons (format nil "  ~a" l) nil)))
+                       (wrap-text abstract (max 8 (- w 2))))
+               (list nil
+                     (list (cons (if written
+                                     "  — the author's own abstract"
+                                     "  — derived by the harness from the first sentence")
+                                 '(:dim t))))))))))

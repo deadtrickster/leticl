@@ -18,14 +18,31 @@
     ("ctrl-c" . "clear what you typed; twice on an empty prompt, within a second, quits")
     ("↑ ↓" . "move inside the prompt, then walk the prompts you have sent")
     ("pgup pgdn" . "scroll the transcript; esc returns to following the stream")
-    ("wheel" . "scroll the transcript; shift+drag selects text")
+    ;; **THE WHEEL ROW SAYS WHAT IS IN FRONT** (sweep 2026-10-11, B.9): it read *scroll the
+    ;; transcript*, and the wheel has scrolled a pane, a card's content and a job's output for as
+    ;; long as those existed — `%pane-key` and `%decision-key` both have wheel arms. A help row
+    ;; that names one of five surfaces is R29's defect on the page that IS the contract.
+    ("wheel" . "scroll whatever is in front — a pane, an output window, the ask card's content — else the transcript; shift+drag selects text")
     ("ctrl-a ctrl-e" . "start and end of the line; ctrl-w and ctrl-u kill, ctrl-y yanks")
     ("ctrl-z" . "undo — a word at a time, and a kill is always its own step")
     ("paste" . "five lines or more collapses to a marker and is sent in full")
     ("ctrl-s" . "the session list: type a number or part of a name to switch")
     ("tab" . "complete the /command being typed; more tabs walk the matches")
-    ("click" . "in the session list, picks the row under the pointer; enter still switches")
-    ("ctrl-t" . "the todos pane: the model's plan, and the repo's TODO.md — ↑↓ moves, enter or tab unfolds, space marks, i composes a prompt from a subtree, h hides the done ones, pgup/pgdn scrolls")
+    ;; **THE CLICK ROW NAMES EVERY SURFACE `%click` ROUTES TO** (click-actions.lisp), not the one
+    ;; it was written for: the edge's count labels, the picker card, the dashboard's panels, the
+    ;; five list panes, and — the sweep's own additions — the ask card's rungs and the quit card's
+    ;; two choices. Selecting, never confirming: a gesture that commits on press is how a misclick
+    ;; moves somebody's session.
+    ("click" . "selects the row under the pointer — in the session list, the jobs, subagents, todos and config panes, on a picker card, on the ask card's rungs and the quit card's choices, on a dashboard panel; the edge's `N jobs running` / `N subagents running` labels open their pane. Enter still confirms")
+    ("ctrl-t" . "the todos pane: the model's plan, and the repo's TODO.md — ↑↓ moves, enter or tab unfolds (enter on your own row opens it whole), space marks, i composes a prompt from a subtree, h hides the done ones, pgup/pgdn scrolls")
+    ("ctrl-g" . "the subagents pane: the tree of children this session has started — enter or o switches into one, p reads its prompt")
+    ;; **`ctrl-j` AND NOT `ctrl-q`** — the operator's ruling (TODO.md, section D): LF is the jobs
+    ;; pane, and the decoder keeps CR and LF apart so the chord exists at all (`keys.lisp`).
+    ("ctrl-j" . "the jobs pane: the background commands — enter reads one's output, d opens its dashboard")
+    ("ctrl-o" . "move the command that is running now to the background — it keeps running as a job")
+    ("/queue" . "the merge queue: every entry with its state, reviews and gate steps — enter opens one in full")
+    ("/standing" . "the notes the harness is reading into this session's prompt right now — enter opens one whole")
+    ("/term" . "a terminal in this session, in a pane: keys go to the program, ctrl-\\ detaches and leaves it running, /term returns to it, /term close ends it")
     ("/new [title]" . "start a session in this daemon and go there")
     ("/switch WHAT" . "go to a session by number, id or part of its name")
     ("ctrl-r" . "fold or unfold the model's reasoning")

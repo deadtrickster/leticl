@@ -11,6 +11,18 @@
 
 (in-package #:leticl)
 
+(defun %card-scrollable-p (head)
+  "Does the open ask's card have content OUT OF VIEW — something for the page keys and the wheel
+to scroll? Read from the screen the head DREW (`docs/code-review-2026-10-11.md`,
+overlay-keys.lisp:65-72): `card-content-window` draws a seam saying `… N rows out of view` exactly
+when the content did not fit, and nothing at all when it did, so the seam's presence on the cell
+buffer IS the fact — the same rule `%composer-edge-buttons` keeps, *read from the painted row, not
+recomputed*. Before the first frame there is no screen and nothing to scroll."
+  (when (head-screen head)
+    (loop for r from 0 below (head-rows head)
+          for text = (%screen-row-text head r)
+          thereis (and text (search "out of view" text) t))))
+
 (defun %decision-key (head key type)
   "The keys an OPEN ASK owns, and only those — NIL when this key is not one.
 
@@ -67,8 +79,17 @@ long as the picker stayed open."
         ;; swallows is the lie this repo keeps refusing to ship. Gated on `empty` for
         ;; the same reason Enter is: a line being typed is the composer's, and its
         ;; history walk is on ↑/↓ anyway.
-        ((:page-up) (when empty (card-scroll-by (- *card-page*)) (setf (head-dirty head) t)))
-        ((:page-down) (when empty (card-scroll-by *card-page*) (setf (head-dirty head) t)))
+        ;; **AND ONLY WHEN THERE IS SOMETHING TO SCROLL** (the review, overlay-keys.lisp:65-72):
+        ;; claimed on an empty composer alone, a card that fit on the screen still took PgUp,
+        ;; PgDn and the wheel away from the transcript for as long as the ask stood — a reader
+        ;; with a four-line permission card up could not page the conversation behind it. The
+        ;; `nil` these arms answer on a card with nothing out of view hands the key back to
+        ;; `%normal-key`, where the transcript's own scroll lives. Home and End are left as they
+        ;; were: on an empty composer they move nothing else, so there is nothing to hand back.
+        ((:page-up) (when (and empty (%card-scrollable-p head))
+                      (card-scroll-by (- *card-page*)) (setf (head-dirty head) t)))
+        ((:page-down) (when (and empty (%card-scrollable-p head))
+                        (card-scroll-by *card-page*) (setf (head-dirty head) t)))
         ((:home) (when empty (setf *card-scroll* 0 (head-dirty head) t)))
         ;; Home/End are the two ends. End is a big number rather than a computed
         ;; maximum: how far the viewport goes is a function of the frame, and the
@@ -86,10 +107,12 @@ long as the picker stayed open."
         ;; took the page arms' AMOUNT along with their polarity, so a card jumped a whole page per
         ;; notch where the reference moves three rows. A copy that came with a bug fix is the kind
         ;; that goes unnoticed: the wheel worked, so nobody measured how far.
-        ((:wheel-up) (when empty (card-scroll-by (- (* (%wheel-notches key) *scroll-notch*)))
-                                (setf (head-dirty head) t)))
-        ((:wheel-down) (when empty (card-scroll-by (* (%wheel-notches key) *scroll-notch*))
-                                  (setf (head-dirty head) t)))
+        ((:wheel-up) (when (and empty (%card-scrollable-p head))
+                       (card-scroll-by (- (* (%wheel-notches key) *scroll-notch*)))
+                       (setf (head-dirty head) t)))
+        ((:wheel-down) (when (and empty (%card-scrollable-p head))
+                         (card-scroll-by (* (%wheel-notches key) *scroll-notch*))
+                         (setf (head-dirty head) t)))
         (t nil)))))
 
 (defun %payload-key (head key type)

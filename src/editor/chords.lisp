@@ -111,6 +111,11 @@ daemon stayed both times, with the head that asked already gone."
       ((:ctrl) (when (eql (getf key :ch) #\c)
                  (setf (head-quit-open head) nil (head-dirty head) t)
                  (say head "staying")))
+      ;; **A CLICK SELECTS A CHOICE, AND TAKES NOTHING** (sweep 2026-10-11, B.3; the reference's
+      ;; `QuitCard` hit). This card is asked before the click router, so the router's card arm
+      ;; cannot reach it — the arm is here. A wheel is still swallowed: the fail-closed rule above.
+      ((:mouse) (when (eq (getf key :kind) :press)
+                  (%quit-card-click head (getf key :y))))
       (t nil)))
   t)
 

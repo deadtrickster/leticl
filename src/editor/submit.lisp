@@ -11,6 +11,42 @@
 
 (in-package #:leticl)
 
+(defun %bang-verb-p (line verb)
+  "Is LINE the bang verb `!VERB` — the WORD, followed by a space or the end of the line?
+
+`!send y` and bare `!send` are the verb; `!sender foo` is not, it is a shell command called
+`sender`. A prefix test cannot tell the two apart, which is the review's finding on the old
+arm (submit.lisp:92) and the reference's own rule (`send_line`: whitespace or end after the verb)."
+  (let ((n (1+ (length verb))))
+    (and (>= (length line) n)
+         (char= (char line 0) #\!)
+         (string= (subseq line 1 n) verb)
+         (or (= (length line) n)
+             (char= (char line n) #\space)))))
+
+(defun %term-close-line-p (line)
+  "Is LINE `/term close` — the one typed act that ENDS the program in this session's terminal?"
+  (string= (string-trim " " line) "/term close"))
+
+(defun %term-close (head)
+  "End the program in this session's terminal pane: the `TermClose` frame, the ending a PERSON
+asked for (the daemon's own ending arrives as `TermEnded`, a different fact the pane says).
+
+**The only path that sends `term_close`** (sweep 2026-10-11, B.2; reference `app/term_pane.rs`,
+*ending is `!term close`, typed at the composer*). `q` used to send it from the pane and so a
+letter typed at a shell prompt ended the shell; `ctrl-\\` and Esc detach and send nothing. This
+works whether or not the pane is on the screen, which is why it is a typed line and not a key.
+
+**It is answered HERE, in the composer's submit, and not in the `term` verb's own `cond`** — that
+arm (`src/commands/dispatch.lisp`) is another pass's file in this sweep. The honest home is a
+`((string= rest \"close\") …)` clause there, beside `status`; when that file is free this function
+moves and the clause below in `%submit-line` goes."
+  (if (head-term head)
+      (progn (%send head (make-term-close))
+             (say head "ending the program in this session's terminal — the daemon says when it has"))
+      (say head "no terminal is open in this session — `/term` opens one"))
+  t)
+
 (defun %submit-line (head)
   "Enter on the composer: a slash command, or a prompt. Queued as a follow-up
 user item by the daemon when a turn runs — never rejected (§13.2).
@@ -75,6 +111,9 @@ text — which is what makes the ledger safe to forget about."
       ;; reference's `submit` has it (app.rs:3961-3963). It used to sit under the
       ;; picker arm, so `/new a title` typed under the session picker the hint bar
       ;; itself advertises was read as the name of a session to switch to.
+      ;; **`/term close` is the one typed act that ends the terminal's program** — see
+      ;; `%term-close` for why it is answered here and where it moves to.
+      ((%term-close-line-p line) (%term-close head))
       ((and (plusp (length line)) (char= (char line 0) #\/))
        (%command head (subseq line 1)))
       ;; **AN `!` LINE IS THE OPERATOR'S OWN SHELL COMMAND** (daemon `7dca40f`,
@@ -90,14 +129,22 @@ text — which is what makes the ledger safe to forget about."
       ;; tool result gets. And `sudo` works, because the daemon runs it through the
       ;; same path `bash` takes, with the same `SUDO_ASKPASS` environment that raises
       ;; `SecretRequested` to a head.
-      ((and (plusp (length line))
-            (char= (char line 0) #\!)
-            ;; **A `!send` LINE IS THE MANUAL ANSWER** (protocol 33) — one line to
-            ;; the running command, on demand, no card needed.
-            (> (length line) 5) (string= (subseq line 0 5) "!send"))
+      ;; **A `!send` LINE IS THE MANUAL ANSWER** (protocol 33) — one line to the running
+      ;; command, on demand, no card needed.
+      ;;
+      ;; **THE WORD, NOT THE PREFIX** (`docs/code-review-2026-10-11.md`, submit.lisp:92). This
+      ;; matched five raw characters, so `!sender foo` reached the running command as `er foo`
+      ;; instead of running the operator's `sender` — and a bare `!send` fell to the shell arm
+      ;; below and ran a program called `send`. The reference's `send_line` requires whitespace
+      ;; or the end of the line after the verb; this is that rule. A bare `!send` is REFUSED with
+      ;; a note rather than sending an empty line, because an empty line is an answer too (it
+      ;; takes a prompt's default) and nobody typed one.
+      ((%bang-verb-p line "send")
        (let ((rest (string-trim " " (subseq line 5))))
-         (%send head (make-send-line rest))
-         (say head (format nil "sent: ~s" rest))))
+         (if (plusp (length rest))
+             (progn (%send head (make-send-line rest))
+                    (say head (format nil "sent: ~s" rest)))
+             (say head "`!send` needs the line to send — `!send y` answers a prompt with y"))))
       ((and (plusp (length line))
             (char= (char line 0) #\!)
             ;; nothing but the bang and whitespace is refused — the daemon's own check

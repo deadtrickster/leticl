@@ -55,15 +55,25 @@ for the lists)."
       ;; arm written for them inside `%pane-key` is dead code. This one is above every other claim,
       ;; which is the third ordering lesson on this pane and the only one that generalises: a key a
       ;; PANE needs must be taken before the paths that assume a composer is the reader.
-      ((and (eq (head-mode head) :term) (head-term head) (member type '(:tab :backspace)))
-       (%send head (make-term-input (case type (:tab (string #\tab)) (t (string (code-char 127))))))
-       t)
+      ;; **AND EVERY CTRL CHORD BUT ONE** (sweep 2026-10-11, B.2; reference `app/term_pane.rs`).
+      ;; `ctrl-c` was in the close list below, so the chord every shell user reaches for to stop a
+      ;; runaway program closed the PANE instead and the program never saw ETX; `ctrl-x`, `ctrl-o`,
+      ;; `ctrl-r` were `%global-chord`'s and never reached `nano` or the shell. A pane holding a
+      ;; program takes the program's keys first — `%term-key` forwards each chord as its byte and
+      ;; keeps exactly one for the head: `ctrl-\`, the detach.
+      ((and (eq (head-mode head) :term) (head-term head) (member type '(:tab :backspace :ctrl)))
+       (%term-key head key type))
       ((and (head-prompt-req head) (not *prompt-away*) (eq type :esc))
        (setf *prompt-away* t
              (head-dirty head) t)
        (say head "the card is away — the request is still open, and a bare line is held until the run ends")
        t)
-      ((and (head-prompt-req head) (eq type :enter))
+      ;; **GATED ON THE CARD BEING UP, LIKE THE ESC ARM ABOVE IT** (`docs/code-review-2026-10-11.md`,
+      ;; dispatch.lisp:51). Without the gate Enter answered the prompt request while its card was
+      ;; AWAY — the operator had put the card aside to type to the model, and their line went to the
+      ;; running command instead. With the card away a bare line is HELD by `%submit-line`, which is
+      ;; the reference's own rule (`prompt_away`): the request stays open and nothing is spent.
+      ((and (head-prompt-req head) (not *prompt-away*) (eq type :enter))
        (let* ((req (head-prompt-req head))
               (line (composer-buffer (head-composer head))))
          (setf (head-prompt-req head) nil)
@@ -92,11 +102,15 @@ for the lists)."
       ;; (app.rs:3273, 3306, 3321, 3379). It was unhandled in the pane arm and in
       ;; `pick-key-event`, so it fell through both and offered to quit the head
       ;; instead of closing the thing the operator was looking at.
+      ;; **`:dash` IS IN THE LIST** (the review's dispatch.lisp:74): without it `ctrl-c` on the
+      ;; dashboard offered to quit the head. `:term` stays for the pane with NO live terminal (the
+      ;; `no terminal — !term opens one` screen); with one live the arm above has already taken
+      ;; the chord to the program.
       ((and (%ctrl-c-p key)
             (or *pick-open*
                 (member (head-mode head)
                         '(:help :status :config :jobs :subagents :peek :job-out :todos :picker
-                          :slash :lisp :queue :standing :merge-detail :term))))
+                          :slash :lisp :queue :standing :merge-detail :term :dash))))
        (if *pick-open*
            (close-pick head)
            (progn
@@ -145,7 +159,10 @@ for the lists)."
       ;; fills IS the composer, so anything it does not take must land there. It is ABOVE
       ;; every other arm that could type, because the text being entered is a credential.
       ((and *key-draft* (%key-draft-key head key type)))
-      ((and *todo-draft* (%todo-draft-key head key type)))
+      ;; **THE TITLE IS CAPPED AT THE MOMENT IT IS WRITTEN** (sweep 2026-10-11, B.4): Enter on the
+      ;; card goes through `%todo-draft-cap` first, which moves whatever is past 135 characters
+      ;; into the detail — see `+todo-title-max+` for why here and not at the wire.
+      ((and *todo-draft* (%todo-draft-key* head key type)))
       ;; a picker's own keys; what it does not take is the composer's, so a name
       ;; can be typed under the card
       ((and *pick-open* (pick-key-event head key)))
@@ -459,8 +476,17 @@ of R36 keeps — the anchor is a record of the top row of the last frame, never 
           ;; quit only on an EMPTY composer (editor.rs:485-491). It used to quit
           ;; unconditionally, so the chord that means "end of input" also meant
           ;; "throw away the paragraph I am in the middle of".
+          ;;
+          ;; **AND THROUGH THE QUIT CARD, NOT AT ONCE** (`docs/code-review-2026-10-11.md`,
+          ;; dispatch.lisp:407-412). This set `head-running` to NIL on the spot, so the one
+          ;; chord a shell user types by reflex at an empty prompt left the head with no
+          ;; question asked — while `ctrl-c ctrl-c` on the same empty prompt opens the card
+          ;; that asks *leave, or leave and stop the daemon?*. The reference routes both
+          ;; through the card; two keys that mean *leave* must not differ in whether they ask.
           (when (zerop (length (composer-buffer c)))
-            (setf (head-running head) nil)))
+            (setf (head-quit-open head) t
+                  (head-quit-sel head) 0
+                  (head-dirty head) t)))
          ((#\u) (%undo-push c) (composer-kill-line c) (setf (head-dirty head) t))
          ((#\k) (%undo-push c) (composer-kill-to-end c) (setf (head-dirty head) t))
          ((#\w) (%undo-push c) (composer-kill-word c) (setf (head-dirty head) t))

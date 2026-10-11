@@ -362,17 +362,33 @@ how a name gets typed."
       (t nil))))
 
 (defun mode-confirm-key (head key)
-  "The `allow-all` question owns every key while it is up: [y] or [enter] send the
-mode with consent; anything else cancels."
+  "The `allow-all` question owns every KEY while it is up: [y] or [enter] send the
+mode with consent; any other key cancels.
+
+**THE POINTER IS NOT A KEY, AND IT ANSWERS NOTHING** (the reference's `key_mode_confirm`,
+`app/keys/cards.rs:31-36`, R67 item 7). A wheel notch and a click arrive through the same
+event path as a keystroke, and this card took them as *no*: `/mode allow-all`, a scroll up to
+reread what allow-all means, and the card said *allow-all not taken* — a question this
+consequential cancelled by a gesture aimed at the transcript. So a WHEEL falls through (NIL:
+the ladder goes on and scrolls whatever it scrolls, card still up) and a CLICK is swallowed
+(T, card still up): neither is an answer, and letting a click through could act on a surface
+under the question."
   (let ((type (getf key :type)))
-    (if (or (eq type :enter)
-            (and (eq type :char) (member (getf key :ch) '(#\y #\Y))))
-        (let ((name *mode-confirm*))
-          (setf *mode-confirm* nil)
-          (%send-mode head name t)
-          (say head (format nil "mode → ~a (consented)" name)))
-        (progn (setf *mode-confirm* nil)
-               (say head "allow-all not taken")))
-    (setf (head-dirty head) t)
-    t))
+    (cond
+      ((eq type :mouse)
+       (if (member (getf key :kind) '(:wheel-up :wheel-down))
+           nil
+           t))
+      ((or (eq type :enter)
+           (and (eq type :char) (member (getf key :ch) '(#\y #\Y))))
+       (let ((name *mode-confirm*))
+         (setf *mode-confirm* nil)
+         (%send-mode head name t)
+         (say head (format nil "mode → ~a (consented)" name)))
+       (setf (head-dirty head) t)
+       t)
+      (t (setf *mode-confirm* nil
+               (head-dirty head) t)
+         (say head "allow-all not taken")
+         t))))
 
