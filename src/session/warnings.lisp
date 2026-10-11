@@ -202,10 +202,11 @@ added to one arm cannot miss the other.
 is a test's standing example of an UNKNOWN code, and an unknown code must fall through both
 tables — it is the fail-safe direction, not a member.
 
-**Every member must also have a `+note-remedies+` entry** (R29 rule one), which
-`every-note-code-offers-a-remedy` asserts by walking this list and `+routine-warnings+`
-together, so the two facts about a code — how loud it is, and what the reader can do — are
-answered in the same place or not at all.")
+**Every member must also have a `+note-remedies+` entry** (R29 rule one), and no member of
+`+routine-warnings+` may have one (letibot R73: a remedy line belongs to a fault, and a routine
+event has none). `every-note-code-offers-a-remedy` asserts both halves by walking the two lists,
+so the two facts about a code — how loud it is, and whether the reader is told what to do — are
+answered together or not at all.")
 
 (defparameter +routine-warnings+
   '("auto_compact" "compacted"
@@ -290,6 +291,13 @@ answered in the same place or not at all.")
     ;; in its table: a fold that is running is housekeeping, and *"a silent wait is what a reader calls
     ;; a failure"*. Without this entry the fail-safe here drew it RED — an alarm for the minutes the
     ;; operator is already waiting through, at the moment the session is largest and the model slowest.
+    ;;
+    ;; **A daemon from `a33655d` on (letibot R73) does not send it** — a half is `CompactionProgress`,
+    ;; drawn as ONE line above the composer (`compaction-progress-line`) and cleared by `compacted`.
+    ;; It stays here because letibot's table keeps it for logs written before that, and a daemon of
+    ;; the same protocol number from before that commit still sends it: no protocol bump marked the
+    ;; change, so a head cannot tell the two daemons apart by the `Hello`. Routine, so it draws its
+    ;; fact and NO remedy line — the four `→ nothing to fix` lines under one fold were R73's report.
     "compact_half")
   "The warning codes whose fact is ROUTINE — drawn faint with a middot, not red with a bang.
 

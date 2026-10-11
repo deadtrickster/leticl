@@ -8947,11 +8947,21 @@ satisfies this rule* — and the honest list is full of them: a compaction that 
 ledger that will not replay, bytes the daemon dropped and nobody holds. **A remedy
 invented to fill the slot is the failure this test is written against**, which is why the
 assertion is about the ENTRY and not about it containing a slash command."
-  (let ((codes (remove-duplicates (append leticl::+routine-warnings+ leticl::+failure-warnings+)
-                                  :test #'string=)))
-    (is (> (length codes) 60)
+  (let ((codes leticl::+failure-warnings+))
+    (is (> (length codes) 40)
         (format nil "**a plausible vocabulary, so this cannot pass by walking an empty
  list** — ~d codes" (length codes)))
+    ;; **AND THE ROUTINE HALF NAMES NOTHING** (letibot R73): a remedy line belongs to a fault.
+    ;; Asserted on the table as well as on the function, so an entry cannot drift back in as
+    ;; dead data the function happens to skip.
+    (dolist (code leticl::+routine-warnings+)
+      (is (null (assoc code leticl::+note-remedies+ :test #'string=))
+          (format nil "**~a is routine and has no remedy entry** — a housekeeping note with an
+ instruction under it reads as a thing to act on" code))
+      (let ((leticl::*head* nil))
+        (is (null (leticl::note-remedy (list :code code)))
+            (format nil "**~a draws no remedy line**: ~s" code
+                    (leticl::note-remedy (list :code code))))))
     (dolist (code codes)
       (let ((remedy (leticl::note-remedy (list :code code))))
         (is (and remedy (plusp (length remedy)))
@@ -27183,8 +27193,10 @@ own explanation of the silence was wrong.
     that cannot act, which is the same rule in the other direction."
   (let ((code "interrupt_idle"))
     ;; 1. no head at all: the idle sentence, which is the table's own
-    (is (search "no turn was generating" (leticl::note-remedy (list :code code)))
-        "**with no turn in hand it says the honest idle thing** — the fallback the guard test walks")
+    (let ((leticl::*head* nil))
+      (is (null (leticl::note-remedy (list :code code)))
+          "**with no turn in hand it is a routine note and names no act** (letibot R73) — the session
+ was idle, which is what the code says, and a routine note carries no remedy line"))
     ;; 2. a turn waiting on a RUNNING command names the key that reaches a call
     (let ((h (%make-head)))
       (setf (leticl::session-turn (leticl::head-session h))
@@ -28163,6 +28175,45 @@ Three claims, and the third is what makes the second safe:
     (leticl::note-turn-finished "finished")
     (is (null leticl::*compaction*) "a finished turn clears the fold")
     (is (not (leticl::compaction-active-p)) "so nothing spins on after the turn it ran in")))
+
+(def-test a-routine-note-draws-no-remedy-line (:suite leticl)
+  "**letibot R73's third defect, which was this head's: a remedy line belongs to a fault.**
+
+The operator's paste, one fold:
+
+    · compact_half — compacting half 1 of 2: the most recent exchanges — 1256 item(s) …
+      → nothing to fix — the conversation is being summarised. The bar above the composer is …
+
+A `→` under a housekeeping note reads as a thing to act on — the same mark that carries
+*/compact summarises now* under a context wall. So a ROUTINE note draws its fact and nothing under
+it, and a REFUSED one keeps the line that says what to do instead: `slash_refused`'s */help lists the
+ones that do* is the reader's way forward, and it stays."
+  (let ((h (%on-head :cols 100 :rows 30)))
+    (flet ((rows-of (code detail)
+             (let ((row (list :item-id (format nil "r73-~a" code) :kind "note" :ts 0
+                              :warning (list :code code :ts 1)
+                              :item (list :type "note"
+                                          :text (format nil "~a ~a — ~a"
+                                                        (warning-glyph (list :code code)) code detail)
+                                          :cap 3 :seam "/notes"))))
+               (segs-of (item-lines row 100 (head-prefs h))))))
+      ;; the routine codes the old table answered with an instruction, one assertion each
+      (dolist (code '("compact_half" "model_slow_first_byte" "compacted" "prefix_stale"
+                      "promote_in_flight" "merge_queued"))
+        (let ((text (rows-of code "compacting half 1 of 2: the most recent exchanges")))
+          (is (search code text) (format nil "the fact is drawn: ~s" text))
+          (is (not (search "→" text))
+              (format nil "**~a is routine and draws NO remedy line**: ~s" code text))
+          (is (not (search "nothing to fix" text))
+              (format nil "and none of the old sentence survives under ~a: ~s" code text))))
+      ;; the refusals keep theirs
+      (dolist (code '("slash_refused" "mode_unknown"))
+        (let ((text (rows-of code "/qwe")))
+          (is (search "→" text)
+              (format nil "**~a is a refusal and keeps its remedy line**: ~s" code text))))
+      ;; and a fault keeps its act
+      (is (search "/compact summarises now" (rows-of "context_wall" "the context is nearly full"))
+          "a context wall still names /compact"))))
 
 (def-test a-bash-command-that-edits-a-file-draws-its-diff (:suite leticl)
   "**The operator: *\"why im not show normal diff card\"*, then *\"right and i want diff card for python

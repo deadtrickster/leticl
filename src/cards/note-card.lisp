@@ -1,5 +1,5 @@
 ;;;; note-card.lisp — a note the HEAD files about itself, in the register its warning
-;;;; code earns, with the remedy R29 says it must carry.
+;;;; code earns — and, under a fault only, the remedy R29 says it must carry.
 
 (in-package #:leticl)
 
@@ -51,6 +51,9 @@
            ;; which is the whole failure R29 is about. It is dim in every register
            ;; (the note's own role says how loud the FACT is; the remedy is an
            ;; instruction, not a second alarm), and it is one line plus its wrap.
+           ;;
+           ;; **AND ONLY UNDER A FAULT** (letibot R73): `note-remedy` answers NIL for a
+           ;; routine code, so a housekeeping note is its fact and nothing under it.
            (remedy (note-remedy w)))
       (append out
               (when hidden
@@ -80,9 +83,6 @@
      ("auto_compact_skipped" . "automatic compaction is off for this session; /compact runs one now")
      ("auto_compact_no_progress" . "compacting again will not help; /new starts a fresh session")
      ("auto_compact_failed" . "/compact runs one now, by hand, and says what it did")
-     ("compacted" . "nothing to do — the session compacted itself; /notes lists the record")
-     ("auto_compact" . "nothing to do — the session is compacting itself")
-     ("reseated" . "nothing to do — the prompt was rebuilt from the tools seated now")
      ;; **the session's INTEGRITY is in doubt, and there is no act.**
      ("ledger_chain_mismatch" . "nothing can be done from here — the ledger will not replay. /status has the counters; the store holds the evidence")
      ("row_coverage_gap" . "nothing can be done from here — the store and the log disagree. /gate corpus reads both")
@@ -99,87 +99,32 @@
      ("session_unavailable" . "/resume brings a stored session back; /sessions lists them")
      ("resume_failed" . "/sessions lists what the daemon can actually reach")
      ("mode_unpersisted" . "the mode is live in this process and not on disk; /mode again after a restart")
-     ("mode_set_next_session_only" . "this applies to the NEXT session; /new starts one")
-     ("mode_session_only" . "nothing to do — this applies for this session only")
      ("secret_late" . "nothing to do — the password was already given by another head")
      ("sudo" . "nothing to do — the daemon reports it; the ask itself is a card")
-     ("daemon_stopping" . "nothing to do — the daemon is going down, by request")
      ("ended_in_reasoning" . "the turn stopped mid-thought; ctrl-r shows it and asking again continues")
      ("reasoning_stall" . "nothing to do — the model was thinking without writing; the turn is still running")
      ("repetition_collapse" . "the turn was cut short by a repeat detector; asking again usually gets past it")
-     ;; **THE IDLE SENTENCE, and it is only the IDLE one.** `note-remedy` answers this code from the
-    ;; turn's own state instead of from this table — see `%interrupt-idle-remedy`. The old wording here
-    ;; (*there was no turn running to interrupt*) was drawn over a screen that said *Responding ·
-    ;; 11m26s* and *1 job running*, because the daemon's `interrupt_idle` is a sentence about
-    ;; GENERATION and the reader was asking about a CALL.
-    ("interrupt_idle" . "nothing to do — no turn was generating")
-     ("promote_idle" . "nothing to do — no command was running to background")
-     ;; **`promote_in_flight` names an act and not a fact** (R29): the request ARRIVED and
-     ;; the run's own wait loop takes it — so the note says where it went, which is the
-     ;; whole reason the code exists (the sentence it replaced said the request had been
-     ;; honoured while the run kept sleeping in the foreground).
-     ;; **`prefix_stale` names an act** (R29): the frozen prefix this session was seated on is
-     ;; not the one this daemon would build now, so a tool the build added is unreachable from
-     ;; this seat — `/reseat` rebuilds the prompt from what is seated now.
-     ("prefix_stale" . "/reseat rebuilds this session's prompt from the tools and instructions seated now; the conversation is kept")
-     ("promote_in_flight" . "the move is in flight — the run's own wait loop takes the request on its next half-second poll; nothing else is needed")
-     ("cache_reuse_shortfall" . "nothing to do — the cache was reused less than the daemon hoped; /status has the numbers")
      ("fabric_refresh_failed" . "nothing can be done from here — the fabric did not refresh")
      ("flowy_not_seated" . "/flowy login [SEAT] attaches a seat; /flowy status shows whether one is held")
      ("monitor_wake_not_armed" . "nothing can be done from here — a fired monitor wakes the model only on job_list")
-     ("frame_capture_written" . "nothing to do — the frame was written where the daemon was told to put it")
-     ("frame_capture_disabled" . "set the capture variable the detail names, and restart the daemon, to capture frames")
      ("frame_capture_failed" . "nothing can be done from here — the capture write failed; the detail names the path")
      ("title_not_stored" . "nothing can be done from here — the title did not reach the store")
      ("record_item_pairing" . "nothing can be done from here — an item arrived without its pair")
      ("orphan_body" . "nothing can be done from here — a body arrived with no row to hang it on")
      ("absolute_path" . "nothing to do — a path in the arguments was absolute, which is a note about the call")
      ("endpoint" . "nothing can be done from here — the model endpoint refused; the detail names it")
-     ("model_endpoint_retry" . "nothing to do — the endpoint was retried and answered")
      ("dated" . "nothing to do — the data is older than the session")
      ("data_claim" . "nothing to do — a claim in the answer was flagged; the detail says which")
-     ("imported" . "nothing to do — the import finished")
-     ("import_scrap" . "nothing to do — part of the import was skipped; the detail says how much")
-     ("imported_summary" . "nothing to do — the import finished and was summarised")
-     ("open_note" . "nothing to do — a note was opened; /notes lists it")
-     ("resume_note" . "nothing to do — the session was resumed")
-     ("reattached" . "nothing to do — this head reattached to the daemon")
-     ("slash" . "nothing to do — that is a command's reply; /notes lists it, ctrl-n clears it")
-     ("steering_urgent" . "nothing to do — the daemon marked the steering urgent")
-     ("test" . "nothing to do — a test note")
-     ;; the three the coverage test found missing on its first run — which is the test
-     ;; doing its job: a code the head draws with no entry is the dead end R29 is about.
-     ("mode_set" . "nothing to do — the mode is set for this session; /mode opens the picker")
+     ;; two of the three the coverage test found missing on its first run — which is the test
+     ;; doing its job: a FAULT the head draws with no entry is the dead end R29 is about.
      ("reseat_unchecked" . "nothing to do — the re-seat went ahead without checking the tool list; /tools shows what is seated")
      ("length_empty_turn" . "the turn carried no message and was not sent; type something and press enter again")
-     ;; **R24 part two's own report, and the entry names the act rather than filling the slot.**
-     ;; The code says the operator's call ran; what the reader may want next is what came back
-     ;; of it, and that is on the row — so the honest remedy points at the row. R29's rule is
-     ;; that the ENTRY exists and names the reason; `nothing to do — …` satisfies it, and
-     ;; inventing a verb here to look useful would be the failure that test is written against.
-     ("operator_call_ran" . "nothing to do — the call you asked for ran; the row under this note holds what it returned")
-     ("message_idle" . "nothing to do — the daemon is idling a message that is waiting on something else")
-     ("operator_shell_ran" . "nothing to do — the command you typed at the ! prompt ran; the row under this note holds what it returned")
-     ("subagents_stopped" . "nothing to do — the session and its children are stopped")
-     ("merge_queued" . "the branch is in the queue; the pane lists its place")
      ("merge_not_queued" . "the branch is not in the queue — read the note beside this row for the reason")
-     ("daemon_stopping_runs" . "the daemon is stopping and there are runs in flight — wait for them to end")
-     ("provider_key_saved" . "the key is stored; the model picker lists it")
      ("operator_shell_failed" . "the command failed — read the row for its exit status and output")
      ("operator_run_unreadable" . "the daemon cannot read this run's state — it may still be running")
      ("prompt" . "the command is asking a question — type the answer and press enter, or !send LINE")
      ("prompt_late" . "an answer was sent after the question was gone — the command may have exited")
-     ("sudo" . "sudo was refused — the daemon may not have the askpass helper configured")
-     ;; **AND A SLOW PROVIDER NAMES AN ACT, WHICH IS THE POINT OF THE CODE.** letibot's
-     ;; `e54b48a` landed it because DeepSeek was measured at 12.4 s to first byte while its
-     ;; `/models` answered in 0.28 s — the failure it prevents is a person concluding the model is
-     ;; GONE and killing a turn that is merely waiting. So the remedy is the thing the reader
-     ;; would otherwise do wrong: wait, and how long to wait before deciding otherwise.
-     ("model_slow_first_byte" . "nothing to fix — the provider is slow, not gone. The turn is still running; ctrl-o backgrounds it if you would rather not wait")
-     ;; **AND THE FOLD SAYS WHICH HALF IT IS ON.** The row above the composer carries the moving
-     ;; figure; this is the sentence for a reader who wants the counts — how much is being read and
-     ;; how much has come back — rather than a bar.
-     ("compact_half" . "nothing to fix — the conversation is being summarised. The bar above the composer is that fold; the session is not stuck"))
+     ("sudo" . "sudo was refused — the daemon may not have the askpass helper configured"))
   "What the reader can DO about a note, per code — R29 rule one, on the note.
 
 **A note that states a fact and not the act is a dead end on the screen.** The operator,
@@ -188,13 +133,22 @@ days: *when this red shit is show it should hint what to do next.* The affordanc
 existed and the note did not mention it — so the rule is that the remedy is ON THE NOTE,
 not in the hint bar, not in `/help`, not in a key the reader has to already know.
 
-**An empty slot is not allowed**, and that is the load-bearing half: the honest entries
-here include a great many `nothing to do — …` and `nothing can be done from here — …`,
-because *nothing is wrong* and *this cannot be fixed from the glass* are real answers and
-the operator's own rule says so (*nothing can be done and here is why satisfies this
-rule*). What is forbidden is silence. A test walks the head's own code set and fails on a
-code with no entry, so a new code cannot arrive without somebody deciding which of the
-three it is.
+**An empty slot is not allowed FOR A FAULT**, and that is the load-bearing half: the honest
+entries here include `nothing can be done from here — …`, because *this cannot be fixed from
+the glass* is a real answer and the operator's own rule says so (*nothing can be done and here
+is why satisfies this rule*). What is forbidden is a refusal or a failure drawn in silence. A
+test walks `+failure-warnings+` and fails on a code with no entry.
+
+**AND A ROUTINE CODE HAS NO ENTRY AT ALL — a remedy line belongs to a fault** (letibot R73).
+This table used to answer every routine code too, mostly with `nothing to do — …`, and the
+operator pasted what one compaction then looked like: four `compact_half` notes, each with
+*→ nothing to fix — the conversation is being summarised …* under it. A housekeeping notice
+with an instruction under it reads as a thing to act on, which is R19's fault one register
+down — the same `→` that carries */compact summarises now* under a context wall. So the
+routine half of the vocabulary (`+routine-warnings+`, letibot's `Class::Routine`) draws its
+fact and stops; where a routine fact has a verb worth knowing (`prefix_stale`'s `/reseat`),
+the daemon's own sentence already says it. The suite asserts no routine code is in this
+table, so an entry cannot drift back in.
 
 **Why a table in the head and not a field from the daemon**: the ACT is the head's. The
 daemon knows what happened; only this file knows that the gesture for clearing a note is
@@ -220,7 +174,10 @@ gets called idle.
 **AND THE TWO CASES ARE GENUINELY DIFFERENT, so this does not replace one sentence with a better one — it
 reads the state.** A command that is RUNNING can be backgrounded by `ctrl-o` (letibot's `Promote` is
 documented as honoured by the exec backend mid-turn, which is the seam an interrupt never uses), and a
-call the daemon has not yet STARTED is not reachable by any key in this head."
+call the daemon has not yet STARTED is not reachable by any key in this head.
+
+**AND THE THIRD CASE — no busy turn — ANSWERS NIL.** There the code's fact is what it says, the
+session was idle, and that is a routine note: it draws no remedy line (letibot R73, `note-remedy`)."
   (let* ((head *head*)
          (turn (and head (session-turn (head-session head))))
          (calls (and turn (getf turn :calls)))
@@ -233,22 +190,32 @@ call the daemon has not yet STARTED is not reachable by any key in this head."
        "the turn is waiting on a RUNNING COMMAND — ctrl-o moves it to the background, which is the gesture that reaches a call; esc esc reaches the model's generation, not a command")
       ((and turn (turn-busy-p turn))
        "the turn is waiting on the daemon — it holds a call the daemon has not started, so nothing typed here reaches it and esc esc cannot help")
-      (t "nothing to do — no turn was generating"))))
+      ;; idle: the routine case, and a routine note carries no remedy line
+      (t nil))))
 
 (defun note-remedy (w)
-  "The line that says what the reader can DO about W, or NIL for a code this head does
-not know.
+  "The line that says what the reader can DO about W, or NIL when there is none to draw.
 
-NIL is for an unknown code only — an old head meeting a new daemon's warning names
-nothing, because any sentence here would be invented. Every code in this head's own set
-has an entry, which is what the suite checks.
+NIL in three cases, and only these:
 
-**ONE CODE IS ANSWERED FROM THE STATE RATHER THAN FROM THE TABLE**, and it is the one whose fixed
-sentence was measurably false: `interrupt_idle`. See `%interrupt-idle-remedy` — the table entry stays
-and is what it falls back to when no turn is busy, so the rule this function keeps (a code names an act,
-or says there is none and why) is unchanged."
+  · **a ROUTINE code** (`routine-warning-p`) — a remedy line belongs to a fault, and a routine
+    event has none (letibot R73; see `+note-remedies+`);
+  · **an unknown code** — an old head meeting a new daemon's warning names nothing, because any
+    sentence here would be invented;
+  · **no code at all**.
+
+Every FAULT in this head's own set has an entry, which is what the suite checks.
+
+**ONE ROUTINE CODE CAN STILL NAME AN ACT, AND ONLY FROM THE STATE**: `interrupt_idle`. Its fact is
+routine when nothing is running — `esc esc` on an idle session — and then it draws nothing, like every
+other routine code. But the daemon also sends it over a turn that is waiting on a CALL, where its
+*nothing was generating* is true about generation and false about the reader's screen; there the
+operator's gesture did not do what they meant, and the line under it is the one that says which key
+does (`%interrupt-idle-remedy`). That is a refusal of the reader's act in all but name, and a remedy
+belongs to it."
   (let ((code (getf w :code)))
-    (if (and code (string= code "interrupt_idle"))
-        (%interrupt-idle-remedy)
-        (cdr (assoc code +note-remedies+ :test #'string=)))))
+    (cond ((null code) nil)
+          ((string= code "interrupt_idle") (%interrupt-idle-remedy))
+          ((routine-warning-p w) nil)
+          (t (cdr (assoc code +note-remedies+ :test #'string=))))))
 
