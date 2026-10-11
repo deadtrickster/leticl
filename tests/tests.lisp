@@ -11923,7 +11923,24 @@ answered. The daemon's own `secret_late` warning, which would explain it, is a
     ;; --- and an entry with NO evidence says that, rather than looking unexplained
     (setf (head-merge-queue h) (list (list :id "e5" :branch "topic-e" :state "waiting")))
     (is (search "no reason given" (funcall text))
-        "**a row with no evidence SAYS it has none** — the difference between *not told* and *nothing to say*")))
+        "**a row with no evidence SAYS it has none** — the difference between *not told* and *nothing to say*")
+    ;; --- **AND THE PANE**: `/queue` asks AND opens, the drawing is the renderer's, and `q` closes
+    (let ((wire (%wire h)))
+      (setf (head-mode h) :normal)
+      (leticl::%command h "queue")
+      (is (eq :queue (head-mode h))
+          "**`/queue` opens the pane at the keypress** — a pane that appears only when the answer lands is a pane nobody watched")
+      (is (find "list_merge_queue" (%sent wire) :key #'frame-name :test #'string=)
+          "and the ask went out with it")
+      (let ((rows (leticl::pane-lines (leticl::pane-for :queue) h 100 30)))
+        (is (equal (merge-queue-lines h 100) rows) "the pane draws the renderer's rows, and nothing of its own")
+        (is (search "merge queue" (format nil "~{~a~}" (mapcar (lambda (l) (if (null l) "" (format nil "~{~a~}" (mapcar #'car l)))) rows)))
+            "with the heading")
+        (is (equal 1 (leticl::pane-cursor-rows (leticl::pane-for :queue) h))
+            "the cursor has rows to walk — one entry"))
+      (setf *pane-cursor* 0)
+      (leticl::%handle-key h (list :type :char :ch #\q))
+      (is (eq :normal (head-mode h)) "`q` closes the pane, as every pane's own hint says"))))
 
 (def-test a-reply-for-a-session-this-head-left-is-not-applied (:suite leticl)
   "**T6 in `TODO.md`, and it is invisible by construction — which is why it needed a test.**

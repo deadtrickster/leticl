@@ -47,6 +47,7 @@ through to the conversation, which is what the old `member` test's absence meant
 (defclass status-pane      (pane) ())
 (defclass config-pane      (pane) ())
 (defclass jobs-pane        (pane) ())
+(defclass merge-queue-pane (pane) ())
 (defclass subagents-pane   (pane) ())
 (defclass peek-pane        (pane) ())
 (defclass job-out-pane     (pane) ())
@@ -69,6 +70,7 @@ through to the conversation, which is what the old `member` test's absence meant
     (:status . status-pane)
     (:config . config-pane)
     (:jobs . jobs-pane)
+    (:queue . merge-queue-pane)
     (:subagents . subagents-pane)
     (:peek . peek-pane)
     (:job-out . job-out-pane)
@@ -251,7 +253,7 @@ outrank any pane's hint."))
 
 ;;; ------------------------------------------------------- the frame's questions ;;;
 
-(dolist (class '(help-pane status-pane config-pane jobs-pane subagents-pane peek-pane
+(dolist (class '(help-pane status-pane config-pane jobs-pane merge-queue-pane subagents-pane peek-pane
                  job-out-pane picker-pane todos-pane slash-pane dash-pane lisp-pane))
   (eval `(defmethod pane-replaces-transcript-p ((pane ,class)) t)))
 
@@ -265,6 +267,18 @@ outrank any pane's hint."))
 ;; group was folded (see `subagents-stops`).
 (defmethod pane-cursor-rows ((pane subagents-pane) head) (length (subagents-stops head)))
 (defmethod pane-cursor-rows ((pane jobs-pane) head) (length (head-jobs head)))
+(defmethod pane-cursor-rows ((pane merge-queue-pane) head) (length (head-merge-queue head)))
+
+(defmethod pane-lines ((pane merge-queue-pane) head cols room)
+  "The queue's rows — the drawing is `merge-queue-lines`, landed ahead of this pane so the pane is
+registration rather than a pile of drawing (see `TODO.md`'s merge-queue box)."
+  (declare (ignore room))
+  (merge-queue-lines head cols))
+
+(defmethod pane-hint ((pane merge-queue-pane) head)
+  "What the queue pane's own keys do — `q` closes it, and the gate runs when a branch is picked."
+  (declare (ignore head))
+  (list (cons "q closes · the gate runs when a branch is picked" '(:dim t))))
 (defmethod pane-cursor-rows ((pane todos-pane) head)
   (length (repo-todo-rows-cached
            (getf (session-wiring (head-session head)) :workspace))))

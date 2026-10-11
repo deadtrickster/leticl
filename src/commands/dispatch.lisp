@@ -180,9 +180,10 @@ on ClientFrame::Slash)."
        ;; daemon-level and no snapshot carries it, so a head that does not ask draws nothing. This
        ;; verb is what makes the frame SENT — and the suite's own invariant is why the constructor
        ;; could not land before it.
-       (%send head (make-list-merge-queue))
+       ;; ASK **and** open, the jobs pane's own shape: a pane that appears only when the answer
+       ;; lands is a pane the reader stared at an empty screen for.
+       (%toggle-pane head :queue (lambda () (%send head (make-list-merge-queue))))
        (say head "asking the daemon for the merge queue…")
-       (setf (head-dirty head) t)
        t)
       ((string= verb "jobs")
        ;; ASK, then open. The jobs pane drew `N out` from JobSettled events, which
