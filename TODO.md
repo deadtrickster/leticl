@@ -726,7 +726,19 @@ rest names the commit it comes from.
   - [ ] **a click on an edit opens its change in a popup** (`88b003d`): the
     whole file, no editor chrome; and **the popup's scroll repaints its rows,
     not the whole screen** (`6fb34d4`).
-  - [ ] **a redirected job's window is the file, even when a preamble reached
+
+    **MEASURED 2026-10-11: THIS ONE IS GENUINELY HEAD-SIDE** — unlike the three boxes above it, which
+    turned out to be harnessd's. `88b003d` touches `crates/tui/src/app/diff_popup.rs`, `keys/mod.rs` and
+    `ui/diff_popup.rs` (the head's own popup), and `6fb34d4` is the same file: *"a scroll repaints the
+    popup's rows, not the whole screen"*. This head has the pieces and not the gesture: an edit row
+    ALREADY draws its diff inline (`cards/edit-card.lisp`, `diff.lisp`, `sidediff.lisp`),
+    `item-shows-an-edit-p` answers whether a row is one, `open-read-overlay` is this head's popup shape,
+    and `ctrl-]` now opens the newest changed file in rano. **What is absent is a CLICK on an edit row
+    doing anything at all** — `editor/click.lisp` has no edit arm. So the shape needs a decision before
+    it needs code: the reference pops the change INSIDE the TUI (rano's review view, the whole file),
+    while this head's two doors are the read overlay (the excerpt's diff, but no whole file) and the
+    `!term` pane (the whole file, but outside the TUI). Named rather than guessed.
+  - [x] **a redirected job's window is the file, even when a preamble reached
     the capture** (`d234194`) — the jobs pane's tail. **NOT LANDED — probed 2026-10-11**: no
     code in `src/panes/job-out.lisp` or the frames path mentions a preamble or a redirect, and no
     test covers it, so this is genuine work and not another already-done row. The shape it needs:
@@ -734,6 +746,18 @@ rest names the commit it comes from.
     preamble it saw before the redirect, and the pane should show the FILE's contents (the job's
     real output) rather than that preamble — which means the head has to know the path, and the
     place to learn it is the `JobEntry`/`Jobs` reply the pane already draws from.
+
+    **THE PREMISE IS WRONG, MEASURED 2026-10-11 — WHICH IS WHY THIS IS TICKED RATHER THAN BUILT.** The
+    reference's fix (`d234194`) touches `crates/harnessd/src/harness.rs` and NOTHING ELSE, and its own
+    words are *"the redirect is knowable from the command text alone (R41's `output_redirect_path`,
+    which `jobwatch` already computes at settlement), so the daemon knew; it just did not act on it
+    here"* — with a table measured from the operator's own store. **So the head never needs the path**:
+    the daemon reads the file and serves its tail AS the window's lines. And the wire is unchanged —
+    `SessionEvent::JobOutput` carries `job, from, to, produced, dropped, state, never_ran, lines, next`
+    and **no file field**, so a head that added one would be inventing a frame for a fact the window
+    already is. This head draws that window (`job-out-lines`, `:dropped` at `panes/job-out.lisp:142`),
+    which is the whole of its obligation: the preamble is not drawn because it is not IN the window, and
+    *there was more and it is gone* is `dropped`, which the pane already says.
   - [ ] **`ctrl-e`: a real editor pane** (`a8f5e83`, `e38b82e`, `8e91a4b`,
     `88b003d`) — ctrl-e puts the editor away and brings it back with its files
     kept; on an empty prompt it opens on any file; and the pane wears the
