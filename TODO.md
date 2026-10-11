@@ -913,7 +913,7 @@ rest names the commit it comes from.
     takes the reader's CARRY — the row's own words and the line — and the view is re-anchored
     by them under the new id, or the sentence says it cannot. The fork port drops the anchor
     and lets `%anchor-lose` say so; this is the better half.
-  - [~] **the todo verbs and the pane's own reading** — **`/todo rm N` LANDED 2026-10-11**
+  - [x] **the todo verbs and the pane's own reading** — **`/todo rm N` LANDED 2026-10-11**
     (`a-row-is-struck-off-by-rm-and-brought-back-by-resume`): the verb strikes a row off by
     number, the row keeps its words, `/todo resume N` brings it back, the refusals name the row
     or the word, and a bare `/todo rm` is a usage note naming the verb. The status is
@@ -923,6 +923,24 @@ rest names the commit it comes from.
     one row marked by quoting it (`09b1c0f`), a row waiting on a CHILD (`f8d98b6`), and the
     plan as a DAG with `needs` edges (`c211118`, `f8d98b6`) — **THE EDGES ARE DRAWN NOW** (2026-10-11, `d160dc2`)
     `%todo-needs-said` shows a `row` / `child` / `job` edge in the wire's own three words, says so for a kind this build does not know (the wire keeps one on purpose, *a plan is what would be lost*), and sits where the `when` clock already is. **What is NOT drawn is any ORDERING the edges imply** — the pane names what a row waits on; it does not topologically sort the board.
+
+     **AND THE THREE CLAUSES ABOVE IT, CHECKED ONE BY ONE (2026-10-11).**
+     · *a row read whole with enter* (`fe9febe`) — **LANDED**: `pane-enter` for `todos-pane` opens the
+     operator's own row WHOLE in the read overlay, because the pane cuts a row at its right edge and a
+     title longer than the width was read by nobody. The MODEL's rows are still not stops, which the
+     pane's own comment files rather than hides.
+     · *a row's title capped at the pane's own row with the rest as detail* (`aa27a89`) — **LANDED**:
+     `+todo-title-max+` is 135 and `%todo-draft-cap` splits the card's title at it, moving the rest into
+     the detail; the reference's reasoning is ported in the constant's own docstring. The cap binds
+     where a row's WORDS are written, and this head's writing doors are the card, the space key and the
+     delete key (`/todo` here is not an add door). Its other half — *the detail on the row, no extra
+     line* — is a RANO constraint (its `TodoLine` has no body field, and an extra line would put every
+     stop below it a row out); this pane CAN splice, so it hangs the detail under the title: the same
+     words, better placed, which is this box's own phrase.
+     · *one row marked by quoting it, and nothing a model sends removes a row* (`09b1c0f`) — **THE
+     REMOVAL IS THE DAEMON'S**: the commit is `tokencore/src/store.rs` + `tools/src/builtins/todo.rs`
+     and its rule is the store's — *a row left out is NOT removed; only i should be able to delete todo
+     items*. This head draws the board it is given, which is the whole of its obligation.
   - [x] **the merge queue** (`e9eb358`, `424c212`, `8178c4e`, `5b925b6`, `1cff68e`,
     `0b05003`): the pane, the person's approve/veto/rm, `/queue reset|clean|restart`, the
     gate's steps drawn in order, the standings beside the triangle, and the review queue as
