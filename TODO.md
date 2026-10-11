@@ -1068,9 +1068,16 @@ head runs today breaks without them.
   characters, not raw bytes — where 0x1c arrives and whether the interception can
   live in the driver is the first thing to measure.
 
-- [ ] **the merge queue pane** — **STEPS, BY SIZE, taken from this box's own list** (added
+- [x] **the merge queue pane** — **STEPS, BY SIZE, taken from this box's own list** (added
   2026-10-11 so the next session takes them in the file's own order — smallest verifiable thing
   first, never across, and each step leaving the head working):
+
+  **EVERY STEP BELOW IS LANDED, AND THE CLAUSES WERE CHECKED ONE BY ONE AGAINST THE TREE (2026-10-11).**
+  The list is in the `the merge queue` box's own paragraph. Two things this pass changed rather than
+  merely confirmed: that box named `/queue reset|clean|restart` and only `restart` was reachable — the
+  two QUEUE-level verbs answered with a usage note, and are now `queue-act` (`fa7e549`) — and the review
+  queue as TWO VIEWS OF ONE LIST is the pane's own tab strip against the snapshot's `standings`.
+  **So nothing here is owed**, which is why the marker is ticked rather than the steps rewritten.
 
   · **S — the two frames — `ListMergeQueue` AND ITS ASK ARE LANDED** (2026-10-11, held by
     `the-merge-queue-is-asked-for-and-its-answer-is-kept`): `make-list-merge-queue`, a
