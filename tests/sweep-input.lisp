@@ -71,8 +71,14 @@ ENDED THE SHELL; it is the program's letter now."
     (is (null (find "term_open" (%sent wire) :key (lambda (f) (getf f :frame)) :test #'string=))
         "with no second `term_open`")
     ;; --- esc detaches too, and ends nothing
-    (%press h (list :type :esc))
-    (is (eq :normal (head-mode h)) "esc leaves the pane")
+    ;; Esc is the PROGRAM's (the reference's rule — vi, less and nano read it); the way out is ctrl-\
+    (let ((inputs (count "term_input" (%sent wire) :key #'frame-name :test #'string=)))
+      (%press h (list :type :esc))
+      (is (= (1+ inputs) (count "term_input" (%sent wire) :key #'frame-name :test #'string=))
+          "esc reaches the program as its byte")
+      (is (eq :term (head-mode h)) "and does not leave the pane"))
+    (%press h (list :type :ctrl :ch #\|))
+    (is (eq :normal (head-mode h)) "ctrl-\\ leaves the pane")
     (is (null (find "term_close" (%sent wire) :key (lambda (f) (getf f :frame)) :test #'string=))
         "and sends no `term_close` either")
     ;; --- the ending is the typed `/term close`, with the pane down or up
@@ -81,7 +87,7 @@ ENDED THE SHELL; it is the program's letter now."
     (leticl::%submit-line h)
     (is (equal (list "term_close") (mapcar (lambda (f) (getf f :frame)) (%sent wire)))
         "**`/term close` is what sends `term_close`** — the one path that ends the program")
-    (is (search "ending the program" (head-status-note h)) "and says it is asking for the end")))
+    (is (search "ending the" (head-status-note h)) "and says it is asking for the end")))
 
 ;;; ------------------------------------------------------------ B.3 — the mouse on cards ;;;
 
@@ -414,3 +420,39 @@ keys back to the transcript; a card with a seam keeps them."
     (%press h (list :type :page-down))
     (is (plusp leticl::*card-scroll*) "and PgDn pages it")
     (is (= 0 (head-scroll h)) "not the transcript")))
+
+(def-test esc-in-the-terminal-reaches-the-program-and-only-ctrl-backslash-detaches (:suite leticl)
+  "The reference forwards Esc to the program (`app/term_pane.rs`): `vi` leaves insert mode on it,
+`less` and `nano` read it. A first cut of the sweep made Esc detach, which is a terminal `vi`
+cannot be used in. Esc goes out as its byte; `ctrl-\\` is the one way out."
+  (let* ((h (%make-head))
+         (wire (%wire h)))
+    (setf (head-term h) (list :cols 80 :rows 20 :output "") (head-mode h) :term)
+    (leticl::%handle-key h (list :type :esc))
+    (let ((sent (remove "term_input" (%sent wire) :key #'frame-name :test-not #'string=)))
+      (is (= 1 (length sent)) "Esc went to the program as a term_input")
+      (is (eq :term (head-mode h)) "and the pane stays up"))
+    (leticl::%handle-key h (list :type :ctrl :ch #\|))
+    (is (eq :normal (head-mode h)) "ctrl-\\ detaches")
+    (is (head-term h) "and the program is still this session's — nothing ended it")))
+
+(def-test the-queue-panes-letters-and-tab-act-on-the-row-under-the-cursor (:suite leticl)
+  "`a`/`v`/`d`/`r` on an empty composer send the daemon's verb for the selected row through the
+same path `/queue VERB ID` takes (reference 74de81a: verb letters only on an empty composer), and
+Tab flips the view between the two queues (the reference's tab strip)."
+  (let* ((h (%make-head))
+         (wire (%wire h)))
+    (setf (head-connected h) t (head-mode h) :queue)
+    (setf (leticl::head-merge-queue h)
+          ;; a review-queue branch waiting for a verdict: the one row `approve` acts on
+          (list (list :id "e1" :state "waiting" :kind "branch" :branch "topic-a" :queue "review")))
+    (setf (head-picker-sel h) 0)
+    (let ((before (length (%sent wire))))
+      (leticl::%handle-key h (list :type :char :ch #\a))
+      (is (> (length (%sent wire)) before) "a sends something for the row under the cursor: ~s"
+          (mapcar #'frame-name (%sent wire))))
+    (let ((view leticl::*queue-view*))
+      (leticl::%handle-key h (list :type :tab))
+      (is (not (eq view leticl::*queue-view*)) "Tab flips the view")
+      (leticl::%handle-key h (list :type :tab))
+      (is (eq view leticl::*queue-view*) "and back"))))

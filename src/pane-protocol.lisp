@@ -985,7 +985,7 @@ it is not, which is the one thing that would make the missing half invisible."
                    (push (list (cons (format nil "  ~a" line) nil)) out))))
            (nreverse out))
          (list nil)
-         (list (list (cons "  keys go to the program · q closes the pane" '(:dim t))))
+         (list (list (cons "  keys go to the program · ctrl-\\ detaches · /term close ends it" '(:dim t))))
          (list (list (cons "  line discipline only — the VT renderer is this pane's remaining half"
                            '(:dim t))))))))
 
@@ -993,7 +993,8 @@ it is not, which is the one thing that would make the missing half invisible."
 
 (defmethod pane-hint ((pane term-pane) head)
   (declare (ignore head))
-  (list (cons "keys go to the program · q closes the pane and ends the terminal" '(:dim t))))
+  ;; every letter is the program's (sweep 2026-10-11, B.2): `q` used to end the shell from here
+  (list (cons "keys go to the program · ctrl-\\ detaches, the program lives · /term close ends it" '(:dim t))))
 
 (defmethod pane-lines ((pane standing-notes-pane) head cols room)
   "The standing notes' rows — the drawing is `standing-notes-lines`, landed ahead of this pane."

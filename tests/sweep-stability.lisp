@@ -467,3 +467,16 @@ source, because a stalled pty is not something a test can make without one."
         "leave-raw applies now")
     (is (search "(%tcsetattr fd +tcsadrain+ *raw-termios*)" src)
         "and enter-raw, at startup with an empty queue, still drains")))
+
+(def-test the-call-tables-are-cleared-when-the-session-changes (:suite leticl)
+  "`*answered-calls*` and `*item-facts*` only ever grew — never cleared outside replay, not even by
+a `/switch` — so a head open for days scanned every call it had ever drawn, linearly, per assistant
+row. They are facts about one transcript's rows and go with it."
+  (let* ((leticl::*answered-calls* (list "c-old"))
+         (leticl::*item-facts* (list (cons "i-old" (list :ms 1))))
+         (h (%make-head))
+         (s (head-session h)))
+    (setf (session-session-id s) "s-old")
+    (leticl::ingest-snapshot s (list :session-id "s-new" :seq 1 :items nil))
+    (is (null leticl::*answered-calls*) "the answered set is the new session's: empty until its rows say otherwise")
+    (is (null leticl::*item-facts*) "and no row of the old transcript keeps its staged facts")))

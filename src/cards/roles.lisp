@@ -521,6 +521,22 @@ under eight settled ones, in the same order, saying less.")
   (when (and call-id (not (call-answered-p call-id)))
     (push call-id *answered-calls*)))
 
+(defun reset-call-tables ()
+  "Forget every call this head has seen answered and every row's staged facts — on a SESSION
+CHANGE, which is the only time they are all somebody else's.
+
+**They only ever grew** (the 2026-10-11 stability pass): `*answered-calls*` was never cleared
+outside replay, not even by a `/switch`, and `note-snapshot-answered` adds every snapshot's results
+— so a head open for days scanned a list of every call it had ever drawn, linearly, for every
+assistant row's tool calls, and a resync cost 2000 × N string compares. `*item-facts*` kept every
+tool row's edit excerpt for the process lifetime, rows the snapshot's trim had long dropped
+included. Both are facts about THIS transcript's rows; a snapshot for another session replaces the
+rows, and the facts go with them. Called from `%clear-session-scoped`, beside the other
+session-scoped tables; the snapshot path then repopulates `*answered-calls*` for the rows it
+carries (`note-snapshot-answered`)."
+  (setf *answered-calls* nil
+        *item-facts* nil))
+
 
 ;;; ---- the row budgets and the step ---- ;;;
 ;;;

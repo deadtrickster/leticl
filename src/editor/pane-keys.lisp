@@ -534,14 +534,15 @@ one thing this head must not need."
                  ;; NIL means NOT MINE AT DEPTH ZERO — the nav's own contract — so the pane
                  ;; leaves. That is also the only way out that is a way in.
                  (shut))))
-          ;; **ESC IN THE TERMINAL DETACHES** (B.2): the pane goes and the program stays, which
-          ;; is `%term-detach`'s whole sentence — the generic `(shut)` below did the same thing
-          ;; silently, and a reader who had just lost sight of a running `nano` needs to be told
-          ;; it is still there and how to get back. (The reference forwards Esc to the program
-          ;; and keeps `ctrl-\` as the only way out; this head's ruling is Esc detaches too, and
-          ;; the hint says so.)
+          ;; **ESC IN THE TERMINAL IS THE PROGRAM'S** (B.2), as the reference rules
+          ;; (`app/term_pane.rs`): `vi` leaves insert mode on it, `less` and `nano` read it, and a
+          ;; terminal that swallows Esc is a terminal those programs cannot be used in. It goes
+          ;; out as the byte, 0x1b. The one way OUT is `ctrl-\` (`%term-detach`), and the pane's
+          ;; footer says so — a first cut made Esc detach, which was the generic `(shut)` below
+          ;; wearing a better sentence, and it was the wrong sentence for a shell.
           ((and (eq mode :term) (head-term head) (eq type :esc))
-           (%term-detach head))
+           (%send head (make-term-input (string (code-char 27))))
+           t)
           (t
         (case type
           ((:esc :q-press) (shut))
@@ -605,7 +606,13 @@ one thing this head must not need."
           ;; where Enter is the pane's whatever the line holds. On every OTHER pane it
           ;; is not the pane's key at all: it used to set `head-dirty` to NIL
           ;; there — against its own comment — which suppressed the next repaint.
-          ((:tab) (when (and (eq mode :todos) empty) (%pane-enter head))
+          ;; **Tab on the queue pane flips the view** — review ↔ merge, the reference's own tab
+          ;; strip (`ui/panes/queue.rs`); the pane draws both queues and this is how the reader
+          ;; moves between them (sweep 2026-10-11, B.1).
+          ((:tab) (when (and (eq mode :queue) empty)
+                    (queue-switch-view head (if (eq *queue-view* :review) :merge :review))
+                    (return-from %pane-key t))
+                  (when (and (eq mode :todos) empty) (%pane-enter head))
                   (and (eq mode :todos) empty))
           ;; **`delete` drops one of the operator's own items** (R44). Their ask: *"i want to be
           ;; able to remove non-started todos"* — and *non-started* is the whole of the guard,
@@ -677,6 +684,18 @@ one thing this head must not need."
           ((:char)
            (let ((ch (getf key :ch)))
              (cond ((and (eq mode :todos) empty (eql ch #\space)) (%todo-toggle head) t)
+                   ;; **The queue's four verbs on an empty composer** — `a`pprove, `v`eto, `d`elete
+                   ;; (rm), `r`estart — on the row under the cursor, as the reference's keys do
+                   ;; (74de81a: *verb letters only on an empty composer*). The act is `queue-verb`,
+                   ;; the same path `/queue VERB ID` takes, so the key and the typed verb cannot
+                   ;; drift; a row the daemon would refuse is said and not sent.
+                   ((and (eq mode :queue) empty (member ch '(#\a #\v #\d #\r)))
+                    (let ((row (nth (head-picker-sel head) (head-merge-queue head))))
+                      (if row
+                          (queue-verb head (ecase ch (#\a "approve") (#\v "veto") (#\d "rm") (#\r "restart"))
+                                      (getf row :id))
+                          (say head "no row under the cursor")))
+                    t)
                    ;; **`i` COMPOSES AN INSTRUCTION FROM A TODO.md SUBTREE.** A letter and not a
                    ;; named key because it is a composer action, and it is free in this pane: the
                    ;; letters taken here are `q` (quit), `o` and `d` (subagents, jobs) and the dash's

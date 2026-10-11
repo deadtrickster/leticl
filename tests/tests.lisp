@@ -7378,12 +7378,16 @@ section. The two heads must teach the same keys the same way."
     ;; `/config` row (the operator's running binary predates it, so its screen
     ;; still shows 36 — the source is the reference here, the binary the evidence),
     ;; and R10 added `/notes`, which the reference teaches too (`app.rs:9793-9797`)
-    (is (= 42 (count-if (lambda (l) (plusp (length l))) text))
-        "42 non-blank rows at the capture's width: the reference's 36 plus /config and
+    (is (= 50 (count-if (lambda (l) (plusp (length l))) text))
+        "~d non-blank rows drawn; 50 expected at the capture's width — MEASURED after the 2026-10-11
+ sweep added the six rows the pane was missing (ctrl-g, ctrl-j, ctrl-o, /queue, /standing, /term)
+ and rewrote the wheel and click rows, which now wrap once each at 210; before that, 42: the
+ reference's 36 plus /config and
  /notes and, from R22, the `ctrl-n` row — which letibot lands too — and R24 part two's
  /run, the head's half of a door only the daemon names — and `/key` and `/lisp`,
  which are this head's own: letibot has no key card, because its keys come from
- opencode, and no Lisp image to evaluate in, so there is nothing for it to teach there")
+ opencode, and no Lisp image to evaluate in, so there is nothing for it to teach there"
+        (count-if (lambda (l) (plusp (length l))) text))
     (is (string= "  enter           send what you typed; while a turn runs it is queued as a follow-up"
                  (third text))
         "the first row, key sixteen wide after two")
@@ -12355,11 +12359,17 @@ a b c
                        :bytes))
           (format nil "**`~a` reaches the program as ~s** — the byte a terminal sends, not the key" (car pair) (cdr pair)))
       (is (eq :term (head-mode h)) "and the pane does not take it as its own"))
-    ;; --- `q` closes the pane AND ends the terminal: two facts, two acts
-    (leticl::%handle-key h (list :type :char :ch #\q))
-    (is (find "term_close" (%sent wire) :key #'frame-name :test #'string=)
-        "**`q` tells the daemon as well** — closing the pane is not ending the program")
-    (is (eq :normal (head-mode h)) "and the screen returns to the conversation")
+    ;; --- `q` is the PROGRAM's letter (sweep 2026-10-11, B.2): a letter typed at a shell prompt
+    ;; used to end the shell. Ending is the explicit `/term close`, typed at the composer.
+    (let ((closes-before (count "term_close" (%sent wire) :key #'frame-name :test #'string=)))
+      (leticl::%handle-key h (list :type :char :ch #\q))
+      (is (= closes-before (count "term_close" (%sent wire) :key #'frame-name :test #'string=))
+          "**`q` does not end the program** — it reaches it, like every other letter")
+      (is (eq :term (head-mode h)) "and the pane stays up")
+      (leticl::%command h "term close")
+      (is (= (1+ closes-before) (count "term_close" (%sent wire) :key #'frame-name :test #'string=))
+          "**`/term close` is what tells the daemon** — the one typed act that ends the program"))
+    (setf (head-mode h) :normal)
     ;; --- one pane per session: a live terminal opens the pane rather than asking again
     (setf (head-term h) (list :cols 80 :rows 20 :output "") (head-mode h) :normal)
     (let ((before (length (%sent wire))))
@@ -14352,7 +14362,11 @@ of*. The reference quits only on an empty composer (editor.rs:485-491)."
     (is (leticl::head-running h) "with text typed, ctrl-d does nothing")
     (leticl::%handle-key h (list :type :ctrl :ch #\c))   ; clears the line
     (leticl::%handle-key h (list :type :ctrl :ch #\d))
-    (is (not (leticl::head-running h)) "on an empty one it leaves")))
+    ;; **through the quit card, not at once** (sweep 2026-10-11, B.10; the reference routes ctrl-d
+    ;; the same way): a chord that leaves without asking is one accidental press from losing the
+    ;; session's screen. The card is the ask; `head-running` is still T until it is answered.
+    (is (leticl::head-running h) "on an empty one it does not leave at once")
+    (is (leticl::head-quit-open h) "it opens the quit card, which is the ask")))
 
 (def-test the-pane-chords-toggle-and-the-globals-reach-under-a-pane (:suite leticl)
   "G14/G18. The global chords ran LAST, inside `%normal-key` and under the pane

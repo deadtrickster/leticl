@@ -226,7 +226,11 @@ alone could never do. See `%subagent-view->event`."
         ;; would put *Responded in 12.4s at 21:07* under a conversation that never asked anything.
         *turn-last* nil)
   ;; the staged call facts are keyed by a call id that only existed over there
-  (%round-boundary))
+  (%round-boundary)
+  ;; **and the durable call tables, which are facts about THAT transcript's rows** —
+  ;; `*answered-calls*` and `*item-facts*` only ever grew (the 2026-10-11 stability pass); see
+  ;; `reset-call-tables`. The snapshot that follows repopulates the answered set for its rows.
+  (reset-call-tables))
 
 (defvar *snapshotted-sessions* nil
   "The session ids this head has ingested a snapshot for, this process.

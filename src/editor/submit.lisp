@@ -24,29 +24,6 @@ arm (submit.lisp:92) and the reference's own rule (`send_line`: whitespace or en
          (or (= (length line) n)
              (char= (char line n) #\space)))))
 
-(defun %term-close-line-p (line)
-  "Is LINE `/term close` — the one typed act that ENDS the program in this session's terminal?"
-  (string= (string-trim " " line) "/term close"))
-
-(defun %term-close (head)
-  "End the program in this session's terminal pane: the `TermClose` frame, the ending a PERSON
-asked for (the daemon's own ending arrives as `TermEnded`, a different fact the pane says).
-
-**The only path that sends `term_close`** (sweep 2026-10-11, B.2; reference `app/term_pane.rs`,
-*ending is `!term close`, typed at the composer*). `q` used to send it from the pane and so a
-letter typed at a shell prompt ended the shell; `ctrl-\\` and Esc detach and send nothing. This
-works whether or not the pane is on the screen, which is why it is a typed line and not a key.
-
-**It is answered HERE, in the composer's submit, and not in the `term` verb's own `cond`** — that
-arm (`src/commands/dispatch.lisp`) is another pass's file in this sweep. The honest home is a
-`((string= rest \"close\") …)` clause there, beside `status`; when that file is free this function
-moves and the clause below in `%submit-line` goes."
-  (if (head-term head)
-      (progn (%send head (make-term-close))
-             (say head "ending the program in this session's terminal — the daemon says when it has"))
-      (say head "no terminal is open in this session — `/term` opens one"))
-  t)
-
 (defun %submit-line (head)
   "Enter on the composer: a slash command, or a prompt. Queued as a follow-up
 user item by the daemon when a turn runs — never rejected (§13.2).
@@ -111,9 +88,6 @@ text — which is what makes the ledger safe to forget about."
       ;; reference's `submit` has it (app.rs:3961-3963). It used to sit under the
       ;; picker arm, so `/new a title` typed under the session picker the hint bar
       ;; itself advertises was read as the name of a session to switch to.
-      ;; **`/term close` is the one typed act that ends the terminal's program** — see
-      ;; `%term-close` for why it is answered here and where it moves to.
-      ((%term-close-line-p line) (%term-close head))
       ((and (plusp (length line)) (char= (char line 0) #\/))
        (%command head (subseq line 1)))
       ;; **AN `!` LINE IS THE OPERATOR'S OWN SHELL COMMAND** (daemon `7dca40f`,
