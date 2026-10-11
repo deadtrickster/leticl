@@ -369,7 +369,9 @@ tail's spaces as a ragged gap."
       (loop for ch across output do
         (cond ((char= ch #\newline) (emit))
               ((char= ch #\return) (setf col 0))
-              ((char= ch #\tab) (put #\space) (put #\space) (put #\space) (put #\space) (put #\space) (put #\space) (put #\space) (put #\space))
+              ;; the same rule in the line model, where there is no right edge to clamp against: a
+              ;; tab lands ON a column, it does not lay down eight blanks.
+              ((char= ch #\tab) (setf col (* 8 (1+ (floor col 8)))))
               ;; **A CONTROL SEQUENCE IS DROPPED AND COUNTED, never drawn and never faked.** `ESC [ …`
               ;; is cursor addressing, colour and erasure — the VT renderer's job, which this head does
               ;; not have. Drawing it would put `[0m` mid-line; honouring it would be worse. The count is
@@ -685,7 +687,12 @@ everything else is counted, never guessed at, which is the rule the pane keeps."
             (:text (case ch
                      (#\newline (setf (term-screen-col s) 0) (%ts-next-row s))
                      (#\return (setf (term-screen-col s) 0))
-                     (#\tab (dotimes (k 8) (%ts-put s #\space)))
+                     ;; **`TAB` moves to the next multiple-of-eight COLUMN — it does not insert eight
+                     ;; blanks** (the reference's `tab`). The difference shows the moment the cursor is
+                     ;; not already on a stop: `ab<TAB>Z` puts `Z` at column 8, not column 10.
+                     (#\tab (setf (term-screen-col s)
+                                   (min (1- (term-screen-cols s))
+                                        (* 8 (1+ (floor (term-screen-col s) 8))))))
                      (#\backspace (when (plusp (term-screen-col s)) (decf (term-screen-col s))))
                      (#\escape (setf state :esc))
                      (t (%ts-put s ch)))

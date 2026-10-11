@@ -12196,6 +12196,24 @@ worked for the merge queue.
       (leticl::term-screen-feed s (esc "[r"))
       (is (equal '(0 4) (region s)) "a bare `r` puts the region back to the whole screen"))))
 
+(def-test a-terminal-tabs-to-the-next-stop (:suite leticl)
+  "**`TAB` moves the cursor to the next multiple-of-eight COLUMN — it does not insert eight blanks**
+  (ported from the reference's `tab`). The difference shows the moment the cursor is not already on a
+  stop: `ab<TAB>Z` puts `Z` at column 8, not at column 10, and a renderer that laid down eight spaces
+  put every column after a tab in the wrong place."
+  ;; THE SCREEN, where there is a right edge to clamp against
+  (let ((s (leticl::term-screen-new 1 16)))
+    (leticl::term-screen-feed s (format nil "ab~cZ" #\tab))
+    (is (equal (list "ab      Z") (leticl::term-screen-lines s))
+        "**the character after a tab is at the next STOP, not eight columns along**"))
+  (let ((s (leticl::term-screen-new 1 4)))
+    (leticl::term-screen-feed s (format nil "ab~cZ" #\tab))
+    (is (equal (list "ab Z") (leticl::term-screen-lines s))
+        "and it is CLAMPED to the screen's last column, as the reference clamps it"))
+  ;; AND THE LINE MODEL MUST AGREE — the fallback is not allowed a second rule
+  (is (equal (list "ab      Z") (leticl::%term-lines-from-output (format nil "ab~cZ" #\tab)))
+      "**the line model lands on the same column** — one rule, two renderers"))
+
 (def-test a-terminal-opens-takes-keys-for-the-program-and-ends-when-asked (:suite leticl)
   "**The `!term` frames, each with the caller the suite's own invariant demands** — and the ordering
   that costs a session if it is guessed: **the pane's KEY PATH is what makes `TermInput` and
