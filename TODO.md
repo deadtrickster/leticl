@@ -569,8 +569,14 @@ rest names the commit it comes from.
     2026-10-11** (`src/links.lisp`, held by `a-link-url-is-never-built-from-content`,
     `an-image-path-becomes-a-link-and-the-url-is-head-authored` and
     `a-link-is-refused-when-the-path-is-not-honest` — the last being the security half: a URL is
-    never built out of content). Still open in this row: a change detected
-    after a command draws its diff (`e09d77c`), a job named in every sentence about it
+    never built out of content). **AND A CHANGE DETECTED AFTER A COMMAND DRAWS ITS DIFF — also
+    LANDED**: `a-bash-command-that-edits-a-file-draws-its-diff` is the operator's own report from
+    their rano session (*"why im not show normal diff card"*, then *"i want diff card for python
+    edits you all love so much"*) turned into a test: the daemon sends a `FileEdit` when a command
+    changed exactly one file, and this head used to throw it away because it chose what to draw
+    from the TOOL'S NAME (`bash` is neither `:edit` nor `:write`), so a `python3 - <<'PY'` heredoc
+    that rewrote a source file got a note and no diff. Still open in this row: a job named in every
+    sentence about it
     (`29f2422`, `5d3bfac`), `allow-all`'s answer surviving a restart (`9f09f04`), the stop
     that interrupts the turns it holds (`195a813`), and the term pane born at its size
     (`401e61f`).
