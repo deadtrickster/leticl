@@ -329,15 +329,42 @@ changed, :quiet when not — the head loop paints on :dirty and acks on both."
                                            (string= gone id :end2 (length gone)))))
                         items))
              (progn
-               (setf (session-items session)
-                     (coerce (remove-if (lambda (i)
-                                          (let ((id (item-id i)))
-                                            (and (stringp id)
-                                                 (>= (length id) (length gone))
-                                                 (string= gone id :end2 (length gone)))))
-                                        (coerce items 'list))
-                             'vector)
-                     *scroll-anchor* nil)
+               ;; **THE CARRY: THE READER'S PLACE IS A ROW'S OWN WORDS** (`53ac610`, `7b18b1d` —
+               ;; the 116-commit batch's *carry by the row's own words*). A fork replaces the
+               ;; parent's rows with the child's, so the anchored row ID is gone by construction —
+               ;; and dropping the anchor made a reader who was scrolled back lose their place with
+               ;; one sentence of explanation. The reference keeps the WORDS and re-finds the row
+               ;; under its new id; that is the better half, and it is the same trick the anchor
+               ;; itself is built on (an anchor is a row, never a count).
+               ;;
+               ;; Captured BEFORE the removal, from the row the anchor names — and only when the
+               ;; anchor is set, because `(car nil)` is NIL and a reader at the bottom has no place
+               ;; to keep.
+               (let* ((anchor *scroll-anchor*)
+                      (carried (and anchor
+                                    (let ((row (find (car anchor) (coerce items 'list)
+                                                     :key (lambda (i) (item-id i))
+                                                     :test #'string=)))
+                                      (and row (ignore-errors (item-display-text row)))))))
+                 (setf (session-items session)
+                       (coerce (remove-if (lambda (i)
+                                            (let ((id (item-id i)))
+                                              (and (stringp id)
+                                                   (>= (length id) (length gone))
+                                                   (string= gone id :end2 (length gone)))))
+                                          (coerce items 'list))
+                               'vector)
+                       ;; **RE-ANCHORED BY THE WORDS, OR LOST AND SAID.** A row whose text still
+                       ;; exists under the new id takes the reader's place back at the same offset
+                       ;; into it; a row nobody carried cannot be found, and then the anchor goes —
+                       ;; which is what `%anchor-lose` reports, exactly as it did before.
+                       *scroll-anchor*
+                       (and carried
+                            (let ((row (find-if (lambda (i)
+                                                  (and (ignore-errors (item-display-text i))
+                                                       (string= carried (item-display-text i))))
+                                                (session-items session))))
+                              (and row (cons (item-id row) (cdr anchor)))))))
                (incf *hist-generation*)
                :dirty)
              :quiet)))

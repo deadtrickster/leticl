@@ -562,7 +562,13 @@ rest names the commit it comes from.
     `ServerFrame::StandingNotes` carrying `NoteEntry` — one row per note, and the form the
     budget gave each. Two frames, so this is the one item here that adds wire. The reference's
     pane draws it and Enter opens the note in rano (`81749c9`).
-  - [ ] **the carry by the row's own words** (`53ac610`, `7b18b1d`): on a live re-seat a fork
+  - [x] **the carry by the row's own words** (`53ac610`, `7b18b1d`) — **LANDED 2026-10-11**, held by
+    `a-fork-carries-the-readers-place-by-the-rows-own-words`: a fork captures the anchored row's
+    WORDS before removing the parent's rows and re-finds a row that carries them under its new id,
+    keeping the offset into it, so a reader scrolled back does not lose their place when the
+    transcript is forked. A row nobody carried still loses the anchor (and `%anchor-lose` says so,
+    as before), and a reader at the bottom is not given a place they never had. *(Original below.)*
+    (from `53ac610`, `7b18b1d`): on a live re-seat a fork
     takes the reader's CARRY — the row's own words and the line — and the view is re-anchored
     by them under the new id, or the sentence says it cannot. The fork port drops the anchor
     and lets `%anchor-lose` say so; this is the better half.

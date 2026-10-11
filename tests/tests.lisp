@@ -20615,6 +20615,52 @@ the banner's number had gone from 6 to 66."
                   finally (return (remove-if (lambda (text) (search "scrolled back" text))
                                              texts))))))
 
+(def-test a-fork-carries-the-readers-place-by-the-rows-own-words (:suite leticl)
+  "**The 116-commit batch's *carry by the row's own words*** (`53ac610`, `7b18b1d`), and the
+  better half of a bad afternoon: a fork REPLACES the parent's rows with the child's, so the row
+  the reader was anchored on is gone by construction — and the port dropped the anchor and let
+  `%anchor-lose` explain. The reference keeps the WORDS and re-finds the row under its new id,
+  which is the same trick the anchor is built on: an anchor is a ROW, never a count.
+
+  Three claims, and the third is the one a careless version gets wrong: a carried row takes the
+  place back AT THE SAME OFFSET, a row nobody carried still loses the anchor and says so, and a
+  reader who was at the bottom (no anchor) is not given one."
+  (let ((leticl::*scroll-anchor* nil) (leticl::*hist-generation* 0)
+        (leticl::*anchor-lost-said* nil))
+    ;; --- the parent's rows, and the child's carry the same words under new ids
+    (let* ((s (make-session))
+           (parent "s-parent.")
+           (child "s-child."))
+      (setf (session-items s)
+            (coerce (list (list :item-id (concatenate 'string parent "7") :kind "assistant" :ts 0
+                                :item (list :type "assistant" :text "the passage I was reading"))
+                          (list :item-id (concatenate 'string child "3") :kind "assistant" :ts 0
+                                :item (list :type "assistant" :text "the passage I was reading"))
+                          (list :item-id (concatenate 'string parent "8") :kind "assistant" :ts 0
+                                :item (list :type "assistant" :text "a parent-only row")))
+                    'vector)
+            leticl::*scroll-anchor* (cons (concatenate 'string parent "7") 4))
+      (apply-event s (list :event "transcript_forked" :parent-id "s-parent"))
+      (is (equal (concatenate 'string child "3") (car leticl::*scroll-anchor*))
+          (format nil "**the anchor follows the WORDS to the child's row** — a fork must not cost the reader their place: ~s"
+                  leticl::*scroll-anchor*))
+      (is (= 4 (cdr leticl::*scroll-anchor*))
+          "and keeps the line inside it, so the view does not shift by a row")
+      ;; --- a row nobody carried: the anchor goes, and the loss is still said
+      (setf (session-items s)
+            (coerce (list (list :item-id (concatenate 'string parent "8") :kind "assistant" :ts 0
+                                :item (list :type "assistant" :text "a parent-only row")))
+                    'vector)
+            leticl::*scroll-anchor* (cons (concatenate 'string parent "8") 0))
+      (apply-event s (list :event "transcript_forked" :parent-id "s-parent"))
+      (is (null leticl::*scroll-anchor*)
+          "**a row that was NOT carried leaves no anchor** — the words are the only handle the child has")
+      ;; --- and a reader at the bottom had no anchor to carry
+      (setf leticl::*scroll-anchor* nil)
+      (apply-event s (list :event "transcript_forked" :parent-id "s-parent"))
+      (is (null leticl::*scroll-anchor*)
+          "a reader at the bottom is not given a place they never had"))))
+
 (def-test a-scrolled-view-does-not-move-when-rows-arrive-below (:suite leticl)
   "**R36, measured — and the measurement is the whole of the requirement's first sentence:**
 *\"scroll must be preserved — if i scrolled i want my view to hold, regardless of the new stuff
