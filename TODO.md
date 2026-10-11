@@ -786,7 +786,16 @@ head runs today breaks without them.
     what it displaces when a completion is open — is what remains. A line nobody calls is the shape
     this session kept finding; said here rather than rediscovered.
     triangle the head already draws.
-  · **M — the review queue as TWO VIEWS OF ONE LIST. AND THE REFERENCE'S QUEUE PANE IS A RANO
+  · **M — the review queue as TWO VIEWS OF ONE LIST. THE SECOND VIEW'S SHAPE IS NOW MEASURED, so
+    it is a small feature rather than a design question**: `Enter` on a queue row opens the entry's
+    reviews and gate steps as an OVERLAY over the list, and the pattern to copy is this head's own
+    `pane-enter` for the jobs pane (`pane-keys.lisp:145`): take `(nth (head-picker-sel head) …)`,
+    open the overlay, set `head-mode`, and leave the list behind it so Esc returns to the chosen
+    row. **AND NO FRAME GOES OUT** — unlike the jobs pane, whose overlay needs a `ReadJobOutput`,
+    the reviews and gate steps are already on the entry (`MergeEntry.reviews`, `gate_steps`), so the
+    view draws what the head holds. That is the whole of what remains here, and it is a
+    `pane-enter` method plus an overlay: the two lists a pane must join (the pane arm's modes and
+    the overlay's own mode) are the traps already written down twice. AND THE REFERENCE'S QUEUE PANE IS A RANO
     WIDGET** — its own header says the pane comes from *`rano::agent::queue` from the queue and the
     reviews this head holds* (`ui/panes/queue.rs:2`), so the reference draws this list through
     rano, the same integration this tree deferred for `ctrl-e` and `!term`. **This head draws it
