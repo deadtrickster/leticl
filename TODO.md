@@ -651,7 +651,7 @@ head runs today breaks without them.
     (a `/queue` verb or the pane's own open, which is how `/todos` and the jobs pane do it), and the
     constructor alone is not a landable increment. Written down because the tempting order — wire
     first, screen after — is exactly the order this tree forbids.
-  · **NEXT — S — the pane, drawing state and EVIDENCE.** One row per entry, the evidence as the reason —
+  · **S — the pane, drawing state and EVIDENCE — THE RENDERER IS LANDED** (2026-10-11, `merge-queue-lines`, held by `the-merge-queue-draws-its-states-and-why-each-one-is-that-state`): two lines per entry, `[state] branch` over the evidence, cursor reversed, the panes' own registers (landed Success, failed/conflict Failure, waiting Pending) and an unknown state drawn PLAIN rather than guessed; an entry with no evidence SAYS *no reason given*. **WHAT REMAINS IS REGISTRATION** — the pane class, `pane-lines` calling this, the mode keyword, `pane-cursor-rows`, `pane-escape-target`, the hint row and `%open-pane`: the drawing is done, which is why the risky half was split from it.** One row per entry, the evidence as the reason —
     *the evidence is the reason for the state in the queue's own words*. The five states are
     already a vocabulary this head renders elsewhere; this is one more pane in `src/panes/`.
   · **M — the person's hand: approve, veto, rm.** The reference's own three acts on a row, each
