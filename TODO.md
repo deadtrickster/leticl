@@ -745,6 +745,21 @@ rest names the commit it comes from.
     it needs code: the reference pops the change INSIDE the TUI (rano's review view, the whole file),
     while this head's two doors are the read overlay (the excerpt's diff, but no whole file) and the
     `!term` pane (the whole file, but outside the TUI). Named rather than guessed.
+
+    **AND THE DECISION WAS ASKED FOR AND NOT ANSWERED (2026-10-11)** — the question (the overlay, the
+    `!term` pane, or leave it) went to the operator's own head and timed out. **A deadline passing is not
+    a decision**, so nothing was built on a guess; what was measured instead is the FIRST STEP, and it is
+    not the popup at all: **a click has nothing to resolve a row TO.** `%click`'s transcript arm is
+    `(t nil)` — a click on the conversation is routed to nobody — and there is no row→item map anywhere in
+    this tree: `click-row->sel` is the PANES' cursor arithmetic, and `*pane-lines*` is a COUNT. The
+    reference's popup works because its pane RECORDS `stop_rows` as it draws (`PaneLines::stop_rows`, the
+    same field its click and arrow keys read); this head's transcript has no equivalent, and
+    `%viewport-lines` returns LINES with no record of which item each one came from. So the work is, in
+    order: (1) the viewport builder returning a parallel row→item vector, (2) the head storing it at the
+    draw, (3) the click arm reading it, and (4) a test — **and (1) is a RENDER-PATH change**, the kind
+    this tree's own history says not to land in the tail of a long session. That step is what a next
+    session should take, whether or not the popup question is ever answered: without it, no click can act
+    on a row the reader can see.
   - [x] **a redirected job's window is the file, even when a preamble reached
     the capture** (`d234194`) — the jobs pane's tail. **NOT LANDED — probed 2026-10-11**: no
     code in `src/panes/job-out.lisp` or the frames path mentions a preamble or a redirect, and no
