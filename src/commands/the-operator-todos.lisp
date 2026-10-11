@@ -429,8 +429,8 @@ line that silently created a row titled `postpone` would be a row nobody meant t
          (verb (first words))
          (n (second words)))
     (cond
-      ((not (member verb '("postpone" "resume" "when") :test #'string=))
-       (say head "usage: /todo postpone N · /todo resume N · /todo when N JOB — the pane numbers your rows")
+      ((not (member verb '("postpone" "resume" "when" "rm") :test #'string=))
+       (say head "usage: /todo postpone N · /todo resume N · /todo when N JOB · /todo rm N — the pane numbers your rows")
        t)
       ((null n)
        (say head (format nil "which row? /todo ~a N~@[ ~a~] — the todos pane numbers your rows"
@@ -501,7 +501,18 @@ line that silently created a row titled `postpone` would be a row nobody meant t
             t)
            (t
             (let* ((item (nth (1- at) *operator-todos*))
-                   (now (if (string= verb "postpone") "postponed" "open")))
+                   ;; **`rm` STRIKES A ROW OFF, AND `cancelled` IS THE DAEMON'S OWN WORD FOR IT.**
+                   ;; The operator asked in their own words — *"i want to be able to remove
+                   ;; non-started todos"* — and the answer is a STATUS rather than a deletion
+                   ;; because the row is a fact about the conversation: `/status` counts it, the pane
+                   ;; draws it in the set-aside register (which is where this head already puts
+                   ;; `cancelled`), the daemon's board carries the status that stops the idle check
+                   ;; asking, and `/todo resume N` brings it back. A DELETE would instead be this
+                   ;; head forgetting something the other half still holds — the two-writers defect
+                   ;; from the other side.
+                   (now (cond ((string= verb "postpone") "postponed")
+                              ((string= verb "rm") "cancelled")
+                              (t "open"))))
               (setf (getf item :status) now)
               ;; **ONE ROW, not the whole list** — the same store discipline as the add and the
               ;; toggle: a transaction per keystroke is what the store's own docstring refuses.
@@ -514,11 +525,15 @@ line that silently created a row titled `postpone` would be a row nobody meant t
               ;; back unchanged.
               (push-operator-todos head)
               (setf (head-dirty head) t)
-              (say head (if (string= verb "postpone")
-                            (format nil "row ~d is set aside — it stays on your list and the model ~
-                                         still sees it, and nothing is reminded of it until you ~
-                                         lift it with /todo resume ~d" at at)
-                            (format nil "row ~d is back in the list — the check may ask about it again" at)))
+              (say head (cond ((string= verb "rm")
+                               (format nil "row ~d is struck off — it stays on the list, nothing ~
+                                           asks about it, and `/todo resume ~d` brings it back"
+                                       at at))
+                              ((string= verb "postpone")
+                               (format nil "row ~d is set aside — it stays on your list and the model ~
+                                            still sees it, and nothing is reminded of it until you ~
+                                            lift it with /todo resume ~d" at at))
+                              (t (format nil "row ~d is back in the list — the check may ask about it again" at))))
               t))))))))
 
 (defvar *todo-draft* nil

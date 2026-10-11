@@ -16508,6 +16508,48 @@ to anything that does not look at the bytes that actually leave the process."
     (is (assoc "todo" leticl::*slash-commands* :test #'string=)
         "`/todo` is in the verb table, so `/help` lists it")))
 
+(def-test a-row-is-struck-off-by-rm-and-brought-back-by-resume (:suite leticl)
+  "**The operator's own ask, in their words: *\"i want to be able to remove non-started todos\"*.**
+
+  The status is `cancelled` and not a deletion, and every clause of that choice is a fact about
+  this tree: the row is a fact about the conversation, `/status` counts it, the pane draws it in
+  the set-aside register (where `cancelled` already goes), the daemon's board carries the status
+  that stops the idle check asking about it, and `/todo resume N` brings it back. A DELETE would be
+  this head forgetting something the other half still holds — the two-writers defect from the other
+  side, which is the shape `fold-board-statuses` exists to prevent."
+  (let ((leticl::*operator-todos*
+          (list (list :id "t1" :content "one I owe" :status "open" :detail "")
+                (list :id "t2" :content "a row I filed and did not want" :status "open" :detail "")))
+        (leticl::*todo-draft* nil) (leticl::*write-prefs* nil)
+        (h (%on-head :cols 90 :rows 30)))
+    ;; --- struck off, by number, and the words stay
+    (leticl::%command h "todo rm 2")
+    (is (string= "cancelled" (getf (second leticl::*operator-todos*) :status))
+        "row 2 is struck off — `cancelled`, which is the daemon's own word for it")
+    (is (string= "a row I filed and did not want" (getf (second leticl::*operator-todos*) :content))
+        (format nil "**and it is still the same row** — a status, not a deletion: ~s"
+                (second leticl::*operator-todos*)))
+    (is (string= "open" (getf (first leticl::*operator-todos*) :status)) "and nothing else moved")
+    (is (search "struck off" (head-status-note h)) "the act says what it did")
+    (is (search "/todo resume 2" (head-status-note h))
+        "**and names the door back** — a state you can enter and not leave is a bug the reader blames on the key")
+    ;; --- and back
+    (leticl::%command h "todo resume 2")
+    (is (string= "open" (getf (second leticl::*operator-todos*) :status))
+        "resume brings a struck-off row back as OPEN work — not done, which is a different answer")
+    (is (search "back in the list" (head-status-note h)) "and says so")
+    ;; --- the same refusals as its siblings: a number that is not one of theirs, and not a number
+    (leticl::%command h "todo rm 9")
+    (is (string= "open" (getf (second leticl::*operator-todos*) :status)) "nothing changed")
+    (is (search "there is no row 9" (head-status-note h)) "and the refusal names the row")
+    (leticl::%command h "todo rm all")
+    (is (search "not a row number" (head-status-note h)) "a word is not a row")
+    ;; --- a bare verb is a usage note that names the verb, not a row titled `rm`
+    (leticl::%command h "todo rm")
+    (is (= 2 (length leticl::*operator-todos*)) "no row was added")
+    (is (search "/todo rm N" (head-status-note h))
+        "**and the usage sentence names it**, so the verb is discoverable from its own refusal")))
+
 (def-test a-condition-is-attached-to-a-row-by-a-verb-by-number (:suite leticl)
   "**The operator's own shape:** *'if you are telling me 'job ends and i do this and that' then
   'this and that' is a todo item, which is conditioned by job status (end)'* — and *'when I file

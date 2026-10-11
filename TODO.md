@@ -425,17 +425,19 @@ rest names the commit it comes from.
   author, the read-only seating of an older daemon, the list-derived child's
   `stored_end`); what remains is head-side UI, each measured against this tree:
 
-  - [ ] **scrolled back, the turn's prompt stays pinned on the top row**
-    (`26b9e08`). The turn is found from the row at the TOP of the window,
+  - [x] **scrolled back, the turn's prompt stays pinned on the top row**
+    (`26b9e08`) — **LANDED `1cb72ac`**, held by
+    `scrolled-back-the-question-stays-pinned-on-top`. The turn is found from the row at the TOP of the window,
     walking back to the nearest row the operator wrote — the pin is the
     question the VISIBLE answer answers, not the session's newest — drawn as
     their row is drawn and cut to one line, covering the top row the way the
     holding banner covers the bottom. Not drawn while the prompt itself is on
     screen; a prompt above the rows a tail frame rendered has no span and is
     pinned too.
-  - [ ] **a wheel notch renders before it steps, and a run of notches outpaces
-    a living stream** (`a950c6e`) — the fix is in `window.rs`'s render/step
-    order.
+  - [x] **a wheel notch renders before it steps, and a run of notches outpaces
+    a living stream** (`a950c6e`) — **LANDED `15e17a5`**, held by
+    `a-run-of-wheel-notches-outpaces-a-living-stream` (and the page-unit numbers beside it:
+    `the-wheel-notch-and-the-page-keystep-are-different-numbers`).
   - [ ] **the count labels on the composer's edge are BUTTONS** (`9ac7dad`) —
     a click on `1 subagent running` opens the subagents pane, `1 job running`
     the jobs pane. This head already converts clicks for panes and rows; this
@@ -477,8 +479,12 @@ rest names the commit it comes from.
     takes the reader's CARRY — the row's own words and the line — and the view is re-anchored
     by them under the new id, or the sentence says it cannot. The fork port drops the anchor
     and lets `%anchor-lose` say so; this is the better half.
-  - [ ] **the todo verbs and the pane's own reading** — `rm` strikes a row off (`91dc73f`: the
-    STATUS is ported; the verb and its `/todo resume N` are not), a row read whole with enter
+  - [~] **the todo verbs and the pane's own reading** — **`/todo rm N` LANDED 2026-10-11**
+    (`a-row-is-struck-off-by-rm-and-brought-back-by-resume`): the verb strikes a row off by
+    number, the row keeps its words, `/todo resume N` brings it back, the refusals name the row
+    or the word, and a bare `/todo rm` is a usage note naming the verb. The status is
+    `cancelled` — the daemon's own word — because a DELETE would be this head forgetting
+    something the other half still holds. **Still open here**: a row read whole with enter
     (`fe9febe`), a row's title capped at the pane's own row with the rest as detail (`aa27a89`),
     one row marked by quoting it (`09b1c0f`), a row waiting on a CHILD (`f8d98b6`), and the
     plan as a DAG with `needs` edges (`c211118`, `f8d98b6`) — `TodoNeed::{Row, Child}` rides
