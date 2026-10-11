@@ -568,12 +568,20 @@ rest names the commit it comes from.
     reply is a snapshot of the harness's mailbox), the `/standing` verb that asks, and the pane
     registered (class, `:standing` keyword, three methods, and BOTH mode lists in `%handle-key` —
     the trap the queue's pane taught, handled before this one's first run).
-    **AND ONE THING MEASURED NOT WORKING**: in the test, `/standing` left the mode `:normal` while
-    the identical shape opens `:queue` and `:jobs`, so **the pane's OPEN is unproven** and the
-    assertion that would have covered it was WITHDRAWN rather than weakened — a test bent to pass
-    is the defect this suite has already shown four times. The pane draws (renderer tested), the
-    wire asks and folds (tested), the registration is in all four places: the fault is in the
-    dispatch path for THIS verb, which needs a head in front of you.
+    **AND THE FAULT WAS IN THE VERB, FOUND BY THE TEST**: `/standing` left the screen on the
+    conversation because **the arm's body only ASKED** — it was written to satisfy the
+    constructor-needs-a-caller invariant and the OPEN was never wired. With the arm fixed
+    (`%toggle-pane … :standing`, the ask as the pane's open, which is the reference's shape), the
+    pane opens at the keypress, draws the renderer's rows and closes on `q` — held by
+    `the-standing-pane-opens-at-the-keypress-and-draws-the-mailbox`, which is its OWN test because
+    the first attempt bolted these assertions onto the wire test where the fixture's `let*` had
+    already closed. **A test is not a place to save a line.**
+
+    **THE ITEM IS THEREFORE COMPLETE**: the two frames, the fold, the verb, the pane and the
+    renderer, each with its own test — and five measured corrections behind it (a frame needs its
+    caller, a verb its registry row, a pane its mode-list entry, a test that reads a global is
+    fragile, and a verb needs its OPEN). **What remains in this row**: `Enter` opening the note in
+    rano (`81749c9`) and `NoteForm`'s own vocabulary beyond the two words this head saw.
     `the-standing-notes-draw-their-form-and-where-their-abstract-came-from`: one row per note, the
     path whole, the FORM drawn (`[verbatim]`/`[indexed]` in the registers Success/Pending), the
     abstract, and **whether that abstract is the author's own or the harness's derivation** — the

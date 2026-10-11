@@ -11874,6 +11874,41 @@ answered. The daemon's own `secret_late` warning, which would explain it, is a
       (is (equal "gate: fmt" (getf row :evidence))
           "**and the evidence we have is kept** — a move that says nothing must not erase the reason"))))
 
+(def-test the-standing-pane-opens-at-the-keypress-and-draws-the-mailbox (:suite leticl)
+  "**The pane, as its own test** — and the reason it is its own: the first attempt bolted these
+  assertions onto the wire test, where the fixture's `let*` had already closed, so they ran at top
+  level with `h` unbound. A test is not a place to save a line.
+
+  It also holds the fault this found: `/standing` never opened the pane because **the verb's body
+  only ASKED** — it was written for the constructor-needs-a-caller invariant and the OPEN was never
+  wired. The assertion that would have caught it was withdrawn rather than weakened until the arm
+  was fixed; that is what a test is for."
+  (let* ((h (%make-head))
+         (wire (%wire h)))
+    (setf (head-mode h) :normal)
+    (leticl::%command h "standing")
+    (is (eq :standing (head-mode h))
+        "**the pane is up at the keypress** — the ask belongs to the OPEN, not to a verb that leaves the screen alone")
+    (let ((sent (%sent wire)))
+      (is (find "list_notes" sent :key #'frame-name :test #'string=)
+          "and the ask went out with it, once"))
+    ;; the pane draws the renderer's rows and nothing of its own
+    (setf (head-standing-notes h) (list (list :path "/n/one.md" :form "verbatim"
+                                               :abstract "a" :abstract-written t)))
+    (let ((rows (leticl::pane-lines (leticl::pane-for :standing) h 100 30)))
+      (is (equal (standing-notes-lines h 100) rows)
+          (format nil "**the pane draws the renderer's rows**, so the drawing lives in one place: ~s" rows))
+      (is (equal 1 (leticl::pane-cursor-rows (leticl::pane-for :standing) h))
+          "and the cursor has a row to walk"))
+    ;; and `q` closes it, as the pane's own hint says
+    (leticl::%handle-key h (list :type :char :ch #\q))
+    (is (eq :normal (head-mode h)) "`q` closes it")
+    ;; and asking again toggles it back OFF, which is the reference's own behaviour for every pane
+    (leticl::%command h "standing")
+    (is (eq :standing (head-mode h)) "reopening works")
+    (leticl::%command h "standing")
+    (is (eq :normal (head-mode h)) "**and asking twice closes it** — every one of these is a toggle")))
+
 (def-test the-standing-notes-are-asked-for-and-kept-as-a-snapshot (:suite leticl)
   "**The standing-notes wire, its ask, and its fold** — the half that must land before the pane, and
   for the reason the suite taught twice: a constructor with no caller is a feature that does not
