@@ -468,7 +468,13 @@ rest names the commit it comes from.
     whole file, no editor chrome; and **the popup's scroll repaints its rows,
     not the whole screen** (`6fb34d4`).
   - [ ] **a redirected job's window is the file, even when a preamble reached
-    the capture** (`d234194`) — the jobs pane's tail.
+    the capture** (`d234194`) — the jobs pane's tail. **NOT LANDED — probed 2026-10-11**: no
+    code in `src/panes/job-out.lisp` or the frames path mentions a preamble or a redirect, and no
+    test covers it, so this is genuine work and not another already-done row. The shape it needs:
+    when a job's command redirects its own output to a file, the daemon's capture holds only the
+    preamble it saw before the redirect, and the pane should show the FILE's contents (the job's
+    real output) rather than that preamble — which means the head has to know the path, and the
+    place to learn it is the `JobEntry`/`Jobs` reply the pane already draws from.
   - [ ] **`ctrl-e`: a real editor pane** (`a8f5e83`, `e38b82e`, `8e91a4b`,
     `88b003d`) — ctrl-e puts the editor away and brings it back with its files
     kept; on an empty prompt it opens on any file; and the pane wears the
