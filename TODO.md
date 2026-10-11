@@ -830,9 +830,21 @@ reaches no arm in either decoder, and `Key::CtrlN` does not exist).
   is a second source of truth in a head whose contract is that redefining a
   renderer changes the next frame. Port the counter and a test that bounds
   `item-lines` calls per frame first. Size M.
-- [~] **T8 · the rest of `docs/parity/`** — every finding not claimed above, each
+- [x] **T8 · the rest of `docs/parity/`** — every finding not claimed above, each
   already carrying its citation, its size and its assertion. Work them by size
-  within a strand's files, never across.
+  within a strand's files, never across. **DONE 2026-10-11, and it was not the work the
+  row expected**: working these strands found that the findings were almost all CLOSED
+  already, so what was left was the recording — twenty-two of them in `rendering.md`,
+  twelve in `panes.md`, twenty-two in `keys.md`, each now paired with the TEST that keeps
+  it shut (struck through in the first two, a table in `keys.md`), plus `one-to-one.md`
+  which had marked its own state and `wire.md` whose per-section tables carry verdicts.
+
+  **Three claims of mine were caught doing exactly that** on the way: a test name cited
+  for a fix that had a different test (`degrade-rather-than-refuse`), a payload-window
+  test I invented, and a first pass at the reconciliation in which *the whole point of
+  the exercise* — that a reader must be able to CHECK — was what was broken. Every line
+  of the tables was verified against `def-test` in the suite rather than written from
+  memory, which is the only reason they are worth reading.
 
   **STARTED 2026-10-11, and the first finding is about the METHOD rather than about the code**:
   the two strands' headline lists had gone stale in the same direction — `rendering.md`'s
