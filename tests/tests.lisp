@@ -12339,6 +12339,39 @@ worked for the merge queue.
                                         :key #'car :test #'string=)))
           "**the pane draws it** — the cell's style is a name this head's palette holds"))))
 
+(def-test a-todo-row-says-what-it-waits-for (:suite leticl)
+  "**`TodoNeed` rides the row and this pane drew NONE of it** — a plan is a GRAPH, and a row that waits
+  on another row, on a CHILD session or on a job is a row whose edges a reader needs to see. The wire's
+  enum has three known kinds and **keeps a fourth on purpose** (*a plan is what would be lost*), so an
+  unknown one is SAID rather than dropped: a reader shown nothing would take a plan with a hole in it.
+
+  `when` and `needs` are different facts — the first is the operator's clock, the second an edge — so a
+  row carrying both draws both."
+  (flet ((said (item)
+           (format nil "~{~a~}"
+                   (mapcar (lambda (line) (if (null line) ""
+                                            (format nil "~{~a~}" (mapcar #'car line))))
+                           (leticl::%todo-item-lines item "model" nil)))))
+    (is (search "waits on j12" (said (list :content "the fold" :when (list :handle "j12"))))
+        "the `when` clock is drawn, as it was")
+    (is (search "needs child s-abc"
+                (said (list :content "the port" :needs (list (list :kind "child" :id "s-abc")))))
+        "**a CHILD edge is drawn with the id `task` handed back**")
+    (is (search "needs \"land the gate\""
+                (said (list :content "the port"
+                            :needs (list (list :kind "row" :content "land the gate")))))
+        "**a ROW edge is drawn as the content it waits on**")
+    (is (search "needs job j9"
+                (said (list :content "the port" :needs (list (list :kind "job" :handle "j9")))))
+        "**a JOB edge is drawn with the handle `background: true` prints**")
+    (is (search "needs a kind this build does not know"
+                (said (list :content "the port" :needs (list (list :kind "telepathy")))))
+        "**and a kind this build does not know is SAID** — the wire keeps it so a plan is not lost")
+    (let ((both (list :content "both" :when (list :handle "j12")
+                      :needs (list (list :kind "job" :handle "j9")))))
+      (is (search "waits on j12" (said both)) "a row carrying both draws its clock")
+      (is (search "needs job j9" (said both)) "**and its edge with it**"))))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of

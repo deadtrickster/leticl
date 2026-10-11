@@ -538,6 +538,22 @@ error."
        (mapcar (lambda (l) (list (cons (format nil "~a        ~a" pad l) '(:dim t))))
                detail)))))
 
+(defun %todo-needs-said (needs)
+  "A row's `needs` EDGES as one sentence — *what the row waits on before it can start*.
+
+ **THE WIRE'S OWN THREE KINDS, EACH IN ITS OWN WORDS** (`sessionlog/src/event.rs`'s `TodoNeed`, a
+ serde-tagged enum): a `row` waits on another ROW's exact content, a `child` on the session id `task`
+ handed back, and a `job` on the handle `bash background: true` prints. **And a kind this build does not
+ know is SAID rather than dropped** — the wire keeps an unknown edge on purpose (*a plan is what would
+ be lost*), so a reader that drew nothing for it would be showing a plan with a hole in it."
+  (format nil " · needs ~{~a~^, ~}"
+          (mapcar (lambda (n)
+                    (cond ((equal (getf n :kind) "child") (format nil "child ~a" (or (getf n :id) "?")))
+                          ((equal (getf n :kind) "job") (format nil "job ~a" (or (getf n :handle) "?")))
+                          ((equal (getf n :kind) "row") (format nil "\"~a\"" (or (getf n :content) "?")))
+                          (t "a kind this build does not know")))
+                  needs)))
+
 (defun %todo-item-lines (item author show-detail &optional here (number nil))
   "ITEM as the pane's lines: the mark, the words, and whose they are — plus the description under
 them when SHOW-DETAIL and the item has one.
@@ -600,9 +616,17 @@ two entries."
             ;; `(when …)` in the segment list, which would leave a NIL segment on every
             ;; unconditional row — a nil in a segment list is a segment the painter cannot
             ;; draw, and the well-formedness check exists to catch exactly that.
-            (let ((handle (getf (getf item :when) :handle)))
-              (and handle
-                   (list (cons (format nil " · waits on ~a" handle) '(:dim t)))))))
+            (let ((handle (getf (getf item :when) :handle))
+                  (needs (getf item :needs)))
+              (append
+               (and handle
+                    (list (cons (format nil " · waits on ~a" handle) '(:dim t))))
+               ;; **AND THE ROW'S `needs` EDGES — the plan's DAG, which this pane drew none of.** A row
+               ;; that waits on another row, on a CHILD session or on a job, in the wire's own three
+               ;; words (`%todo-needs-said`), DIM like the wait above: both are asides ABOUT the row and
+               ;; not the row. A `when` and a `needs` are different facts — the first is the operator's
+               ;; clock, the second an edge — so both are drawn when a row carries both.
+               (and (consp needs) (list (cons (%todo-needs-said needs) '(:dim t))))))))
      (let ((detail (getf item :detail)))
        (when (and show-detail detail (plusp (length detail)))
          ;; ten columns — two past the mark, which sits at eight once the number column is in
