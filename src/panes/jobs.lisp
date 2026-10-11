@@ -13,6 +13,65 @@
 
 ;;; ------------------------------------------------ the jobs and subagents ;;;
 
+(defun merge-queue-lines (head cols)
+  "The merge queue, one BLOCK per entry — the rows the `/queue` pane will draw.
+
+**STATE AND EVIDENCE, and the evidence is the whole point of the field**: *the evidence is the
+reason for the state in the queue's own words* (the unmet dependencies while Waiting, the gate's
+failure while Failed, the conflict while Conflict, the dead job while Stale, the landed tip while
+Landed). A move without its reason is a row that changed state with nothing saying why, which is
+the defect the field exists to prevent — so the renderer never draws a state without its evidence
+when it has one, and says so when it does not.
+
+Two lines per entry, the shape the jobs pane uses for the same reason (a list of facts needs a
+second, dim line to carry them): `▸ [state] branch` over `         evidence`.
+
+The queue is daemon-level and held on the head (`head-merge-queue`), so this draws from there and
+never asks: the ASK is `/queue`'s own act (`make-list-merge-queue`), which is what keeps a frame
+out of a renderer."
+  (let ((entries (head-merge-queue head))
+        (out (list (list (cons "merge queue" '(:bold t))))))
+    (push nil out)
+    (if (null entries)
+        (progn
+          (push (list (cons "    empty — nothing is waiting to land" '(:dim t))) out)
+          (push nil out)
+          (push (list (cons "    `/queue` asks the daemon for it again; entries arrive as they are filed"
+                            '(:dim t)))
+                out))
+        (dolist (e entries)
+          (let* ((id (or (getf e :id) "?"))
+                 (branch (or (getf e :branch) "?"))
+                 (state (or (getf e :state) "?"))
+                 (evidence (getf e :evidence))
+                 ;; the cursor's entry is REVERSED, exactly as every other pane's is
+                 (picked (= (or (position id entries :key (lambda (x) (getf x :id)) :test #'equal) -1)
+                            (head-picker-sel head))))
+            (push (list (cons "  ▸ " '(:dim t))
+                        (cons (format nil "[~a] " state) (merge-state-style state))
+                        (cons branch (and picked '(:reverse t))))
+                  out)
+            ;; **SAID IN PLAIN LISP, not with format gymnastics** — the first cut used `~@[…~]~:[…~]`
+            ;; and got the branches the wrong way round, which is how a renderer comes to say *no
+            ;; reason given* about a row that has one.
+            (push (list (cons (format nil "         ~a" (or evidence "no reason given"))
+                              '(:dim t)))
+                  out))))
+    (push nil out)
+    (push (list (cons (format nil "    ~d entries — `q` closes · the gate runs when a branch is picked"
+                              (length entries)) '(:dim t)))
+          out)
+    (nreverse out)))
+
+(defun merge-state-style (state)
+  "The register a queue STATE is drawn in — the same vocabulary the panes already use: a landed
+entry is Success, a failure or a conflict is Failure, a waiting or stale one is Pending, and a
+state this build has never met is drawn plain rather than guessed at."
+  (cond ((string-equal state "landed") +role-success+)
+        ((member state '("failed" "conflict") :test #'string-equal) +role-failure+)
+        ((member state '("waiting" "stale" "running") :test #'string-equal) +role-pending+)
+        (t nil)))
+
 (defun jobs-lines (head cols)
   "The background jobs, the reference's `jobs_lines` (app.rs:6039):
 

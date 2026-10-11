@@ -11874,6 +11874,57 @@ answered. The daemon's own `secret_late` warning, which would explain it, is a
       (is (equal "gate: fmt" (getf row :evidence))
           "**and the evidence we have is kept** — a move that says nothing must not erase the reason"))))
 
+(def-test the-merge-queue-draws-its-states-and-why-each-one-is-that-state (:suite leticl)
+  "**The renderer for the queue pane** — the rows, landed ahead of the pane so the pane is
+  registration rather than a pile of drawing.
+
+  The finding this holds is the field's own reason: *the evidence is the reason for the state in
+  the queue's own words*, so no state is drawn without its reason when there is one, and a row
+  with none SAYS it has none rather than looking like a row whose reason was simply not shown.
+  The register is the vocabulary the other panes already use: landed is Success, failure and
+  conflict are Failure, waiting and stale are Pending, and a state this build has never met is
+  drawn PLAIN rather than guessed at."
+  (let* ((h (%make-head))
+         (text (lambda () (format nil "~{~a~^~%~}"
+                                  (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l)))
+                                          (merge-queue-lines h 100))))))
+    ;; --- empty is a fact, and it names the verb that fills it
+    (is (search "empty — nothing is waiting to land" (funcall text)) "an empty queue says so")
+    (is (search "`/queue` asks the daemon" (funcall text)) "and names the verb")
+    ;; --- entries: state, branch, and the REASON
+    (setf (head-merge-queue h)
+          (list (list :id "e1" :branch "topic-a" :state "waiting"
+                      :evidence "needs: topic-b, topic-c")
+                (list :id "e2" :branch "topic-b" :state "landed" :evidence "tip 4f2a1c9")
+                (list :id "e3" :branch "topic-c" :state "failed" :evidence "gate: format")))
+    (let ((t3 (funcall text)))
+      (is (search "[waiting] topic-a" t3) "the state and the branch, in that order")
+      (is (search "needs: topic-b, topic-c" t3) "**with the reason the daemon gave**")
+      (is (search "gate: format" t3) "every entry carries its own")
+      (is (search "3 entries" t3) "and the count is said")
+      ;; the registers, on the segments — a state is not just a word
+      (let* ((lines (merge-queue-lines h 100))
+             (waiting (find-if (lambda (l) (search "[waiting]" (format nil "~{~a~}" (mapcar #'car l)))) lines))
+             (failed (find-if (lambda (l) (search "[failed]" (format nil "~{~a~}" (mapcar #'car l)))) lines)))
+        (is (equal leticl::+role-pending+
+                   (cdr (find-if (lambda (s) (search "[waiting]" (car s))) waiting)))
+            "waiting is Pending — the register for *is happening*")
+        (is (equal leticl::+role-failure+
+                   (cdr (find-if (lambda (s) (search "[failed]" (car s))) failed)))
+            "and a failed gate is Failure, because something has to be looked at")))
+    ;; --- a state this build has never met is drawn PLAIN, never guessed at
+    (setf (head-merge-queue h) (list (list :id "e4" :branch "topic-d" :state "a_new_state" :evidence "why")))
+    (let* ((lines (merge-queue-lines h 100))
+           (row (find-if (lambda (l) (search "[a_new_state]" (format nil "~{~a~}" (mapcar #'car l)))) lines)))
+      (is (null (cdr (find-if (lambda (s) (search "[a_new_state]" (car s))) row)))
+          "an unknown state takes no colour: a wrong colour is worse than none")
+      (is (search "[a_new_state]" (car (find-if (lambda (s) (search "[a_new_state]" (car s))) row)))
+          "and its own word is shown rather than folded into one of ours"))
+    ;; --- and an entry with NO evidence says that, rather than looking unexplained
+    (setf (head-merge-queue h) (list (list :id "e5" :branch "topic-e" :state "waiting")))
+    (is (search "no reason given" (funcall text))
+        "**a row with no evidence SAYS it has none** — the difference between *not told* and *nothing to say*")))
+
 (def-test a-reply-for-a-session-this-head-left-is-not-applied (:suite leticl)
   "**T6 in `TODO.md`, and it is invisible by construction — which is why it needed a test.**
 
