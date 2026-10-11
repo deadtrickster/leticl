@@ -12248,6 +12248,45 @@ worked for the merge queue.
         (is (equal "    ab" (funcall joined))
             "**and hiding the cursor does not change one character of the row**")))))
 
+(def-test a-terminal-carries-the-emphasis-the-program-set (:suite leticl)
+  "**SGR's ATTRIBUTES are kept on the cells they were written with** — a cell is `(char . style)`, and
+  the pen in force at the moment of the write is copied onto it. `ESC [ 1 m` bolds what follows and
+  `ESC [ 0 m` takes it back, and the styles reach the pane as SEGMENTS: one per run of one style.
+
+  **A COLOUR is still counted**, which is a fact about this head rather than an omission — it draws
+  roles out of its own palette, and turning a terminal's `31` into a colour would put one on a row
+  whose role the head has already decided."
+  (flet ((esc (n) (concatenate 'string (string (code-char 27)) n))
+         (segs (s) (leticl::%term-screen-row-segments s 0))
+         (styles (s) (mapcar #'cdr (leticl::%term-screen-row-segments s 0)))
+         (text (s) (string-right-trim '(#\space)
+                                      (format nil "~{~a~}"
+                                              (mapcar #'car (leticl::%term-screen-row-segments s 0))))))
+    (let ((s (leticl::term-screen-new 1 12)))
+      (is (null (leticl::term-screen-pen s)) "**the pen starts empty** — a terminal begins unstyled")
+      (leticl::term-screen-feed s "a")
+      (is (not (member '(:bold t) (styles s) :test #'equal)) "**plain text carries no emphasis**")
+      (leticl::term-screen-feed s (esc "[1m"))
+      (is (equal '(:bold t) (leticl::term-screen-pen s)) "**`1 m` sets the pen to bold**")
+      (leticl::term-screen-feed s "bb")
+      (is (equal "bb" (car (find '(:bold t) (segs s) :key #'cdr :test #'equal)))
+          "**and the cells written under it reach the pane as ONE run of that style**")
+      (is (equal "  abb" (text s))
+          "**while the TEXT is just the characters** — the emphasis is a style on the cell")
+      ;; an erase clears the STYLE with the cell; the PEN is the program's and survives
+      (leticl::term-screen-feed s (esc "[1;1H"))
+      (leticl::term-screen-feed s (esc "[K"))
+      (is (not (member '(:bold t) (styles s) :test #'equal))
+          "**an erase clears the style with the cell** — the blanks it leaves belong to nobody")
+      (is (equal '(:bold t) (leticl::term-screen-pen s))
+          "and the PEN survives it, because the pen is the program's and not the cell's")
+      ;; the reset, and a colour the head counts rather than draws
+      (leticl::term-screen-feed s (esc "[0m"))
+      (is (null (leticl::term-screen-pen s)) "**`0 m` is the reset**")
+      (is (= 1 (leticl::term-screen-feed s (esc "[31m")))
+          "**a COLOUR is COUNTED, not honoured** — this head draws roles, not terminal colours")
+      (is (null (leticl::term-screen-pen s)) "and it left the pen alone"))))
+
 (def-test a-terminal-opens-takes-keys-for-the-program-and-ends-when-asked (:suite leticl)
   "**The `!term` frames, each with the caller the suite's own invariant demands** — and the ordering
   that costs a session if it is guessed: **the pane's KEY PATH is what makes `TermInput` and

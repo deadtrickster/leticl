@@ -427,8 +427,11 @@ tail's spaces as a ragged gap."
 (defstruct (term-screen (:constructor %make-term-screen (rows cols cells)))
   (rows 0 :type fixnum)
   (cols 0 :type fixnum)
-  ;; a string, row-major: cell (r, c) is at (+ (* r cols) c)
-  (cells "" :type string)
+  ;; row-major: cell (r, c) is at (+ (* r cols) c). **A CELL IS `(char . style)` AND NOT A BARE
+  ;; CHARACTER** — a program's SGR has to live somewhere, and ONE vector of whole cells keeps every
+  ;; scroll, insert and delete a single `replace` of cells rather than two arrays kept in step by
+  ;; hand. See `%ts-put` and `%term-screen-row-segments`.
+  (cells #() :type simple-vector)
   (row 0 :type fixnum)
   (col 0 :type fixnum)
   ;; **THE SCROLLING REGION** (`DECSTBM`), 0-based and INCLUSIVE: a line feed on the BOTTOM row
@@ -441,6 +444,9 @@ tail's spaces as a ragged gap."
   ;; keyboard, which is the pane's fact and not the screen's — but a full-screen program that hid its
   ;; cursor while redrawing and never showed it again must not leave one this head invented.
   (visible t :type boolean)
+  ;; **THE PEN** — the SGR state the program last set (`ESC [ … m`), copied onto each cell as it is
+  ;; written. NIL is "no style", which is what a terminal starts with.
+  (pen nil)
   ;; the ALTERNATE screen when one is up (`?1049`): `(cells top bottom)` saved whole, or NIL on the
   ;; main screen. The region is saved WITH the cells because it is part of what the program expects
   ;; to find unchanged when it comes back.
@@ -449,9 +455,15 @@ tail's spaces as a ragged gap."
 (defun term-screen-new (rows cols)
   "A blank screen, cursor at home, and the WHOLE screen as the scrolling region."
   (let* ((rows (max 1 rows)) (cols (max 1 cols))
-         (s (%make-term-screen rows cols (make-string (* rows cols) :initial-element #\space))))
+         (s (%make-term-screen rows cols (%blank-cells (* rows cols)))))
     (setf (term-screen-bottom s) (1- rows))
     s))
+
+(defun %blank-cells (n)
+  "A fresh vector of N blank cells — a blank is a SPACE carrying no style, and the two travel
+ together because a later write must not inherit a pen the program had already given up."
+  (let ((v (make-array n)))
+    (dotimes (i n v) (setf (aref v i) (cons #\space nil)))))
 
 (defun %ts-index (s r c) (+ (* r (term-screen-cols s)) c))
 
@@ -462,7 +474,8 @@ full line, and why a program that prints a long line sees it break."
     (setf (term-screen-col s) 0)
     (%ts-next-row s))
   (when (< (term-screen-row s) (term-screen-rows s))
-    (setf (char (term-screen-cells s) (%ts-index s (term-screen-row s) (term-screen-col s))) ch))
+    (setf (aref (term-screen-cells s) (%ts-index s (term-screen-row s) (term-screen-col s)))
+          (cons ch (term-screen-pen s))))
   (incf (term-screen-col s)))
 
 (defun %ts-next-row (s)
@@ -526,9 +539,11 @@ CURSOR, which is what a full-screen program's next redraw depends on."
             (term-screen-col s) 0))))
 
 (defun %ts-erase-row (s row from to)
-  (let ((cols (term-screen-cols s)))
+  "Blank the cells row FROM..TO — **and their styles with them**, or a later write would inherit a
+ pen the program had already given up."
+  (let ((cols (term-screen-cols s)) (cells (term-screen-cells s)))
     (loop for c from (max 0 from) below (min cols to)
-          do (setf (char (term-screen-cells s) (%ts-index s row c)) #\space))))
+          do (setf (aref cells (%ts-index s row c)) (cons #\space nil)))))
 
 (defun term-screen-cup (s row col)
   "Cursor position — `H`/`f`. Its arguments are 1-BASED in the notation and 0-based here."
@@ -555,11 +570,18 @@ CURSOR, which is what a full-screen program's next redraw depends on."
       (2 (loop for r from 0 below rows do (%ts-erase-row s r 0 cols))))))
 
 (defun term-screen-lines (s)
-  "The rows as a reader sees them, right-trimmed — a blank row is an EMPTY line, not a row of spaces."
+  "The rows as a reader sees them, right-trimmed — a blank row is an EMPTY line, not a row of spaces.
+
+ **THE TEXT ONLY.** A cell's style is not part of a line, so a caller that wants the styles asks
+ `%term-screen-row-segments`: this stays the function a reader's plain copy of the screen uses."
   (loop for r from 0 below (term-screen-rows s)
-        collect (string-right-trim '(#\space)
-                                   (subseq (term-screen-cells s) (%ts-index s r 0)
-                                           (+ (%ts-index s r 0) (term-screen-cols s))))))
+        collect (string-right-trim
+                 '(#\space)
+                 (let* ((start (%ts-index s r 0))
+                        (cells (term-screen-cells s))
+                        (line (make-string (term-screen-cols s))))
+                   (dotimes (c (term-screen-cols s) line)
+                     (setf (char line c) (car (aref cells (+ start c)))))))))
 
 (defun %ts-erase-chars (s n)
   "Erase N characters from the cursor without moving it (`X`) — the screen keeps its shape and the
@@ -573,16 +595,16 @@ content, which is what makes a shell's redraw land where it should."
   (let* ((row (term-screen-row s)) (col (term-screen-col s)) (cols (term-screen-cols s))
          (cells (term-screen-cells s)) (start (%ts-index s row 0)))
     (loop for c from col below cols
-          do (setf (char cells (+ start c))
-                   (if (< (+ c n) cols) (char cells (+ start c n)) #\space)))))
+          do (setf (aref cells (+ start c))
+                   (if (< (+ c n) cols) (aref cells (+ start c n)) (cons #\space nil))))))
 
 (defun %ts-insert-chars (s n)
   "Insert N blanks at the cursor (`@`), pushing the rest of the row RIGHT and losing the far end."
   (let* ((row (term-screen-row s)) (col (term-screen-col s)) (cols (term-screen-cols s))
          (cells (term-screen-cells s)) (start (%ts-index s row 0)))
     (loop for c from (1- cols) downto col
-          do (setf (char cells (+ start c))
-                   (if (>= (- c n) col) (char cells (+ start (- c n))) #\space)))))
+          do (setf (aref cells (+ start c))
+                   (if (>= (- c n) col) (aref cells (+ start (- c n))) (cons #\space nil))))))
 
 (defun %ts-insert-lines (s n)
   "Insert N blank lines at the cursor (`L`), pushing the lines below DOWN — WITHIN THE REGION, and
@@ -599,12 +621,47 @@ the cursor is inside it."
     (when (and (>= row (term-screen-top s)) (<= row bot))
       (%ts-scroll-up-in s row bot n))))
 
+(defun %ts-set-pen (s args)
+  "Fold an SGR sequence's parameters into the screen's PEN (`ESC [ … m`).
+
+ **THE ATTRIBUTES ARE HONOURED AND THE COLOURS ARE STILL COUNTED**, which is a fact about this head
+ rather than an omission: a cell here carries a STYLE the head's own renderer understands, and this
+ head draws roles out of its palette instead of honouring a terminal's colour numbers. Reading a `31`
+ as `:red` would put a colour on a row whose role the head has already decided.
+
+ `0` is the reset and so is an EMPTY parameter list (`ESC [ m`). Parameters are folded in order, so
+ `1;31m` bolds and then asks for a red this build does not draw: the bold lands, and the colour is
+ still the sequence's own parameter."
+  (let ((pen (copy-list (term-screen-pen s))))
+    (dolist (p (if (plusp (length args))
+                   (loop for x in (uiop:split-string args :separator ";")
+                         collect (or (parse-integer x :junk-allowed t) 0))
+                   '(0)))
+      (case p
+        ((0) (setf pen nil))
+        ((1) (setf (getf pen :bold) t))
+        ((2) (setf (getf pen :dim) t))
+        ((3) (setf (getf pen :italic) t))
+        ((4) (setf (getf pen :underline) t))
+        ((7) (setf (getf pen :reverse) t))
+        ((9) (setf (getf pen :strikethrough) t))
+        ;; the four the program can take back without resetting everything
+        ((22) (remf pen :bold) (remf pen :dim))
+        ((23) (remf pen :italic))
+        ((24) (remf pen :underline))
+        ((27) (remf pen :reverse))
+        ((29) (remf pen :strikethrough))
+        (t nil)))
+    (setf (term-screen-pen s) pen)))
+
 (defun term-screen-feed (s output)
   "Feed OUTPUT into SCREEN, honouring what can be honoured. Returns the count of sequences DROPPED.
 
 A VT SUBSET and it says so: `CR`, `LF`, `BS`, `TAB`, the cursor moves (`A`–`D`, `H`/`f`), the erases
-(`J`/`K`). SGR (`m`) is dropped on purpose — this head draws ROLES, not terminal colours — and
-everything else is counted, never guessed at, which is the rule the pane keeps."
+(`J`/`K`), the region, the alternate screen, DECTCEM, and **SGR's ATTRIBUTES**, which are carried on
+the cells they were in force for. **A COLOUR is still counted rather than guessed at** — this head
+draws roles out of its own palette and a terminal's colour number is not one of them — and so is
+every sequence this build does not know."
   (let ((dropped 0) (args "") (state :text) (n (length output)) (i 0)
         ;; `ESC [ ? …` is a PRIVATE sequence — the screen switch and the cursor are spelled that way,
         ;; and the `?` is not a digit, so it has to be remembered rather than skipped.
@@ -655,6 +712,9 @@ everything else is counted, never guessed at, which is the rule the pane keeps."
                  ;; sequence's final byte), not a carriage return; a carriage return is `#\return`,
                  ;; which the text state handles above.
                  (#\r (%ts-set-scroll-region s (arg1) (arg2-or (term-screen-rows s))))
+                 ;; **SGR (`m`)** — the program's emphasis, kept on the cells it writes. See
+                 ;; `%ts-set-pen` for what is honoured and what is still counted.
+                 (#\m (%ts-set-pen s args))
                  ;; **THE ALTERNATE SCREEN** (`?1049 h`/`l`) — what a full-screen program switches to
                  ;; so that leaving it restores what was on the screen before. Honoured HERE rather
                  ;; than left to the caller because it is a fact about the TERMINAL, and a program
@@ -675,9 +735,8 @@ everything else is counted, never guessed at, which is the rule the pane keeps."
                            (setf (term-screen-main s) (list (term-screen-cells s)
                                                             (term-screen-top s)
                                                             (term-screen-bottom s))
-                                 (term-screen-cells s) (make-string (* (term-screen-rows s)
-                                                                        (term-screen-cols s))
-                                                                     :initial-element #\space)
+                                 (term-screen-cells s) (%blank-cells (* (term-screen-rows s)
+                                                                         (term-screen-cols s)))
                                  (term-screen-top s) 0
                                  (term-screen-bottom s) (1- (term-screen-rows s))
                                  (term-screen-row s) 0
@@ -730,28 +789,60 @@ everything else is counted, never guessed at, which is the rule the pane keeps."
     dropped))
 
 (defun %term-screen-row-segments (s row)
-  "One row of SCREEN as pane SEGMENTS, with the CURSOR CELL reversed when the program asked for a
-cursor (`?25h`).
+  "One row of SCREEN as pane SEGMENTS — **a run of cells per STYLE**, with the cursor cell reversed
+when the program asked for a cursor (`?25h`).
 
-**The characters are the same either way.** The cursor is a STYLE on one cell and never a character,
-so a reader (or a test) that reads the text out of the pane still reads exactly what the program
-wrote — and a cursor past the end of the trimmed line is drawn in the space it would occupy, which
-is where a shell's cursor sits after a command it has already drawn."
+ **The characters are the program's and the styles are the program's.** A cell carries what was
+ written into it together with the pen in force at that moment (`%ts-set-pen`), so a stretch of one
+ style is one segment and the pane's own renderer does the rest.
+
+ **And the TEXT is unchanged by any of it** — an emphasis, a colour and a cursor are all STYLES on a
+ cell and never characters, so a reader (or a test) that copies a line out of the pane still reads
+ exactly what the program wrote."
   (let* ((cols (term-screen-cols s))
-         (text (string-right-trim '(#\space)
-                                  (subseq (term-screen-cells s) (%ts-index s row 0)
-                                          (+ (%ts-index s row 0) cols))))
-         (line (format nil "  ~a" text))
-         (at (+ 2 (min (term-screen-col s) (length text)))))
-    (if (not (and (term-screen-visible s) (= row (term-screen-row s))))
-        (list (cons line nil))
-        (cond ((< at (length line))
-               (append (list (cons (subseq line 0 at) nil)
-                             (cons (string (char line at)) '(:reverse t)))
-                       (let ((after (subseq line (1+ at))))
-                         (when (plusp (length after)) (list (cons after nil))))))
-              ;; the cursor is past the text this row has: the cell it would overwrite is a blank
-              (t (list (cons line nil) (cons " " '(:reverse t))))))))
+         (cells (term-screen-cells s))
+         (start (%ts-index s row 0))
+         ;; the row's cells, right-trimmed: a trailing blank carrying no style is not drawn
+         (line (let ((end cols))
+                 (loop while (plusp end)
+                       for cell = (aref cells (+ start (1- end)))
+                       while (and (char= (car cell) #\space) (null (cdr cell)))
+                       do (decf end))
+                 (loop for c from 0 below end collect (aref cells (+ start c)))))
+         (here (and (term-screen-visible s) (= row (term-screen-row s))))
+         (cur (term-screen-col s)))
+    (%segment-runs
+     (format nil "  ")
+     (if (not here)
+         line
+         (cond ((< cur (length line))
+                (let ((l (copy-list line)))
+                  (setf (nth cur l) (%reverse-cell (nth cur l)))
+                  l))
+               ;; the cursor is past the text this row has: the cell it would overwrite is a blank
+               (t (append line
+                          (loop for i from (length line) below cur
+                                collect (cons #\space nil))
+                          (list (cons #\space '(:reverse t))))))))))
+
+(defun %reverse-cell (cell)
+  "CELL with `:reverse` in its style — the cursor's own mark, ADDED to whatever the program had on
+ that cell rather than replacing it, so a bold word under a cursor is still bold."
+  (cons (car cell) (list* :reverse t (cdr cell))))
+
+(defun %segment-runs (indent cells)
+  "INDENT, then CELLS as segments: one `(text . style)` per run of cells that share a style."
+  (if (null cells)
+      (list (cons indent nil))
+      (let ((out (list (cons indent nil))) (run "") (style nil) (first-p t))
+        (dolist (cell cells)
+          (let ((c (car cell)) (st (cdr cell)))
+            (cond (first-p (setf run (string c) style st first-p nil))
+                  ((equal st style) (setf run (concatenate 'string run (string c))))
+                  (t (push (cons run style) out)
+                     (setf run (string c) style st)))))
+        (push (cons run style) out)
+        (nreverse out))))
 
 (defmethod pane-lines ((pane term-pane) head cols room)
   "The terminal's bytes, as this head can HONESTLY draw them today, and the pane's own keys.
