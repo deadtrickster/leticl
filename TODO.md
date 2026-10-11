@@ -861,11 +861,24 @@ rest names the commit it comes from.
     one row marked by quoting it (`09b1c0f`), a row waiting on a CHILD (`f8d98b6`), and the
     plan as a DAG with `needs` edges (`c211118`, `f8d98b6`) — `TodoNeed::{Row, Child}` rides
     the row and this pane draws none of it.
-  - [ ] **the merge queue** (`e9eb358`, `424c212`, `8178c4e`, `5b925b6`, `1cff68e`,
+  - [x] **the merge queue** (`e9eb358`, `424c212`, `8178c4e`, `5b925b6`, `1cff68e`,
     `0b05003`): the pane, the person's approve/veto/rm, `/queue reset|clean|restart`, the
     gate's steps drawn in order, the standings beside the triangle, and the review queue as
     TWO VIEWS OF ONE LIST (protocol 38's removal rides it). The big filed project; the queue
     is daemon-level and asks with `ListMergeQueue`.
+
+    **EVERY CLAUSE ON THIS LINE IS NOW VERIFIED AGAINST THE TREE (2026-10-11).** The pane (`merge-queue-pane`,
+    class + `:queue` keyword + three methods + both mode lists); **the person's hand** — approve, veto,
+    rm AND restart — as the daemon's own slash line, with `queue-verb-refusal` mirroring the daemon's
+    rule so a row it would refuse is SAID rather than sent, and the pane's `a`/`v`/`d`/`r` letters and
+    `/queue VERB ID` ONE path; **`/queue reset|clean|restart`** — restart was there and the two
+    QUEUE-level verbs were not, which this session landed (`queue-act`, `fa7e549`: they take no id, and
+    the daemon still owns what they mean); **the gate's steps in order** (`:gate-steps` drawn by
+    `pane-protocol.lisp`); **the standings beside the triangle** (`merge-standings-line`, `chrome/composer.lisp`);
+    and **the review queue as TWO VIEWS OF ONE LIST** (`queue-switch-view`, `/queue review|merge`, and the
+    pane's own tab strip against `standings`). Held by the queue's own tests — the pane draws its states
+    and why each is that state, the verbs send the daemon's line or say why not, and the pane re-reads
+    every five seconds while open.
   - [ ] **the lateral send and the question row** — a message to a session the worker owns is
     a row and a turn (`af218a2`, `3d36cea`), and an answered question leaves the operator's
     answer as their own row, byte-identical and citable (`7179fc6`, `0cf9cce`).
