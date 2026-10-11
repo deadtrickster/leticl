@@ -657,7 +657,13 @@ rest names the commit it comes from.
     the fold's tests*. Measured against `protocol.rs:1268`, whose own words are that the name is
     *the agent's own stated intent* and *never a parse of the command line*, because a slug derived
     from the command would be the machine inventing an intent.
-    (`29f2422`, `5d3bfac`), `allow-all`'s answer surviving a restart (`9f09f04`), the stop
+    (`29f2422`, `5d3bfac`), **`allow-all`'s answer surviving a restart (`9f09f04`) IS THE DAEMON'S** — `harnessd/src/modes.rs`
+    + `harness.rs` + `sessions.rs`, the answer living in the session's store rather than in a head's
+    memory. **And `195a813` (a stop interrupts the turns it holds) is MOSTLY the daemon's** —
+    `sessionlog/src/{registry,server}.rs` — **with a genuine 20-line head half** (`app/session.rs`):
+    this head must let a `Stop` end the turn it holds rather than leaving a running turn's clock and
+    spinner over a daemon that has gone. That last one is the only piece of this row that is
+    head-side and not yet measured in detail; the term pane (`401e61f`) is the `!term` project.
     that interrupts the turns it holds (`195a813`), and the term pane born at its size
     (`401e61f`).
 
