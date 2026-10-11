@@ -672,4 +672,16 @@ head runs today breaks without them.
     and nothing else*: the approve/veto/rm acts belong to the DAEMON's own surface (its CLI or its
     other clients), and a head that invented them would be building an interface the other half
     does not answer. **The honest next step is therefore not code**: find where the acts live in
-    the reference (the daemon's CLI, most likely) and only then decide what this head owes.
+    the reference (the daemon's CLI, most likely) and only then decide what this head owes
+    **AND THE THIRD MEASUREMENT FINDS THEM — 2026-10-11.** They are the STORE's, not a head's:
+    `tokencore/src/store.rs` has `approve_entry(…)` and `veto_entry(entry_id, evidence, now_ms)`,
+    with a test named *a veto parks the row and a remove forgets it* — so a REMOVE is a real
+    deletion there, and a VETO parks the row with its evidence, which is the opposite of each
+    other and both are the queue owner's acts. **And `MergeState` HAS SEVEN STATES, NOT FIVE**:
+    `Waiting, Taken, Landed, Failed, Conflict, Stale, Vetoed`. This head's renderer maps five of
+    them (`landed`, `failed`, `conflict`, `waiting`/`stale`) and draws anything else PLAIN — so
+    `taken` and `vetoed` currently arrive in the pane with no colour at all. That is honest rather
+    than wrong, and it is the next concrete thing to fix here: give those two their registers from
+    the daemon's own semantics (a `taken` row is *in flight*, a `vetoed` one is *a person said
+    no*) — **not** from a guess, and not before the events that carry them are watched on a live
+    queue.
