@@ -654,8 +654,13 @@ head runs today breaks without them.
   · **S — the pane, drawing state and EVIDENCE — THE RENDERER IS LANDED** (2026-10-11, `merge-queue-lines`, held by `the-merge-queue-draws-its-states-and-why-each-one-is-that-state`): two lines per entry, `[state] branch` over the evidence, cursor reversed, the panes' own registers (landed Success, failed/conflict Failure, waiting Pending) and an unknown state drawn PLAIN rather than guessed; an entry with no evidence SAYS *no reason given*. **STEP TWO IS NOW COMPLETE TOO (2026-10-11)**: the pane class, the `:queue` keyword in `*pane-classes*`, `pane-lines`/`pane-cursor-rows`/`pane-hint`, `/queue` asking AND opening it (`%toggle-pane`), and — the piece the test caught — `:queue` in **the pane arm's mode list**, because `%handle-key` enumerates the modes it serves and a registered pane absent from that list DRAWS and receives no keys at all. Held by the same test, which asserts the pane opens at the keypress, the ask goes with it, the pane draws the renderer's rows and nothing of its own, and `q` closes it. **WHAT REMAINS** — the pane class, `pane-lines` calling this, the mode keyword, `pane-cursor-rows`, `pane-escape-target`, the hint row and `%open-pane`: the drawing is done, which is why the risky half was split from it.** One row per entry, the evidence as the reason —
     *the evidence is the reason for the state in the queue's own words*. The five states are
     already a vocabulary this head renders elsewhere; this is one more pane in `src/panes/`.
-  · **M — the person's hand: approve, veto, rm.** The reference's own three acts on a row, each
-    naming the entry by id and each answered by a `MergeEntryMoved` a head already folds.
+  · **M — the person's hand: approve, veto, rm.** **CORRECTED 2026-10-11 by measuring the
+    reference: these are NOT client frames.** There is no `MergeApprove`/`MergeVeto`/`MergeRemove`
+    in letibot's crates — the only client frame about the queue is `ListMergeQueue`, which this head
+    already sends. So the acts must ride the SLASH path (a `/queue approve <id>` line the daemon
+    answers, the way `/job` and `/gate` work), and the next session should confirm that in
+    `crates/tui/src/keys/` before writing anything: inventing three frames for acts the daemon
+    reaches another way is exactly the mistake this ledger keeps catching.
   · **M — the standings and the gate's steps, in order.** The steps drawn in the order the gate
     runs them (which is the gate's own sequence, not the head's), and the standings beside the
     triangle the head already draws.
