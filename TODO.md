@@ -791,8 +791,17 @@ head runs today breaks without them.
     additive with its own note: *an older peer reads past it and draws the queue without the
     reviews*. So *two views of one list* is a PANE question rather than a wire one: the same queue
     drawn whole, and one entry's reviews drawn as their own view — and the head already has the
-    pattern (the job-output overlay is a second view of a row the list holds). **What is NOT yet
-    known**: `MergeReview`'s fields, which the next session should read before drawing them. And
+    pattern (the job-output overlay is a second view of a row the list holds). **AND `MergeReview`'S FIELDS ARE READ, so nothing is left to
+    guess** (`event.rs:516`): `entry_id`, `session_id` (*the session that reviewed it — the one a
+    person attaches to when they want to read the argument rather than the verdict*), `branch`,
+    `base_sha`, `asked_ms`, `answered_ms` (`None` while outstanding), `decision` (`accept`,
+    `reject` or `needs_human`, or `None` for one that has not answered — `serde(default)`),
+    `failure` (*the last attempt's failure, verbatim, or empty* — **and the daemon's own note says
+    it must NOT be read as a decision: a reviewer whose turn failed reached no judgement, so
+    `decision` is `None` and without this field the pane drew *asked and has not answered* over an
+    attempt that had already died**), and `reasons` (*the reviewer's reasons, in its own words*).
+    So the view has three facts to keep apart — a verdict, no verdict yet, and a review that DIED —
+    which is the same three-way distinction the notes and the gate steps each turned on. And
     `/queue reset | clean | restart` — the verbs, each with the sentence that says what it did.
     **AND A SECOND MEASUREMENT, 2026-10-11**: the reference's TUI has NO `/queue` verb either —
     `queue` appears in no chord or key file, and its ONE reference is `driver.rs:737`, the
