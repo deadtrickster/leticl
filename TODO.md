@@ -92,9 +92,22 @@ WEATHER, sub-sessions) and `docs/code-review-2026-10-11.md`. **The operator's ru
 a FEATURE gap is the finding, not a pixel difference; algorithmic differences are fine; where this
 head does something better, it is KEPT (section D).
 
+**LANDED 2026-10-11, the same day**, on `sweep-2026-10-11` → `main` (`f157a56`): the transcript
+pass `76ab52d`, stability `3c23cfa`, the wire `697a741`, input `6142a14`, the integration
+`f157a56`, the release pin `9dd42ac`. Four implementation passes on disjoint files, each with
+its own test file (`tests/sweep-{wire,input,transcript,stability}.lisp`, 55 tests); suite 8359
+checks. **Left over, by name:** the model's todo rows are drawn but are still not cursor STOPS
+(`todos-stops`, repo-todo.lisp — the R44 boundary; Enter reads the operator's own rows whole, and
+`/todo postpone|rm WORDS` moves a model row by its words), so B.4 is `[~]`; todo ids are minted
+outside the store transaction (`the-operator-todos.lisp:275`); the `/todo add` verb path does not
+cap titles (the draft card does); a frame larger than the free socket buffer can still block for
+its remainder (a writer thread is the full fix); `!term` forwards no mouse reports (needs the VT
+screen to record the mode). The two review items found already fixed at HEAD (`%sgr-to-style`'s
+three ways, `*compaction-sections*`'s writer) got the tests the review asked for.
+
 ### A. Red now — breaks a live session or the suite
 
-- [ ] **`!term` has never spoken the daemon's frames.** `term_open` goes out as `{cols,rows}` and the
+- [x] **`!term` has never spoken the daemon's frames.** `term_open` goes out as `{cols,rows}` and the
   daemon requires `line: String` (protocol.rs:2131); `term_input` sends `:data` and the daemon wants
   `bytes: Vec<u8>` (:2151). Either one fails serde, the daemon answers `Bye` and drops the socket —
   so `/term` today costs a reconnect. The answers are wrong-shaped too: `term_attached` carries only
@@ -102,20 +115,20 @@ head does something better, it is KEPT (section D).
   (pane-protocol.lisp:457); `term_output` carries `bytes` as a JSON number array (:2597) where the
   fold reads `:data` as a string and always gets `""`. Fix all four shapes; `term_status` is a frame
   this head should also be able to send (what is running after leaving the pane).
-- [ ] **`/todo rm` resurrects the row.** `set_operator_todos` maps only `completed` and `postponed`
+- [x] **`/todo rm` resurrects the row.** `set_operator_todos` maps only `completed` and `postponed`
   (the-wire.lisp:118-122); `cancelled` goes out as `"pending"`, the board stores pending, and the next
   `todos_updated` writes pending back. Send every status; send `moved` (protocol 41) so the operator
   can postpone/cancel rows the model wrote.
-- [ ] **`QueueMoved` is not folded** (event.rs:1998, `{queue,id,to,why}`); it is broadcast into EVERY
+- [x] **`QueueMoved` is not folded** (event.rs:1998, `{queue,id,to,why}`); it is broadcast into EVERY
   session's log (registry.rs:2111), so each move files an "unknown event" row on every head, bumps the
   ⚠ alarm, and replays on reattach. The `:merge-entry-added`/`:merge-entry-moved` arms are dead
   (protocol 43 folded them into this one).
-- [ ] **Protocol 43 is not claimed, and `queues` replaced `merge_queue`.** The arm at frames.lisp:1026
+- [x] **Protocol 43 is not claimed, and `queues` replaced `merge_queue`.** The arm at frames.lisp:1026
   matches a frame name that no longer exists, so `/queue` draws nothing. Fold `queues` (one snapshot of
   both queues), bump the constant, record the move in versions.lisp.
-- [ ] **`DecisionRequested.write_targets` is dropped on the live arm** (seq-gap.lisp:476-523 has no
+- [x] **`DecisionRequested.write_targets` is dropped on the live arm** (seq-gap.lisp:476-523 has no
   `:write-targets`), so the permission card shows a write's targets only after a resync. Carry it.
-- [ ] **The 7 red pin checks.** The compaction announcement is now
+- [x] **The 7 red pin checks.** The compaction announcement is now
   `"{r} of {w} {unit} resident{basis}, leaving less than the {h} …"` (harness.rs:7913) — with a basis
   clause and a unit that can be `ledger tokens (unscaled: …)`; `" tokens resident now, was "` is a dead
   arm (that sentence only goes to stderr now); `compacted: A → B {unit}, on transcript T.` misses the
@@ -126,44 +139,44 @@ head does something better, it is KEPT (section D).
 
 ### B. Build this pass — each with a test, each small enough for one sitting
 
-1. [ ] **The queue pane, finished** (reference `ui/panes/queue.rs`, R61): both queues behind a tab;
+1. [x] **The queue pane, finished** (reference `ui/panes/queue.rs`, R61): both queues behind a tab;
    the red target first and on the composer edge; per-repo lease with owner, build, heartbeat age and
    STALE past 90 s; time in the CURRENT state; the selected row's moves; `a`/`v`/`d`/`r` on an empty
    composer; `/queue approve|veto|rm|restart ID`; re-read every 5 s while open. Today: one merge list,
    no verbs, `/queue` ignores its arguments (dispatch.lisp:196-205).
-2. [ ] **`!term` keys that do not lose the shell.** `ctrl-c` must reach the program as ETX, not close
+2. [x] **`!term` keys that do not lose the shell.** `ctrl-c` must reach the program as ETX, not close
    the pane (dispatch.lisp:96-99 lists `:term` in the close list); `q` must not end the shell —
    `ctrl-\` DETACHES (pane closes, program lives; reference `app/term_pane.rs`), and closing is an
    explicit `/term close`.
-3. [ ] **Mouse on cards.** The allow-all card treats a wheel notch or a click as "no"
+3. [x] **Mouse on cards.** The allow-all card treats a wheel notch or a click as "no"
    (pick.lisp:364-377) — ignore mouse events there; a click on a decision rung or a quit choice selects
    it (the click router has no card arm, click-actions.lisp:66-95); `%pick-click` assumes one row per
    choice while `/verbosity` draws two (click-actions.lisp:28-41 vs pick.lisp:203).
-4. [ ] **Todos: a model's row can be read whole** (Enter on it opens the row in an overlay —
+4. [~] **Todos: a model's row can be read whole** (Enter on it opens the row in an overlay —
    `pane-enter` on todos only knows `:add` and `:repo`, pane-keys.lisp:196) **and titles are capped at
    135 characters where they are written** (reference `app/todos.rs:390`).
-5. [ ] **Standing notes: Enter opens the note** in a read overlay (the peek/job-out pattern; the
+5. [x] **Standing notes: Enter opens the note** in a read overlay (the peek/job-out pattern; the
    reference opens rano, which this head does not embed — see C).
-6. [ ] **A `!` result row is drawn at every verbosity rung** (reference 4237b19). `reading-hides-p`
+6. [x] **A `!` result row is drawn at every verbosity rung** (reference 4237b19). `reading-hides-p`
    (hidden-run.lisp:37-55) folds the operator's own `! ls` output into a `[1 tool call]` count; a row
    whose `:origin` is the operator is never hidden.
-7. [ ] **The detected-diff panel under `Ran`**: draw the command's OUTPUT and then the diff
+7. [x] **The detected-diff panel under `Ran`**: draw the command's OUTPUT and then the diff
    (tool-result-card.lisp:265-277 `return-from`s with the diff alone), and the provenance line
    *"detected afterwards — not made by `edit`"* folded or open (reference 6ba1ede, `call.rs:236-255`);
    the live card and the settled row share the 8-row rule (live keeps 10+3 today,
    live-call-card.lisp:185,206) so the diff does not change shape when the call settles.
-8. [ ] **A compaction is one visible line at the reading rungs** (reference 8fb629a: `· compacted — A →
+8. [x] **A compaction is one visible line at the reading rungs** (reference 8fb629a: `· compacted — A →
    B tokens`). This head files it as a `compact` tool row, which `+reading-hides+` then folds into a
    count — exclude it from the hide list (the record stays the payload at the open rungs, section D).
-9. [ ] **`/help` rows**: add `ctrl-g`, `ctrl-j`, `ctrl-o`, `/queue`, `/standing`, `/term`; the wheel row
+9. [x] **`/help` rows**: add `ctrl-g`, `ctrl-j`, `ctrl-o`, `/queue`, `/standing`, `/term`; the wheel row
    says it scrolls what is in front; the click row names every clickable surface (help.lisp:14-56).
-10. [ ] **The review's open highs** (`docs/code-review-2026-10-11.md`): `marker_seam` cannot be flipped
+10. [x] **The review's open highs** (`docs/code-review-2026-10-11.md`): `marker_seam` cannot be flipped
     from `/config`; Enter answers a prompt request while its card is AWAY; `hack.lisp` catches `error`
     where `serious-condition` is what a stack exhaustion is; `%sgr-to-style` three ways broken;
     `*compaction-sections*`'s only writer is never called; `+outcomes-taking-a-reason+` is `("failed")`
     against an enum where four more carry payloads; `!send` is a raw five-character prefix; `ctrl-d`
     leaves at once instead of through the quit card; `:dash` missing from the ctrl-c close list.
-11. [ ] **Stability** — the stability pass, ranked by probability × damage:
+11. [x] **Stability** — the stability pass, ranked by probability × damage:
     - **a write to a stalled daemon blocks the main thread for ever** (`write-frame` wire.lisp:28-33,
       `%send` io.lisp:116-149): every ack, screen answer and `tick-peek` write runs on the main loop
       with nothing bounding `write(2)`; a daemon that stops reading fills the ~200 KB socket buffer
