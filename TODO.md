@@ -786,7 +786,13 @@ head runs today breaks without them.
     what it displaces when a completion is open — is what remains. A line nobody calls is the shape
     this session kept finding; said here rather than rediscovered.
     triangle the head already draws.
-  · **M — the review queue as TWO VIEWS OF ONE LIST**, riding protocol 38's removal, and
+  · **M — the review queue as TWO VIEWS OF ONE LIST. MEASURED 2026-10-11: the reviews are ON THE
+    WIRE, one list per entry** — `MergeEntry.reviews: Vec<MergeReview>` (`protocol.rs:2400-2405`),
+    additive with its own note: *an older peer reads past it and draws the queue without the
+    reviews*. So *two views of one list* is a PANE question rather than a wire one: the same queue
+    drawn whole, and one entry's reviews drawn as their own view — and the head already has the
+    pattern (the job-output overlay is a second view of a row the list holds). **What is NOT yet
+    known**: `MergeReview`'s fields, which the next session should read before drawing them. And
     `/queue reset | clean | restart` — the verbs, each with the sentence that says what it did.
     **AND A SECOND MEASUREMENT, 2026-10-11**: the reference's TUI has NO `/queue` verb either —
     `queue` appears in no chord or key file, and its ONE reference is `driver.rs:737`, the
