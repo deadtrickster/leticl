@@ -176,12 +176,13 @@ on ClientFrame::Slash)."
                                      "the model it started with")))))
            (open-pick head :model)))
       ((string= verb "standing")
-       ;; the ask, and the sentence that says it is a wait — the pane that will draw this is the
-       ;; next step; the verb exists now because a constructor with no caller is a feature that does
-       ;; not exist (the suite's own invariant, which refused the queue's wire half alone).
-       (%send head (make-list-notes))
+       ;; **ASK AND OPEN.** The ask belongs to the pane's OPEN — measured in the reference, where
+       ;; the pane queues the read itself (`app/standing.rs:133`) — so the pane appears at the
+       ;; keypress and fills when the mailbox answers. The first cut of this arm only ASKED, which is
+       ;; why `/standing` left the screen on the conversation: the verb existed to satisfy the
+       ;; constructor-needs-a-caller invariant, and the OPEN was never wired.
+       (%toggle-pane head :standing (lambda () (%send head (make-list-notes))))
        (say head "asking the daemon which notes are standing…")
-       (setf (head-dirty head) t)
        t)
       ((string= verb "queue")
        ;; **THE ASK IS STEP ONE'S OTHER HALF** (see the merge queue's box in `TODO.md`): the queue is
