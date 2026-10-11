@@ -11984,6 +11984,34 @@ worked for the merge queue.
     ;; --- and the count is on the heading
     (is (search "standing notes  3" (funcall text)) "the heading counts them")))
 
+(def-test a-job-is-called-by-its-name-and-falls-back-to-its-command (:suite leticl)
+  "**`5d3bfac`: the transcript calls a job by its name — every sentence about a job uses the label.**
+  MEASURED (`sessionlog/src/protocol.rs:1268`): `JobEntry.name` is *the name the caller gave this
+  job*, the agent's own stated intent (`bash(slug: \"release-build\")`) — **and never a parse of the
+  command line**, because a slug derived from the command *would be the machine inventing an
+  intent*. Empty means nobody named it.
+
+  The reason the field exists is the pane: *`j57` is a counter — a person watching cannot tell which
+  running job is the release build and which is the fold's tests, and a name is what makes a row
+  ring a bell.* And the fallback is the COMMAND rather than the id, because the id is a handle and
+  the command is what the reader asked for."
+  (is (equal "release-build" (job-label (list :id "j57" :name "release-build" :command "cargo build --release")))
+      "a named job is called by its name")
+  (is (equal "cargo test" (job-label (list :id "j12" :name "" :command "cargo test")))
+      "**an unnamed one falls back to its COMMAND** — not to `j12`, which is a counter")
+  (is (equal "cargo test" (job-label (list :id "j12" :command "cargo test")))
+      "and a daemon older than the field sends none at all")
+  (is (equal "" (job-label nil)) "no job, no label — not a crash in a renderer")
+  ;; --- and the pane's own row says it
+  (let ((h (%make-head)))
+    (setf (head-jobs h) (list (list :id "j57" :name "release-build" :command "cargo build --release"
+                                    :running t :state "running")))
+    (let ((text (segs-of (jobs-lines h 100))))
+      (is (search "release-build" text)
+          (format nil "**the pane's row is the name** — the reason the field exists: ~s" text))
+      (is (not (search "cargo build --release" text))
+          "and not the command beside it, which the name replaces rather than joins"))))
+
 (def-test the-queues-standings-are-drawn-only-while-something-stands (:suite leticl)
   "**The standings on the composer edge, with the rule that decides when they exist at all**
   (`ui/panes/queue.rs:254`, measured): three counts — *in review* (`waiting`), *being merged*

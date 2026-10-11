@@ -119,6 +119,23 @@ state this build has never met is drawn plain rather than guessed at."
         ;; is the honest register until somebody has seen one.
         (t nil)))
 
+(defun job-label (job)
+  "JOB as the reader should be told about it: its NAME when the daemon sent one, else its command.
+
+**MEASURED, not invented** (`sessionlog/src/protocol.rs:1268`): `JobEntry.name` is *the name the
+caller gave this job* — the agent's own stated intent, `bash(slug: \"release-build\")` — **and never
+a parse of the command line**, because *a slug derived from `W=…; cd /tmp && cargo test …` would be
+the machine inventing an intent*. Empty means nobody named it, and then the command is what a
+reader needs: it is already on the row beside the id.
+
+**`j57` is a counter**, which is the whole reason the field exists: *a person watching the pane
+cannot tell which running job is the release build and which is the fold's tests, and a name is what
+makes a row ring a bell.*"
+  (let ((name (and job (getf job :name))))
+    (if (and (stringp name) (plusp (length name)))
+        name
+        (or (and job (getf job :command)) ""))))
+
 (defun merge-standings-line (head)
   "The merge queue's three counts, as the composer edge draws them — or NIL when NOTHING STANDS.
 
@@ -209,7 +226,7 @@ Second value is the cursor's LINE: two lines per job after a two-line header."
                                          (floor elapsed 1000) (floor (mod elapsed 1000) 100))))))
                (push (list (cons (format nil "~a " (if picked "▸" " ")) (and picked '(:reverse t)))
                            (cons mark (if picked (append '(:reverse t) colour) colour))
-                           (cons (format nil " ~a ~a" (getf j :id) (getf j :command))
+                           (cons (format nil " ~a ~a" (getf j :id) (job-label j))
                                  (and picked '(:reverse t)))
                            ;; **A JOB WITH A DASHBOARD SAYS SO ON ITS OWN ROW.** The operator's
                            ;; ask: *"link to dashboard from jobs if a job has associated
