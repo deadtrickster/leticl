@@ -525,6 +525,17 @@ rest names the commit it comes from.
     kept; on an empty prompt it opens on any file; and the pane wears the
     head's frame rather than nano's. This is the `!term` project's sibling and
     the same rectangle contract applies.
+
+    **MEASURED 2026-10-11, AND IT SETTLES WHERE THIS BELONGS.** The reference's `open_editor`
+    (`crates/tui/src/app/editor.rs:323`) is an `EditorPane` holding **a rano instance** — it
+    TOGGLES (`p.hidden = !p.hidden`, so *put away* is not *destroyed*: the file, the cursor and the
+    keyboard come back as they were), it is drawn BEHIND the composer, and the door into it is
+    *`F8` is rano's `open-file`, in its global map, and a key is the one door into rano's commands
+    its API keeps public*. So this is not a head-side pane at all: **it is the `!term` project's
+    sibling**, needing the same rectangle contract — a program that owns the conversation's
+    rectangle — and the same client frames. A head that built "a pane drawing a file" would be
+    building the wrong thing, which is why the item is left where the ledger already put it: beside
+    `!term`, not in the 48-batch's list of small mirrors.
   - [ ] **standing notes: the agent writes the notes it already reads**
     (`1c9f3a4`, `35670ee`, `1be706b`) — a tool, so the wire is the tool table;
     the head's notes pane is the surface, and every read must say the notes are
