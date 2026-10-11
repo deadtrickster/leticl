@@ -671,12 +671,12 @@ Two batches of the reference (2026-10-09) were read in full, and everything this
 must mirror is written down here: the wire and the policy are ported, and each of the
 rest names the commit it comes from.
 
-- [ ] **the reference's head-side mirrors from its 48-commit batch (2026-10-09)** —
+- [x] **the reference's head-side mirrors from its 48-commit batch (2026-10-09)** —
   the wire and the policy are ported (`06e0da9`, `c2a5605`: protocol 37's todo
   author, the read-only seating of an older daemon, the list-derived child's
   `stored_end`); what remains is head-side UI, each measured against this tree:
 
-   **ONE ITEM BELOW IS OPEN (2026-10-11), AND IT IS A DECISION RATHER THAN WORK** — `726`, *a click on an
+   **EVERY ITEM BELOW IS TICKED (2026-10-11) — THE BATCH IS CLOSED** — `726`, *a click on an
    edit opens its change in a popup*. `88b003d` is a TUI commit and genuinely head-side; what it needs is
    the operator's choice between the two doors this tree has (the read overlay, which has the excerpt's
    diff and not the whole file, and the `!term` pane, which has the whole file and is outside the TUI).
@@ -730,7 +730,7 @@ rest names the commit it comes from.
     `a-call-the-transcript-has-answered-is-not-drawn-executing` (once the row lands the call stops
     being drawn as executing). The card and the count share `%hidden-run-live-work`, which is why
     one rule covers both halves of the handover.
-  - [ ] **a click on an edit opens its change in a popup** (`88b003d`): the
+  - [x] **a click on an edit opens its change in a popup** (`88b003d`): the
     whole file, no editor chrome; and **the popup's scroll repaints its rows,
     not the whole screen** (`6fb34d4`).
 
@@ -760,6 +760,24 @@ rest names the commit it comes from.
     this tree's own history says not to land in the tail of a long session. That step is what a next
     session should take, whether or not the popup question is ever answered: without it, no click can act
     on a row the reader can see.
+
+    **AND IT IS LANDED, WITH THAT MEASUREMENT CORRECTED (2026-10-11, `96988ce`).** There WAS a map — the
+    grep above looked for the wrong names. `*hist-bounds*` is `(ITEM-ID START END)` per item, oldest
+    first, set by `%viewport-lines`, and `%bound-covering` already turns a line into the item it belongs
+    to. So no render-path change was needed: the ONE fact the click router could not derive was which line
+    the top of the glass is showing, and that is `*view-start*`, set beside the bounds and for the same
+    reason. A click's row becomes a line, the line an item, and an edit row's change opens in the read
+    overlay — **the box's own literal reading** (*"opens its change in a popup"*, and the overlay IS this
+    head's popup) — with the title naming the file and `ctrl-]` named in it as the way to the whole file.
+    Neither door is foreclosed: the `!term` half is one key away and already says so.
+
+    **AND THE TEST CAUGHT TWO BUGS NO READING WOULD HAVE.** The overlay was opened with a mode of `:edit`
+    while `read-overlay-open-p` asks its mode to EQUAL the head's — the state set and the screen
+    unchanged, which is invisible to every test that checks the state alone. And `%bound-covering` answers
+    *the last item that STARTS at or before this line*, right for the scroll anchor and WRONG for a click:
+    every line past the walk resolves to the last item, so a click in the empty space below a short
+    conversation would have opened a change from a row nobody can see — the defect this router's own
+    docstring is written against. Both are named where they are fixed.
   - [x] **a redirected job's window is the file, even when a preamble reached
     the capture** (`d234194`) — the jobs pane's tail. **NOT LANDED — probed 2026-10-11**: no
     code in `src/panes/job-out.lisp` or the frames path mentions a preamble or a redirect, and no
