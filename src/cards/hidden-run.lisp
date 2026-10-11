@@ -44,6 +44,21 @@ beside a row that is still on the screen, or collapse a run that is not one."
     (and (reading-p)
          body
          (member (%key-from-wire (getf body :type)) +reading-hides+)
+         ;; **AN ACT OF THE PERSON AT THE KEYBOARD IS NEVER HIDDEN BY VERBOSITY** (letibot
+         ;; `4237b19`, sweep B.6). MEASURED there on a live head: the operator typed `! ls`, the
+         ;; store held the `tool_result` with `origin: {operator …}`, and at `read-edits` the
+         ;; listing was never on the screen — their own guess, *"i guess it was eaten by verbosity
+         ;; level"*, was the right one. This head folded the same row into a `[1 tool call]` count.
+         ;; **Verbosity governs how much of the MODEL's working you see; it must not hide what YOU
+         ;; did.** The `!` result is the conversation exactly as the `User` row beside it is, so it
+         ;; is drawn at every rung. `%operator-origin-p` is the one reader of that fact; a row with
+         ;; no origin is the model's and takes the rung as before.
+         (not (%operator-origin-p body))
+         ;; **A COMPACTION IS ONE LINE, NOT A COUNT** (letibot `8fb629a`, sweep B.8). It is a
+         ;; `tool_result` by filing and not by nature — see `+reading-never-hides+` for the ruling —
+         ;; so the name list is asked here, where every hide is decided, and `%tool-result-lines`
+         ;; draws the kept row as its headline alone.
+         (not (reading-kept-tool-p body))
          ;; **`read-edits` KEEPS THE EDITS, AND THIS IS THE ONLY PLACE THAT DECIDES IT.** Every hide
          ;; in this head goes through this predicate — `item-lines` before drawing a row and
          ;; `%history-until` when it finds the run — so the exception lives here or it does not exist.
@@ -53,6 +68,21 @@ beside a row that is still on the screen, or collapse a run that is not one."
          ;; not what the call returned. The operator's rule (2026-10-04) is that edits are the
          ;; `edit` tool *plus* the heredoc-shaped writes, and both are `item-shows-an-edit-p`'s.
          (not (and (read-edits-p) (item-shows-an-edit-p item))))))
+
+(defun reading-kept-tool-p (body)
+  "Is BODY a tool row the reading rungs keep BY NAME — one of `+reading-never-hides+`?
+
+**Two readers, one answer**: `reading-hides-p` decides the row stays on the screen, and
+`%tool-result-lines` decides that what stays is the headline alone. A second spelling of the name
+test in either would let a row be kept whole, or hidden with a one-line rule waiting for it.
+
+`string-equal`, because the name is the wire's string and this head's own filing writes it in
+lower case; a body with no name (a fixture, a frame from a daemon that forgot) is not kept, which
+is the direction `+reading-hides+` already falls — a thing this build cannot name is the working."
+  (let ((name (getf body :name)))
+    (and (stringp name)
+         (member name +reading-never-hides+ :test #'string-equal)
+         t)))
 
 (defun item-shows-an-edit-p (item)
   "Does ITEM show an EDIT — what the `:read-edits` rung exists to keep on the screen?

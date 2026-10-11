@@ -160,6 +160,26 @@ three colours, none of them the reference's."
                                                    :test #'string=)
                            :decision))
            (edit (getf st :edit))
+           ;; **the same question the settled row asks** — is the verb itself an edit — and the
+           ;; same two answers: under `Edited`/`Wrote` the diff IS the body; under `Ran` it is a
+           ;; panel the daemon detected after the command, drawn after the body with its
+           ;; provenance line. `%diff-panel-lines` is the one renderer of both (sweep B.7).
+           (edit-verb (and (member (%verb-kind (getf call :name)) '(:edit :write)) t))
+           ;; **FOLDED BY THE SETTLED ROW'S RULE, NOT BY THIS CARD'S BUDGET.** The card kept its
+           ;; tool budget over the diff — ten head rows, a marker and three tail rows for an edit,
+           ;; two and three for a `bash` that changed a file — while the settled row kept
+           ;; `+diff-fold-rows+` and a seam, so the diff changed shape at the moment the call
+           ;; settled: the hand-over flickering, one frame drawn one way and the next another, for
+           ;; one call (reference `call.rs:375-387`: *the same panel the settled row draws, for the
+           ;; same reason*). The panel arrives already folded, with no lead — `Card::render`'s
+           ;; mapcar below adds the two columns — and the budget below is not applied to it.
+           ;; The seam names `/config`: this card is not a payload row, so `/t` does not act on it.
+           (panel (and edit
+                       (%diff-panel-lines edit (- cols 2) :open open :subject target-raw
+                                          :split (string= (or (getf prefs :diff) "unified") "split")
+                                          :unfold "/config unfolds it"
+                                          :detected (not edit-verb)
+                                          :lead "")))
            (body nil))
       ;; §8.3's disclosure, as prose and in units a person reads. In the BODY
       ;; rather than the header tail, because the header tail is dropped whole
@@ -176,14 +196,15 @@ three colours, none of them the reference's."
                                     (bytes-human inline-bytes))
                                 '(:dim t))))))
       ;; a file-editing call carries both sides of the change (event.rs:75), and
-      ;; the diff REPLACES the body rather than following it. Two columns
-      ;; narrower than we had it: the card indents its body by two, and `ind` was
+      ;; under an EDIT VERB the diff REPLACES the body rather than following it — so the
+      ;; byte-count line goes, as it always did, and the panel is drawn in its place below.
+      ;; Two columns narrower than we had it: the card indents its body by two, and `ind` was
       ;; in effect being subtracted twice.
       ;; **AND THE SAME FIX HERE, because the card and the settled row are two renderers of one
       ;; fact** — the second place this same guard was written, and the reason the drift would
       ;; have survived a fix to only one of them. See `%tool-result-lines` for the measurement.
-      (when edit
-        (setf body (edit-lines edit (- cols 2) :subject target-raw)))
+      (when (and edit edit-verb)
+        (setf body nil))
       ;; the approval this call was gated by — `%decision-card-lines`, the ONE
       ;; spelling the settled row draws too. It was a second copy here, and it
       ;; had already drifted: the echoed-basis skip was the settled row's fix
@@ -203,10 +224,18 @@ three colours, none of them the reference's."
             ;; `Card::render`: the budget over the body, then two columns of
             ;; indent, then every row trimmed to the width. A folded card with a
             ;; sixty-row diff drew all sixty rows here; the reference draws ten,
-            ;; a marker, and three.
+            ;; a marker, and three — for a BODY. **A diff is not budgeted here**: the
+            ;; panel is folded by `+diff-fold-rows+` already, the settled row's own
+            ;; rule, and a second cut over it would give the two renderers two shapes.
             (let ((budget (card-body-budget card)))
-              (mapcar (lambda (l) (%truncate-segs (cons (cons "  " nil) l) cols))
-                      (if open
-                          (head-tail-lines body +expanded-max-rows+ 0)
-                          (head-tail-lines body (car budget) (cdr budget)))))))))
+              (flet ((fit (l) (%truncate-segs (cons (cons "  " nil) l) cols)))
+                (append
+                 ;; the diff IS the body under an edit verb, so it comes first
+                 (when (and panel edit-verb) (mapcar #'fit panel))
+                 (mapcar #'fit
+                         (if open
+                             (head-tail-lines body +expanded-max-rows+ 0)
+                             (head-tail-lines body (car budget) (cdr budget))))
+                 ;; and FOLLOWS the body — the command's own account — under any other
+                 (when (and panel (not edit-verb)) (mapcar #'fit panel)))))))))
 

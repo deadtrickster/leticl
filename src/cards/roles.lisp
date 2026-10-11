@@ -237,10 +237,17 @@ row at the bottom of every open card, against letibot's screen."
  30-37 and 90-97 → fg colours, 39 → default fg.
  Parameters this mapping does not know are dropped rather than guessed — the same
  rule the reference keeps for a code nobody classified."
-  (let ((codes (mapcar #'parse-integer
-                       (remove "" (uiop:split-string (or params "")
-                                                     :separator '(#\;))
-                               :test #'string=)))
+  ;; **A PARAMETER THAT IS NOT A NUMBER IS DROPPED, NOT SIGNALLED ON.** `parse-integer` with no
+  ;; `:junk-allowed` signals on `ESC[38:2::255:0:0m` — the colon-separated form every modern
+  ;; terminal emits for a truecolour — and on `ESC[>4;1m`, and this function runs on the bytes a
+  ;; command wrote, under `%paint-line`, on the draw path: the fourth way an operator's own run
+  ;; could take the frame down after the reviewer's three (sweep B.10). The rule is the one the
+  ;; docstring already states for a code nobody classified: dropped rather than guessed.
+  (let ((codes (remove nil
+                       (mapcar (lambda (p) (parse-integer p :junk-allowed t))
+                               (remove "" (uiop:split-string (or params "")
+                                                             :separator '(#\;))
+                                       :test #'string=))))
         (style nil))
     (dolist (c codes)
       (case c

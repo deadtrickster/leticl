@@ -11,8 +11,7 @@
 (defclass assistant-card (card) ())
 
 (defmethod card-lines ((card assistant-card) cols prefs)
-  (let ((item (card-item card))
-        (body (card-body card)))
+  (let ((body (card-body card)))
     ;; The answer sits at the body's own column, with the question: it is
     ;; the one thing on the screen not subordinate to something else.
     ;;

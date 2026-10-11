@@ -59,6 +59,68 @@ convention."))
   (activity-indent cols))
 
 
+;;; ------------------------------------------- the diff panel, drawn by two renderers ;;;
+
+(defparameter +diff-fold-rows+ 8
+  "How many rows of a diff a FOLDED row keeps before the `… +N diff rows` seam.
+
+**One number for the live card and the settled row** (sweep B.7; reference `call.rs`, the
+`detected_diff_rows` the live card and the settled row both call). The settled row kept eight and
+the live card kept its tool budget — ten head rows, a marker and three tail rows for an edit, TWO
+and three for a `bash` command that changed a file — so the diff changed shape at the moment the
+call settled: one frame with the change drawn one way and the next frame drawn another, for one
+call. The hand-over is supposed to be invisible, and a number spelled twice is how it was not.")
+
+(defparameter +detected-diff-provenance+
+  "detected afterwards — the command changed this file; not made by `edit`"
+  "The line a diff under a `Ran` row carries, saying how the diff was obtained.
+
+The reference's own words (`call.rs:236-255`, letibot `6ba1ede`), and the fact they state is
+`bash.rs`'s: when a command changed exactly one file the daemon builds the `FileEdit` itself and
+says so in the payload's `[note]` line. A folded row shows the payload's first line only, so the
+note can be hidden by any note ahead of it — MEASURED in the reference on a head whose daemon
+shared its cgroup, where the first line was `memory: ran UNCAPPED` and the provenance was in
+`… +1 lines`: a diff under `Ran` with nothing saying the command had made it. So the panel says it
+itself, folded or open, and the reader is never asked to infer from the verb that no `edit` ran.")
+
+(defun %diff-panel-lines (edit cols &key open subject split unfold detected (lead "  "))
+  "The DIFF of EDIT as the rows a card draws under its header: folded to `+diff-fold-rows+` and a
+seam, or whole when OPEN — one function for the settled row and the live card.
+
+**The two renderers call this and nothing else draws a diff under a header**, which is what makes
+`+diff-fold-rows+`'s docstring true: a shape agreed by convention between two call sites is a
+shape that drifts, and it had (ten-plus-three against eight).
+
+  · SUBJECT is the row's own subject, so `edit-lines` can leave the path off a diff whose header
+    already names it (`%subject-names-path-p`);
+  · SPLIT is the `diff` preference, `unified` unless the operator chose otherwise;
+  · UNFOLD is what the seam names as the thing that opens the rest — the caller knows which verb
+    acts on ITS row (R40: *a chord is named only where it acts*), this function does not;
+  · DETECTED draws `+detected-diff-provenance+` first — a diff the daemon found after a command,
+    on a row whose verb is `Ran`, says how it was obtained; a diff an `edit` made needs no line
+    saying `edit` made it;
+  · LEAD is the two columns a card's body sits in. The settled row emits its lines with the lead
+    on them; the live card adds the lead itself in `Card::render`'s mapcar, so it passes `\"\"`."
+  (let* ((rows (edit-lines edit cols :folded nil :subject subject :split split))
+         (keep (if open (length rows) (min +diff-fold-rows+ (length rows))))
+         (hidden (- (length rows) keep))
+         (faint '(:dim t))
+         (out nil))
+    (when detected
+      (push (list (cons (concatenate 'string lead
+                                     (truncate-to-width +detected-diff-provenance+ (max 4 cols)))
+                        faint))
+            out))
+    (dolist (l (subseq rows 0 keep))
+      (push (cons (cons lead nil) l) out))
+    (when (plusp hidden)
+      (push (list (cons (format nil "~a… +~d diff rows · ~a" lead hidden
+                                (or unfold "/config unfolds it"))
+                        faint))
+            out))
+    (nreverse out)))
+
+
 (defmethod card-lines ((card tool-result-card) cols prefs)
   (%tool-result-lines (card-item card) (card-body card) cols prefs))
 ;; **`system (Bootstrap)` on its own line, then the text, all dim**
@@ -130,6 +192,16 @@ header, also printed `· 1 line` — a count for a fold with nothing to fold."
          (verb (%tool-row-verb body))
          (subject (%tool-row-subject body))
          (decision (getf facts :decision))
+         ;; **THE WINDOW IS READ ONCE, UP HERE**, because two things below ask it: the payload
+         ;; pager it has always driven, and now the diff panel, which the window unfolds too — a
+         ;; seam that says `/t opens it` under a diff and then opens only the payload has lied.
+         (window (payload-view-for item))
+         ;; **Is the row's verb itself an edit** — `Edited`/`Wrote` against `Ran`. The reference's
+         ;; `verb.is_an_edit()`, and it decides WHERE a diff goes: under an edit verb the diff IS
+         ;; the body; under any other it is a panel the daemon detected after the command, drawn
+         ;; after the command's own output (letibot `e09d77c`, `6ba1ede`; sweep B.7).
+         (edit-verb (and (member (%verb-kind name) '(:edit :write)) t))
+         (split (string= (or (getf prefs :diff) "unified") "split"))
          ;; Sanitised FIRST and filtered second, the reference's order
          ;; (app.rs:9712) — a payload's bytes are the command's, not this
          ;; terminal's (`%without-control`) — and then the envelope lines, which
@@ -206,7 +278,48 @@ header, also printed `· 1 line` — a count for a fold with nothing to fold."
                ;; `%decision-card-lines`, the ONE spelling the live card draws too
                (dolist (l (%decision-card-lines decision w :open open :rows rows
                                                 :lead "  "))
+                 (emit l)))
+             ;; **WHAT A SEAM ON THIS ROW NAMES, said once for every seam the row draws.** Every
+             ;; seam says which key does what NOW — the chord opens the view, the arrows move
+             ;; inside it, esc closes it — because a row that named only the chord was the row
+             ;; that could not be read past its head.
+             ;;   · the window is open on THIS row: the keys are the window's own;
+             ;;   · **the chord, on the row it acts on**, and the verb everywhere else. **The
+             ;;     newest long row names the verb that acts on it; every other row names the
+             ;;     setting that unfolds the wall** — `/t` opens ONE row's window now, and the
+             ;;     conversation-wide unfold is `/config`'s `tools` row;
+             ;;   · **the WALL's home, not a key** — every other long row is unfolded by the
+             ;;     `tools` row in `/config` (the setting `/t` used to toggle), so that is what
+             ;;     the seam names.
+             ;; The diff seam used to say `/config unfolds it` on every row, including the one
+             ;; row `/t` acts on — the same lie R40 removed from the payload seam, one seam down.
+             (unfold-verb ()
+               (cond (window "↓ pages down · esc closes")
+                     ((newest-payload-row-p item) "/t opens it")
+                     (t "/config unfolds it")))
+             ;; the diff, folded to the rule the live card shares — `%diff-panel-lines` — and
+             ;; unfolded by the fold OR by this row's window, so the seam's promise holds
+             (diff-panel (detected)
+               (dolist (l (%diff-panel-lines edit (- w 2)
+                                             :open (or open window)
+                                             :subject subject :split split
+                                             :unfold (unfold-verb)
+                                             :detected detected))
                  (emit l))))
+      ;; **A COMPACTION IS ONE LINE AT THE READING RUNGS** (letibot `8fb629a`, sweep B.8). The
+      ;; operator: *"compaction leads to too much noise in the conversation for me. in conversation
+      ;; and show edits i want a one line - compacted blabla"*. The row survives the rung by name
+      ;; (`+reading-never-hides+`, asked through the same predicate `reading-hides-p` asks) and
+      ;; what survives is the HEADLINE — the verb, the numbers, the outcome and how long the record
+      ;; is — not the first line of the record and a seam, which is the folded shape every other
+      ;; rung draws. The record stays the payload at those rungs; at this one `/notes` has the
+      ;; sentence. **Unless the reader has opened the window on it**: `/t` on this row asked for
+      ;; the rest, and a marker that cannot be opened is the elision this tree refuses everywhere.
+      (when (and (reading-p) (reading-kept-tool-p body) (null window))
+        (emit (%truncate-segs
+               (append head (list (cons (format nil " · ~d line~:p" n) size-style)))
+               w))
+        (return-from %tool-result-lines (nreverse out)))
       ;; A result of ONE line goes on the header — one row where the folded form
       ;; is two, and the second carried the count and a chord for a fold with
       ;; nothing to fold. Not for an edit with an excerpt: that draws its diff.
@@ -265,17 +378,20 @@ header, also printed `· 1 line` — a count for a fold with nothing to fold."
         ;;
         ;; `bad` is kept, and it is a different question from the tool's name: a call that failed
         ;; has its own row above saying so, and the run that carries this excerpt succeeded.
-        (when (and edit (not bad))
-          (let* ((rows (edit-lines edit (- w 2) :folded nil
-                                   :subject subject
-                                   :split (string= (or (getf prefs :diff) "unified") "split")))
-                 (keep (if open (length rows) (min 8 (length rows))))
-                 (hidden (- (length rows) keep)))
-            (dolist (l (subseq rows 0 keep))
-              (emit (cons (cons "  " nil) l)))
-            (when (plusp hidden)
-              (emit (list (cons (format nil "  … +~d diff rows · /config unfolds it" hidden)
-                                faint)))))
+        ;;
+        ;; **AND THE TWO CODE PATHS ARE NOW TWO PLACES ON PURPOSE, drawing one panel** (sweep B.7).
+        ;; R35 made the `bash` row draw the diff, but it drew it INSTEAD of the command's output —
+        ;; this branch `return-from`ed with the diff alone for every verb — so the one row whose
+        ;; output explains the change (a `python3` heredoc's own `wrote 3 files`, a test run's
+        ;; summary) lost that output the moment the daemon detected a file under it. The reference
+        ;; (`e09d77c`, `call.rs:375-387`) draws the output and THEN the diff for a verb that is not
+        ;; an edit, and the diff alone for one that is: an `edit`'s payload is the tool's prose
+        ;; (`wrote`), and the diff is what it means. So:
+        ;;   · an edit verb — `Edited`, `Wrote` — draws its diff here and is done;
+        ;;   · any other verb falls through to its payload below, and the DETECTED panel follows it,
+        ;;     with the provenance line saying how the diff was obtained (`6ba1ede`).
+        (when (and edit (not bad) edit-verb)
+          (diff-panel nil)
           (return-from %tool-result-lines (nreverse out)))
         ;; Folded shows the first line, which is where a tool puts what it did,
         ;; then the seam: `… +N lines`, a separator row and not a sentence — it is
@@ -295,8 +411,7 @@ header, also printed `· 1 line` — a count for a fold with nothing to fold."
         ;; the chord opens the view, the arrows move inside it, esc closes it —
         ;; because a row that named only the chord was the row that could not be read
         ;; past its head.
-        (let* ((window (payload-view-for item))
-               (page (if window (min window (max 0 (1- n))) 0))
+        (let* ((page (if window (min window (max 0 (1- n))) 0))
                ;; **THE WINDOW IS THE ROW'S OWN LENGTH, NOT THE FOLD'S** (R40). This read
                ;; `(or open …)`, so a window that was open on a row whose conversation was not
                ;; unfolded drew ONE body line and paged one line per keypress — and the only way
@@ -316,21 +431,8 @@ header, also printed `· 1 line` — a count for a fold with nothing to fold."
           (dolist (l (subseq rows page end)) (emit (body-line l)))
           (cond
             (below
-             (emit (list (cons (format nil "  … +~d lines · ~a" (- n end)
-                                       (cond
-                                         ;; the window is open on THIS row: the keys are the
-                                         ;; window's own
-                                         (window "↓ pages down · esc closes")
-                                         ;; **the chord, on the row it acts on**, and the verb
-                                         ;; everywhere else. **The newest long row names the verb
-                                         ;; that acts on it; every other row names the setting that
-                                         ;; unfolds the wall** — `/t` opens ONE row's window now, and
-                                         ;; the conversation-wide unfold is `/config`'s `tools` row.
-                                         ((newest-payload-row-p item) "/t opens it")
-                                         ;; **the WALL's home, not a key** — every other long row is
-                                         ;; unfolded by the `tools` row in `/config` (the setting
-                                         ;; `/t` used to toggle), so that is what the seam names.
-                                         (t "/config unfolds it")))
+             ;; the one spelling of what acts on this row — see `unfold-verb`
+             (emit (list (cons (format nil "  … +~d lines · ~a" (- n end) (unfold-verb))
                                faint))))
             ;; The end of the payload, SAID — so "no more" cannot be confused with
             ;; "the arrow stopped working", which is the other half of a seam's job.
@@ -339,7 +441,13 @@ header, also printed `· 1 line` — a count for a fold with nothing to fold."
             ;; the payload was short enough to show whole, but the REASON was
             ;; cut — so the affordance has to be here
             (why-folded
-             (emit (list (cons "  … the rest of the reason · /config unfolds it" faint)))))))
+             (emit (list (cons "  … the rest of the reason · /config unfolds it" faint))))))
+        ;; **THE DETECTED DIFF, AFTER THE OUTPUT IT EXPLAINS** — a change the daemon found under a
+        ;; command whose verb is not an edit (`Ran "python3 - <<'PY'…"`). The output above is the
+        ;; command's own account; the panel is the file's; and the provenance line between them
+        ;; says the second was not made by `edit`. See the edit-verb branch above for the split.
+        (when (and edit (not bad) (not edit-verb))
+          (diff-panel t)))
       ;; `item-lines` steps the whole row in by the activity indent
       (nreverse out))))
 

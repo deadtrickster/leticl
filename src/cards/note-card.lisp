@@ -5,6 +5,20 @@
 
 (defclass note-card (card) ())
 
+;; **A ROW THIS HEAD WROTE ABOUT ITSELF.** No daemon item has this type — the
+;; wire's are `user`, `assistant`, `reasoning`, `tool_result`, `system` and
+;; `segment_mark` — so this is the head filing a sentence of its own into the
+;; conversation at the point it happened. `note-unreadable` and `note-warning`
+;; are the writers, and the contract is the one the reference's `warn_line`
+;; keeps: an `!`, the words, and the failure role (app.rs:8425-8427).
+;;
+;; **`:cap` and `:seam` fold a long one** (R10). A warning's detail can be a
+;; whole rule, and the operator-facing complaint was a WALL of them — 27 red
+;; lines from two gate timeouts. A note with a `:cap` shows that many rows and
+;; a `:seam` naming the verb that has the rest, and the seam is DIM rather than
+;; failure-role because it is not part of the warning: it is the instrument.
+;; The whole text is still what `/notes` prints, so this folds a disclosure
+;; and never the record.
 (defmethod card-lines ((card note-card) cols prefs)
   (let ((item (card-item card))
         (body (card-body card)))

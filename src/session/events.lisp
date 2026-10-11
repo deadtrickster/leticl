@@ -47,12 +47,28 @@ next paragraph — and this docstring is where the reasons live:
     ten-minute tool-heavy turn draws NOTHING AT ALL, and a reader cannot tell working
     from wedged. The footer keeps the running state and its elapsed time (R13).
 
-**AND THE THREE ARE NOT A LIST, WHICH IS THE DESIGN RATHER THAN AN OMISSION.** This paragraph
-named a `+reading-never-hides+` that does not exist (found by the wire reviewer, 2026-10-11):
-what exists is `+reading-hides+`, the DENYLIST below, and the three things above survive it by
-being things the denylist never names — a warning is a `:note` kind that is not on it, a card is
-not an item at all, and the footer is chrome rather than a row. A head that grew the allowlist
-would have two lists to keep in step, which is the shape this file's own note warns about.
+**AND THE THREE ARE NOT A LIST, WHICH IS THE DESIGN RATHER THAN AN OMISSION.** What hides is
+`+reading-hides+`, the DENYLIST below, and the three things above survive it by being things the
+denylist never names — a warning is a `:note` kind that is not on it, a card is not an item at
+all, and the footer is chrome rather than a row. Nothing has to be listed to be kept.
+
+**Two MORE things it may not hide, and these two ARE on the denylist's kind** — both are
+`tool_result` rows, the kind the rung exists to fold — so each is an exception the rung has to
+state (the 2026-10-11 sweep, B.6 and B.8):
+
+  · **the operator's own `!` row.** letibot `4237b19`: *verbosity governs how much of the MODEL's
+    working you see; it must not hide what YOU did.* The row carries `:origin {operator …}`, and
+    `reading-hides-p` reads that fact off the body — an origin is not a name, so it is a clause
+    there and not an entry anywhere.
+  · **a compaction.** letibot `8fb629a`: *one line in the conversation, and the model's record is
+    not it.* This head files a compaction as a `compact` tool row (`note-compaction`), which the
+    denylist would otherwise fold into a `[1 tool call]` count — the most information-dense event
+    of a long session, counted as a chore. It is kept by NAME, through `+reading-never-hides+`
+    below, and `%tool-result-lines` draws it as its one headline at these rungs.
+
+This paragraph used to name `+reading-never-hides+` as a list that did not exist (found by the
+wire reviewer, 2026-10-11). It exists now, and it is exactly one line long: the tool names whose
+result rows survive the rung, which is not the allowlist the first cut of this was.
 
 **It is a VIEW.** Nothing leaves the transcript, the ledger, the corpus or what is sent
 to the model; switching back restores every row, retroactively, including the span the
@@ -83,6 +99,25 @@ fall: a new kind is at least as likely to be conversation the operator wants as 
 work, and being shown something unexpected is the safe failure when the alternative is silently
 withholding it. `:note` is not in this list because R37 forbids hiding a warning — and the
 allowlist's own one entry is what proved the list was the wrong shape.")
+
+(defparameter +reading-never-hides+
+  '("compact")
+  "The TOOL NAMES whose `tool_result` rows the reading rungs KEEP, although `+reading-hides+`
+names their kind.
+
+**An exception list under a denylist, and it is one name long on purpose.** `+reading-hides+`
+folds every `tool_result` into a run marker because a tool row is the model's working; a
+compaction is a `tool_result` by filing (`note-compaction`, R24 — *the most information-dense
+event in a long session arrived as the one shape with no affordances*) and is NOT the model's
+working: the daemon ran it, no row proposed it, and what it says — `941,290 → 9,449 tokens` — is
+the one fact about the conversation's memory a reader at the conversation rung needs. letibot
+`8fb629a` draws it as one line at exactly these rungs (`· compacted — A → B tokens`), and so does
+`%tool-result-lines`: the headline, and nothing of the record, which stays the payload at the
+open rungs.
+
+**Matched by `string-equal` against the row's `:name`** — the wire's spelling is the daemon's,
+and this head's own filing writes `\"compact\"`. The operator's `!` row is NOT here, because what
+marks it is an origin and not a name; `reading-hides-p` reads that fact directly.")
 
 (defun set-verbosity (level)
   "Set the rung, and INVALIDATE WHAT HAS BEEN RENDERED.

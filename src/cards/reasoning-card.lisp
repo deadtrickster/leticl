@@ -63,8 +63,7 @@ the wrap and the rail agree. Folded, the header alone."
 
 
 (defmethod card-lines ((card reasoning-card) cols prefs)
-  (let ((item (card-item card))
-        (body (card-body card)))
+  (let ((body (card-body card)))
     ;; **The model's working-out, so it can never be mistaken for its
     ;; answer.** Three signals, because any one is lost somewhere: the WORD
     ;; (`Thought`), the RAIL (`┃`, two columns), and the dim-italic
@@ -74,7 +73,6 @@ the wrap and the rail agree. Folded, the header alone."
     ;; Folded by default, like a card and like letibot: `▸ Thought · 20
     ;; lines · ctrl-r`. A settled row is by definition not running, so the
     ;; word is `Thought`; `Thinking…` belongs to the live turn.
-    (reasoning-lines (getf body :text) cols prefs :running nil))
-  )
+    (reasoning-lines (getf body :text) cols prefs :running nil)))
 
 
