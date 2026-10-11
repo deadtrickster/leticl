@@ -626,7 +626,10 @@ head runs today breaks without them.
     that keep the queue live after the reply — and their folds. The reply alone is a snapshot; the
     events are what make it a queue a reader can watch.
 
-    **THE INTERACTION IS FOUND, AND IT WAS NEVER THE FOLDS — MEASURED 2026-10-11.** The two arms were added to the
+    **STEP ONE IS COMPLETE — LANDED 2026-10-11** (the frames, the ask, the reply, AND the two
+    events with their folds), held by `the-merge-queue-is-asked-for-and-its-answer-is-kept`. The
+    paragraph below is the record of how it got there, including the hour that was not the folds'
+    fault. The two arms were added to the
     head's event `case` (an add that appends by id, replacing rather than doubling so a reconnect's
     replay cannot double the queue; a move that sets state and evidence, keeping the evidence it
     has when the event carries none) and the suite went red in
@@ -637,10 +640,9 @@ head runs today breaks without them.
     the diagnostic test sent no merge-queue frame at all. It binds `*unreadable-total*` now (as five
     sibling tests already did), the suite is green, and **the folds were innocent**.
 
-    So the arms are ready to land: append-by-id with replace (a reconnect's replay must not double
-    the queue), move sets state and keeps the evidence it has when the event carries none, and a
-    move for an entry this head was never told about invents no row. They are reverted only because
-    they were written against the real defect; nothing about them needs changing.
+    The folds landed once the test was fixed: append-by-id with replace (a reconnect's replay must
+    not double the queue), a move that sets state and keeps the evidence it has when the event
+    carries none, and no row invented for an entry the head was never told about.
 
     **AND IT CANNOT LAND ALONE — MEASURED 2026-10-11, one hour wasted so nobody repeats it.** The
     suite has an invariant, `every-frame-constructor-is-actually-sent`: *a frame the head defines
@@ -649,7 +651,7 @@ head runs today breaks without them.
     (a `/queue` verb or the pane's own open, which is how `/todos` and the jobs pane do it), and the
     constructor alone is not a landable increment. Written down because the tempting order — wire
     first, screen after — is exactly the order this tree forbids.
-  · **S — the pane, drawing state and EVIDENCE.** One row per entry, the evidence as the reason —
+  · **NEXT — S — the pane, drawing state and EVIDENCE.** One row per entry, the evidence as the reason —
     *the evidence is the reason for the state in the queue's own words*. The five states are
     already a vocabulary this head renders elsewhere; this is one more pane in `src/panes/`.
   · **M — the person's hand: approve, veto, rm.** The reference's own three acts on a row, each

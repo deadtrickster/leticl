@@ -704,6 +704,38 @@ empty pane on every attach, which is the defect the guard exists to prevent, inv
                           :key (lambda (d) (getf d :req-id)) :test #'string=)
             (setf (head-decision-sel head) 0
                   (head-dirty head) t)))
+         ;; **THE TWO EVENTS THAT MAKE THE QUEUE LIVE RATHER THAN A SNAPSHOT** (the merge queue's
+         ;; first step, `TODO.md`): a head that asked once and folded nothing after would draw the
+         ;; queue as it was at the ask.
+         ;;
+         ;; `:merge-entry-added` INSERTS by id, REPLACING an entry it already holds: an event can
+         ;; arrive twice through a reconnect's replay (the read mark is a seq, so a redelivery is a
+         ;; duplicate by design), and a queue that doubles on every reconnect is a pane nobody can
+         ;; read.
+         ((:merge-entry-added)
+          (let* ((entry (getf env :entry))
+                 (id (and entry (getf entry :id)))
+                 (queue (head-merge-queue head)))
+            (when (and id queue)
+              (let ((at (position id queue :key (lambda (e) (getf e :id)) :test #'equal)))
+                (if at
+                    (setf (nth at queue) entry)
+                    (setf (head-merge-queue head) (append queue (list entry))))
+                (setf (head-dirty head) t))))
+          :dirty)
+         ;; `:merge-entry-moved` is STATE PLUS EVIDENCE, folded onto the row the reply gave us —
+         ;; never invented. An entry this head has not been told about arrives with the next ask,
+         ;; which is the rule `:job-settled` keeps one event over.
+         ((:merge-entry-moved)
+          (let ((row (find (getf env :id) (head-merge-queue head)
+                           :key (lambda (e) (getf e :id)) :test #'equal)))
+            (when row
+              (setf (getf row :state) (getf env :state))
+              ;; **AND AN EVENT THAT CARRIES NO EVIDENCE DOES NOT ERASE THE REASON WE HAVE** — a
+              ;; move with nothing saying why is the defect the field exists to prevent.
+              (when (getf env :evidence) (setf (getf row :evidence) (getf env :evidence)))
+              (setf (head-dirty head) t)))
+          :dirty)
          ((:job-settled)
           ;; FOLDED INTO THE ROW THE DAEMON GAVE US, never invented. The jobs
           ;; pane draws `head-jobs`, which is only ever the `Jobs` reply, so an

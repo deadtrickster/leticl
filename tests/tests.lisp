@@ -11839,7 +11839,40 @@ answered. The daemon's own `secret_late` warning, which would explain it, is a
                 (head-merge-queue h)))
     ;; --- an empty queue is a fact, not an absence
     (leticl::%handle-frame h (list :frame "merge_queue" :entries nil))
-    (is (null (head-merge-queue h)) "an empty queue is empty")))
+    (is (null (head-merge-queue h)) "an empty queue is empty")
+    ;; --- **AND THE TWO EVENTS MAKE IT LIVE RATHER THAN A SNAPSHOT** (the same step's other half)
+    (leticl::%handle-frame h (list :frame "merge_queue"
+                                   :entries (list (list :id "e1" :branch "a" :state "waiting"
+                                                        :evidence "needs: b"))))
+    (leticl::%handle-frame h (list :frame "event" :seq 2 :event "merge_entry_added"
+                                   :entry (list :id "e2" :branch "b" :state "waiting"
+                                                :evidence "needs: c")))
+    (is (= 2 (length (head-merge-queue h))) "an added entry joins the queue")
+    (is (equal "b" (getf (second (head-merge-queue h)) :branch)) "at the END, in arrival order")
+    ;; a REDELIVERY — a reconnect's replay — replaces rather than doubles
+    (leticl::%handle-frame h (list :frame "event" :seq 2 :event "merge_entry_added"
+                                   :entry (list :id "e2" :branch "b" :state "waiting"
+                                                :evidence "needs: c")))
+    (is (= 2 (length (head-merge-queue h)))
+        (format nil "**the same id twice is one row** — a replay must not double the queue: ~s"
+                (head-merge-queue h)))
+    ;; a MOVE carries state and its reason
+    (leticl::%handle-frame h (list :frame "event" :seq 3 :event "merge_entry_moved"
+                                   :id "e2" :state "failed" :evidence "gate: fmt"))
+    (let ((row (find "e2" (head-merge-queue h) :key (lambda (e) (getf e :id)) :test #'equal)))
+      (is (equal "failed" (getf row :state)) "the move's state lands on the row the reply gave us")
+      (is (equal "gate: fmt" (getf row :evidence)) "**with the reason** — the evidence is WHY"))
+    ;; a move for an entry this head was never told about invents nothing
+    (leticl::%handle-frame h (list :frame "event" :seq 4 :event "merge_entry_moved"
+                                   :id "never-heard-of" :state "landed"))
+    (is (= 2 (length (head-merge-queue h))) "a move for an unknown entry invents no row")
+    ;; and a move carrying no evidence keeps the reason we have
+    (leticl::%handle-frame h (list :frame "event" :seq 5 :event "merge_entry_moved"
+                                   :id "e2" :state "conflict"))
+    (let ((row (find "e2" (head-merge-queue h) :key (lambda (e) (getf e :id)) :test #'equal)))
+      (is (equal "conflict" (getf row :state)) "the state moves")
+      (is (equal "gate: fmt" (getf row :evidence))
+          "**and the evidence we have is kept** — a move that says nothing must not erase the reason"))))
 
 (def-test a-reply-for-a-session-this-head-left-is-not-applied (:suite leticl)
   "**T6 in `TODO.md`, and it is invisible by construction — which is why it needed a test.**
