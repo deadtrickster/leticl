@@ -581,6 +581,48 @@ height, which is what the pane sent before the three readers were made to agree.
   (%term-view-live head)
   (%send head (make-term-input-bytes octets)))
 
+(defun %newest-changed-file (head)
+  "The path of the NEWEST row this head holds that changed a file, or NIL.
+
+ **THE EXCERPT IS THE PATH, and it is the only thing that has one.** MEASURED on the running head: a
+ `tool_result` row's body carries `:edit` (asked a real row and its keys are `:TYPE :CALL-ID :NAME
+ :OUTCOME :PAYLOAD :EDIT :ORIGIN :MEDIA`), and `edit-card.lisp` reads `(getf edit :path)` — so the row
+ that touched a file is exactly the row whose body says which, and no new state is needed. Walking
+ NEWEST-first means *the file I just watched* needs no picker."
+  (loop for item in (reverse (coerce (session-items (head-session head)) 'list))
+        for body = (item-body item)
+        for path = (and (consp body) (getf (getf body :edit) :path))
+        when (and (stringp path) (plusp (length path)))
+          return path))
+
+(defun %sh-quote (text)
+  "TEXT in single quotes, with any single quote in it escaped the way a shell reads it — because this
+ goes into a LINE a shell runs, and a path with a space in it is still a path."
+  (with-output-to-string (o)
+    (write-char #\' o)
+    (loop for c across text
+          do (if (char= c #\') (write-string "'\\''" o) (write-char c o)))
+    (write-char #\' o)))
+
+(defun %open-editor (head)
+  "`ctrl-]`: open RANO on the newest file this conversation changed, in a terminal pane. T always.
+
+ **THIS HEAD RUNS RANO AS A PROGRAM AND DOES NOT EMBED IT.** The reference holds a rano instance
+ behind the composer (`crates/tui/src/app/editor.rs`) and calls its `open_review`, so it draws the
+ CHANGE over the text. This head is Lisp and rano is a crate, so what it can do is what that reference
+ does through a door it does not need — `!term rano <path>` — which gets the file, its syntax, its
+ keys, the mouse and the scrollback, and NOT the review overlay.
+
+ **The sentence says which**, because a head that opened a plain file and called it a review would be
+ claiming the half it does not have — the same rule the pane's footers keep."
+  (let ((path (%newest-changed-file head)))
+    (if (null path)
+        (say head "no file this conversation changed — `ctrl-]` opens the newest one there is")
+        (multiple-value-bind (cols rows) (%term-rectangle head)
+          (%send head (make-term-open (format nil "!term rano ~a" (%sh-quote path)) cols rows))
+          (say head (format nil "opening rano on ~a — the file, and not rano's review overlay" path))))
+    t))
+
 (defun %term-mouse-bytes (head key)
   "The OCTETS a mouse event becomes for the program in this head's terminal pane, or NIL for none.
 

@@ -12339,6 +12339,44 @@ worked for the merge queue.
                                         :key #'car :test #'string=)))
           "**the pane draws it** — the cell's style is a name this head's palette holds"))))
 
+(def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
+  "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
+  one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of
+  line* — the emacs set bound beside it. The byte is 0x1d, which the decoder spells `(:ctrl #\})` by
+  its `(+ 96 code)` rule, the same trap `%ctrl-backslash-p` documents one byte over.
+
+  **What it opens HERE is rano as a PROGRAM.** The reference embeds a rano instance and draws the
+  change over the text (`open_review`); a Lisp head cannot hold that crate, so the door is
+  `!term rano <path>` — the file, its syntax, its keys, the mouse and the scrollback — and the sentence
+  says the file rather than claiming the overlay it does not have.
+
+  **The path is the ROW's own**: a `tool_result` body carries `:edit`, so the newest changed file needs
+  no new state, and a conversation that changed nothing says so rather than opening an editor on
+  nothing."
+  (flet ((row (path) (list :item-id (format nil "r~a" path) :kind "transcript"
+                           :item (list :type "tool_result" :edit (list :path path)))))
+    (let* ((h (%make-head)) (leticl::*term-pane* 1) (wire (%wire h)))
+      (setf (session-items (head-session h)) (leticl::%items-vector nil))
+      (is (null (leticl::%newest-changed-file h))
+          "**a conversation that changed nothing has no file**")
+      (leticl::%open-editor h)
+      (is (search "no file this conversation changed" (head-status-note h))
+          "**and `ctrl-]` SAYS so** rather than opening an editor on nothing")
+      (is (null (find "term_open" (%sent wire) :key #'frame-name :test #'string=))
+          "with nothing sent for it")
+      (setf (session-items (head-session h))
+            (leticl::%items-vector (list (row "a b/old.lisp") (row "src/new.lisp"))))
+      (is (equal "src/new.lisp" (leticl::%newest-changed-file h)) "**the NEWEST changed file**")
+      (is (equal "'src/new.lisp'" (leticl::%sh-quote "src/new.lisp"))
+          "**the path is quoted into the line** — it goes to a shell")
+      (is (equal "'a b/it'\\''s.lisp'" (leticl::%sh-quote "a b/it's.lisp"))
+          "**and a quote in it is escaped** — a path with a space is still a path")
+      (leticl::%open-editor h)
+      (let ((open (find "term_open" (%sent wire) :key #'frame-name :test #'string=)))
+        (is (not (null open)) "the open went out")
+        (is (equal "!term rano 'src/new.lisp'" (getf open :line))
+            "**as `!term rano <path>`** — rano as a program, in the pane that exists")))))
+
 (def-test a-second-pane-is-asked-for-by-number-and-the-head-follows-it (:suite leticl)
   "**Choosing a pane is the DAEMON's reading of the LINE** (protocol 44): `!term N` attaches to pane N,
   bare `!term` to the most recent, and this head invents no frame for it — it sends the operator's own

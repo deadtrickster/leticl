@@ -193,6 +193,13 @@ Esc was a second thing to remember per pane."
         ;; exists (Shift makes the TERMINAL select and keeps the events from this head), so the reader
         ;; is who holds the screen; see `*frozen*` for the measurement and for why *write nothing* is
         ;; the whole of the contract.
+                ;; **`ctrl-]` OPENS THE EDITOR** — the reference's own key (`app/editor.rs`: *"a click on an edit
+        ;; or write row of the conversation, or `ctrl-]` for the newest one, opens rano on that file"*),
+        ;; and NOT `ctrl-e`, which this head's composer already owns as *end of line* — bound beside it
+        ;; in the emacs set, so a session reading the ledger's shorthand would have taken a key that is
+        ;; already doing something. The byte is 0x1d, which the decoder spells `(:ctrl #\})` by its
+        ;; `(+ 96 code)` rule — the same trap `%ctrl-backslash-p` documents one byte over at `#\|`.
+        ((#\}) (%open-editor head))
         ((#\p) (%toggle-freeze head))
         ;; `o` on the subagents pane switches INTO the row under the cursor
         ;; (app.rs:3696-3707); anywhere else it promotes the running command,
