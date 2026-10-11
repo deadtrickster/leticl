@@ -116,7 +116,17 @@ wrong, the edge is bare."
   ;; on the operator's word: *"responding has to be brought back up to the left on top of the input
   ;; area and stay here."* The alarm stays: it is about the SESSION and not about a turn, and it is
   ;; the one thing on this edge that must be visible while nothing is running.
-  (let ((parts (remove nil (list (and (alarmed-p head) "⚠")))))
+  (let ((parts (remove nil (list (and (alarmed-p head) "⚠")
+                                 ;; **AND THE MERGE QUEUE'S STANDINGS, drawn while the queue holds
+                                 ;; something that STANDS and not otherwise** — MEASURED
+                                 ;; (`ui/screen.rs:609-620`): *they are drawn while the queue holds
+                                 ;; something that stands and not otherwise, so the edge carries them
+                                 ;; exactly as long as they are the fact a `merge_queued` row told.*
+                                 ;; The line is `merge-standings-line`, which answers NIL for an empty
+                                 ;; or all-landed queue — so the marker appears when there is something
+                                 ;; to move and vanishes when there is not, which is the same rule the
+                                 ;; alarm keeps (*a marker that is always on is furniture*).
+                                 (merge-standings-line head)))))
     ;; NOTHING is nothing: returning a space put a stray `─ ╯` on the box where
     ;; letibot draws `──╯`. Same defect as `composer-title`'s, one function over —
     ;; and only a column-precise diff shows a one-column difference.

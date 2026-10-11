@@ -12015,7 +12015,15 @@ worked for the merge queue.
                                        (list :id "e6" :state "stale")
                                        (list :id "e7" :state "landed")))
       (is (equal "1 in review · 1 being merged · 4 parked" (funcall #'line))
-          "**`taken` is being merged, and the four stopped states are parked TOGETHER** — *a person moves it* is one job however the queue stopped"))))
+          "**`taken` is being merged, and the four stopped states are parked TOGETHER** — *a person moves it* is one job however the queue stopped")
+      ;; --- **AND IT REACHES THE EDGE**: the composer's bottom legend carries it while the queue
+      ;; stands, and says nothing when it does not — the marker-is-furniture rule the alarm keeps.
+      (setf (head-merge-queue h) nil)
+      (is (not (search "in review" (composer-wiring h 100)))
+          "an empty queue leaves the edge exactly as it was")
+      (setf (head-merge-queue h) (list (list :id "e1" :state "waiting")))
+      (is (search "1 in review · 0 being merged · 0 parked" (composer-wiring h 100))
+          "**and something standing puts the counts on the composer's edge**"))))
 
 (def-test the-merge-queue-draws-its-states-and-why-each-one-is-that-state (:suite leticl)
   "**The renderer for the queue pane** — the rows, landed ahead of the pane so the pane is
