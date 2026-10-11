@@ -9,7 +9,8 @@
 # head — finding or starting the folder's daemon, the seat's defaults, --continue,
 # --new — stays the launcher's; this only translates its arguments into the
 # image's: the socket becomes $LETIBOT_SOCKET (how the image finds its daemon),
-# `--resume ID` becomes `--session ID`, `--new-session TITLE` becomes
+# `--resume ID` STAYS `--resume ID` (it is a different act from `--session` — see the arm
+# below), `--new-session TITLE` becomes
 # `--new TITLE`, and `--identity` is dropped — the image says `leticl` on the
 # wire, which is what the daemon's head list should show for this head.
 #
@@ -53,7 +54,12 @@ while [ $# -gt 0 ]; do
                    exec "$IMAGE" --version ;;
     --socket)      export LETIBOT_SOCKET="$2"; shift 2 ;;
     --identity)    shift 2 ;;
-    --resume)      args+=(--session "$2"); shift 2 ;;
+    # **`--resume` STAYS `--resume`** (T4 in TODO.md): the launcher passes the reference's flag
+    # straight through, and the image does the one thing that can bring a session the daemon does
+    # not hold into the conversation — ask for it once the Hello has delivered the list. Rewritten
+    # to `--session` it named the id on the ATTACH, which the daemon refuses for a session it has
+    # never opened, so a stored session was reachable from the picker and not from the CLI.
+    --resume)      args+=(--resume "$2"); shift 2 ;;
     --new-session) args+=(--new "$2"); shift 2 ;;
     *) echo "leticl-head: unknown argument from the launcher: $1" >&2; exit 2 ;;
   esac

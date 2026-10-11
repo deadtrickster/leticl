@@ -165,6 +165,13 @@ answers the default size and the diff is then 40 rows of nothing."
                            :no-tty no-tty :cols cols :rows rows)))
       ((string= (first args) "--session")
        (uiop:symbol-call :leticl '#:run :session-id (or (second args) "")))
+      ;; **`--resume ID`: a DIFFERENT act from `--session ID`** (T4 in `TODO.md`). The launcher
+      ;; translates the reference's `--resume` into `--session`, which names the id on the ATTACH —
+      ;; and the daemon refuses a session it has never opened, so a stored session was unreachable
+      ;; from the CLI while the picker could reach it with a keystroke. The reference draws the same
+      ;; line at `app.rs:1602-1610`.
+      ((string= (first args) "--resume")
+       (uiop:symbol-call :leticl '#:run :resume-id (or (second args) "")))
       ;; the launcher's `--new TITLE`, through scripts/leticl-head
       ((string= (first args) "--new")
        (uiop:symbol-call :leticl '#:run :new-title (or (second args) "")))

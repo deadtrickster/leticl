@@ -42,7 +42,7 @@
    #:read-frame #:write-frame #:wire-error #:wire-error-line #:wire-error-detail
    ;; protocol
    #:+protocol-version+
-   #:make-attach #:make-ack #:make-prompt #:make-interrupt #:make-answer
+   #:*pending-resume* #:make-attach #:make-ack #:make-prompt #:make-interrupt #:make-answer
    #:match-option
    #:make-answer-question #:question-answer #:make-list-sessions #:make-list-todos #:make-list-jobs
    #:make-set-operator-todos

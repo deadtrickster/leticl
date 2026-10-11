@@ -11703,6 +11703,88 @@ answered. The daemon's own `secret_late` warning, which would explain it, is a
     (is (equal "" (leticl::head-secret-buf h)) "with nothing left in the field")
     (is (search "claude-host" (head-status-note h)) "and it says who answered")))
 
+(def-test resume-id-is-a-different-act-from-session-id (:suite leticl)
+  "**T4 in `TODO.md`: a stored session was reachable from the picker and NOT from the CLI.**
+
+  `scripts/leticl-head` translated the reference's `--resume ID` into this image's `--session ID`,
+  and `--session` names the id on the ATTACH — which the daemon refuses for a session it has never
+  opened, because it is not the daemon's yet. So `--resume` could only ever reach a session the
+  daemon already held, which is exactly the case it is not for.
+
+  The fix is the reference's own line (`app.rs:1602-1610`): attach as if no id were named, hold the
+  ask, and let the first Hello answer it through `%switch-to` — the SAME path the picker uses, so
+  the two doors cannot disagree about which frame brings a session in."
+  ;; **BOTH HALVES ARE TEXTUAL, AND THAT IS THE HONEST FORM HERE**: the flag's own plumbing is
+  ;; `run`, which needs a tty and a socket, and what the reviewer's finding was about is the
+  ;; TRANSLATION — a launcher rewriting one flag into another. So the assertions are the source of
+  ;; the two files that carry it, which is the mechanism this tree already uses for a `cond` of
+  ;; literals it cannot read back at run time.
+  (let ((image (%repo-file "freeze.lisp"))
+        (launcher (%repo-file "scripts/leticl-head")))
+    (is (search "(string= (first args) \"--resume\")" image)
+        "**the image has an arm for `--resume`** — not an alias of `--session`: the two name different acts")
+    (is (search ":resume-id" image)
+        "and it calls `run` with the resume keyword, which is what holds the ask")
+    (is (search "args+=(--resume \"$2\")" launcher)
+        "**and the launcher PASSES IT THROUGH** — it used to rewrite it to `--session`, which named
+  the id on the ATTACH and could never reach a session the daemon does not hold")
+    (is (not (search "args+=(--session \"$2\")" launcher))
+        "which is the line that was there before")))
+
+(def-test the-hello-answers-the-resume-with-the-pickers-own-path (:suite leticl)
+  "The Hello is the only reader of `*pending-resume*`, and it asks the way the picker does."
+  (let* ((leticl::*pending-resume* "s-stored")
+         (h (%make-head))
+         (wire (%wire h)))
+    (setf (session-session-id (head-session h)) "s-current")
+    ;; the daemon's list: the session on disk, not live — so the answer is `resume_session`
+    (leticl::%handle-frame
+     h (list :frame "hello" :protocol-version leticl:+protocol-version+
+             :session-id "s-current" :head-id "h1" :dropped 0
+             ;; **THE LIST ARRIVES ON THE HELLO** — that is the frame `%switch-to` reads it from, and a
+             ;; fixture that set the slot beforehand would be asserting against a list the daemon's
+             ;; own reply had just wiped.
+             :sessions (list (list :session-id "s-current" :title "here" :live t)
+                             (list :session-id "s-stored" :title "there" :live nil :stored-items 12))
+             :wiring nil :resumed-from nil :scrubbed nil :snapshot nil))
+    (is (null leticl::*pending-resume*) "**the Hello consumes the ask** — a second Hello must not ask again")
+    ;; **ONE READ OF THE WIRE.** `%sent` DRAINS the stream, so a reason that reads it and an
+    ;; assertion that reads it again measure two different lists — the second one empty. Measured
+    ;; here, and it is the trap this suite's own helper docstrings warn about.
+    (let ((sent (%sent wire)))
+      ;; **THE FRAME, NOT THE FIRST FRAME.** A Hello also asks for the settings and pushes the
+      ;; operator's board — both documented, both before this — so the assertion is that the resume
+      ;; is ON the wire, in the shape the picker sends.
+      (is (find "resume_session" sent :key #'frame-name :test #'string=)
+          (format nil "**and it asks the way the PICKER does**: a stored row is RESUMED, which is the frame that can bring a session the daemon does not hold into the conversation: ~s"
+                  (mapcar #'frame-name sent))))
+    ;; --- and a LIVE row switches, which is the other half of the same rule
+    (let* ((leticl::*pending-resume* "s-live")
+           (h2 (%make-head))
+           (wire2 (%wire h2)))
+      (leticl::%handle-frame
+       h2 (list :frame "hello" :protocol-version leticl:+protocol-version+
+                :session-id "s-current" :head-id "h1" :dropped 0
+                :sessions (list (list :session-id "s-current" :title "here" :live t)
+                                (list :session-id "s-live" :title "there" :live t))
+                :wiring nil :resumed-from nil :scrubbed nil :snapshot nil))
+      (let ((sent2 (%sent wire2)))
+        (is (find "switch" sent2 :key #'frame-name :test #'string=)
+            (format nil "a live row switches, with no resume round trip: ~s" (mapcar #'frame-name sent2)))
+        (is (null (find "resume_session" sent2 :key #'frame-name :test #'string=))
+            "**and a LIVE row is not resumed** — the daemon already holds it, and asking it to bring in a session it is holding is a frame that means nothing: a resume round trip here would also drop the switch")))
+    ;; --- and the session you are already on sends nothing
+    (let* ((leticl::*pending-resume* "s-current")
+           (h3 (%make-head))
+           (wire3 (%wire h3)))
+      (leticl::%handle-frame
+       h3 (list :frame "hello" :protocol-version leticl:+protocol-version+
+                :session-id "s-current" :head-id "h1" :dropped 0
+                :sessions (list (list :session-id "s-current" :title "here" :live t))
+                :wiring nil :resumed-from nil :scrubbed nil :snapshot nil))
+      (is (not (find "switch" (%sent wire3) :key #'frame-name :test #'string=))
+          "**asking for the session you are already in sends no switch** — the Hello's settings request is all this frame owes"))))
+
 (def-test a-reply-for-a-session-this-head-left-is-not-applied (:suite leticl)
   "**T6 in `TODO.md`, and it is invisible by construction — which is why it needed a test.**
 

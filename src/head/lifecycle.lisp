@@ -22,10 +22,17 @@ push ran `(defparameter *stdout* nil)` and the operator's head exited)."
       (setf *stdout* (sb-sys:make-fd-stream 1 :output t :element-type 'character
                                             :external-format :utf-8 :buffering :none))))
 
-(defun run (&key socket-path session-id new-title)
+(defun run (&key socket-path session-id new-title resume-id)
   "Attach to a daemon and run until /quit or ctrl+d. NEW-TITLE asks the daemon for
 a fresh session under that name right after the attach — `letibot --new TITLE`
-through `scripts/leticl-head`, the same two frames `/new` sends from the composer."
+through `scripts/leticl-head`, the same two frames `/new` sends from the composer.
+
+**RESUME-ID is a different act from SESSION-ID and the difference is measured.** A session the
+daemon HOLDS is named on the ATTACH; one on disk is not the daemon's yet, so an attach naming it is
+refused. `--resume ID` therefore attaches as it would with no id and holds the ask in
+`*pending-resume*`, which the first Hello consumes — through `%switch-to`, the same path the picker
+uses, so the two doors cannot disagree about which frame brings a session in (T4 in `TODO.md`)."
+  (setf *pending-resume* (and resume-id (plusp (length resume-id)) resume-id))
   (%open-stdout)
   (unless (plusp (%isatty 1))
     (error "the head paints on the real terminal — run it on a tty, not a pipe"))

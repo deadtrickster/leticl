@@ -317,6 +317,18 @@ and a `hello` with a snapshot). Returns T when the queue moved."
 ;;;
 ;;; The ack itself is sent by the loop, after painting, from the last seq READ
 ;;; — never from this function, which does not know whether the frame went out.
+(defvar *pending-resume* nil
+  "The session id `--resume ID` asked for, held until a Hello brings the daemon's list.
+
+**It cannot ride the ATTACH.** `--session ID` puts the id on `make-attach`, which is right for a
+session the daemon already holds and wrong for one on disk: the daemon has never opened it, and the
+attach is refused by name. The reference draws the same line (`app.rs:1602-1610`) and its answer is
+that `--resume` is a different act from `--session`, so this head asks for it the way the PICKER
+does once the list has arrived — see the `hello` arm, which is the only reader.
+
+A global rather than a head slot because the launcher's flag is per PROCESS: `run` creates one head
+and the flag is consumed by the first Hello it sees.")
+
 (defun %frame-for-another-session-p (head frame)
   "Is FRAME a reply about a session that is not the one this head is on?
 
@@ -502,6 +514,18 @@ empty pane on every attach, which is the defect the guard exists to prevent, inv
          (when (member (head-mode head) '(:job-out :slash))
            (setf (head-mode head) :normal))))
      (ingest-hello (head-session head) frame)
+     ;; **`--resume ID`, AT THE MOMENT THE LIST EXISTS** (T4 in `TODO.md`). A session the daemon does
+     ;; not hold cannot be attached to BY ID: `--session ID` puts the id on the ATTACH, and the daemon
+     ;; refuses a session it has never opened (`app.rs:1602-1610` is the reference's own note on why
+     ;; its `--resume` is a different act). So the flag attaches to whatever the daemon is on and then
+     ;; asks for that session the way the PICKER does — `%switch-to` reads the list this Hello just
+     ;; delivered and sends `switch` for a live row or `resume_session` for one on disk. ONE path, so
+     ;; the CLI and the picker cannot disagree about which frame brings a session in.
+     (when (and *pending-resume* (plusp (length *pending-resume*)))
+       (let ((id *pending-resume*))
+         (setf *pending-resume* nil)
+         (unless (equal id (session-session-id (head-session head)))
+           (%switch-to head id))))
      ;; the same, for the other frame a snapshot arrives on: a HELLO after a
      ;; reattach. (A SWITCH's snapshot is a different session's, and the `moved` check
      ;; above has already cleared the echoes rather than resolving them — a prompt

@@ -753,9 +753,14 @@ reaches no arm in either decoder, and `Key::CtrlN` does not exist).
   why both heads have to be nudged into the same state by hand, and why one
   comparison in this round was not a controlled test. Size L, and it pays for
   itself in every later round.
-- [ ] **T4 · `--resume ID`** (`panes.md` G9). `scripts/leticl-head` rewrites it
+- [x] **T4 · `--resume ID`** (`panes.md` G9). `scripts/leticl-head` rewrites it
   to `--session`, which cannot work for a session the daemon does not hold
-  (app.rs:1602-1610). Size M.
+  (app.rs:1602-1610). Size M. **Landed 2026-10-11**: the image has a `--resume`
+  arm of its own, the launcher passes the flag THROUGH instead of rewriting it, and
+  the ask is held in `*pending-resume*` until the first Hello delivers the daemon's
+  list — consumed through `%switch-to`, the same path the picker uses, so the CLI
+  and the picker cannot disagree about which frame brings a session in (a live row
+  switches, a stored one resumes, and the session you are already on sends nothing).
 - [x] **T5 · the ordering of the ladders** — with the session picker open and an
   ask arriving, ↑↓ moved the picker; the reference puts the decision ladder above
   the picker (re-measured on the pin below: the ladder is app.rs:3609 and the
