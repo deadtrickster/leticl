@@ -628,6 +628,13 @@ rest names the commit it comes from.
   - [ ] **the lateral send and the question row** — a message to a session the worker owns is
     a row and a turn (`af218a2`, `3d36cea`), and an answered question leaves the operator's
     answer as their own row, byte-identical and citable (`7179fc6`, `0cf9cce`).
+    **MEASURED 2026-10-11: the question half is the DAEMON's, not this head's.** `7179fc6` is
+    `harnessd/src/answers.rs` + `harness.rs` (+ its own 500-line test) — the row is appended by
+    the daemon and this head draws it with the speaker rule it already has (`speaker: operator`
+    draws as the person's own row, `agent` as the session's labelled one), which the earlier port
+    landed. What is genuinely left in this clause is the LATERAL SEND (`af218a2`): a message to a
+    session the worker owns, drawn as a row and a turn — head-side, and worth its own measurement
+    before anybody writes it.
   - [~] **the head's smaller mirrors**: **a printed path IS a link — probed and LANDED
     2026-10-11** (`src/links.lisp`, held by `a-link-url-is-never-built-from-content`,
     `an-image-path-becomes-a-link-and-the-url-is-head-authored` and
