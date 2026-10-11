@@ -762,9 +762,13 @@ reaches no arm in either decoder, and `Key::CtrlN` does not exist).
   session picker :3643 — the `3474`/`3508` this row used to carry were a lineref
   that moved). Landed in `6b87351`, with the overlays that keep the arrows under an
   ask — `:peek`, `:job-out`, `:config` — written down on both sides of it. Size S.
-- [ ] **T6 · `Todos` and `Jobs` replies ignore their `session_id`**, so a reply
+- [x] **T6 · `Todos` and `Jobs` replies ignore their `session_id`**, so a reply
   for a session this head has left is applied to the one it is on. One `equal`
-  each in `%handle-frame`. Size S.
+  each in `%handle-frame`. Size S. **Landed 2026-10-11** in `%frame-for-another-session-p`
+  (one predicate, both arms), with `a-reply-for-a-session-this-head-left-is-not-applied`
+  holding the three cases apart: another session's reply is not taken, its own is, and
+  EMPTY on either side means *cannot tell* rather than *not mine* — a head that refused
+  then would draw an empty pane on every attach, which is the same defect inverted.
 - [ ] **T7 · the render instrumentation, not the cache.** The reference renders
   zero rows on a steady frame; we rebuild the window every frame (0.46 ms at
   210×63). `rendering.md` argues against porting `hist_lines` — its invalidation

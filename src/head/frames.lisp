@@ -317,6 +317,23 @@ and a `hello` with a snapshot). Returns T when the queue moved."
 ;;;
 ;;; The ack itself is sent by the loop, after painting, from the last seq READ
 ;;; — never from this function, which does not know whether the frame went out.
+(defun %frame-for-another-session-p (head frame)
+  "Is FRAME a reply about a session that is not the one this head is on?
+
+**Two arms ask this and they ask it for the same reason** (T6 in `TODO.md`): a `Jobs` or `Todos`
+reply is answered to a request that may have been made before a `/switch`, and the daemon's reply
+names the session it is about. Applying it unconditionally puts one conversation's rows on another's
+screen — invisible, because a job list looks the same whoever it belongs to.
+
+**Empty on either side is NOT another session.** A daemon older than the field, and a head that has
+not attached yet, both mean *this head cannot tell* — and a guard that refused then would draw an
+empty pane on every attach, which is the defect the guard exists to prevent, inverted."
+  (let ((mine (session-session-id (head-session head)))
+        (theirs (getf frame :session-id)))
+    (and (plusp (length (or mine "")))
+         (plusp (length (or theirs "")))
+         (not (equal mine theirs)))))
+
 (defun %handle-frame (head frame)
   (cond
     ((and (consp frame) (eq (car frame) :disconnected))
@@ -907,17 +924,36 @@ and a `hello` with a snapshot). Returns T when the queue moved."
          (t nil)))
      :control)
     ((string= (frame-name frame) "jobs")
-     (setf (head-jobs head) (getf frame :jobs)
-           (head-dirty head) t)
-     :control)
+     ;; **A REPLY WHOSE SESSION IS NOT THIS ONE IS NOT THIS HEAD'S COPY** (T6 in `TODO.md`).
+     ;; A `/jobs` asked before a `/switch` is answered after it, and the daemon's reply names the
+     ;; session it is about — so applying it unconditionally put ONE conversation's job rows on
+     ;; another's screen, with nothing on the glass saying where they came from. The same guard is
+     ;; on `todos` below, and the pairs are why it is written twice rather than in a helper: each
+     ;; arm's fold is its own, and a shared wrapper would have to know both.
+     ;;
+     ;; The two empty cases are NOT refusals: a frame from a daemon that does not carry the field,
+     ;; and a head that has not attached yet. Both mean *I cannot tell*, and a head that dropped
+     ;; the reply then would draw an empty list on every attach.
+     (if (%frame-for-another-session-p head frame)
+         :quiet
+         (progn
+           (setf (head-jobs head) (getf frame :jobs)
+                 (head-dirty head) t)
+           :control)))
     ((string= (frame-name frame) "todos")
      ;; **the reply carries the UNION, so the operator's half of it is folded into this head's own
      ;; list before the wire's copy is stored** — see `fold-board-statuses`, the one rule for who
      ;; owns what: membership is this head's, status is the daemon's
-     (fold-board-statuses (getf frame :todos))
-     (setf (session-todos (head-session head)) (getf frame :todos)
-           (head-dirty head) t)
-     :control)
+     ;;
+     ;; AND NOT FOR ANOTHER SESSION, for `jobs`' reason: the operator's half must not be folded
+     ;; against a board from a conversation this head has left.
+     (if (%frame-for-another-session-p head frame)
+         :quiet
+         (progn
+           (fold-board-statuses (getf frame :todos))
+           (setf (session-todos (head-session head)) (getf frame :todos)
+                 (head-dirty head) t)
+           :control)))
     ((string= (frame-name frame) "settings")
      ;; STORE the rows and stop there. Opening the pane is the COMMAND's act,
      ;; not the reply's: the head asks for settings on attach now (they are only

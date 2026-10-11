@@ -11703,6 +11703,51 @@ answered. The daemon's own `secret_late` warning, which would explain it, is a
     (is (equal "" (leticl::head-secret-buf h)) "with nothing left in the field")
     (is (search "claude-host" (head-status-note h)) "and it says who answered")))
 
+(def-test a-reply-for-a-session-this-head-left-is-not-applied (:suite leticl)
+  "**T6 in `TODO.md`, and it is invisible by construction — which is why it needed a test.**
+
+  A `Jobs` or `Todos` reply is the answer to a request that may have been made BEFORE a
+  `/switch`: ask `/jobs`, switch while the daemon is still reading, and the reply lands naming
+  the session you just left. Nothing compared the two, so one conversation's job rows were
+  drawn on another conversation's screen — and a job list looks like a job list whoever it
+  belongs to, so nothing on the glass said so.
+
+  The two empty cases are NOT refusals: a daemon older than the field and a head that has not
+  attached both mean *this head cannot tell*, and refusing then would draw an empty pane on
+  every attach — the same defect inverted."
+  (let* ((h (%make-head))
+         (s (head-session h)))
+    (setf (session-session-id s) "s-mine"
+          (head-jobs h) (list (list :id "j-mine" :command "mine" :running t)))
+    ;; --- THE OTHER SESSION'S REPLY IS NOT TAKEN
+    (leticl::%handle-frame h (list :frame "jobs" :session-id "s-theirs"
+                                   :jobs (list (list :id "j-theirs" :command "theirs" :running t))))
+    (is (equal "j-mine" (getf (first (head-jobs h)) :id))
+        (format nil "**a job list for another session is not this head's** — it would be drawn with no sign of where it came from: ~s" (head-jobs h)))
+    ;; and the board, which folds the operator's half against the wire's — a fold against another
+    ;; conversation's board is a status applied to the wrong row
+    (let ((leticl::*operator-todos* (list (list :id "t1" :content "mine" :status "open" :detail "")))
+          (leticl::*write-prefs* nil))
+      (leticl::%handle-frame h (list :frame "todos" :session-id "s-theirs"
+                                     :todos (list (list :content "mine" :status "completed"
+                                                        :by "operator"))))
+      (is (string= "open" (getf (first leticl::*operator-todos*) :status))
+          "**and an other session's board does not move this head's rows** — the fold is against the wrong conversation")
+      (is (null (session-todos s)) "nor is it kept as this session's list"))
+    ;; --- ITS OWN IS TAKEN, so the guard is not a way to drop everything
+    (leticl::%handle-frame h (list :frame "jobs" :session-id "s-mine"
+                                   :jobs (list (list :id "j-new" :command "new" :running t))))
+    (is (equal "j-new" (getf (first (head-jobs h)) :id)) "this session's reply lands")
+    ;; --- and the two empty cases, which mean *cannot tell* rather than *not mine*
+    (leticl::%handle-frame h (list :frame "jobs" :jobs (list (list :id "j-old-daemon" :command "x"))))
+    (is (equal "j-old-daemon" (getf (first (head-jobs h)) :id))
+        "**a daemon that sends no session id is not a daemon about somebody else**")
+    (setf (session-session-id s) "")
+    (leticl::%handle-frame h (list :frame "jobs" :session-id "s-whatever"
+                                   :jobs (list (list :id "j-unattached" :command "x"))))
+    (is (equal "j-unattached" (getf (first (head-jobs h)) :id))
+        "**and an unattached head takes the reply** — it has no session to be wrong about")))
+
 (def-test a-settled-job-updates-the-row-the-pane-draws (:suite leticl)
   "`JobSettled` was pushed to `session-jobs`, which nothing draws: the pane draws
 `head-jobs`, which is only ever the `Jobs` reply. So an open pane showed
