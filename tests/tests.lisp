@@ -12137,6 +12137,36 @@ worked for the merge queue.
         (is (search "no gate — nothing declared to run" t6)
             "**`no_gate` is its own sentence** — not a blank checklist")
         (is (not (search "the gate has not run" t6)) "and it is not confused with *has not run yet*"))
+      ;; --- **AND AN ENTRY'S REVIEWS ARE DRAWN ON ITS OWN ROWS**, which is what makes the review
+      ;; renderer a thing the pane calls rather than a line nobody calls.
+      (setf (head-merge-queue h)
+            (list (list :id "e12" :branch "t" :state "waiting" :evidence "awaiting the gatekeeper"
+                        :reviews (list (list :decision "reject" :reasons "it changes the renderer")
+                                       (list :asked-ms 3)
+                                       (list :failure "the reviewer's turn died")))))
+      (let ((t7 (funcall text)))
+        (is (search "review: reject · it changes the renderer" t7)
+            (format nil "**the verdict and the reviewer's own reasons** are drawn on the entry's rows: ~s" t7))
+        (is (search "review failed — the reviewer's turn died" t7)
+            (format nil "**and a review that DIED says so** — not *has not answered*, which is the fact `decision` alone cannot carry: ~s" t7))
+        ;; **counted by walking, not by `(count … :test #'search)`** — which is a TYPE ERROR (a
+        ;; sequence of characters against a string) and was measured as one. The point stands: the
+        ;; review that has been asked and has not answered draws NOTHING, so only ONE `review` line
+        ;; is on those rows.
+        ;; **counted by the two LINE PREFIXES, not by the word `review`** — which also occurs inside
+        ;; the failure's own sentence (*the reviewer's turn died*), so counting it measured the
+        ;; reviewer's wording rather than the rows. Two lines is the fact: a verdict and a death,
+        ;; with the asked-not-answered review drawing NOTHING.
+        (flet ((n-of (needle)
+                 (loop with n = 0 with at = 0
+                       for hit = (search needle t7 :start2 at)
+                       while hit do (incf n) (setf at (1+ hit))
+                       finally (return n))))
+          (is (= 1 (n-of "review: ")) "one verdict line")
+          (is (= 1 (n-of "review failed")) "and one death line")
+          (is (= 2 (+ (n-of "review: ") (n-of "review failed")))
+              (format nil "**and nothing for the review that has been asked and has not answered**: ~s" t7))))
+
       (setf (head-merge-queue h) (list (list :id "e11" :branch "t" :state "waiting" :evidence "…")))
       (is (search "the gate has not run on this entry" (funcall text))
           "**an entry whose steps have not arrived SAYS so** — the third fact, kept apart from the other two")

@@ -90,6 +90,14 @@ out of a renderer."
                                               command))
                                   (merge-state-style (if (string-equal outcome "green") "landed" outcome))))
                       out)))
+            ;; **AND THE ENTRIES THIS ONE DEPENDS ON OR IS REVIEWED BY** — the reviews are on the
+            ;; wire (`MergeEntry.reviews`) and `merge-review-line` keeps their three facts apart;
+            ;; a review that has been asked and has not answered draws nothing, so the filter is
+            ;; here rather than in the renderer's caller.
+            (dolist (review (getf e :reviews))
+              (let ((line (merge-review-line review)))
+                (when line
+                  (push (list (cons (format nil "         ~a" line) '(:dim t))) out))))
             ;; nothing at all: said, not shown as a checklist that looks complete
             (when (null (getf e :gate-steps))
               (push (list (cons "         the gate has not run on this entry" '(:dim t))) out)))))
