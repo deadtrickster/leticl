@@ -11984,6 +11984,52 @@ worked for the merge queue.
     ;; --- and the count is on the heading
     (is (search "standing notes  3" (funcall text)) "the heading counts them")))
 
+(def-test enter-on-a-queue-row-opens-the-entry-in-full-and-esc-returns (:suite leticl)
+  "**The second view of one list** (`e9eb358`'s *TWO VIEWS OF ONE LIST*): Enter on a queue row opens
+  that entry in full — its facts, its reviews and its gate steps — over the list, and Esc returns to
+  the queue on the row the reader chose.
+
+  **And it sends NO frame**, which is the difference between this view and the jobs pane's overlay:
+  the reviews and gate steps are already on the entry, so the view draws what the head holds. The
+  pattern (take the selected row, set the mode, leave the list behind it) is that pane's own."
+  (let* ((h (%make-head))
+         (wire (%wire h)))
+    (setf (head-merge-queue h)
+          (list (list :id "e1" :branch "topic-a" :state "waiting" :priority "high"
+                      :evidence "awaiting the gatekeeper"
+                      :reviews (list (list :decision "reject" :reasons "changes the renderer")
+                                     (list :failure "the reviewer's turn died"))
+                      :gate-steps (list (list :command "cargo fmt --check" :outcome "red")))
+                (list :id "e2" :branch "topic-b" :state "landed"))
+          leticl::*merge-detail* nil
+          (head-mode h) :queue
+          (head-picker-sel h) 0)
+    (let ((sent-before (length (%sent wire))))
+      (leticl::%handle-key h (list :type :enter))
+      (is (eq :merge-detail (head-mode h))
+          "**Enter opens the entry in full** — the list stays behind it, as the jobs pane's does")
+      (is (equal "e1" (getf leticl::*merge-detail* :id)) "the row the cursor was on, and not the first")
+      (is (equal sent-before (length (%sent wire)))
+          "**and NO frame goes out** — the entry already carries everything this view draws")
+      (let* ((p (leticl::pane-for :merge-detail))
+             (rows (leticl::pane-lines p h 100 30))
+             (text (format nil "~{~a~^~%~}" (mapcar (lambda (l) (if (null l) "" (format nil "~{~a~}" (mapcar #'car l)))) rows))))
+        (is (search "entry e1" text) "the view names the entry")
+        (is (search "topic-a" text) "and its branch")
+        (is (search "priority high" text) "with the facts the row had — priority")
+        (is (search "review: reject · changes the renderer" text) "**its reviews**")
+        (is (search "review failed — the reviewer's turn died" text)
+            "**including a reviewer that DIED**, which is the fact a view built on `decision` would lose")
+        (is (search "red cargo fmt --check" text) "**and its gate steps**, in the gate's own order"))
+      ;; Esc returns to the QUEUE, not to the conversation — the list is what it came back to
+      (is (eq :queue (leticl::pane-esc-target (leticl::pane-for :merge-detail)))
+          "Esc's target is the queue itself, so the reader lands on the row they chose")
+      ;; and Enter on a queue with no rows does nothing rather than opening an empty view
+      (setf (head-merge-queue h) nil (head-mode h) :queue leticl::*merge-detail* nil)
+      (leticl::%handle-key h (list :type :enter))
+      (is (eq :queue (head-mode h)) "an empty queue opens nothing")
+      (is (null leticl::*merge-detail*) "and sets no entry"))))
+
 (def-test a-reviews-three-facts-are-not-one-rendering (:suite leticl)
   "**A verdict, no verdict YET, and a review that DIED are three facts** — measured against
   `MergeReview` (`event.rs:516`): `decision` is *accept*/*reject*/*needs_human*, `decision` nil with

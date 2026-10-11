@@ -142,6 +142,20 @@ two sides in circles."
 	 (%send head (make-peek it))
 	 (say head (format nil "re-reading ~a…" it))))
 
+(defmethod pane-enter ((pane merge-queue-pane) head)
+  "**Enter shows the selected entry IN FULL — the second view of the same list.**
+
+The pattern is the jobs pane's own (see the method below): take the row the cursor is on, open the
+view, set the mode, and leave the list behind it so Esc returns to the row the reader chose. **And
+unlike that one, NO FRAME GOES OUT**: `MergeEntry` already carries the reviews and the gate steps,
+so the view draws what the head holds rather than asking the daemon for what it has."
+  (let ((entry (nth (head-picker-sel head) (head-merge-queue head))))
+    (when entry
+      (setf *merge-detail* entry
+            (head-mode head) :merge-detail
+            (head-dirty head) t)
+      t)))
+
 (defmethod pane-enter ((pane jobs-pane) head)
   ;; **Enter opens the job's output IN A PANE, not in the conversation.**
   ;;

@@ -49,6 +49,15 @@ through to the conversation, which is what the old `member` test's absence meant
 (defclass jobs-pane        (pane) ())
 (defclass merge-queue-pane (pane) ())
 (defclass standing-notes-pane (pane) ())
+(defclass merge-detail-pane (pane) ())
+
+(defvar *merge-detail* nil
+  "The queue entry the `:merge-detail` VIEW is about — set by `pane-enter` on the queue pane.
+
+**A VIEW AND NOT A SECOND LIST**, which is the item's own phrase: *two views of one list*. It is
+held here rather than read again because *the data is already on the head* — the reviews and gate
+steps ride the entry — so opening this view sends no frame and cannot disagree with the row the
+reader came from.")
 (defclass subagents-pane   (pane) ())
 (defclass peek-pane        (pane) ())
 (defclass job-out-pane     (pane) ())
@@ -72,6 +81,7 @@ through to the conversation, which is what the old `member` test's absence meant
     (:config . config-pane)
     (:jobs . jobs-pane)
     (:queue . merge-queue-pane)
+    (:merge-detail . merge-detail-pane)
     (:standing . standing-notes-pane)
     (:subagents . subagents-pane)
     (:peek . peek-pane)
@@ -255,7 +265,7 @@ outrank any pane's hint."))
 
 ;;; ------------------------------------------------------- the frame's questions ;;;
 
-(dolist (class '(help-pane status-pane config-pane jobs-pane merge-queue-pane standing-notes-pane subagents-pane peek-pane
+(dolist (class '(help-pane status-pane config-pane jobs-pane merge-queue-pane standing-notes-pane merge-detail-pane subagents-pane peek-pane
                  job-out-pane picker-pane todos-pane slash-pane dash-pane lisp-pane))
   (eval `(defmethod pane-replaces-transcript-p ((pane ,class)) t)))
 
@@ -270,6 +280,63 @@ outrank any pane's hint."))
 (defmethod pane-cursor-rows ((pane subagents-pane) head) (length (subagents-stops head)))
 (defmethod pane-cursor-rows ((pane jobs-pane) head) (length (head-jobs head)))
 (defmethod pane-cursor-rows ((pane merge-queue-pane) head) (length (head-merge-queue head)))
+
+(defmethod pane-lines ((pane merge-detail-pane) head cols room)
+  "ONE entry of the merge queue, in full — the second view of the same list.
+
+**THE DATA IS ALREADY ON THE HEAD**, which is what makes this view cheap: `MergeEntry` carries the
+reviews and the gate steps, so unlike the jobs pane's overlay this one sends NO frame. It draws the
+entry's own rows, its reviews (three facts kept apart by `merge-review-line`) and its gate steps.
+The entry comes from `*merge-detail*`, which `pane-enter` on the queue pane sets."
+  (declare (ignore room))
+  (let ((e *merge-detail*))
+    (if (null e)
+        (list (list (cons "no entry — the queue moved under this view; esc returns to the list"
+                          '(:dim t))))
+        (append
+         (list (list (cons (format nil "entry ~a  " (or (getf e :id) "?")) '(:bold t))
+                     (cons (or (getf e :branch) "?") nil)
+                     (cons (format nil "  [~a]" (or (getf e :state) "?"))
+                           (merge-state-style (or (getf e :state) ""))))
+               nil)
+         (let ((out nil))
+           (when (getf e :priority)
+             (push (list (cons (format nil "  priority ~a" (getf e :priority)) '(:dim t))) out))
+           (when (getf e :needs)
+             (push (list (cons (format nil "  needs ~{~a~^, ~}" (getf e :needs)) '(:dim t))) out))
+           (push (list (cons (format nil "  ~a" (or (getf e :evidence) "no reason given")) '(:dim t))) out)
+           (when (and (getf e :brief) (plusp (length (getf e :brief))))
+             (push nil out)
+             (push (list (cons "  the ask:" '(:dim t))) out)
+             (push (list (cons (format nil "    ~a" (getf e :brief)) nil)) out))
+           (when (getf e :reviews)
+             (push nil out)
+             (push (list (cons "  reviews" '(:bold t))) out)
+             (dolist (r (getf e :reviews))
+               (let ((line (merge-review-line r)))
+                 (when line (push (list (cons (format nil "    ~a" line) '(:dim t))) out)))))
+           (when (getf e :gate-steps)
+             (push nil out)
+             (push (list (cons "  the gate" '(:bold t))) out)
+             (dolist (step (getf e :gate-steps))
+               (push (list (cons (format nil "    ~a ~a" (or (getf step :outcome) "?")
+                                         (or (getf step :command) ""))
+                                 (merge-state-style (if (string-equal (getf step :outcome) "green")
+                                                        "landed" (getf step :outcome)))))
+                     out)))
+           (push nil out)
+           (push (list (cons "  esc returns to the queue, on the row you chose" '(:dim t))) out)
+           (nreverse out))))))
+
+(defmethod pane-cursor-rows ((pane merge-detail-pane) head)
+  ;; a VIEW, not a list: nothing to walk, which is what the cursor row count says
+  (declare (ignore head)) 0)
+
+(defmethod pane-esc-target ((pane merge-detail-pane)) :queue)
+
+(defmethod pane-hint ((pane merge-detail-pane) head)
+  (declare (ignore head))
+  (list (cons "esc returns to the queue" '(:dim t))))
 
 (defmethod pane-lines ((pane standing-notes-pane) head cols room)
   "The standing notes' rows — the drawing is `standing-notes-lines`, landed ahead of this pane."
