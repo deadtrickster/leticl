@@ -508,19 +508,36 @@ under it.
   or a stalled tick cleared it. `compacted`, `reseated` and `auto_compact_failed` now clear it
   (`+fold-ending-codes+`, the reference's three). `compact_half` stays in the routine table: a
   daemon from before `a33655d` speaks the same protocol number and still sends it.
-- [ ] **Protocol 43 (letibot `955a7fc`, R61) is NOT claimed here.** This head says 42. Against a 43
+- [x] **Protocol 43 (letibot `955a7fc`, R61) is NOT claimed here.** This head says 42. Against a 43
   daemon it attaches and reads (a newer daemon is a reading problem, R3): what it cannot read is
   `ServerFrame::Queues` (the reply to `/queue`'s `list_merge_queue`, replacing `merge_queue`) and
   `SessionEvent::QueueMoved` (replacing `merge_entry_added/moved/removed`) — both reported and
   skipped, so the merge-queue pane stays EMPTY rather than breaking. Moving to 43 means porting
   `QueueSnapshot` (reviews, merges, leases, targets, recent, `unreadable`) into the pane and
   treating `QueueMoved` as *ask again*; until then the number is a claim this head cannot make.
-- [ ] **Two guards were red on `main` before this branch, both from letibot's last two days and
+
+  **RESOLVED, AND THE HEAD IS PAST IT — IT ANNOUNCES 44 (2026-10-11).** The number moved for the
+  terminal's panes (`pane` on every frame, protocol 44); 43's own half came with it: `ServerFrame::Queues`
+  is folded (the `queues` frame in `src/head/frames.lisp`, replacing `merge_queue`) and
+  `SessionEvent::QueueMoved` is the ONE event that keeps the queues live — its arm replaced the three
+  `merge_entry_*` tags, and before it a real move filed an *unknown event* row on every head. Held by
+  `protocol-44-is-claimed-and-the-queues-frame-folds-both-queues` (`tests/sweep-wire.lisp`), which
+  asserts the number AND that the frame folds both queues, the leases, the red target and the moves. So
+  `QueueSnapshot`'s six fields are in the pane and `QueueMoved` is *ask again* — nothing is owed, which
+  is why the marker is ticked rather than the box rewritten.
+- [x] **Two guards were red on `main` before this branch, both from letibot's last two days and
   neither touched here:** `a-routine-warning-code-is-one-letibot-calls-routine` (R61 added
   `queue_lease_lost` and `merge_queue_recovered` as `Routine`) and six markers of
   `every-compaction-sentence-this-head-parses-is-still-the-one-letibot-writes` (R72/`e834316`
   reworded the wall and compaction sentences into the provider's units, so `compaction-facts` no
   longer finds its numbers and a `compacted` falls back to a note).
+
+  **BOTH GUARDS ARE GREEN (2026-10-11), AND THE SUITE IS THE MEASUREMENT**: 8,437 checks, 0 failures.
+  `a-routine-warning-code-is-one-letibot-calls-routine` passes, so `queue_lease_lost` and
+  `merge_queue_recovered` are read as the daemon's `Routine` severity; and all six markers of
+  `every-compaction-sentence-this-head-parses-is-still-the-one-letibot-writes` pass, so the wall and the
+  compaction sentences in the provider's units are parsed. **A guard that was red cannot be red in a
+  green run** — so this needs no separate measurement, which is what the marker was for.
 
 ## R38 — a setting with more than two values is CHOSEN, not cycled
 
@@ -773,10 +790,19 @@ rest names the commit it comes from.
   core is ported (`c2a5605`'s successor: 42's todo author and `cancelled`, 40's
   `TranscriptForked` drop, the exit id on stdout, `prefix_stale`); what remains is head-side:
 
-  - [ ] **the standing-notes pane** (`ccee82a`, protocol 39): `ClientFrame::ListNotes` →
+  - [~] **the standing-notes pane** (`ccee82a`, protocol 39): `ClientFrame::ListNotes` →
     `ServerFrame::StandingNotes` carrying `NoteEntry` — one row per note, and the form the
     budget gave each. Two frames, so this is the one item here that adds wire. The reference's
     pane draws it and Enter opens the note in rano (`81749c9`).
+
+    **WHAT IS LEFT, MEASURED 2026-10-11.** The pane, the wire, the renderer AND an Enter that opens the
+    note WHOLE in the read overlay are landed (`pane-enter` for `standing-notes-pane`,
+    `panes/notes.lisp`). The reference's Enter opens the note's FILE in rano instead, and `NoteEntry`
+    carries `path` for it — *the absolute path the section's heading carries, so a `read` of it and this
+    row are the same file*. **The door for that now exists** (`ctrl-]`'s `!term rano <path>`, landed
+    2026-10-11, `c216549`), so what is missing is not machinery but a DECISION: a read-only view and a
+    full editor want one key between them, and moving a landed, tested behaviour onto a second key is
+    the kind of change that wants its own session rather than the tail of this one.
 
     **THE RENDERER IS LANDED (2026-10-11)** — `standing-notes-lines`, held by
     **AND THE WIRE WITH IT** — `make-list-notes`, the `standing_notes` fold (which REPLACES: the
