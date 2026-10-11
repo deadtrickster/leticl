@@ -786,7 +786,13 @@ head runs today breaks without them.
     what it displaces when a completion is open — is what remains. A line nobody calls is the shape
     this session kept finding; said here rather than rediscovered.
     triangle the head already draws.
-  · **M — the review queue as TWO VIEWS OF ONE LIST. MEASURED 2026-10-11: the reviews are ON THE
+  · **M — the review queue as TWO VIEWS OF ONE LIST. AND THE REFERENCE'S QUEUE PANE IS A RANO
+    WIDGET** — its own header says the pane comes from *`rano::agent::queue` from the queue and the
+    reviews this head holds* (`ui/panes/queue.rs:2`), so the reference draws this list through
+    rano, the same integration this tree deferred for `ctrl-e` and `!term`. **This head draws it
+    itself instead** (the rows, the gate steps, the standings, the reviews), which is why the whole
+    read half landed here without rano — and why the *two views* question is this head's to answer
+    rather than a widget's to inherit. MEASURED 2026-10-11: the reviews are ON THE
     WIRE, one list per entry** — `MergeEntry.reviews: Vec<MergeReview>` (`protocol.rs:2400-2405`),
     additive with its own note: *an older peer reads past it and draws the queue without the
     reviews*. So *two views of one list* is a PANE question rather than a wire one: the same queue
