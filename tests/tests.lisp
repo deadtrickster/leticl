@@ -12047,6 +12047,24 @@ worked for the merge queue.
         (format nil "**a bare escape takes its ONE following byte with it** — so `a ESC b ESC c` is just `a`: ~s" lines))
     (is (= 2 dropped) "and each is counted once")))
 
+(def-test a-terminal-honours-the-erase-a-shell-uses (:suite leticl)
+  "**`ESC [ K` erases from the cursor to the end of the line** — a shell does it constantly, and
+  without it a line redrawn SHORTER than the last one keeps the old tail hanging off it. `K`'s
+  parameter picks the direction (0, the default, is cursor-to-end) and this head honours the default.
+
+  The two cases differ by one sequence and nothing else, which is what makes them a test of the
+  honouring rather than of the overwrite: overwriting covers columns, it does not remove them."
+  (multiple-value-bind (lines dropped)
+      (leticl::%term-lines-from-output (format nil "abc~cx~c[K" #\return #\escape))
+    (is (equal (list "x") lines)
+        (format nil "**the erase leaves nothing of the old tail**: ~s" lines))
+    (is (= 1 dropped) "and the sequence it honoured is still COUNTED — the pane says what it could not draw"))
+  (multiple-value-bind (lines dropped)
+      (leticl::%term-lines-from-output (format nil "abc~cx" #\return))
+    (is (equal (list "xbc") lines)
+        (format nil "**without it the tail stays** — an overwrite covers, it does not erase: ~s" lines))
+    (is (= 0 dropped) "and nothing was dropped")))
+
 (def-test a-terminal-opens-takes-keys-for-the-program-and-ends-when-asked (:suite leticl)
   "**The `!term` frames, each with the caller the suite's own invariant demands** — and the ordering
   that costs a session if it is guessed: **the pane's KEY PATH is what makes `TermInput` and

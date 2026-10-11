@@ -381,7 +381,15 @@ tail's spaces as a ragged gap."
               ;; the notation itself is built on.
               ((char= ch #\escape) (incf dropped) (setf esc-p t))
               (esc-p (setf esc-p nil csi-p (char= ch #\[)))
-              (csi-p (when (<= 64 (char-code ch) 126) (setf csi-p nil)))
+              (csi-p (when (<= 64 (char-code ch) 126)
+                       (setf csi-p nil)
+                       ;; **`ESC [ K` ERASES FROM THE CURSOR TO THE END OF THE LINE**, and a shell does it
+                       ;; constantly: without it a line redrawn shorter than the last one keeps the old
+                       ;; tail hanging off it. `K`'s parameter picks the direction — 0, the default, is
+                       ;; cursor-to-end and is the one a prompt uses — and this head honours the default,
+                       ;; leaving the others counted rather than guessed at.
+                       (when (char= ch #\K)
+                         (setf buf (subseq buf 0 (min col (length buf)))))))
               (t (put ch))))
       (emit))
     (values (nreverse out) dropped)))

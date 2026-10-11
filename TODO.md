@@ -695,7 +695,13 @@ head runs today breaks without them.
   mapped wrongly, but never arriving: they are consumed EARLIER in `%handle-key`'s routing (the
   completer takes `:tab`; something takes `:backspace` before the pane arm), so the `%pane-key` arm
   written for them is dead code and its Backspace comment describes a mapping that never runs. The
-  **AND THE NEXT PIECE OF THE EMULATOR IS `ESC [ K`** — erase from the cursor to the end of the line,
+  **AND `ESC [ K` IS LANDED (2026-10-11)** — held by `a-terminal-honours-the-erase-a-shell-uses`:
+  erase from the cursor to the end of the line, which a shell does constantly, honouring `K`'s DEFAULT
+  parameter (cursor-to-end) and leaving the others counted rather than guessed at. The two cases differ
+  by one sequence and nothing else, which is what makes them a test of the honouring rather than of the
+  overwrite. *(The paragraph below is the record of the five attempts it took, and the recipe.)*
+
+  **AND THE NEXT PIECE AFTER THAT** — erase from the cursor to the end of the line,
   which a shell does constantly: without it a line redrawn shorter than the last one keeps the old tail
   hanging off it. The code was written and WORKS (the existing escape cases pass through it), and it is
   **not landed, because its own assertion would not write**: five attempts today died on getting
