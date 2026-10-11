@@ -222,6 +222,17 @@ for \"nothing to say\", and *deferring is not sending*."
 (defun make-list-todos ()
   (list :frame "list_todos"))
 
+(defun make-list-notes ()
+  "The STANDING notes — what the harness is reading into this session's prompt right now.
+
+**Asked when the pane opens, not by a verb that rides the queue** (measured in the reference,
+2026-10-11): `app/standing.rs:133` is `self.standing_pane.then_some(Action::ListNotes)`, and the
+protocol's own docstring gives the reason — *a list is a question, not an act; a pane that opens
+must answer while it is open, and a verb that rides the command queue answers after the turn.*
+Read-only and unserialised like `ListJobs`, and the answer is the harness's mailbox rather than a
+fresh read of the directory."
+  (list :frame "list_notes"))
+
 (defun make-list-merge-queue ()
   "The merge queue as of NOW — daemon-level, and the first thing a head asks for.
 

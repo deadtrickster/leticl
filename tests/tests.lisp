@@ -11874,6 +11874,34 @@ answered. The daemon's own `secret_late` warning, which would explain it, is a
       (is (equal "gate: fmt" (getf row :evidence))
           "**and the evidence we have is kept** — a move that says nothing must not erase the reason"))))
 
+(def-test the-standing-notes-are-asked-for-and-kept-as-a-snapshot (:suite leticl)
+  "**The standing-notes wire, its ask, and its fold** — the half that must land before the pane, and
+  for the reason the suite taught twice: a constructor with no caller is a feature that does not
+  exist, and a verb with no registry row makes the dispatcher drift."
+  (let* ((h (%make-head))
+         (wire (%wire h)))
+    ;; --- the ask
+    (leticl::%command h "standing")
+    (is (find "list_notes" (%sent wire) :key #'frame-name :test #'string=)
+        "**`/standing` asks** — and the ask is why the constructor can exist at all")
+    (is (search "asking the daemon" (head-status-note h)) "saying it is a wait, because the answer is not instant")
+    ;; --- the answer replaces, and says how many
+    (leticl::%handle-frame h (list :frame "standing_notes"
+                                   :notes (list (list :path "/n/one.md" :form "verbatim"
+                                                      :abstract "a" :abstract-written t)
+                                                (list :path "/n/two.md" :form "indexed"
+                                                      :abstract "b" :abstract-written nil))))
+    (is (= 2 (length (head-standing-notes h))) "the notes are on the head")
+    (is (equal "/n/one.md" (getf (first (head-standing-notes h)) :path)) "in the daemon's order")
+    (is (search "reading 2 notes" (head-status-note h)) "and the count is said")
+    ;; a second reply REPLACES: a note the harness stopped injecting must leave the pane
+    (leticl::%handle-frame h (list :frame "standing_notes" :notes (list (list :path "/n/two.md" :form "indexed"))))
+    (is (= 1 (length (head-standing-notes h)))
+        (format nil "**the reply is a snapshot, not a log** — a note no longer injected must go: ~s"
+                (head-standing-notes h)))
+    (leticl::%handle-frame h (list :frame "standing_notes" :notes nil))
+    (is (null (head-standing-notes h)) "and an empty mailbox is empty")))
+
 (def-test the-standing-notes-draw-their-form-and-where-their-abstract-came-from (:suite leticl)
   "**The renderer for the standing-notes pane** (protocol 39, the 116-commit batch's `ccee82a`) —
 the rows, landed ahead of the pane so the pane is registration rather than drawing, the split that

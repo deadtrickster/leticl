@@ -44,7 +44,7 @@
    #:+protocol-version+
    #:*pending-resume* #:make-attach #:make-ack #:make-prompt #:make-interrupt #:make-answer
    #:match-option
-   #:make-answer-question #:question-answer #:make-list-sessions #:make-list-todos #:make-list-jobs #:make-list-merge-queue
+   #:make-answer-question #:question-answer #:make-list-sessions #:make-list-todos #:make-list-jobs #:make-list-merge-queue #:make-list-notes
    #:make-set-operator-todos
    #:make-new-session #:make-resume-session #:make-rename-session #:make-fetch-row
    #:make-switch #:make-peek #:make-settings #:make-detach #:make-resync

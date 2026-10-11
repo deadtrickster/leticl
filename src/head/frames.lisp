@@ -979,6 +979,15 @@ empty pane on every attach, which is the defect the guard exists to prevent, inv
          ;; the first wants one; the command that asks for a list opens it itself.
          (t nil)))
      :control)
+    ((string= (frame-name frame) "standing_notes")
+     ;; **THE LIST OF WHAT THE HARNESS IS READING IN**, one row per note. REPLACES, for the
+     ;; reason the queue's own fold does: this is a snapshot of a mailbox, and folding it into
+     ;; what the head held would leave a note the harness has stopped injecting on the pane.
+     (let ((notes (getf frame :notes)))
+       (setf (head-standing-notes head) notes
+             (head-dirty head) t)
+       (say head (format nil "the harness is reading ~d note~:p into this session" (length notes))))
+     :control)
     ((string= (frame-name frame) "merge_queue")
      ;; **THE QUEUE AS OF NOW, and the two events keep it from here.** `MergeQueue` is the WHOLE
      ;; queue, so this REPLACES rather than merges — folding it into what the head held would let a

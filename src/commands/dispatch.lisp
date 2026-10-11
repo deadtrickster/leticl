@@ -175,6 +175,14 @@ on ClientFrame::Slash)."
                                  (or (getf (session-turn (head-session head)) :model)
                                      "the model it started with")))))
            (open-pick head :model)))
+      ((string= verb "standing")
+       ;; the ask, and the sentence that says it is a wait — the pane that will draw this is the
+       ;; next step; the verb exists now because a constructor with no caller is a feature that does
+       ;; not exist (the suite's own invariant, which refused the queue's wire half alone).
+       (%send head (make-list-notes))
+       (say head "asking the daemon which notes are standing…")
+       (setf (head-dirty head) t)
+       t)
       ((string= verb "queue")
        ;; **THE ASK IS STEP ONE'S OTHER HALF** (see the merge queue's box in `TODO.md`): the queue is
        ;; daemon-level and no snapshot carries it, so a head that does not ask draws nothing. This
