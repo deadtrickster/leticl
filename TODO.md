@@ -735,6 +735,15 @@ head runs today breaks without them.
     step that never ran), and `outcome` is a **closed four-word set** (green / red / never reached
     / no gate).
 
+    **AND THE RENDERING IS LANDED (2026-10-11)**: each step is drawn with its outcome and its
+    COMMAND, in the order `main` declared them, with green in Success's register and red /
+    never-reached in Failure's — held by the same test as the queue's rows. Three facts are kept
+    apart and the test holds all three: a `no_gate` step is its own sentence, an entry whose steps
+    have not arrived says *the gate has not run on this entry*, and an empty list is NEVER drawn as
+    a checklist (it would read as *all steps passed*). **What remains in this step**: the
+    STANDINGS beside the triangle, which is a drawing question about the pane's edge rather than
+    about the rows.
+
     **AND THE RULE THAT MATTERS IS THE REFERENCE'S OWN**: the `no_gate` case is a VARIANT rather
     than an empty list because *"the gate declared nothing to run"* and *"the gate has not run
     yet"* are different facts, and **an empty checklist reads as a third one — *all steps passed* —
