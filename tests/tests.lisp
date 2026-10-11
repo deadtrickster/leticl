@@ -12292,6 +12292,33 @@ worked for the merge queue.
           "**a COLOUR is COUNTED, not honoured** — this head draws roles, not terminal colours")
       (is (null (leticl::term-screen-pen s)) "and it left the pen alone"))))
 
+(def-test the-pane-frames-name-the-pane-the-daemon-numbered (:suite leticl)
+  "**Protocol 44 numbers the panes, and every frame about one carries the number** — `TermInput`,
+  `TermResize` and `TermClose` say WHICH pane they are for, and the daemon refuses the whole
+  `ClientFrame` without it (`ClientFrame` is an internally-tagged enum, so an unknown shape fails the
+  deserialiser and takes the socket with it).
+
+  **A 43 daemon is still served**: the field goes only to a daemon that says 44, because the same
+  serde refuses an unknown field on the older side — the version argument, both ways. The number
+  comes from `TermAttached { pane }`, which is how a head learns which of a session's panes it is
+  drawing."
+  (flet ((panes (f) (getf f :pane)))
+    (let ((*daemon-protocol* 44))
+      (is (= 1 (panes (make-term-input "a"))) "**44: the keystroke names its pane**")
+      (is (= 1 (panes (make-term-resize 80 24))) "and so does the rectangle")
+      (is (= 1 (panes (make-term-close))) "and the ending"))
+    (let ((*daemon-protocol* 43))
+      (is (null (panes (make-term-input "a")))
+          "**43: the field is not sent at all** — an unknown field there ends the daemon's read loop")
+      (is (null (panes (make-term-resize 80 24))) "nor on the rectangle")
+      (is (null (panes (make-term-close))) "nor on the ending"))
+    ;; THE NUMBER IS THE DAEMON'S, and the attach is where it arrives
+    (let ((h (%make-head)) (*daemon-protocol* 44) (*term-pane* 1))
+      (leticl::%handle-frame h (list :frame "term_attached" :pane 3 :command "mc" :opened t
+                                     :cols 40 :rows 10))
+      (is (= 3 (getf (head-term h) :pane)) "**the ATTACH says which pane arrived**")
+      (is (= 3 (panes (make-term-input "x"))) "and the keys follow it, not a guess"))))
+
 (def-test a-terminal-opens-takes-keys-for-the-program-and-ends-when-asked (:suite leticl)
   "**The `!term` frames, each with the caller the suite's own invariant demands** — and the ordering
   that costs a session if it is guessed: **the pane's KEY PATH is what makes `TermInput` and

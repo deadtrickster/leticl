@@ -276,6 +276,19 @@ than being told."
   "TEXT as a vector of its UTF-8 byte values — the shape `Vec<u8>` takes on a JSON wire."
   (coerce (sb-ext:string-to-octets (or text "") :external-format :utf-8) 'simple-vector))
 
+(defun %term-pane-field ()
+  "**The `pane` field, and only for a daemon that speaks 44** — the number this head is drawing, or
+ NIL on a 43 daemon.
+
+ Protocol 44 (letibot R60 item 2) gave every pane frame a `pane`, because a session may now hold
+ several and each frame is fanned out to every head of the session. The field is REQUIRED there, and
+ a version-43 daemon refuses the whole `ClientFrame` when it meets an unknown shape — `ClientFrame` is
+ an internally-tagged enum, so one unknown field fails the deserialiser and ends the daemon's read
+ loop with the socket. That is the both-ways argument the version constant records, so the field is
+ sent to a daemon that says 44 and omitted for one that does not, and one head serves both."
+  (when (and (integerp *daemon-protocol*) (>= *daemon-protocol* 44))
+    (list :pane *term-pane*)))
+
 (defun make-term-input (text)
   "A keystroke for the PROGRAM — the pane's key path. A terminal that takes no keystroke for the
 program is not a terminal, which is why this frame and that path land together.
@@ -287,7 +300,7 @@ layer reads decoded characters, so the UTF-8 encoding happens HERE, once, and ev
 passing the text it has. The old frame sent `data: STRING`, which serde refused with the whole
 `ClientFrame` — the same `Bye` `make-term-open` records (sweep 2026-10-11, section A). A vector and
 never a list, so an empty keystroke is `[]` rather than an elided required field."
-  (list :frame "term_input" :bytes (%utf8-octets text)))
+  (list* :frame "term_input" :bytes (%utf8-octets text) (%term-pane-field)))
 
 (defun make-term-status ()
   "**Is something running in this session's pane, and what?** — `TermStatus` (protocol 34), answered
@@ -303,12 +316,12 @@ run `!term` in."
 (defun make-term-resize (cols rows)
   "The rectangle, told to the PROGRAM rather than to the daemon — sent when a terminal attaches at
 a size the program has not heard, which is the only resize this head knows about so far."
-  (list :frame "term_resize" :cols cols :rows rows))
+  (list* :frame "term_resize" :cols cols :rows rows (%term-pane-field)))
 
 (defun make-term-close ()
   "The ending a PERSON asked for. The daemon can end one by itself too, and that arrives as
 `TermEnded`: two different facts, and the pane draws which."
-  (list :frame "term_close"))
+  (list* :frame "term_close" (%term-pane-field)))
 
 (defun make-list-notes ()
   "The STANDING notes — what the harness is reading into this session's prompt right now.

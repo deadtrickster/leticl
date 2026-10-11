@@ -499,6 +499,11 @@ command, `protocol.rs:2572`), and `TermResize` tells the program it. One row und
 height, which is what the pane sent before the three readers were made to agree."
   (values (max 1 (head-cols head)) (max 1 (1- (head-rows head)))))
 
+(defvar *term-pane* 1
+  "The pane number this head is drawing, from `TermAttached { pane }` (protocol 44), and named on
+ every frame about it — `%term-pane-field` sends it to a daemon that speaks 44 and omits it for one
+ that does not. 1 is the number a 43 daemon's single pane is treated as.")
+
 (defvar *term-status* nil
   "The last `term_status` answer — the command this session's pane is running, or NIL for none —
 kept so a later reader (an edge, a hint) can say it without asking again. Said once when it

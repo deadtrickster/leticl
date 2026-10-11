@@ -1,4 +1,4 @@
-;;;; protocol.lisp — the head frame vocabulary, protocol version 43.
+;;;; protocol.lisp — the head frame vocabulary, protocol version 44.
 ;;;; Source of truth: crates/sessionlog/src/protocol.rs. Frames are plists in
 ;;;; the image (PLAN.md §7, D4); the constructors below are the only place
 ;;;; that knows what a frame looks like on the wire.
@@ -11,13 +11,26 @@
 
 (in-package #:leticl)
 
-(defparameter +protocol-version+ 43
+(defparameter +protocol-version+ 44
   "The version this head announces at ATTACH, and the number is a CLAIM rather than a flag.
 
 The protocol's only compatibility check is EQUALITY at ATTACH, so a head that announces a
 version is saying *I know what those frames are* — and a head that announces a number it does
 not understand has traded a clear refusal for a mid-session surprise. So what 24, 25 and 27
 added is written down here rather than assumed:
+
+  · **44** IS NUMBERED PANES (letibot R60 item 2, `protocol.rs` §44): *'One pane per session, and
+    no second one. A second `TermOpen` while one is live is refused in a sentence rather than
+    replacing the running program.'* **The refusal is gone** — a second `!term` starts a second
+    program BESIDE the first, each pane has a number the session never reuses, and every frame
+    about a pane says which: `TermInput`, `TermResize` and `TermClose` carry `pane`,
+    `TermOutput`/`TermEnded` carry it back, `TermAttached { pane, command, opened }` also answers
+    an open (the number, before the program's first byte) and `TermStatus { panes: [PaneBrief] }`
+    lists them. The field is REQUIRED, so this number is a hard break both ways — a v43 daemon
+    refuses the whole `ClientFrame` on the first `TermInput` it meets and ends its read loop with
+    the socket. **This head sends the field only to a daemon that says 44** (`%term-pane-field`),
+    which is what lets one head serve both, and it still draws ONE pane: `!term N`, the cap of
+    eight and the scrollback are the reference's other half and are filed rather than faked.
 
   · **43** IS TWO QUEUES (letibot R61, `protocol.rs` §43): *'review is review and merge is
     merge. separate steps. separate queues.'* `ServerFrame::MergeQueue {entries}` became

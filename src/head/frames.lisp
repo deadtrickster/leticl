@@ -1033,11 +1033,13 @@ empty pane on every attach, which is the defect the guard exists to prevent, inv
      (multiple-value-bind (cols rows) (%term-rectangle head)
        (let ((cols (or (getf frame :cols) cols))
              (rows (or (getf frame :rows) rows)))
-         (setf (head-term head) (list :cols cols :rows rows :output ""
+         (setf *term-pane* (or (getf frame :pane) 1)
+              (head-term head) (list :cols cols :rows rows :output ""
                                       :command (getf frame :command)
                                       :screen (term-screen-new rows cols)
-                                      :dropped 0 :pending nil)
-               (head-mode head) :term
+                                      :dropped 0 :pending nil :pane *term-pane*)
+               
+              (head-mode head) :term
                (head-dirty head) t)
          ;; the PROGRAM is told the size the pane has — the window may have changed between the
          ;; ask and the answer

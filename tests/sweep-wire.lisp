@@ -205,16 +205,16 @@ the pane is open and no ask is in flight."
       (is (equal "restarted" (getf row :evidence)) "**and a move that says nothing keeps the reason we have**"))
     (%sw-reset-queues)))
 
-;;; ------------------------------------------------------- 4. protocol 43 ;;;
+;;; ------------------------------------------------------- 4. protocol 44 ;;;
 
-(def-test protocol-43-is-claimed-and-the-queues-frame-folds-both-queues (:suite leticl)
-  "`+protocol-version+` is 43 and the move is recorded; the `queues` frame folds into a snapshot with
+(def-test protocol-44-is-claimed-and-the-queues-frame-folds-both-queues (:suite leticl)
+  "`+protocol-version+` is 44 and the moves are recorded; the `queues` frame folds into a snapshot with
 both queues, the leases, the red target and the moves — and `/queue` asks with the daemon's name."
   (%sw-reset-queues)
-  (is (= 43 leticl:+protocol-version+) "the claim")
-  (is (search "**43**" (uiop:read-file-string (merge-pathnames "src/protocol/versions.lisp"
+  (is (= 44 leticl:+protocol-version+) "the claim")
+  (is (search "**44**" (uiop:read-file-string (merge-pathnames "src/protocol/versions.lisp"
                                                                (asdf:system-source-directory :leticl))))
-      "and versions.lisp records what 43 is")
+      "and versions.lisp records what 44 is — the pane's number this head now sends")
   (let* ((h (%make-head))
          (wire (%wire h)))
     (leticl::%command h "queue")
