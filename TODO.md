@@ -638,7 +638,15 @@ rest names the commit it comes from.
     edits you all love so much"*) turned into a test: the daemon sends a `FileEdit` when a command
     changed exactly one file, and this head used to throw it away because it chose what to draw
     from the TOOL'S NAME (`bash` is neither `:edit` nor `:write`), so a `python3 - <<'PY'` heredoc
-    sentence about it — **AND IT IS LANDED 2026-10-11** (`job-label`, held by `a-job-is-called-by-its-name-and-falls-back-to-its-command`): the name the caller gave the job when there is one, the command when there is not, never the id — measured against `protocol.rs:1268`, whose own words are that the name is *the agent's own stated intent* and *never a parse of the command line*, because a slug derived from the command would be the machine inventing an intent.
+    that rewrote a source file got a note and no diff.
+    **AND A JOB NAMED IN EVERY SENTENCE ABOUT IT IS LANDED 2026-10-11** (`job-label`, held by
+    `a-job-is-called-by-its-name-and-falls-back-to-its-command`): the name the caller gave the job
+    when there is one, and the COMMAND when there is not — never the id, because `j57` is a counter
+    and *a person watching the pane cannot tell which running job is the release build and which is
+    the fold's tests*. Measured against `protocol.rs:1268`, whose own words are that the name is
+    *the agent's own stated intent* and *never a parse of the command line*, because a slug derived
+    from the command would be the machine inventing an intent.
+    (`29f2422`, `5d3bfac`), `allow-all`'s answer surviving a restart (`9f09f04`), the stop
     that interrupts the turns it holds (`195a813`), and the term pane born at its size
     (`401e61f`).
 
