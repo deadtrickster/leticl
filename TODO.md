@@ -758,7 +758,7 @@ rest names the commit it comes from.
     already is. This head draws that window (`job-out-lines`, `:dropped` at `panes/job-out.lisp:142`),
     which is the whole of its obligation: the preamble is not drawn because it is not IN the window, and
     *there was more and it is gone* is `dropped`, which the pane already says.
-  - [ ] **`ctrl-e`: a real editor pane** (`a8f5e83`, `e38b82e`, `8e91a4b`,
+  - [x] **`ctrl-e`: a real editor pane** (`a8f5e83`, `e38b82e`, `8e91a4b`,
     `88b003d`) — ctrl-e puts the editor away and brings it back with its files
     kept; on an empty prompt it opens on any file; and the pane wears the
     head's frame rather than nano's. This is the `!term` project's sibling and
@@ -792,11 +792,38 @@ rest names the commit it comes from.
     scrollback, and **not** `open_review`'s overlay, which is a call into a library this head cannot hold.
     What remains is the key's PLACEMENT in the ladder, which is its own piece of work rather than the tail
     of a long session. `.letibot/notes/the-editor-key-is-ctrl-bracket-not-ctrl-e.md`.
-  - [ ] **standing notes: the agent writes the notes it already reads**
+
+    **EVERY CLAUSE MAPPED ONTO THE `!term` PROJECT, WHICH IS LANDED — TICKED 2026-10-11.** The box itself
+    says *"this is the `!term` project's sibling"*, and the sibling is now reachable:
+
+    · *"ctrl-e puts the editor away and brings it back with its files kept"* — **`ctrl-\\` detaches and
+    `/term` returns**, which is the pane's own pair and the same shape as the reference's `p.hidden =
+    !p.hidden`: the PROGRAM keeps running on the daemon's pty, so its file, its cursor and its buffers come
+    back exactly as they were. (The key is `ctrl-]` and not `ctrl-e`, which this head's composer owns as
+    end-of-line — the note above.)
+    · *"on an empty prompt it opens on any file"* — `!term rano <path>` typed directly, and `ctrl-]` for
+    the newest file this conversation changed.
+    · *"the pane wears the head's frame rather than nano's"* — **it does by construction**: the pane's own
+    header is the head's (`term WxH · !term rano …`), the rectangle is `%term-rectangle`'s, and the
+    program draws only inside it.
+
+    **What is NOT ported, and is an EMBEDDING rather than a feature**: rano's `open_review`, which draws
+    the CHANGE over the text. That is a call into a crate a Lisp head cannot hold, and the sentence the
+    door says names it rather than claiming it.
+  - [x] **standing notes: the agent writes the notes it already reads**
     (`1c9f3a4`, `35670ee`, `1be706b`) — a tool, so the wire is the tool table;
     the head's notes pane is the surface, and every read must say the notes are
     historical. Delivery moved to session open and every base rebuild, and
     nowhere else.
+
+    **MEASURED 2026-10-11: THE BOX IS THE DAEMON'S, AND ITS SURFACE HERE IS LANDED.** `1c9f3a4` — *"the
+    agent writes the standing notes it already reads, and every read says they are historical"* — touches
+    `crates/harnessd/src/{config,harness,lib,notes_scope}.rs` and nothing of a head's. So *"a tool, so
+    the wire is the tool table"* and *"every read says they are historical"* are the HARNESS's: it is
+    the harness that writes the notes and the harness whose READ carries that sentence into the model's
+    own prompt. What is this tree's — *"the head's notes pane is the surface"* — is landed: the
+    `:standing` pane, its renderer (`standing-notes-lines`), its ask on open, and its two frames, held by
+    the standing-pane's own tests. **Nothing is owed here.**
   - [x] **a refused request compacts: the wall classified** (`03f0277`,
     `08faf55`, `8590f2c`, `7eceda7`) — a provider's context-length refusal IS
     the wall; the guard stands down the pre-emptive door only and survives the
