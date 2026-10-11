@@ -382,12 +382,12 @@ The one exception is `ctrl-\\`, which detaches (see `%term-detach`). Passing a S
 `make-term-input` is the constructor's contract; how it goes on the wire is the constructor's."
   (cond
     ((%ctrl-backslash-p key) (%term-detach head))
-    ((eq type :tab) (%send head (make-term-input (string #\tab))) t)
-    ((eq type :backspace) (%send head (make-term-input (string (code-char 127)))) t)
+    ((eq type :tab) (%term-send-input head (string #\tab)) t)
+    ((eq type :backspace) (%term-send-input head (string (code-char 127))) t)
     ((eq type :ctrl)
      (let ((code (- (char-code (getf key :ch)) 96)))
        (when (<= 0 code 31)
-         (%send head (make-term-input (string (code-char code)))))
+         (%term-send-input head (string (code-char code))))
        t))
     ;; **THE MOUSE**, and it is the only key here that does not reach `make-term-input`: its report is
     ;; octets, not text (see `%term-mouse-bytes` for the filter and the two encodings, and
@@ -396,7 +396,7 @@ The one exception is `ctrl-\\`, which detaches (see `%term-detach`). Passing a S
     ;; not a wheel over the transcript.
     ((eq type :mouse)
      (let ((octets (%term-mouse-bytes head key)))
-       (when octets (%send head (make-term-input-bytes octets)))
+       (when octets (%term-send-octets head octets))
        t))
     (t nil)))
 
@@ -550,7 +550,7 @@ one thing this head must not need."
           ;; footer says so — a first cut made Esc detach, which was the generic `(shut)` below
           ;; wearing a better sentence, and it was the wrong sentence for a shell.
           ((and (eq mode :term) (head-term head) (eq type :esc))
-           (%send head (make-term-input (string (code-char 27))))
+           (%term-send-input head (string (code-char 27)))
            t)
           (t
         (case type
@@ -672,11 +672,11 @@ one thing this head must not need."
              ;; PROGRAM must take the program's keys before its own.
              ((and (eq mode :term) (head-term head)
                    (member type '(:enter :tab :backspace)))
-              (%send head (make-term-input
+              (%term-send-input head
                            (case type
                              (:enter (string #\return))
                              (:tab (string #\tab))
-                             (t (string (code-char 127))))))
+                             (t (string (code-char 127)))))
               t)
              ((and (eq mode :picker) (not empty)) nil)
                  (t (%pane-enter head) t)))
@@ -726,7 +726,7 @@ one thing this head must not need."
                    ;; never either. **EVERY KEY GOES TO THE PROGRAM** — including the bytes a shell
                    ;; wants. A pane holding a program must not eat the keys the program is for.
                    ((and (eq mode :term) (head-term head) (characterp ch))
-                    (%send head (make-term-input (string ch)))
+                    (%term-send-input head (string ch))
                     t)
                    ((eql ch #\q) (shut))
                    ((and (eql ch #\o) (eq mode :subagents)) (subagent-switch head) t)

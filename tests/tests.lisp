@@ -2105,7 +2105,13 @@ than an oversight."
     ;; every other src file, as one blob of text
     (dolist (name '("head" "commands" "editor" "cards" "chrome" "panes" "render"
                     "session" "hack" "keys" "prefs" "progress" "diff" "markdown"
-                    "highlight" "socket" "cells" "wire" "json" "width" "term"))
+                    "highlight" "socket" "cells" "wire" "json" "width" "term"
+                    ;; **AND THE TERMINAL PANE'S OWN FILE**, which is where the two
+                    ;; `term_input` constructors are now called from: a funnel is still a caller,
+                    ;; and a list of areas that omits the one a constructor moved into would report
+                    ;; a live call as missing — the same shape the comment below records for the
+                    ;; space rule.
+                    "pane-protocol"))
       (ignore-errors (setf sent (concatenate 'string sent (source-of name)))))
     (dolist (ctor (protocol-constructors))
       ;; the call is `(ctor` followed by anything that is not a symbol
@@ -12332,6 +12338,50 @@ worked for the merge queue.
       (is (equal '(:fg :red) (cdr (find "red" (leticl::%term-screen-row-segments s 0)
                                         :key #'car :test #'string=)))
           "**the pane draws it** — the cell's style is a name this head's palette holds"))))
+
+(def-test a-wheel-scrolls-the-scrollback-and-a-key-comes-back (:suite leticl)
+  "**With tracking OFF the wheel is the READER's** — the reference's other arm (`TermPane::mouse`):
+  on the MAIN screen it moves this head's view and sends NOTHING, because the program is at its prompt
+  and a report it never asked for is a keystroke; on the ALTERNATE screen it is three cursor keys,
+  because a full-screen program has no scrollback of its own and expects the arrow.
+
+  **And any key that IS the program's snaps the view back to live** (`TermPane::route`), so a reader
+  one wheel from the bottom does not have to find a second key. A view that does not say it is a view
+  is read as the whole conversation, so the pane says how far back it is."
+  (flet ((esc (n) (concatenate 'string (string (code-char 27)) n))
+         (wheel (up) (list :type :mouse :x 3 :y 5 :kind (if up :wheel-up :wheel-down))))
+    (let ((h (%make-head)) (leticl::*pane-top* 1) (leticl::*pane-gutter* 2) (leticl::*term-pane* 1))
+      (setf (head-term h) (list :command "sh" :cols 6 :rows 3 :output "" :back 0
+                                :screen (leticl::term-screen-new 3 6)))
+      (let* ((term (head-term h)) (scr (getf term :screen)))
+        (leticl::term-screen-feed scr (format nil "one~%two~%three~%four~%five~%six~%seven"))
+        (is (= 4 (length (leticl::term-screen-history scr))) "four rows have scrolled off the glass")
+        (is (null (leticl::%term-mouse-bytes h (wheel t)))
+            "**the wheel sends NOTHING to a program that asked for no mouse**")
+        (is (= 3 (getf term :back))
+            "**and moves the VIEW back one notch** — three rows, the reference's own step")
+        (setf (getf term :back) 99)
+        (leticl::%term-mouse-bytes h (wheel t))
+        (is (= 4 (getf term :back)) "**and it CLAMPS at the history** — there is no further back")
+        ;; the pane draws the view, and says that it is one
+        (let ((text (format nil "~{~a~^~%~}"
+                            (mapcar (lambda (l) (if (null l) "" (format nil "~{~a~}" (mapcar #'car l))))
+                                    (leticl::pane-lines (leticl::pane-for :term) h 40 10)))))
+          (is (search "one" text) "**the row that scrolled off is what the pane draws**")
+          (is (search "back" text) "**and the view says it is a view**"))
+        ;; any key that is the program's snaps back to live
+        (leticl::%term-send-input h "x")
+        (is (zerop (getf term :back)) "**a key to the program returns the reader to live**")
+        ;; on the ALTERNATE screen the same notch is the program's arrows
+        (leticl::term-screen-feed scr (esc "[?1049h"))
+        (is (equal '(27 91 65 27 91 65 27 91 65) (leticl::%term-mouse-bytes h (wheel t)))
+            "**a notch on the alternate screen is THREE UP ARROWS** — `ESC [ A` three times")
+        (leticl::term-screen-feed scr (esc "[?1h"))
+        (is (equal '(27 79 65 27 79 65 27 79 65) (leticl::%term-mouse-bytes h (wheel t)))
+            "**spelled the way the program asked** — `?1h` is application cursor keys (`ESC O A`)")
+        (leticl::term-screen-feed scr (esc "[?1l")))
+      (is (= 0 (getf (head-term h) :back))
+          "and none of the alternate-screen wheel touched the view"))))
 
 (def-test a-terminals-scrollback-keeps-what-scrolled-past-the-glass (:suite leticl)
   "**The rows the MAIN screen's line feeds push off its top** — the reference's rule

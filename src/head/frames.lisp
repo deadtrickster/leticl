@@ -1074,7 +1074,7 @@ empty pane on every attach, which is the defect the guard exists to prevent, inv
               (head-term head) (list :cols cols :rows rows :output ""
                                       :command (getf frame :command)
                                       :screen (term-screen-new rows cols)
-                                      :dropped 0 :pending nil :pane *term-pane*)
+                                      :dropped 0 :pending nil :pane *term-pane* :back 0)
                
               (head-mode head) :term
                (head-dirty head) t)
@@ -1107,7 +1107,15 @@ empty pane on every attach, which is the defect the guard exists to prevent, inv
          (setf (head-dirty head) t)
          (let ((scr (getf term :screen)))
            (when scr
-             (incf (getf term :dropped) (term-screen-feed scr text))))))
+             (let ((before (term-screen-scrolled scr)))
+                (incf (getf term :dropped) (term-screen-feed scr text))
+                ;; **A READER'S PAGE STAYS PUT.** A row pushed past the top while they are reading is
+                ;; counted into `back`, so the view does not slide under them — the reference's own
+                ;; `feed`, and the difference between reading a scrollback and chasing one.
+                (when (plusp (or (getf term :back) 0))
+                  (setf (getf term :back)
+                        (min (+ (getf term :back) (- (term-screen-scrolled scr) before))
+                             (length (term-screen-history scr))))))))))
      :control)
     ((string= (frame-name frame) "term_status")
      ;; **WHAT THIS SESSION'S PANE IS RUNNING, OR NOTHING** — the answer to `/term status`

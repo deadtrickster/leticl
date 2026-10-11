@@ -492,6 +492,10 @@ tail's spaces as a ragged gap."
   ;; terminal, so the head is the half that acts on it). A TERMINAL's mode and not a face's: the
   ;; alternate screen has no mouse of its own, which is why the switch below leaves it standing.
   (mouse nil)
+  ;; **APPLICATION CURSOR KEYS** (`?1h`/`?1l`) — an up arrow is `ESC O A` rather than `ESC [ A`. Read
+  ;; by the wheel's alternate-screen arm, which sends ARROWS for a notch and so has to spell them the
+  ;; way the program asked.
+  (app-cursor nil)
   ;; **THE SCROLLBACK** — the rows the MAIN screen's line feeds pushed off its top, NEWEST FIRST, and
   ;; `scrolled` counts every push even once the ring is full (see `term-screen-view`).
   (history nil)
@@ -532,6 +536,51 @@ height, which is what the pane sent before the three readers were made to agree.
  header grew — which is the drift `click-header-lines` was written to end for the other panes."
   (+ 1 (if (and term (getf term :ended)) 1 0) 1))
 
+(defun %term-wheel-scroll (term key)
+  "The wheel when the program asked for NO mouse — the reference's other arm (`TermPane::mouse`), and
+ the one that makes the scrollback reachable at all.
+
+ **On the ALTERNATE screen it is three CURSOR KEYS**, spelled the way the program asked
+ (`?1h` is `ESC O A` and not `ESC [ A`): a full-screen program has no scrollback of its own and
+ expects the arrow. **On the main screen it moves THIS HEAD's view** and sends nothing — the program is
+ at its prompt and a report it never asked for is a keystroke it did not want. Answers the octets for
+ the first case and NIL for the second."
+  (let* ((scr (getf term :screen))
+         (up (eq (getf key :kind) :wheel-up)))
+    (if (term-screen-main scr)
+        (let ((seq (cond ((and up (term-screen-app-cursor scr)) '(27 79 65))
+                         (up '(27 91 65))
+                         ((term-screen-app-cursor scr) '(27 79 66))
+                         (t '(27 91 66)))))
+          (loop repeat +term-wheel-rows+ append seq))
+        (let ((back (or (getf term :back) 0)))
+          (setf (getf term :back)
+                (if up (min (+ back +term-wheel-rows+) (length (term-screen-history scr)))
+                    (max 0 (- back +term-wheel-rows+))))
+          nil))))
+
+(defun %term-view-live (head)
+  "Snap the scrollback view back to the live screen.
+
+ **ANY KEY THAT IS THE PROGRAM'S DOES THIS**, which is the reference's own rule (`TermPane::route`:
+ a byte that goes down clears `back`) — while a wheel that only MOVED the view does not, which is why
+ the reset is at the send and not at the wheel."
+  (let ((term (head-term head)))
+    (when (and term (plusp (or (getf term :back) 0)))
+      (setf (getf term :back) 0
+            (head-dirty head) t))))
+
+(defun %term-send-input (head text)
+  "A keystroke to the PROGRAM, through the ONE funnel — so the snap-back cannot be forgotten at a
+ seventh call site. See `%term-view-live`."
+  (%term-view-live head)
+  (%send head (make-term-input text)))
+
+(defun %term-send-octets (head octets)
+  "The same for a report that is already bytes — the mouse's own."
+  (%term-view-live head)
+  (%send head (make-term-input-bytes octets)))
+
 (defun %term-mouse-bytes (head key)
   "The OCTETS a mouse event becomes for the program in this head's terminal pane, or NIL for none.
 
@@ -564,6 +613,9 @@ height, which is what the pane sent before the three readers were made to agree.
                             (t (eq tracking :any)))))
          (x (- (or (getf key :x) 0) (or *pane-gutter* 0)))
          (y (- (or (getf key :y) 0) (+ (or *pane-top* 0) (%term-head-lines term)))))
+    (when (and (or (null mode) (eq tracking :off)) wheel
+               (<= 1 x (term-screen-cols scr)) (<= 1 y (term-screen-rows scr)))
+      (return-from %term-mouse-bytes (%term-wheel-scroll term key)))
     (when (and wanted (<= 1 x (term-screen-cols scr)) (<= 1 y (term-screen-rows scr)))
       (let* ((b (cond (wheel (if (eq kind :wheel-up) 64 65))
                       (motion (+ (or button 0) 32))
@@ -589,6 +641,10 @@ height, which is what the pane sent before the three readers were made to agree.
   "The last `term_status` answer — the command this session's pane is running, or NIL for none —
 kept so a later reader (an edge, a hint) can say it without asking again. Said once when it
 arrives; never drawn as a row (`protocol.rs:2557`).")
+
+(defparameter +term-wheel-rows+ 3
+  "How many lines one wheel NOTCH walks, here and in the reference (*a notch on its own walks three
+ lines* — October's reconciliation, and it is not negotiable).")
 
 (defparameter +term-history-rows+ 2000
   "How many rows the scrollback keeps — the reference's own number (`letibot-vt`'s `HISTORY_ROWS`),
@@ -974,6 +1030,8 @@ build does not know."
                ;; mode is not a screen mode, so it is kept out of that cond entirely.
                (when (and private (member args '("9" "1000" "1002" "1003" "1006") :test #'string=))
                  (%ts-set-mouse s args (char= final #\h)))
+               (when (and private (string= args "1"))
+                 (setf (term-screen-app-cursor s) (char= final #\h)))
                (case final
                  ((#\H #\f) (term-screen-cup s (arg1) (arg2)))
                  (#\K (term-screen-el s (num)))
@@ -1169,16 +1227,22 @@ it is not, which is the one thing that would make the missing half invisible."
            ;; where it put it, which is the whole difference between this and the line model the
            ;; first cut used. The line model stays below as the fallback for a terminal that has no
            ;; screen (a frame from a daemon that never attached a rectangle).
-           (let ((screen (getf term :screen)))
+           (let* ((screen (getf term :screen)) (back (or (getf term :back) 0)) (view (if (and screen (plusp back)) (term-screen-view screen back) nil)))
              (if screen
                  ;; **EVERY ROW, AS SEGMENTS, so the cursor cell can carry its own style** — see
                  ;; `%term-screen-row-segments`. The header and the footer below are the pane's own.
                  (dotimes (r (term-screen-rows screen))
-                   (push (%term-screen-row-segments screen r) out))
+                   (push (if view (%segment-runs "  " (nth r view)) (%term-screen-row-segments screen r)) out))
                  (dolist (line (%term-lines-from-output (or (getf term :output) "")))
                    (push (list (cons (format nil "  ~a" line) nil)) out))))
            (nreverse out))
          (list nil)
+         (when (plusp (or (getf term :back) 0))
+           ;; **A VIEW THAT DOES NOT SAY IT IS A VIEW IS READ AS THE WHOLE CONVERSATION** — the tree's
+           ;; own rule for every window, and a terminal's scrollback is a window like any other. The
+           ;; sentence names the way back because a reader who scrolled is one key from it.
+           (list (list (cons (format nil "  ~d row~:p back · any key returns to live" (getf term :back))
+                             '(:dim t)))))
          (list (list (cons "  keys go to the program · ctrl-\\ detaches · /term close ends it" '(:dim t))))
          (list (list (cons "  line discipline only — the VT renderer is this pane's remaining half"
                            '(:dim t))))))))
