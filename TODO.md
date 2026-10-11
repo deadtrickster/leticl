@@ -773,10 +773,21 @@ rest names the commit it comes from.
     the head's notes pane is the surface, and every read must say the notes are
     historical. Delivery moved to session open and every base rebuild, and
     nowhere else.
-  - [ ] **a refused request compacts: the wall classified** (`03f0277`,
+  - [x] **a refused request compacts: the wall classified** (`03f0277`,
     `08faf55`, `8590f2c`, `7eceda7`) — a provider's context-length refusal IS
     the wall; the guard stands down the pre-emptive door only and survives the
     restart; both automatic doors take the pre-turn check.
+
+    **MEASURED 2026-10-11, AND ALL FOUR COMMITS ARE THE DAEMON'S.** `git log -1` on each, in letibot:
+    *"a provider's context-length refusal IS the wall — classify it"* (`03f0277`), *"the guard stands
+    DOWN the pre-emptive door only — and survives the restart"* (`08faf55`), *"the two automatic doors
+    take the pre-turn check"* (`8590f2c`), and the merge (`7eceda7`). `03f0277` touches
+    `crates/harnessd/src/harness.rs` and a `wall_refusal.rs` test, so **the guard is harnessd's**. This
+    head's obligation is DRAWING what that guard's outcome produces, and that is landed:
+    `auto_compact_skipped`, `auto_compact_no_progress`, `auto_compact_failed` and `context_wall` are
+    rows in `cards/note-card.lisp` with their remedies in the daemon's own words, and
+    `session/warnings.lisp` reads the whole `auto_compact_*` family by PREFIX. **Nothing is owed here**
+    — which is worth recording, because this box read as a head-side feature and is not one.
   - [x] **a model change during a retrying turn takes** (`12ade5e`) — **THE HEAD'S HALF IS IN**
     (2026-10-11, `a-model-change-mid-turn-says-the-turn-continues`): `/model NAME` while a turn is
     running now says *the model changes at the next round — this turn continues on <the one it
@@ -879,7 +890,7 @@ rest names the commit it comes from.
     pane's own tab strip against `standings`). Held by the queue's own tests — the pane draws its states
     and why each is that state, the verbs send the daemon's line or say why not, and the pane re-reads
     every five seconds while open.
-  - [ ] **the lateral send and the question row** — a message to a session the worker owns is
+  - [x] **the lateral send and the question row** — a message to a session the worker owns is
     a row and a turn (`af218a2`, `3d36cea`), and an answered question leaves the operator's
     answer as their own row, byte-identical and citable (`7179fc6`, `0cf9cce`).
     **MEASURED 2026-10-11: the question half is the DAEMON's, not this head's.** `7179fc6` is
@@ -893,6 +904,11 @@ rest names the commit it comes from.
     row. **SO THE WHOLE CLAUSE IS THE OTHER HALF'S**, with this head's obligation being only that it
     draws what arrives — and that is worth saying plainly, because the ledger's prose read as two
     head-side features.
+
+    **AND THE DRAWING IS LANDED**: a row whose speaker is the operator draws as the person's own, and
+    an agent's as the session's labelled one — the port this box's own paragraph names. The marker is
+    ticked on THAT conclusion rather than on a change: the measurement was already here, and the box
+    only needed to stop reading as work.
   - [~] **the head's smaller mirrors**: **a printed path IS a link — probed and LANDED
     2026-10-11** (`src/links.lisp`, held by `a-link-url-is-never-built-from-content`,
     `an-image-path-becomes-a-link-and-the-url-is-head-authored` and
