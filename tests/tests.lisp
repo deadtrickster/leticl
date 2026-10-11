@@ -14405,6 +14405,50 @@ that costs work (editor.rs:519-548, 591-593, 219)."
       (is (= leticl::*history-max* (length (leticl::composer-history c)))
           "the history is capped, oldest dropped"))))
 
+(def-test a-model-change-mid-turn-says-the-turn-continues (:suite leticl)
+  "**`12ade5e`'s head half** (`TODO.md`, the 48-commit list): a model change during a retrying turn
+  TAKES — the daemon reads it at its next round — so the sentence a reader needs is *the turn
+  continues, and the next round is the new model*. Before this the note was `sent: \"models …\"`,
+  which leaves the one question a person has (*did that interrupt anything?*) unanswered.
+
+  And only WHILE a turn runs: between turns the change is immediate and there is nothing to explain.
+  `turn-busy-p` and not the state name, for the reason that predicate exists — the name reads
+  `finished` for the whole of a tool call, and a `\"/model\"` typed then is just as mid-turn."
+  (flet ((ask (&optional turn)
+           (let* ((leticl::*pick-open* nil)
+                  (h (%on-head :cols 100 :rows 24))
+                  (wire (%wire h)))
+             (when turn (setf (session-turn (head-session h)) turn))
+             (leticl::%command h "model a-model")
+             (values (head-status-note h) wire h))))
+    ;; --- MID-TURN: the sentence explains what happens to the turn
+    (multiple-value-bind (note wire h) (ask (list :turn-id "t1" :model "the old one"
+                                                  :state (list :state "running")))
+      (declare (ignore wire h))
+      (is (search "changes at the next round" note)
+          (format nil "**the mid-turn sentence** — it takes, and the turn continues: ~s" note))
+      (is (search "the old one" note)
+          "naming the model the turn is still on, which is what the reader is choosing between"))
+    ;; --- THE CONTROL: no turn at all, so no sentence — the change is immediate
+    (multiple-value-bind (note wire h) (ask)
+      (declare (ignore wire h))
+      (is (null (search "changes at the next round" note))
+          (format nil "no turn running, no sentence: ~s" note)))
+    ;; --- and with a call running the state NAME reads `finished`, which is why the predicate is asked
+    (let* ((h (%on-head :cols 100 :rows 24))
+           (wire (%wire h)))
+      (setf (session-turn (head-session h))
+            (list :turn-id "t1" :model "the old one" :state (list :state "finished")
+                  :calls (list (list :call-id "c1" :name "bash"
+                                     :state (list :state "running")))))
+      (leticl::%command h "model a-new-one")
+      (let ((note (head-status-note h)))
+        (is (search "changes at the next round" note)
+            (format nil "**a call in flight is mid-turn too** — the state name says `finished` and the call is running: ~s" note))
+        (is (search "the old one" note)
+            "and the sentence names the model the turn is still on, which is what the reader is choosing between"))
+      (is (equal "slash" (getf (first (%sent wire)) :frame)) "the command still travels to the daemon"))))
+
 (def-test reseat-summarise-asks-for-the-lossy-kind-by-name (:suite leticl)
   "G23. `%command` split the verb, bound `rest` and then ignored it, and the frame
 carried no `summarise` at all — so the operator asked for the destructive variant

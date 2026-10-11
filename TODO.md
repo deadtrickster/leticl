@@ -489,8 +489,14 @@ rest names the commit it comes from.
     `08faf55`, `8590f2c`, `7eceda7`) — a provider's context-length refusal IS
     the wall; the guard stands down the pre-emptive door only and survives the
     restart; both automatic doors take the pre-turn check.
-  - [ ] **a model change during a retrying turn takes** (`12ade5e`) — daemon,
-    but the head's `/model` surface should say the turn continues.
+  - [x] **a model change during a retrying turn takes** (`12ade5e`) — **THE HEAD'S HALF IS IN**
+    (2026-10-11, `a-model-change-mid-turn-says-the-turn-continues`): `/model NAME` while a turn is
+    running now says *the model changes at the next round — this turn continues on <the one it
+    started with>*, instead of `sent: "models …"`, which left the one question a reader has
+    (*did that interrupt anything?*) unanswered. Asked of `turn-busy-p` and not the state name,
+    because the name reads `finished` for the whole of a tool call and a command issued then is
+    just as mid-turn — which the test's third case asserts with a call in flight.
+    **The daemon half is not this head's** (the retrying turn's own behaviour).
 
 - [ ] **the reference's second 116-commit batch (2026-10-09, protocols 38–42)** — the wire
   core is ported (`c2a5605`'s successor: 42's todo author and `cancelled`, 40's

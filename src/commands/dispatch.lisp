@@ -158,8 +158,22 @@ on ClientFrame::Slash)."
            ;; least visible part of the thing anybody types it for.
            (open-pick head :mode)))
       ((or (string= verb "models") (string= verb "model"))
+       ;; **A MODEL CHANGE MID-TURN TAKES, AND THE HEAD SAYS SO** (`12ade5e` — the head's half of
+       ;; that item in `TODO.md`'s 48-commit list): the daemon reads a mid-turn `/models` at its next
+       ;; round rather than refusing it, so the sentence is *the turn continues, and the next round
+       ;; is the new model*. A reader who changed it and saw only `sent:` would not know whether they
+       ;; had interrupted anything. Said only while a turn is actually running — between turns the
+       ;; change is immediate and there is nothing to explain.
+       ;;
+       ;; `turn-busy-p` and not the state name, for the reason that predicate exists: the name reads
+       ;; `finished` for the whole of a tool call, and a command issued then is just as mid-turn.
        (if (plusp (length rest))
-           (%send-slash head (format nil "models ~a" rest))
+           (progn
+             (%send-slash head (format nil "models ~a" rest))
+             (when (turn-busy-p (session-turn (head-session head)))
+               (say head (format nil "the model changes at the next round — this turn continues on ~a"
+                                 (or (getf (session-turn (head-session head)) :model)
+                                     "the model it started with")))))
            (open-pick head :model)))
       ((string= verb "jobs")
        ;; ASK, then open. The jobs pane drew `N out` from JobSettled events, which
