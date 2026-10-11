@@ -626,16 +626,21 @@ head runs today breaks without them.
     that keep the queue live after the reply — and their folds. The reply alone is a snapshot; the
     events are what make it a queue a reader can watch.
 
-    **AND THE FOLDS ARE WRITTEN BUT NOT LANDED, because they broke a test that has nothing to do
-    with them — MEASURED 2026-10-11, twice, deterministically.** The two arms were added to the
+    **THE INTERACTION IS FOUND, AND IT WAS NEVER THE FOLDS — MEASURED 2026-10-11.** The two arms were added to the
     head's event `case` (an add that appends by id, replacing rather than doubling so a reconnect's
     replay cannot double the queue; a move that sets state and evidence, keeping the evidence it
     has when the event carries none) and the suite went red in
     `the-diagnostic-verb-asks-for-both-halves-and-opens-the-pane`, on its last assertion —
-    `*unreadable-total*` was no longer 0. That test sends no merge-queue frame at all, so the
-    interaction is real and not understood: **the next attempt must find it before re-adding the
-    arms**, and the arms as written are described above so they need not be re-derived. Reverted so
-    the tree stays green; nothing half-wired is in it.
+    `*unreadable-total*` was no longer 0. Chasing it found the real defect one file over:
+    **that test's last assertion reads a PROCESS global it never binds**, so it passed only while no
+    earlier test had bumped the counter — inserting a test above it was enough to turn it red, and
+    the diagnostic test sent no merge-queue frame at all. It binds `*unreadable-total*` now (as five
+    sibling tests already did), the suite is green, and **the folds were innocent**.
+
+    So the arms are ready to land: append-by-id with replace (a reconnect's replay must not double
+    the queue), move sets state and keeps the evidence it has when the event carries none, and a
+    move for an entry this head was never told about invents no row. They are reverted only because
+    they were written against the real defect; nothing about them needs changing.
 
     **AND IT CANNOT LAND ALONE — MEASURED 2026-10-11, one hour wasted so nobody repeats it.** The
     suite has an invariant, `every-frame-constructor-is-actually-sent`: *a frame the head defines

@@ -21897,6 +21897,12 @@ screen for (the job overlay's rule).
 It reuses the `/slash` pane on purpose: this is a verb's answer that is a listing, which is
 exactly what that pane is, so the scrolling, Esc, `ctrl-c` and the footer are already right."
   (let* ((*diag* nil) (*slash-out* nil) (*pane-scroll* 0) (*pane-lines* 0) (*pane-room* 0)
+         ;; **BOUND, because the last assertion is about it** — this read the PROCESS global, so the
+         ;; test passed only while no earlier test had bumped it. MEASURED 2026-10-11: inserting a
+         ;; test ABOVE it turned it red, on an assertion about a counter this test never set, which
+         ;; is the same defect the suite's own notes record for `*answered-calls*` and
+         ;; `*pick-open*` — a test that reads the world instead of its own state.
+         (leticl::*unreadable-total* 0)
          (h (%on-head :cols 100 :rows 24)) (wire (%wire h)))
     (leticl::%diagnostic-command h "adj-42")
     (let ((sent (%sent wire)))
