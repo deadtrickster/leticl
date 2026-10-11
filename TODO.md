@@ -442,6 +442,19 @@ rest names the commit it comes from.
     a click on `1 subagent running` opens the subagents pane, `1 job running`
     the jobs pane. This head already converts clicks for panes and rows; this
     is the edge's own hit test.
+
+    **WHAT IT NEEDS, measured 2026-10-11 so the next session starts from facts rather than
+    from the reference's wording**: the legend is `composer-legend` (`src/chrome/composer.lisp`),
+    rendered into the box's TOP edge by `composer-box-top` as ` {legend} ─` right-aligned inside
+    the box's inner width; `%click` (`src/editor/click-actions.lisp`) receives the screen ROW and
+    does not know where the box is, because the frame composes the chrome from the bottom up. So
+    the two missing pieces are a helper that answers the box's top row (the tests already find it
+    the robust way — search the LAST PAINTED rows for `╭`, as `%ghost-box-top` does — and using
+    the painted frame means the hit test cannot disagree with the drawing) and a span per label
+    computed from the same pieces the legend composes (`~d subagent~:p running` and `~d job~:p
+    running`, joined by ` · `), so a click maps to `(:subagents)` or `(:jobs)` and `%open-pane`
+    does the rest. `%click`'s existing arms show the shape: a `cond` clause BEFORE the pane arm,
+    answering `t` when it took the click.
   - [ ] **a settling diff card is handed over on the row's body, not its
     announcement** (`98a8f11`, the settle-flicker merge: a call is in one half
     or the other, never neither, so a settling card's frames are identical).
