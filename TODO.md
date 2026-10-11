@@ -1,6 +1,16 @@
 # leticl — TODO, for the switch
 
-- [ ] **the git format's row on `/config`** — the FINDING is in, the row is not.
+- [x] **the git format's row on `/config`** — DONE, and measured rather than assumed (2026-10-11).
+  `"git_format"` is in `*head-setting-rows*` AND `"git format"` in the parallel labels list,
+  `%head-setting-value` reports the template in force, `%flip-head-setting` has the three stops,
+  both bridges carry it, and `%git-format` reads the live plist. The test that holds it is
+  `the-config-pane-lists-the-git-format-and-cycles-it`; the LIVE head draws the row with its
+  value —
+
+      ("diff view" "split") … ("marker seam" "hidden")
+      ("git format" "default (%b%d%a%s%m%~%+%!%?)")
+
+  — so the finding below is history rather than instructions.~~
   The operator: *"i dont see the config in /config"*. It was invisible for a reason worth keeping:
   **`*head-setting-rows*` is a list of KEYS and the labels beside it are a PARALLEL list** in the
   `loop` that builds the pane (`panes.lisp`, `config-rows`) — so a key added without a label does
@@ -20,7 +30,18 @@
     `the-config-pane-renders-every-row-with-its-source-under-the-cursor`.
 
 
-- [ ] **the git field's COLOURS and its CONFIGURABLE FORMAT** — designed, reverted, written down.
+- [x] **the git field's COLOURS and its CONFIGURABLE FORMAT** — DONE (2026-10-11, verified against
+  this list item by item). `+git-format-default+` is `"%b%d%a%s%m%~%+%!%?"`; `+git-slots+` maps the
+  glyphs (`%%` literal); `+git-styles+` is one ROLE per segment, word for word with the decisions
+  above (branch green clean / yellow dirty, `+` green, `!` yellow, `?` dim, `~` red and bold, the
+  action bold magenta, `*` magenta, `⇣`/`⇡` cyan); `%git-pieces` returns `(text . style)` pieces with
+  each literal attached to the piece it PRECEDES; the state is cached as FACTS and never as a
+  rendered string; the format is applied on the reader thread; and the preference is `git_format` in
+  this head's own file, with its load arm (including the quoted-string handling) and its save arm in
+  `src/prefs/notes.lisp` and its default in `*prefs-defaults*`. Held by
+  `the-git-format-is-configurable-and-the-colours-are-roles`.
+
+  **The paragraph below is kept as the record of the design, which is the expensive part.**
   The operator asked for both, 2026-10-04, right after the field gained gitstatus's segments:
   *"how about we do the colours too and the configurable format too"*.
 
