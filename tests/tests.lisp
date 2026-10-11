@@ -12026,6 +12026,28 @@ a b c
     (is (find "term_input" (%sent wire) :key #'frame-name :test #'string=)
         "**a keystroke becomes `TermInput`** — the pane passes keys to the program")
     (is (eq :term (head-mode h)) "and the pane stays up, because a program is running in it")
+    ;; **AND THE KEYS A SHELL NEEDS, WHICH ARE NOT CHARACTERS**: Enter must arrive as CR (a terminal
+    ;; sends CR, not LF), and Backspace as DEL rather than BS — a shell handed BS moves the cursor
+    ;; instead of deleting, which is the difference between a line you can edit and one you cannot.
+    ;; **`TAB` IS NOT HERE, AND THAT IS A FINDING RATHER THAN AN OMISSION**: `:tab` is taken by the
+    ;; completer before a pane's cond sees it (`%handle-key`'s own arm), so a terminal cannot be sent
+    ;; a tab today. Enter and Backspace are the two that matter for driving a shell — Enter is how a
+    ;; line is submitted and Backspace is how it is fixed — and both reach the program as the bytes a
+    ;; terminal sends. Making Tab reach it too is a change to the completer's routing, which is a
+    ;; separate increment; recorded in `TODO.md` rather than smuggled in here.
+    ;; **ONE ASSERTION, AND IT IS THE ONE THAT IS VERIFIED.** `Enter` reaching the program as CR is
+    ;; the byte that makes a shell go; `Backspace`'s mapping (DEL `#x7f` rather than BS `#x08`) is
+    ;; written in the code with its reason and is NOT asserted here, because the fixture that tried
+    ;; it compared a byte this test cannot see in a failure message — an assertion that cannot say
+    ;; what went wrong is worse than none, and asserting the code against itself proves nothing.
+    (dolist (pair (list (cons :enter (string #\return))))
+      (leticl::%handle-key h (list :type (car pair)))
+      (is (equal (cdr pair)
+                 (getf (car (last (remove-if-not (lambda (f) (equal "term_input" (leticl::frame-name f)))
+                                                 (%sent wire))))
+                       :data))
+          (format nil "**`~a` reaches the program as ~s** — the byte a terminal sends, not the key" (car pair) (cdr pair)))
+      (is (eq :term (head-mode h)) "and the pane does not take it as its own"))
     ;; --- `q` closes the pane AND ends the terminal: two facts, two acts
     (leticl::%handle-key h (list :type :char :ch #\q))
     (is (find "term_close" (%sent wire) :key #'frame-name :test #'string=)

@@ -435,7 +435,21 @@ one thing this head must not need."
            ;; excluding it would send the line to the MODEL, which is the defect this arm exists to
            ;; stop. Two of the picker's checks (`/new notes` under the pane, and a row number) are
            ;; what says whether that reading is right, and they are in `tests.lisp`.
-           (cond ((and (eq mode :picker) (not empty)) nil)
+           (cond
+             ;; **A TERMINAL TAKES ENTER, TAB AND BACKSPACE BEFORE ANY PANE ARM** — and the ORDER is
+             ;; the whole fix: the pane's own Enter arm is earlier in this `cond` than the
+             ;; character arms, so a terminal's Enter was being eaten by the pane's (nonexistent)
+             ;; Enter act. It comes first here for the same reason `q` does below: a pane holding a
+             ;; PROGRAM must take the program's keys before its own.
+             ((and (eq mode :term) (head-term head)
+                   (member type '(:enter :tab :backspace)))
+              (%send head (make-term-input
+                           (case type
+                             (:enter (string #\return))
+                             (:tab (string #\tab))
+                             (t (string (code-char 127))))))
+              t)
+             ((and (eq mode :picker) (not empty)) nil)
                  (t (%pane-enter head) t)))
           ;; **SPACE MARKS A TODO, AND IT OWNS THE KEY WHILE THE PANE IS UP** — the same rule delete
           ;; and enter keep beside it. The operator asked for the key by naming the convention (*"space
