@@ -921,8 +921,8 @@ rest names the commit it comes from.
     something the other half still holds. **Still open here**: a row read whole with enter
     (`fe9febe`), a row's title capped at the pane's own row with the rest as detail (`aa27a89`),
     one row marked by quoting it (`09b1c0f`), a row waiting on a CHILD (`f8d98b6`), and the
-    plan as a DAG with `needs` edges (`c211118`, `f8d98b6`) — `TodoNeed::{Row, Child}` rides
-    the row and this pane draws none of it.
+    plan as a DAG with `needs` edges (`c211118`, `f8d98b6`) — **THE EDGES ARE DRAWN NOW** (2026-10-11, `d160dc2`)
+    `%todo-needs-said` shows a `row` / `child` / `job` edge in the wire's own three words, says so for a kind this build does not know (the wire keeps one on purpose, *a plan is what would be lost*), and sits where the `when` clock already is. **What is NOT drawn is any ORDERING the edges imply** — the pane names what a row waits on; it does not topologically sort the board.
   - [x] **the merge queue** (`e9eb358`, `424c212`, `8178c4e`, `5b925b6`, `1cff68e`,
     `0b05003`): the pane, the person's approve/veto/rm, `/queue reset|clean|restart`, the
     gate's steps drawn in order, the standings beside the triangle, and the review queue as
