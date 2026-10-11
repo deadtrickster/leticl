@@ -102,7 +102,19 @@ env:
   # unpacked: the fetch fails by name with `-f` if the file moves, where relying on it would
   # fall through to the check below. Both are keyed on the one tag.
   LETIBOT_REPO: deadtrickster/letibot
-  LETIBOT_REF: v0.2.2
+  LETIBOT_REF: v0.3.0
+  # **v0.3.0, and this time the pairing DID move, so read the reason before trusting it**: the tag's
+  # own commit says *"0.3.0, because a protocol bump is not a patch"* — it carries `PROTOCOL_VERSION`
+  # 36, and the head this file ships claims 43 (the 2026-10-11 sweep, TODO.md). That is NOT the
+  # ordering the comment above insists on, and it is safe for one measured reason: since letibot
+  # `f6e66f0` a version mismatch at attach is SERVED, not refused (`sessionlog/src/server.rs:670-683`,
+  # *"Serving it rather than refusing"*), and this head files one skew row and stays writable
+  # (`protocol/versions.lisp`, `skew-locked-p` locks only against an OLDER daemon). What a 43 head
+  # loses against a 36 daemon is the frames 37-43 added — the queues pane, `!term`, the forked
+  # transcript — each of which the head says it cannot do rather than failing; nothing a 36 daemon
+  # sends is unknown to a 43 head. The newest letibot tag is the most a release can pin: letibot's
+  # `main` at 43 is unpushed and untagged as of this sweep, and moving THIS pin further is the
+  # operator's, the day that tag exists.
   # **v0.2.2, and its own commit is the reason it is safe**: *"0.2.2, because the daemon moved and
   # the pairing did not"* — no `PROTOCOL_VERSION` bump, so the ordering the comment above states still
   # holds (letibot tags, this pin follows, this repository tags third). What it carries that this head
