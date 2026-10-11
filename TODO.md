@@ -681,6 +681,14 @@ the wire half of each is additive (protocol 31+ frames; leticl is 36) and nothin
 head runs today breaks without them.
 
 - [~] **the `!term` pane + a VT renderer** — **THE WIRE, THE PANE AND THE KEY PATH ARE LANDED
+  **AND THE VT RENDERER IS A PORT, NOT AN INVENTION — MEASURED 2026-10-11**: `rano` is a LOCAL project
+  (`/home/dead/Projects/rano`) and ships its own terminal — `rano/src/term/`, **3021 lines across six
+  modules** (`decode`, `event`, `features`, `graphics`, `links`, `terminal`). The reference head drives
+  that code, and this tree has PORTED the reference everywhere else rather than reinventing it. So the
+  remaining half has a SOURCE TO READ, and what is already in the pane (the walk, the column model, the
+  escape counting) is the frame it plugs into. The ambiguity that looked like a decision — `ESC [ H` in
+  a line model — is answered by ROWS, which is what the port brings, and why that sequence stays
+  COUNTED until it lands.
   (2026-10-11)**, held by `a-terminal-opens-takes-keys-for-the-program-and-ends-when-asked`: the four
   client frames (each with its caller), the `head-term` slot, the three server folds, the pane, and
   the `/term` verb — which opens the pane rather than sending a second `TermOpen` the daemon refuses.
