@@ -302,6 +302,15 @@ passing the text it has. The old frame sent `data: STRING`, which serde refused 
 never a list, so an empty keystroke is `[]` rather than an elided required field."
   (list* :frame "term_input" :bytes (%utf8-octets text) (%term-pane-field)))
 
+(defun make-term-input-bytes (octets)
+  "A keystroke for the PROGRAM when it is already BYTES — the mouse's own reports, which are not text.
+
+ `make-term-input` takes a STRING and encodes it UTF-8, which is right for every key this head decodes
+ from its own terminal and WRONG for an X10 mouse report: its coordinates are raw bytes from 33 up, and
+ UTF-8 would turn each one past 127 into two bytes — a click the program acts on somewhere else. The
+ wire wants a `Vec<u8>` either way, so a caller that already has octets hands them over untouched."
+  (list* :frame "term_input" :bytes (coerce octets 'simple-vector) (%term-pane-field)))
+
 (defun make-term-status ()
   "**Is something running in this session's pane, and what?** — `TermStatus` (protocol 34), answered
 on this connection with `term_status {command}`, `null` when nothing is.

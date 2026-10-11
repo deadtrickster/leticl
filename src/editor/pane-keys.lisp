@@ -389,6 +389,15 @@ The one exception is `ctrl-\\`, which detaches (see `%term-detach`). Passing a S
        (when (<= 0 code 31)
          (%send head (make-term-input (string (code-char code)))))
        t))
+    ;; **THE MOUSE**, and it is the only key here that does not reach `make-term-input`: its report is
+    ;; octets, not text (see `%term-mouse-bytes` for the filter and the two encodings, and
+    ;; `make-term-input-bytes` for why). NIL bytes is the ordinary answer — a program that asked for
+    ;; no tracking gets nothing — and the key is CONSUMED either way, because a wheel over a pane is
+    ;; not a wheel over the transcript.
+    ((eq type :mouse)
+     (let ((octets (%term-mouse-bytes head key)))
+       (when octets (%send head (make-term-input-bytes octets)))
+       t))
     (t nil)))
 
 (defmethod pane-enter ((pane picker-pane) head)

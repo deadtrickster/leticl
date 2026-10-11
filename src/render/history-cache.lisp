@@ -1514,7 +1514,14 @@ scrolls the transcript by a row every keystroke.
              ;; tell the KEY handler what it may scroll: it clamps without
              ;; re-rendering, and the cursor can then scroll itself into view
              (setf *pane-lines* (pane-total (current-pane head) head lines)
-                   *pane-room* room)
+                   *pane-room* room
+                   ;; **WHERE THE PANE IS** — its first row and the columns left of it, so a mouse
+                   ;; position can be told which pane it landed in. Set HERE, beside the room, and
+                   ;; for the reason this file's own header gives: the arithmetic that knows
+                   ;; `body-top` and the gutter is this one, and a second one would be the drift it
+                   ;; was written to end.
+                   *pane-top* body-top
+                   *pane-gutter* gutter)
              (when sel-line (scroll-pane-into-view sel-line))
              (%place-lines s (if (pane-self-windows-p (current-pane head))
                                  lines

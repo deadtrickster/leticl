@@ -504,6 +504,78 @@ command, `protocol.rs:2572`), and `TermResize` tells the program it. One row und
 height, which is what the pane sent before the three readers were made to agree."
   (values (max 1 (head-cols head)) (max 1 (1- (head-rows head)))))
 
+(defvar *pane-top* 0
+  "The terminal row a full-body pane's FIRST line was drawn at (0-based), set by the render beside
+ `*pane-lines*` and `*pane-room*` — the pane's own answer to *where am I*, which is what a mouse
+ position has to be measured against.
+
+ **A CONSTANT WOULD BE WRONG**, which is why it is read off the draw: the pane moves when the header,
+ the composer or a notice takes a row, and the module header of `render/history-cache.lisp` records
+ what the alternative costs — *of the two would put every click in a pane one row out*. A `defvar`
+ for the usual reason: a struct change is a restart.")
+
+(defvar *pane-gutter* 0
+  "How many columns sit LEFT of a full-body pane's first column (0-based), set by the render with
+ `*pane-top*` and for the same reason: a mouse position is a terminal position until it is told which
+ pane it landed in.")
+
+(defun %term-head-lines (term)
+  "How many of the terminal pane's OWN lines come before the screen's first row.
+
+ **ASKED OF THE PANE'S SHAPE rather than guessed**, and it is the same number its `pane-lines`
+ builds: the `term WxH` header, the `ended` row when there is one, and the blank under them. The
+ mouse needs it to find row 1 of the screen, and a constant would be right until the first time the
+ header grew — which is the drift `click-header-lines` was written to end for the other panes."
+  (+ 1 (if (and term (getf term :ended)) 1 0) 1))
+
+(defun %term-mouse-bytes (head key)
+  "The OCTETS a mouse event becomes for the program in this head's terminal pane, or NIL for none.
+
+ **THE FILTER IS THE REFERENCE'S** (`letibot`, `crates/tui/src/app/term_pane.rs`, `TermPane::mouse`):
+ with a tracking LEVEL on, a wheel is always reported, a press and a release always, a DRAG only when
+ the program asked for drags, and a bare hover only when it asked for motion. With tracking OFF,
+ nothing is sent — a report a program never asked for is a keystroke it did not want, and the pane's
+ own scroller is the other half of that arm and is not built yet.
+
+ **The coordinates are the PANE's and one-based**, which is what a program's `?1006` report is
+ measured in: the head's own terminal position minus where the pane starts, the latter read from
+ `*pane-top*`/`*pane-gutter*` and `%term-head-lines` rather than from a constant.
+
+ **Returned as OCTETS and not as text**, because the X10 form is not ASCII — its coordinates are raw
+ bytes 33 and up, and `make-term-input` would UTF-8-encode them into two bytes each."
+  (let* ((term (head-term head))
+         (scr (and term (getf term :screen)))
+         (mode (and scr (term-screen-mouse scr)))
+         (kind (getf key :kind))
+         (button (getf key :button))
+         (wheel (member kind '(:wheel-up :wheel-down) :test #'eq))
+         (motion (eq kind :motion))
+         (held (and (integerp button) (/= (logand button 3) 3)))
+         (tracking (and mode (getf mode :tracking)))
+         (wanted (and scr mode
+                      (not (eq tracking :off))
+                      (cond (wheel t)
+                            ((not motion) t)
+                            (held (member tracking '(:drag :any) :test #'eq))
+                            (t (eq tracking :any)))))
+         (x (- (or (getf key :x) 0) (or *pane-gutter* 0)))
+         (y (- (or (getf key :y) 0) (+ (or *pane-top* 0) (%term-head-lines term)))))
+    (when (and wanted (<= 1 x (term-screen-cols scr)) (<= 1 y (term-screen-rows scr)))
+      (let* ((b (cond (wheel (if (eq kind :wheel-up) 64 65))
+                      (motion (+ (or button 0) 32))
+                      (t (or button 0))))
+             (release (eq kind :release)))
+        (if (getf mode :sgr)
+            (loop for c across (format nil "~c[<~d;~d;~d~c" #\escape b x y (if release #\m #\M))
+                  collect (char-code c))
+            ;; **X10 CANNOT CARRY A COLUMN PAST 223** — it has one byte per coordinate, and the
+            ;; reference sends NOTHING rather than wrapping; a wrapped coordinate is a click the
+            ;; program acts on somewhere it was not made.
+            (when (and (<= x 223) (<= y 223))
+              (list 27 91 77
+                    (+ 32 (if release (logior (logand b -4) 3) b))
+                    (+ 32 x) (+ 32 y))))))))
+
 (defvar *term-pane* 1
   "The pane number this head is drawing, from `TermAttached { pane }` (protocol 44), and named on
  every frame about it — `%term-pane-field` sends it to a daemon that speaks 44 and omits it for one

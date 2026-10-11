@@ -12333,6 +12333,53 @@ worked for the merge queue.
                                         :key #'car :test #'string=)))
           "**the pane draws it** — the cell's style is a name this head's palette holds"))))
 
+(def-test a-pane-sends-the-mouse-only-to-a-program-that-asked (:suite leticl)
+  "**The filter and both encodings are the reference's** (`term_pane.rs`, `TermPane::mouse` and
+  `encode`): with a tracking level on, a wheel is always reported, a press and a release always, a
+  drag only when drags were asked for, and a bare hover only when motion was — and with tracking OFF
+  nothing is sent at all, because a report a program never asked for is a keystroke it did not want.
+
+  **The coordinates are the PANE's**, one-based: the head's own terminal position minus
+  `*pane-gutter*` and minus the pane's first row plus the pane's own lines above the screen. And
+  **X10 cannot carry a coordinate past 223** — it sends NOTHING rather than wrapping, because a
+  wrapped coordinate is a click the program acts on where it was not made."
+  (flet ((esc (n) (concatenate 'string (string (code-char 27)) n))
+         (mine (h key) (leticl::%term-mouse-bytes h key)))
+    (let ((h (%make-head)) (leticl::*pane-top* 4) (leticl::*pane-gutter* 2) (leticl::*term-pane* 1))
+      (setf (head-term h) (list :command "mc" :cols 20 :rows 5 :output ""
+                                :screen (leticl::term-screen-new 5 20)))
+      (let ((scr (getf (head-term h) :screen)))
+        (is (= 2 (leticl::%term-head-lines (head-term h)))
+            "**the pane's own lines above the screen**: its header and the blank under it")
+        (is (null (mine h (list :type :mouse :x 6 :y 8 :button 0 :kind :press)))
+            "**a program that asked for no mouse is sent nothing**")
+        (leticl::term-screen-feed scr (esc "[?1000h"))
+        (leticl::term-screen-feed scr (esc "[?1006h"))
+        ;; x = 6 - 2 = 4, y = 8 - (4 + 2) = 2
+        (is (equal '(27 91 60 48 59 52 59 50 77)
+                   (mine h (list :type :mouse :x 6 :y 8 :button 0 :kind :press)))
+            "**a press is `ESC [ < b ; x ; y M`, at the PANE's own coordinates**")
+        (leticl::term-screen-feed scr (esc "[?1006l"))
+        (is (equal '(27 91 77 32 36 34)
+                   (mine h (list :type :mouse :x 6 :y 8 :button 0 :kind :press)))
+            "**X10 adds 32 to each of three bytes** — and it is not text")
+        (is (equal '(27 91 77 35 36 34)
+                   (mine h (list :type :mouse :x 6 :y 8 :button 0 :kind :release)))
+            "**an X10 release has no flag**: it is `(button & !3) | 3`")
+        (is (null (mine h (list :type :mouse :x 6 :y 8 :button 0 :kind :motion)))
+            "**a drag with only `?1000` is not sent** — the level did not ask for motion")
+        (leticl::term-screen-feed scr (esc "[?1002h"))
+        (is (equal '(27 91 77 64 36 34)
+                   (mine h (list :type :mouse :x 6 :y 8 :button 0 :kind :motion)))
+            "**with `?1002` it is** — 32 on top of the button")
+        (is (null (mine h (list :type :mouse :x 6 :y 8 :button 3 :kind :motion)))
+            "**a hover with no button held is not a drag**, so `?1002` does not want it")
+        (is (equal '(27 91 77 96 36 34)
+                   (mine h (list :type :mouse :x 6 :y 8 :kind :wheel-up)))
+            "**a wheel is 64**, and is reported whatever the level")
+        (is (null (mine h (list :type :mouse :x 99 :y 8 :button 0 :kind :press)))
+            "**a click outside the pane is not the program's**")))))
+
 (def-test a-terminal-records-the-mouse-the-program-asked-for (:suite leticl)
   "**The program's mouse request is RECORDED and never performed** — the reference's own split
   (`letibot-vt`'s `Screen::mouse`: *mouse modes … recorded and never acted on*, because that crate
