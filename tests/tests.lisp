@@ -11984,6 +11984,39 @@ worked for the merge queue.
     ;; --- and the count is on the heading
     (is (search "standing notes  3" (funcall text)) "the heading counts them")))
 
+(def-test the-queues-standings-are-drawn-only-while-something-stands (:suite leticl)
+  "**The standings on the composer edge, with the rule that decides when they exist at all**
+  (`ui/panes/queue.rs:254`, measured): three counts — *in review* (`waiting`), *being merged*
+  (`taken`) and *parked* (`failed`/`conflict`/`stale`/`vetoed`, where *the queue has stopped and a
+  person moves it*).
+
+  **AND THE EDGE SAYS NOTHING WHEN NOTHING STANDS** — an empty queue, or one whose entries have all
+  landed, draws no line at all rather than `0 in review · 0 being merged · 0 parked`: *a row of
+  zeroes is a row of attention paid for ever for a fact nobody has*. The disclosure is `/queue`.
+  When something does stand, ALL THREE counts are drawn — a count that vanishes reads as though
+  the queue had forgotten it."
+  (let ((h (%make-head)))
+    (flet ((line () (merge-standings-line h)))
+      ;; --- nothing at all
+      (is (null (funcall #'line)) "an empty queue draws nothing")
+      (setf (head-merge-queue h) (list (list :id "e1" :state "landed")))
+      (is (null (funcall #'line))
+          "**and neither does a queue whose entries have all landed** — the same fact about what is left to do")
+      ;; --- something stands: all three, zeroes included
+      (setf (head-merge-queue h) (list (list :id "e1" :state "waiting")))
+      (is (equal "1 in review · 0 being merged · 0 parked" (funcall #'line))
+          (format nil "**all three counts, zeroes included** — a vanishing count reads as a queue that forgot: ~s" (funcall #'line)))
+      ;; --- and each of the three maps from the state it belongs to
+      (setf (head-merge-queue h) (list (list :id "e1" :state "waiting")
+                                       (list :id "e2" :state "taken")
+                                       (list :id "e3" :state "conflict")
+                                       (list :id "e4" :state "vetoed")
+                                       (list :id "e5" :state "failed")
+                                       (list :id "e6" :state "stale")
+                                       (list :id "e7" :state "landed")))
+      (is (equal "1 in review · 1 being merged · 4 parked" (funcall #'line))
+          "**`taken` is being merged, and the four stopped states are parked TOGETHER** — *a person moves it* is one job however the queue stopped"))))
+
 (def-test the-merge-queue-draws-its-states-and-why-each-one-is-that-state (:suite leticl)
   "**The renderer for the queue pane** — the rows, landed ahead of the pane so the pane is
   registration rather than a pile of drawing.

@@ -193,7 +193,7 @@
    #:slash-out-row-count #:+slash-listing-lines+
    #:job-out-lines #:job-out-body #:job-out-row-count
    #:subagent-switch
-   #:jobs-lines #:merge-queue-lines #:standing-notes-lines #:subagent-lines #:subagent-rows #:pick-card-lines #:open-pick #:close-pick
+   #:jobs-lines #:merge-queue-lines #:merge-standings-line #:standing-notes-lines #:subagent-lines #:subagent-rows #:pick-card-lines #:open-pick #:close-pick
    #:take-pick #:pick-by-text #:pick-key-event #:mode-action #:mode-confirm-key
    #:%resolve-session #:%switch-to
    #:mode-confirm-lines #:pick-choices #:pick-current

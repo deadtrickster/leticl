@@ -119,6 +119,28 @@ state this build has never met is drawn plain rather than guessed at."
         ;; is the honest register until somebody has seen one.
         (t nil)))
 
+(defun merge-standings-line (head)
+  "The merge queue's three counts, as the composer edge draws them — or NIL when NOTHING STANDS.
+
+**MEASURED, not invented** (`ui/panes/queue.rs:254`): `Standings` is `review` (`waiting`: *in the
+queue, not taken — the gatekeeper's review is what it waits on*), `merging` (`taken`) and `parked`
+(`failed`/`conflict`/`stale`/`vetoed`: *the queue has stopped, and a person moves it*).
+
+**AND NOTHING STANDS FOR A QUEUE THAT IS EMPTY OR ALL-LANDED, so the edge says NOTHING** — not
+`0 in review · 0 being merged · 0 parked`: *a row of zeroes is a row of attention paid for ever for
+a fact nobody has*. The disclosure is `/queue`, which says *none* in words. And when something DOES
+stand, **all three counts are drawn, zeroes included**, because a count that vanishes reads as
+though the queue had forgotten it."
+  (let* ((entries (head-merge-queue head))
+         (review (count-if (lambda (e) (string-equal (getf e :state) "waiting")) entries))
+         (merging (count-if (lambda (e) (string-equal (getf e :state) "taken")) entries))
+         (parked (count-if (lambda (e) (member (getf e :state)
+                                               '("failed" "conflict" "stale" "vetoed")
+                                               :test #'string-equal))
+                           entries)))
+    (when (plusp (+ review merging parked))
+      (format nil "~d in review · ~d being merged · ~d parked" review merging parked))))
+
 (defun jobs-lines (head cols)
   "The background jobs, the reference's `jobs_lines` (app.rs:6039):
 
