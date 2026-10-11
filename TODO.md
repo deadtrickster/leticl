@@ -769,10 +769,24 @@ reaches no arm in either decoder, and `Key::CtrlN` does not exist).
   finished job: `job output — j74`, `exited 0 — bytes 0..899 of 899`, the bytes
   themselves, the jobs list still behind it. One window at a time is (2); (1) is its
   own item.
-- [ ] **T2 · the launcher** — `~/bin/letibot` needs `exec "$HEAD"` at its four
-  remaining TUI exec sites and `~/bin/leticl` replaced by `scripts/leticl`;
-  blocked on the operator, since the edit is in their own `~/bin`. Until then
-  `leticl` in a folder with no daemon refuses instead of starting one. Size S.
+- [x] **T2 · the launcher** — MEASURED 2026-10-11, and BOTH CLAUSES ARE ALREADY MET; the row was
+  written from the intention rather than from the files:
+
+  · **`~/bin/letibot`'s exec sites all go through `$HEAD`** — `HEAD="${LETIBOT_HEAD:-$BIN/letibot-tui}"`
+    (line 95) and FIVE `exec "$HEAD" --socket "$SOCKET" --identity ...` sites (1605, 1902, 1960,
+    1964, 1967), so `LETIBOT_HEAD` reaches every one of them. The row's *four remaining* sites
+    were fixed before it was written.
+  · **`~/bin/leticl` IS `scripts/leticl`** — `cmp` says byte-identical, and `scripts/leticl` is
+    the complete launcher: it seats leticode (`LETIBOT_ROLE`, `LETIBOT_MODE=automode-edits`, the
+    shell and `web_fetch` on), exports `LETIBOT_HEAD="$LETICL_HOME/scripts/leticl-head"` and
+    `exec letibot`. So `leticl` in a folder with no daemon STARTS one — the refusal the row
+    describes cannot happen with this pair in place.
+
+  **What is still worth doing, and it is the operator's file rather than mine**: `~/bin/leticl` is
+  a COPY. A change to `scripts/leticl` in this repo does not reach it until somebody copies it
+  again — which is exactly the drift the script's own header records (*"a second copy of
+  letibot's launcher that had already drifted from it"*). A symlink would end it:
+  `ln -sf /home/dead/Projects/leticl/scripts/leticl ~/bin/leticl`.
 - [x] **T3 · `--replay FILE.jsonl`** (`panes.md` G18) — DONE (2026-10-11): the replay itself
   was already in place (`--replay FILE [--no-tty] [--cols N] [--rows N]`, `src/replay.lisp`, a
   fixture per scenario and a walk over all of them), and **`-n K` — the half that makes a screen
