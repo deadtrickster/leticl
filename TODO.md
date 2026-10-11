@@ -795,7 +795,21 @@ reaches no arm in either decoder, and `Key::CtrlN` does not exist).
   holding the three cases apart: another session's reply is not taken, its own is, and
   EMPTY on either side means *cannot tell* rather than *not mine* — a head that refused
   then would draw an empty pane on every attach, which is the same defect inverted.
-- [ ] **T7 · the render instrumentation, not the cache.** The reference renders
+- [x] **T7 · the render instrumentation, not the cache** — THE COUNTER AND ITS BOUND ARE IN
+  (2026-10-11, the *first* half this item asks for). `*item-lines-renders*` counts the work where
+  the work happens (`%item-lines-render`, not `item-lines` — a memo HIT is a `gethash` and the
+  number that was 44-296 is the renders), `*item-lines-renders-this-frame*`/`-last-frame*` are read
+  at the frame boundary by `%render-and-paint`, and
+  `a-steady-frame-does-not-re-render-the-transcript` holds the bound: a COLD frame over 120 rows
+  renders them, a STEADY frame renders at most TWO, and a frame after a row arrived renders the row
+  and not the transcript.
+
+  **The instrument earned its place immediately**: the first version published the count at the
+  START of the next paint, so a test asking *what did the frame I just drew cost* got the one before
+  it — measured, and the same mistake would have made the bound read as a defect in the memo.
+
+  **The rest of the item stays open on purpose**: `rendering.md` argues against porting
+  `hist_lines`, and that argument has not changed. The reference renders
   zero rows on a steady frame; we rebuild the window every frame (0.46 ms at
   210×63). `rendering.md` argues against porting `hist_lines` — its invalidation
   key would have to include five defvars any eval can change, and a screen cache

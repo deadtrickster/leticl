@@ -32,8 +32,26 @@ call, because two call sites inside one walk stamp two different contexts."
           (when id (setf (gethash id table) (cons sig lines)))
           lines))))
 
-(defun %item-lines-render (item cols prefs)
+(defvar *item-lines-renders* 0
+  "How many rows have been RENDERED from scratch since this head started.
 
+**THE INSTRUMENT T7 ASKED FOR, and it exists because the cache cannot be trusted to say whether it is
+working.** `*item-lines-frames*` holds rendered rows; whether it is HOLDING is a question about how
+often `%item-lines-render` runs, and a cache that stops hitting does not fail — it just does the work
+again, silently, every frame. The docstring above records what that cost before the memo existed:
+*44-296 renders a frame, growing every frame, never a hit*.
+
+Monotone, so it is a total; `*item-lines-renders-last-frame*` is the per-frame reading, which is the
+number a bound can be asserted against.")
+
+(defvar *item-lines-renders-this-frame* 0
+  "Renders since the last paint. Reset by `%render-and-paint`, and the frame's own cost.")
+
+(defvar *item-lines-renders-last-frame* 0
+  "What the PREVIOUS frame cost, which is what a test can assert a bound against — the frame in
+progress is not finished when a reader asks.")
+
+(defun %item-lines-render (item cols prefs)
   "One transcript row to segment lines.
 
 The model's WORKING — reasoning and tool calls — is stepped in
@@ -42,6 +60,12 @@ screen: its cards sit at column 4 and its prose at 2, while every row of ours wa
 at 2. The step is what makes a turn readable as a turn — the answer at the body's
 own column, the working subordinate to it — and it costs no colour, so it survives
 a terminal-native palette."
+  ;; **THE COUNTER IS INCREMENTED WHERE THE WORK IS**, not in `item-lines`: a call that hits the
+  ;; memo costs a `gethash` and a signature comparison, and what T7's bound is about is the work the
+  ;; memo exists to avoid. Counting the public entry point would measure how many times the walk
+  ;; asked, which is a different number and not the one that was 44-296.
+  (incf *item-lines-renders*)
+  (incf *item-lines-renders-this-frame*)
   ;; **A row the reader has retired draws NOTHING** (R10). It is still an ITEM — it
   ;; is in the transcript, `/status` counts it and `/notes` lists it with its text —
   ;; and only its rendering is withheld, which is what "retired is not deleted"

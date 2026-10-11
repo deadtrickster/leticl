@@ -171,7 +171,7 @@
    #:permission-card-lines #:card-content-window #:card-scroll-by #:reset-card-scroll
    #:*card-scroll* #:*card-page* #:*scroll-notch*
    ;; R57's sibling: the loop's own wait, which IS the head's input latency
-   #:*idle-poll-ms* #:*frames-painted* #:*loop-passes*
+   #:*idle-poll-ms* #:*frames-painted* #:*item-lines-renders* #:*item-lines-renders-last-frame* #:*loop-passes*
    ;; R57: one bad byte on stdin must not take the keyboard — see head.lisp's `%input-loop`
    #:+input-external-format+
    #:%wheel-batch #:%wheel-notches

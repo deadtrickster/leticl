@@ -25092,6 +25092,67 @@ run time). Two claims: the loop uses the named constant, and the constant is sma
         "**and it is not zero**, which would be a busy-spin with no wait at all: the point is that a
  pass is CHEAP, not that the loop should never yield")))
 
+(def-test a-steady-frame-does-not-re-render-the-transcript (:suite leticl)
+  "**T7 in `TODO.md`: the instrument first, and a bound on it — because a cache that stops hitting
+  does not fail.**
+
+  The memo holds rendered rows, and whether it is HOLDING is a question about how often the work
+  runs. Before it existed, `%item-lines-render` ran *44-296 times a frame, growing every frame, never
+  a hit* — measured — and nothing in the suite could tell the difference between that and a healthy
+  head, because a re-rendered row draws the same pixels as a remembered one.
+
+  Three claims, and the third is the one that makes the instrument trustworthy: a COLD frame renders
+  what it must, a STEADY frame renders almost nothing however large the transcript is, and the
+  counter really moves when the work does (a frame after a change is not quiet by accident)."
+  (let* ((leticl::*hist-cache* nil) (leticl::*hist-generation* 0)
+         (leticl::*item-lines-frames* nil)
+         (leticl::*item-lines-renders* 0)
+         (leticl::*item-lines-renders-this-frame* 0)
+         (leticl::*item-lines-renders-last-frame* 0)
+         (*stdout* (make-string-output-stream))
+         (h (%on-head :cols 100 :rows 30))
+         (s nil))
+    (setf (head-connected h) t)
+    (setf s (head-session h))
+    (setf (session-items s)
+          (coerce (loop for i from 1 to 120
+                        collect (list :item-id (format nil "i~d" i) :kind "assistant" :ts 0
+                                      :item (list :type "assistant"
+                                                  :text (format nil "row ~d of a long conversation" i))))
+                  'vector))
+    ;; --- COLD: the first frame renders the rows it draws
+    (leticl::%render-and-paint h)
+    (let ((cold leticl::*item-lines-renders-last-frame*))
+      (is (plusp cold)
+          (format nil "**a COLD frame renders** — with an empty memo there is nothing to reuse: ~d" cold))
+      (is (<= cold 120)
+          "and it renders the rows of the transcript, not a multiple of them")
+      ;; --- STEADY: nothing moved, so almost nothing may be rendered
+      (leticl::%render-and-paint h)
+      (let ((steady leticl::*item-lines-renders-last-frame*))
+        (is (<= steady 2)
+            (format nil "**A STEADY FRAME RENDERS ALMOST NOTHING** — 120 rows on the screen, nothing changed, so the memo must be doing the work: ~d renders (it was 44-296 before the memo, growing every frame)"
+                    steady))
+        (is (< steady cold)
+            "and strictly fewer than the cold frame, which is what *the cache is holding* means")
+        ;; --- AND THE COUNTER MOVES WHEN THE WORK DOES, or the bound above is a claim about a
+        ;; counter that never fires
+        (let ((new (list :item-id "i999" :kind "assistant" :ts 0
+                         :item (list :type "assistant" :text "a row that just arrived"))))
+          (setf (session-items s)
+                (concatenate 'vector (session-items s) (vector new)))
+          (incf leticl::*hist-generation*)
+          (setf leticl::*hist-cache* nil)
+          (leticl::%render-and-paint h)
+          (let ((after leticl::*item-lines-renders-last-frame*))
+            (is (plusp after)
+                (format nil "**a frame after a row arrived renders the row** — the instrument is live: ~d" after))
+            (is (< after cold)
+                "and still does not re-render the whole transcript for one new row")))))
+    ;; and it is monotone over the whole run, so it can read as a total
+    (is (>= leticl::*item-lines-renders* leticl::*item-lines-renders-last-frame*)
+        "the total is at least the last frame's reading")))
+
 (def-test a-frame-is-counted-so-a-pass-cost-can-be-measured-against-something (:suite leticl)
   "`*frames-painted*` did not exist when scrolling was reported as sluggish, and that is why the
 diagnosis took a detour: `*idle-poll-ms*` is only justifiable against a pass cost, and a pass cost is

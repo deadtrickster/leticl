@@ -1726,6 +1726,7 @@ in-flight call reaches a function that changed under it — an error in the main
 thread, which is a dead head. `--tree` takes the same lock per file."
   (sb-thread:with-mutex ((paint-lock))
     (incf *frames-painted*)
+    (setf *item-lines-renders-this-frame* 0)
     (handler-case
         (progn
           (%render head)
@@ -1766,6 +1767,13 @@ thread, which is a dead head. `--tree` takes the same lock per file."
   ;; the failure frame is still a frame, and a stamp that did not move would ask for
   ;; another one immediately, which is a head that spins on a broken renderer.
   (setf *last-paint-ms* (internal-real-time-ms))
+  ;; **AND THE FRAME'S RENDER COST, PUBLISHED WHERE A FRAME ENDS** (T7 in `TODO.md`). Reading it at
+  ;; the START of the next paint is off by one — MEASURED, because the first version did exactly that
+  ;; and a test asking *what did the frame I just drew cost* got the one before it. The reset is at
+  ;; the frame's start and the reading here, so the pair covers exactly one frame: everything
+  ;; `%render` did between them.
+  (setf *item-lines-renders-last-frame* *item-lines-renders-this-frame*
+        *item-lines-renders-this-frame* 0)
   (setf (head-dirty head) nil))
 
 
