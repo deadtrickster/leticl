@@ -695,6 +695,11 @@ head runs today breaks without them.
   mapped wrongly, but never arriving: they are consumed EARLIER in `%handle-key`'s routing (the
   completer takes `:tab`; something takes `:backspace` before the pane arm), so the `%pane-key` arm
   written for them is dead code and its Backspace comment describes a mapping that never runs. The
+  **AND THE ESCAPES ARE DROPPED AND COUNTED (2026-10-11)** — `%term-lines-from-output`'s second
+  value: `ESC` starts a sequence, `[` makes it a CSI one, a byte in `@`..`~` ends it (the notation's
+  own rule), and the pane can say how many it could not draw. **A half that is named is missing; a
+  half that is faked is invisible** — and `[0m` in the middle of a line is neither.
+
   **AND THE OUTPUT HALF IS LANDED (2026-10-11)** — `%term-lines-from-output`, held by
   `a-terminals-output-is-read-the-way-a-terminal-writes-it`: `#\return` moves to column 0 and what
   follows OVERWRITES column by column, so a progress bar that redrew itself is the one line the
