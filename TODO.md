@@ -163,7 +163,40 @@ head does something better, it is KEPT (section D).
     `*compaction-sections*`'s only writer is never called; `+outcomes-taking-a-reason+` is `("failed")`
     against an enum where four more carry payloads; `!send` is a raw five-character prefix; `ctrl-d`
     leaves at once instead of through the quit card; `:dash` missing from the ctrl-c close list.
-11. [ ] **Stability** — the findings of the stability pass, appended below when it lands.
+11. [ ] **Stability** — the stability pass, ranked by probability × damage:
+    - **a write to a stalled daemon blocks the main thread for ever** (`write-frame` wire.lisp:28-33,
+      `%send` io.lisp:116-149): every ack, screen answer and `tick-peek` write runs on the main loop
+      with nothing bounding `write(2)`; a daemon that stops reading fills the ~200 KB socket buffer
+      and then no paint, no keys, and `/quit` hangs on its own detach (lifecycle.lisp:103-106).
+      `sb-sys:wait-until-fd-usable fd :output` with a deadline before each write, or a writer
+      thread with a bounded queue; a deadline on the detach at exit.
+    - **one slow eval freezes the UI** — `%render-and-paint` takes the paint lock with no timeout
+      (history-cache.lisp:1727) while the eval side holds it for the whole eval (hack.lisp:238);
+      paint with `grab-mutex :timeout 0` and skip the frame; run evals under `with-deadline`.
+    - **the `tick-*` calls are unguarded** (op-call.lisp:467-494) — an error in a dash watcher or a
+      half-pushed tree takes the head down; one `handler-case` per tick, reported through `say`.
+    - **a helper thread dying on a non-`error` condition kills the process with the terminal raw** —
+      `main`'s restoring debugger hook is a `let` binding seen by the main thread only
+      (freeze.lisp:99-117); `%reader-loop`/`%input-loop` catch `error` only; `setf` the global hook,
+      catch `serious-condition` in both loops.
+    - **`!term` output grows without bound and each append copies it all** (frames.lisp:1002) — cap
+      to the last N KB, append through an adjustable buffer.
+    - **session-lifetime tables only grow**: `push-item` past the 2000 trim until a snapshot;
+      `*answered-calls*` (never cleared, linear `member`), `*item-facts*` — clear on snapshot/switch,
+      hash tables.
+    - **the todo store can lose rows with two heads on one db**: no `busy_timeout`, `store-save-todo`
+      returns NIL silently on BUSY, `store-replace-todos` is delete-then-N-inserts with no
+      transaction; `pragma busy_timeout`, `BEGIN IMMEDIATE`.
+    - **`head.toml` is written in place** (notes.lisp:442 `:supersede`) while the retired-notes writer
+      already does temp-and-rename; do the same.
+    - **stale state across reconnect/restart**: `head-term` survives a `hello` for a new daemon; the
+      old reader may be mid-`read-line` when its stream is closed; acks are dropped while skew-locked.
+    - **a frame that fails to fold is acked anyway** (`last-seq` moves before `%handle-frame`,
+      op-call.lisp:509-519) — a silence, where the rule is "a duplicate, never a silence".
+    - **evals mutate state concurrently with the fold** — the paint lock covers painting only.
+    Where this head is already more robust (keep): undecodable stdin bytes are replaced, not fatal; a
+    failed paint never updates the screen record and forces a full repaint; the reader captures its
+    stream once; a non-plist marker cannot crash the drain.
 
 ### C. Deferred — each is its own session, not this pass
 
