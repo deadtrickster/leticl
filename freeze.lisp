@@ -34,7 +34,8 @@
   (write-line "usage: leticl [--continue|-c]   attach the head to the newest session in this dir" stream)
   (write-line "       leticl --session ID      attach to a specific session" stream)
   (write-line "       leticl --new TITLE       attach, then open a fresh session under TITLE" stream)
-  (write-line "       leticl --replay FILE.jsonl [--no-tty] [--cols N] [--rows N]" stream)
+  (write-line "       leticl --replay FILE.jsonl [--no-tty] [--cols N] [--rows N] [-n K]" stream)
+  (write-line "       (-n K folds only the first K events: the screen the head had at event K)" stream)
   (write-line "                                render a recorded log — no daemon, no socket" stream)
   (write-line "       leticl -h|help           this message" stream)
   ;; **AND THE FLAG A PERSON ACTUALLY TYPES, SAID OUT LOUD.** `--help` and `--version` are
@@ -117,23 +118,30 @@ its own meaning for it, and the loop already turns a real SIGINT into a conditio
       (%main))))
 
 (defun %replay-args (args)
-  "Parse `--replay FILE [--no-tty] [--cols N] [--rows N]`.
+  "Parse `--replay FILE [--no-tty] [--cols N] [--rows N] [-n K]`.
 
-Returns (values path no-tty cols rows), or NIL for PATH when `--replay` is not
+**`-n K` IS `head -n K`** (T3 in `TODO.md`): fold only the first K envelopes, so the frame
+is the state the head was in at event K — which is what makes a screen test able to address
+a moment, and a changed screen bisectable by event number rather than by guesswork.
+
+Returns (values path no-tty cols rows limit), or NIL for PATH when `--replay` is not
 in ARGS. Written as a loop rather than as a position in the list because the
 reference takes these flags in any order and the fixture comparison passes
 `--cols`/`--rows` after the file — a parser that only reads the second argument
 answers the default size and the diff is then 40 rows of nothing."
-  (let ((path nil) (no-tty nil) (cols 100) (rows 40) (rest args))
+  (let ((path nil) (no-tty nil) (cols 100) (rows 40) (limit nil) (rest args))
     (loop while rest
           for arg = (pop rest)
           do (cond ((string= arg "--replay") (setf path (pop rest)))
+                   ;; `-n K`, the `head -n K` of a replay: the state at event K
+                   ((or (string= arg "-n") (string= arg "--up-to"))
+                    (setf limit (parse-integer (pop rest) :junk-allowed t)))
                    ((string= arg "--no-tty") (setf no-tty t))
                    ((string= arg "--cols")
                     (setf cols (or (parse-integer (or (pop rest) "") :junk-allowed t) cols)))
                    ((string= arg "--rows")
                     (setf rows (or (parse-integer (or (pop rest) "") :junk-allowed t) rows)))))
-    (values path no-tty cols rows)))
+    (values path no-tty cols rows limit)))
 
 (defun %main ()
   (let ((args (uiop:command-line-arguments)))
@@ -144,7 +152,7 @@ answers the default size and the diff is then 40 rows of nothing."
       ;; terminal, which is exactly why it is checked first: every arm below
       ;; ends in `leticl:run`, which refuses on a pipe.
       ((member "--replay" args :test #'string=)
-       (multiple-value-bind (path no-tty cols rows) (%replay-args args)
+       (multiple-value-bind (path no-tty cols rows limit) (%replay-args args)
          (unless path
            (format *error-output* "leticl: --replay needs a file~%")
            (uiop:quit 2))
@@ -162,7 +170,7 @@ answers the default size and the diff is then 40 rows of nothing."
                    "leticl: --replay paints on the real terminal; add --no-tty on a pipe~%")
            (uiop:quit 1))
          (uiop:symbol-call :leticl '#:replay path
-                           :no-tty no-tty :cols cols :rows rows)))
+                           :no-tty no-tty :cols cols :rows rows :limit limit)))
       ((string= (first args) "--session")
        (uiop:symbol-call :leticl '#:run :session-id (or (second args) "")))
       ;; **`--resume ID`: a DIFFERENT act from `--session ID`** (T4 in `TODO.md`). The launcher

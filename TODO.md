@@ -767,13 +767,21 @@ reaches no arm in either decoder, and `Key::CtrlN` does not exist).
   remaining TUI exec sites and `~/bin/leticl` replaced by `scripts/leticl`;
   blocked on the operator, since the edit is in their own `~/bin`. Until then
   `leticl` in a folder with no daemon refuses instead of starting one. Size S.
-- [ ] **T3 · `--replay FILE.jsonl`** (`panes.md` G18). The reference's head
-  replays a session log with no daemon, no socket and no model, which is what
-  makes its screen tests deterministic — `head -n K` and the head renders the
-  state it was in at event K. We compare against a live session instead, which is
-  why both heads have to be nudged into the same state by hand, and why one
-  comparison in this round was not a controlled test. Size L, and it pays for
-  itself in every later round.
+- [x] **T3 · `--replay FILE.jsonl`** (`panes.md` G18) — DONE (2026-10-11): the replay itself
+  was already in place (`--replay FILE [--no-tty] [--cols N] [--rows N]`, `src/replay.lisp`, a
+  fixture per scenario and a walk over all of them), and **`-n K` — the half that makes a screen
+  ADDRESSABLE — is now landed too**: fold only the first K envelopes, so the frame is the state the
+  head was in at event K, exactly `head -n K` on the file.
+
+  MEASURED through the frozen image on a committed fixture: `-n 2` and the whole file render
+  DIFFERENT screens (7 rows differ on a 90x12 frame — at event 2 the head has just attached and
+  said nothing, at the end it has the tool call and its counts), so the limit is a parameter that
+  is really read rather than one the CLI accepts and drops. `a-replay-can-be-stopped-at-event-k`
+  holds the three envelope cases apart (inside the file, past its end, and no limit) plus that pair
+  of screens.
+
+  What it buys is the item's own sentence: a screen test can now address a MOMENT, and a screen
+  that changed can be bisected by event number rather than by guesswork about which row drew it.
 - [x] **T4 · `--resume ID`** (`panes.md` G9). `scripts/leticl-head` rewrites it
   to `--session`, which cannot work for a session the daemon does not hold
   (app.rs:1602-1610). Size M. **Landed 2026-10-11**: the image has a `--resume`

@@ -93,6 +93,21 @@ prefs on one side only would differ on every row a fold covers."
     (screen-resize (head-prev-screen head) cols rows)
     head))
 
+(defun %replay-up-to (envelopes limit)
+  "The first LIMIT envelopes, or all of them for NIL/zero — `head -n K`.
+
+**T3's own reason for asking for it** (`TODO.md`): the reference replays with
+`head -n K` so a screen test can say *the head, at event K* — and without it every
+comparison has to be driven to the state it wants, which is why one comparison in
+an earlier round was not a controlled test. A limit is applied to the ENVELOPE LIST
+and not to the fold, so the count means the same thing as `head -n K` on the file.
+
+The limit is also what makes a REGRESSION ADDRESSABLE: a screen that changed can be
+bisected by event number rather than by guesswork about which row drew it."
+  (if (and limit (plusp limit) (< limit (length envelopes)))
+      (subseq envelopes 0 limit)
+      envelopes))
+
 (defun replay-fold (head envelopes)
   "Fold ENVELOPES into HEAD, one at a time, through the live head's own handler.
 
@@ -265,7 +280,7 @@ view's caches, anchor and high-water behind. One line, and no second copy of the
 `let` written over there would have been."
   (with-replay-globals () (funcall thunk)))
 
-(defun replay-screen-from-envelopes (envelopes &key (cols 100) (rows 40))
+(defun replay-screen-from-envelopes (envelopes &key (cols 100) (rows 40) limit)
   "Fold ENVELOPES and answer the screen as one ANSI string per row.
 
 The same `screen-rows-ansi` a `screen_requested` is answered with, so what this
@@ -279,24 +294,28 @@ the one from before the call and conclude the frame was clean. The comparison's
 regression net asserts on this value."
   (with-replay-globals (:clock 0)
     (let ((head (%make-replay-head cols rows)))
-      (replay-fold head envelopes)
+      (replay-fold head (%replay-up-to envelopes limit))
       (%render head)
       (values (screen-rows-ansi (head-screen head)) *last-render-error*))))
 
-(defun replay-screen (path &key (cols 100) (rows 40))
+(defun replay-screen (path &key (cols 100) (rows 40) limit)
   "The screen the file at PATH produces at COLS x ROWS. Deterministic.
 
-Second value: the condition a fold or a render left behind, or NIL."
-  (replay-screen-from-envelopes (replay-envelopes path) :cols cols :rows rows))
+LIMIT is `head -n K`: fold only the first K envelopes, so the frame is the state the
+head was in at event K.
 
-(defun replay-print (path &key (cols 100) (rows 40))
+Second value: the condition a fold or a render left behind, or NIL."
+  (replay-screen-from-envelopes (replay-envelopes path)
+                                :cols cols :rows rows :limit limit))
+
+(defun replay-print (path &key (cols 100) (rows 40) limit)
   "`--replay FILE --no-tty`: the frame on stdout, one row per line, then exit.
 
 100x40 is the reference's fixed size (`app.screen(100, 40)`,
 letibot-tui.rs:271); `--cols`/`--rows` move it so a difference can be checked at
 the width it was reported at."
   (let ((out (%open-stdout)))
-    (dolist (line (replay-screen path :cols cols :rows rows))
+    (dolist (line (replay-screen path :cols cols :rows rows :limit limit))
       (write-string line out)
       (write-char #\newline out))
     (force-output out)))
@@ -308,7 +327,7 @@ replay SHOWS the streaming behaviour instead of the finished document; at 0 the
 whole session lands in one frame and the thing you wanted to look at never
 happened on the screen.")
 
-(defun replay-tty (path)
+(defun replay-tty (path &key limit)
   "`--replay FILE` on a real terminal: paced paint, then the live loop.
 
 The same shape as the reference (letibot-tui.rs:280-330) — fold one envelope,
@@ -327,7 +346,7 @@ on a paced replay would misreport the one thing the pacing exists to show."
             (sb-thread:make-thread (lambda () (%input-loop head)) :name "leticl input"))
       (with-tui-terminal (*stdout*)
         (block paced
-          (dolist (env (replay-envelopes path))
+          (dolist (env (%replay-up-to (replay-envelopes path) limit))
             (unless (head-running head) (return-from paced))
             (setf *now-ms* (internal-real-time-ms))
             (note-frame-arrived)
@@ -342,8 +361,11 @@ on a paced replay would misreport the one thing the pacing exists to show."
           (setf (head-dirty head) t)
           (run-loop head))))))
 
-(defun replay (path &key no-tty (cols 100) (rows 40))
-  "The `--replay` entry point. NO-TTY prints one fixed-size frame and returns."
+(defun replay (path &key no-tty (cols 100) (rows 40) limit)
+  "The `--replay` entry point. NO-TTY prints one fixed-size frame and returns.
+
+LIMIT stops the fold after that many envelopes — `head -n K`, and the state the head was
+in at event K."
   (if no-tty
-      (replay-print path :cols cols :rows rows)
-      (replay-tty path)))
+      (replay-print path :cols cols :rows rows :limit limit)
+      (replay-tty path :limit limit)))

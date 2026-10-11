@@ -153,6 +153,38 @@ being right is not evidence that what is on disk was built by it."
    ;; seven fixtures on the way to this shape.) Found by the test-suite reviewer.
    (is (plusp looked) "the committed fixtures offered tool_result rows to check")))
 
+(def-test a-replay-can-be-stopped-at-event-k (:suite leticl)
+  "**T3's `head -n K`, and it is what makes a screen addressable.**
+
+  The reference replays a session log with no daemon, no socket and no model, and `head -n K`
+  is the half that lets a screen test say *the head, AT EVENT K* — without it every comparison
+  has to be driven to the state it wants by hand, which is why one comparison in an earlier
+  round was not a controlled test. It also makes a changed screen bisectable by event number
+  rather than by guesswork about which row drew it.
+
+  The limit is applied to the ENVELOPES, so the count means what `head -n K` means for the file,
+  and three cases are held apart: a limit inside the file folds that far, a limit past the end
+  folds everything, and no limit is the whole file."
+  (let* ((name (first (fixture-names)))
+         (all (leticl::replay-envelopes (fixture name))))
+    (is (>= (length all) 3)
+        (format nil "the fixture has enough events to cut: ~d in ~a" (length all) name))
+    (is (= 2 (length (leticl::%replay-up-to all 2))) "a limit inside the file takes exactly that many")
+    (is (equal (subseq all 0 3) (leticl::%replay-up-to all 3)) "and it is a PREFIX, not a sample")
+    (is (= (length all) (length (leticl::%replay-up-to all (+ 100 (length all)))))
+        "**a limit past the end is the whole file** — `head -n` semantics, not an error")
+    (is (eq all (leticl::%replay-up-to all nil)) "and no limit is the file itself, not a copy")
+    ;; and through the real path: a screen at K is the state at K, and it is not the final screen
+    (let ((early (leticl::replay-screen (fixture name) :cols 100 :rows 30 :limit 2))
+          (late (leticl::replay-screen (fixture name) :cols 100 :rows 30)))
+      (is (and early late) "both fold and render")
+      (is (not (equal early late))
+          (format nil "**the screen at event 2 is not the screen at the end of ~a** — otherwise the limit is a parameter nothing reads" name)))
+    ;; a fixture the limit does not cut is the same screen either way, which is the control
+    (let ((one (leticl::replay-screen (fixture name) :cols 100 :rows 30 :limit 1))
+          (none (leticl::replay-screen (fixture name) :cols 100 :rows 30 :limit nil)))
+      (is (not (equal one none)) "and a one-event fold is not the whole file either"))))
+
 (def-test every-fixture-renders-without-taking-the-head-down ()
   "Every committed fixture, folded and painted, with no render error left behind.
 
