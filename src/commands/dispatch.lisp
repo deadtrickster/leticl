@@ -247,11 +247,16 @@ on ClientFrame::Slash)."
             (queue-switch-view head (if (string= sub "review") :review :merge))
             (unless (eq (head-mode head) :queue)
               (%toggle-pane head :queue (lambda () (ask-queues head)))))
+           ((member sub '("reset" "clean") :test #'string=)
+            ;; **THE TWO QUEUE-LEVEL VERBS** — they act on the queue and not on a row, so they take no
+            ;; id and are not `queue-verb`'s. The daemon decides what they mean; the head only says
+            ;; the line, which is the same rule the four row verbs keep.
+            (queue-act head sub))
            ((member sub '("approve" "veto" "rm" "restart") :test #'string=)
             (if (and arg (plusp (length arg)))
                 (queue-verb head sub arg)
                 (say head (format nil "which row? /queue ~a ID — the queue pane prints each row's id" sub))))
-           (t (say head "usage: /queue · /queue review|merge · /queue approve|veto|rm|restart ID"))))
+           (t (say head "usage: /queue · /queue review|merge · /queue approve|veto|rm|restart ID · /queue reset|clean"))))
        t)
       ((string= verb "jobs")
        ;; ASK, then open. The jobs pane drew `N out` from JobSettled events, which

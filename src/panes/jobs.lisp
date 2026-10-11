@@ -266,6 +266,17 @@ anyway, because the daemon holds rows this head's last snapshot may not."
             (%send-slash head (format nil "queue ~a ~a" verb id))
             (say head (format nil "queue ~a ~a — sent; the pane re-reads when the daemon moves it" verb id)))))))
 
+(defun queue-act (head verb)
+  "The two verbs that act on the QUEUE rather than on a row — `reset` and `clean` — as the slash line
+ the daemon takes (`queue VERB`), which is the spelling its own command line has.
+
+ **NO ID, which is why they are not `queue-verb`'s**: `approve`, `veto`, `rm` and `restart` each name a
+ row, and a head that asked *which row?* for `reset` would be asking a question with no answer. The
+ daemon is still the one that decides what they mean — a head that DID something on `reset` would be
+ the second owner of the queue."
+  (%send-slash head (format nil "queue ~a" verb))
+  (say head (format nil "queue ~a — sent; the pane re-reads when the daemon moves the queue" verb)))
+
 (defun queue-row-moves (id &optional (n 3))
   "The last N moves of row ID from the snapshot's recent history, oldest first."
   (let ((mine (remove-if-not (lambda (m) (equal (getf m :entry-id) id)) (getf *queues* :recent))))

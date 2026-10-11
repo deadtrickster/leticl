@@ -298,6 +298,17 @@ CURRENT state, the selected row's moves; `/queue review|merge` switches; the edg
     (leticl::%command h "queue veto r-target")
     (is (equal "queue veto r-target" (getf (find "slash" (%sent wire) :key #'frame-name :test #'string=) :line))
         "an open review can be vetoed")
+    ;; **AND THE TWO THE QUEUE OWNS RATHER THAN A ROW** — they take NO id, which is why they are not
+    ;; the row verbs' arm: a head that asked *which row?* for `reset` would ask a question with no
+    ;; answer.
+    (%sent wire)
+    (leticl::%command h "queue reset")
+    (is (equal "queue reset" (getf (find "slash" (%sent wire) :key #'frame-name :test #'string=) :line))
+        "**`/queue reset` is the daemon's line and takes NO id**")
+    (%sent wire)
+    (leticl::%command h "queue clean")
+    (is (equal "queue clean" (getf (find "slash" (%sent wire) :key #'frame-name :test #'string=) :line))
+        "and so does `clean`")
     (%sw-reset-queues)))
 
 (def-test the-queue-pane-rereads-every-five-seconds-while-open (:suite leticl)
