@@ -80,6 +80,7 @@
     ("key" . "NAME — paste a cloud provider's API key (deepseek | glm | grok) into providers.toml")
     ("models" . "which model answers: the picker, or /models PROVIDER/MODEL")
     ("model" . "which model answers — the same as /models")
+    ("queue" . "the merge queue — what is waiting to land")
     ("jobs" . "the background-jobs pane")
     ("subagents" . "the subagent tree")
     ("todos" . "the plan and the repo's TODO.md — or /todos add for one of your own")

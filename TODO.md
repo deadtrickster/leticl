@@ -615,10 +615,16 @@ head runs today breaks without them.
   2026-10-11 so the next session takes them in the file's own order — smallest verifiable thing
   first, never across, and each step leaving the head working):
 
-  · **S — the two frames.** `ClientFrame::ListMergeQueue` → `ServerFrame::MergeQueue`, and the two
-    events `MergeEntryAdded`/`MergeEntryMoved`. Constructors, the folds in `%handle-frame`, and a
-    test per frame (the shape `/todos` already keeps, including the *attaches late and does not
-    ask* rule).
+  · **S — the two frames — `ListMergeQueue` AND ITS ASK ARE LANDED** (2026-10-11, held by
+    `the-merge-queue-is-asked-for-and-its-answer-is-kept`): `make-list-merge-queue`, a
+    `head-merge-queue` slot, the `/queue` verb that sends the ask, and the fold — which REPLACES
+    rather than merges, because a queue is a snapshot and folding it would let a landed entry
+    survive a reset. The `/queue` row is in `*slash-commands*` too, which the registry/dispatcher
+    drift test insisted on the moment the verb existed.
+
+    **WHAT IS STILL MISSING FROM THIS STEP**: `MergeEntryAdded`/`MergeEntryMoved` — the two EVENTS
+    that keep the queue live after the reply — and their folds. The reply alone is a snapshot; the
+    events are what make it a queue a reader can watch.
 
     **AND IT CANNOT LAND ALONE — MEASURED 2026-10-11, one hour wasted so nobody repeats it.** The
     suite has an invariant, `every-frame-constructor-is-actually-sent`: *a frame the head defines

@@ -11800,6 +11800,47 @@ answered. The daemon's own `secret_late` warning, which would explain it, is a
       (is (not (find "switch" (%sent wire3) :key #'frame-name :test #'string=))
           "**asking for the session you are already in sends no switch** — the Hello's settings request is all this frame owes"))))
 
+(def-test the-merge-queue-is-asked-for-and-its-answer-is-kept (:suite leticl)
+  "**The merge queue's step one: the frames AND the ask** (`TODO.md`'s merge-queue box).
+
+  Two things this holds, and the second is the reason the step cannot be split: the app has no
+  snapshot of the queue by design (it is daemon-level), so a head that does not ASK draws nothing —
+  and the suite's `every-frame-constructor-is-actually-sent` refuses a constructor with no caller,
+  which is how the tempting order (wire first, screen after) was measured to be wrong.
+
+  The reply REPLACES rather than merges: `MergeQueue` is the whole queue as of now, so folding it
+  into what the head held would let a landed entry survive a reset."
+  (let* ((h (%make-head))
+         (wire (%wire h)))
+    ;; --- the ask
+    (leticl::%command h "queue")
+    (let ((sent (%sent wire)))
+      (is (find "list_merge_queue" sent :key #'frame-name :test #'string=)
+          (format nil "**`/queue` asks the daemon** — the constructor is not defined and never sent: ~s"
+                  (mapcar #'frame-name sent)))
+      (is (search "asking the daemon" (head-status-note h))
+          "and says it is asking, because the answer is not instant"))
+    ;; --- the answer: kept, whole, and it SAYS how many
+    (leticl::%handle-frame h (list :frame "merge_queue"
+                                   :entries (list (list :id "e1" :branch "topic-a" :state "waiting"
+                                                        :evidence "needs: topic-b")
+                                                  (list :id "e2" :branch "topic-b" :state "landed"
+                                                        :evidence "tip 4f2a1c9"))))
+    (is (= 2 (length (head-merge-queue h))) "**the queue is on the head** — where a pane will draw it")
+    (is (equal "topic-a" (getf (first (head-merge-queue h)) :branch)) "in the daemon's order")
+    (is (equal "needs: topic-b" (getf (first (head-merge-queue h)) :evidence))
+        "**with the evidence**, which is the reason for the state in the queue's own words")
+    (is (search "holds 2" (head-status-note h)) "and the head says how many arrived")
+    ;; --- a second reply REPLACES: a landed entry must not survive a reset
+    (leticl::%handle-frame h (list :frame "merge_queue" :entries (list (list :id "e2" :branch "topic-b"
+                                                                            :state "landed"))))
+    (is (= 1 (length (head-merge-queue h)))
+        (format nil "**the reply REPLACES what the head held** — a queue is a snapshot, not a log: ~s"
+                (head-merge-queue h)))
+    ;; --- an empty queue is a fact, not an absence
+    (leticl::%handle-frame h (list :frame "merge_queue" :entries nil))
+    (is (null (head-merge-queue h)) "an empty queue is empty")))
+
 (def-test a-reply-for-a-session-this-head-left-is-not-applied (:suite leticl)
   "**T6 in `TODO.md`, and it is invisible by construction — which is why it needed a test.**
 

@@ -947,6 +947,15 @@ empty pane on every attach, which is the defect the guard exists to prevent, inv
          ;; the first wants one; the command that asks for a list opens it itself.
          (t nil)))
      :control)
+    ((string= (frame-name frame) "merge_queue")
+     ;; **THE QUEUE AS OF NOW, and the two events keep it from here.** `MergeQueue` is the WHOLE
+     ;; queue, so this REPLACES rather than merges — folding it into what the head held would let a
+     ;; landed entry survive a reset. Not scoped to this head's session: the queue is daemon-level.
+     (let ((entries (getf frame :entries)))
+       (setf (head-merge-queue head) entries
+             (head-dirty head) t)
+       (say head (format nil "the merge queue holds ~d ~:p" (length entries))))
+     :control)
     ((string= (frame-name frame) "jobs")
      ;; **A REPLY WHOSE SESSION IS NOT THIS ONE IS NOT THIS HEAD'S COPY** (T6 in `TODO.md`).
      ;; A `/jobs` asked before a `/switch` is answered after it, and the daemon's reply names the

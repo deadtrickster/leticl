@@ -222,6 +222,17 @@ for \"nothing to say\", and *deferring is not sending*."
 (defun make-list-todos ()
   (list :frame "list_todos"))
 
+(defun make-list-merge-queue ()
+  "The merge queue as of NOW — daemon-level, and the first thing a head asks for.
+
+**THE SNAPSHOT CARRIES NONE OF IT BY DESIGN, so a head that never asks draws nothing** — the same
+bootstrap rule `/todos` keeps. The reply is the whole queue and every change after it arrives as
+`MergeEntryAdded`/`MergeEntryMoved`.
+(`TODO.md`'s merge-queue box, step one of five: the frames and the ASK together — the suite's
+`every-frame-constructor-is-actually-sent` refuses a wire half with no caller, which is the
+invariant doing its job.)"
+  (list :frame "list_merge_queue"))
+
 (defun make-list-jobs ()
   "This session's background jobs, answered IMMEDIATELY.
 

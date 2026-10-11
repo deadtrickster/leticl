@@ -175,6 +175,15 @@ on ClientFrame::Slash)."
                                  (or (getf (session-turn (head-session head)) :model)
                                      "the model it started with")))))
            (open-pick head :model)))
+      ((string= verb "queue")
+       ;; **THE ASK IS STEP ONE'S OTHER HALF** (see the merge queue's box in `TODO.md`): the queue is
+       ;; daemon-level and no snapshot carries it, so a head that does not ask draws nothing. This
+       ;; verb is what makes the frame SENT — and the suite's own invariant is why the constructor
+       ;; could not land before it.
+       (%send head (make-list-merge-queue))
+       (say head "asking the daemon for the merge queue…")
+       (setf (head-dirty head) t)
+       t)
       ((string= verb "jobs")
        ;; ASK, then open. The jobs pane drew `N out` from JobSettled events, which
        ;; a head that attached after the jobs started never saw — so the pane was

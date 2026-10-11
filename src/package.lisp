@@ -44,7 +44,7 @@
    #:+protocol-version+
    #:*pending-resume* #:make-attach #:make-ack #:make-prompt #:make-interrupt #:make-answer
    #:match-option
-   #:make-answer-question #:question-answer #:make-list-sessions #:make-list-todos #:make-list-jobs
+   #:make-answer-question #:question-answer #:make-list-sessions #:make-list-todos #:make-list-jobs #:make-list-merge-queue
    #:make-set-operator-todos
    #:make-new-session #:make-resume-session #:make-rename-session #:make-fetch-row
    #:make-switch #:make-peek #:make-settings #:make-detach #:make-resync
@@ -284,7 +284,7 @@
    #:head-farewell #:head-quit-open #:head-secret-req #:head-connected #:head-status-note
    #:head-settings #:head-queued #:head-scroll #:head-screen-reqs #:head-want-new
    #:*queued-unconfirmed* #:%resolve-queued #:%re-resolve-queued
-   #:head-jobs #:head-subagents #:head-peeked #:head-picker-sel
+   #:head-jobs #:head-merge-queue #:head-subagents #:head-peeked #:head-picker-sel
    ;; the operator-call door (R24 part two), the head's half
    #:*head-tool-runners* #:*op-calls* #:+op-call-wait-ms+ #:tick-op-calls #:%op-call-ask
    #:*op-call-draft* #:op-call-draft-open-p #:op-call-card-lines #:%op-call-draft-key

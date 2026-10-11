@@ -72,6 +72,9 @@ globals a frame reads.")
   (peeked nil)
   (settings nil)
   (jobs nil)
+  ;; the merge queue is DAEMON-LEVEL (not per session, and not in any snapshot): a head asks with
+  ;; `make-list-merge-queue` and the two events keep it after that.
+  (merge-queue nil)
   (subagents nil)
   (prefs (list :show-reasoning nil :show-tools nil :diff "split" :links t))
   (status-note nil)
