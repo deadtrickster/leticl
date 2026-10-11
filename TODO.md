@@ -680,7 +680,15 @@ session starts from facts and not from a summary's memory. Neither is parity deb
 the wire half of each is additive (protocol 31+ frames; leticl is 36) and nothing a
 head runs today breaks without them.
 
-- [ ] **the `!term` pane + a VT renderer** — a program that owns the conversation's
+- [ ] **the `!term` pane + a VT renderer** — **AND ITS WIRE IS MEASURED 2026-10-11**
+  (`sessionlog/src/protocol.rs:344-460`): four client frames — `TermOpen`, `TermInput`,
+  `TermResize` (the head's rectangle) and `TermClose` — and three server ones: `TermAttached`,
+  `TermOutput`, `TermEnded`. **The rules the docstring states and the head must keep**: *ONE pane per
+  session at a time* (a second `TermOpen` while one is live is refused), `TermInput`/`TermOutput` are
+  the pair that carry the bytes, and the two frames that are neither a line nor an answer are the
+  rectangle and the ending. So the project's first increment is the four constructors WITH the pane
+  that opens one (the caller rule), and the VT renderer is the second — the wire is not the hard
+  part. — a program that owns the conversation's
   rectangle. **The wire half is the small half**: client `TermOpen` / `TermInput` /
   `TermResize {cols rows}` / `TermClose`; server `TermAttached {command}` /
   `TermStatus {command}` / `TermOutput {bytes}` / `TermEnded {reason}` (protocol 31;
