@@ -681,6 +681,17 @@ the wire half of each is additive (protocol 31+ frames; leticl is 36) and nothin
 head runs today breaks without them.
 
 - [~] **the `!term` pane + a VT renderer** — **THE WIRE, THE PANE AND THE KEY PATH ARE LANDED
+  **AND THE SCREEN IS IN AND WIRED (2026-10-11)** — the box's missing half, and it turned on a knob:
+  **the exec memory cap must be raised for the suite** (`memory: 4G` on the command), because SBCL
+  dies at the 64 MiB default — that is why six attempts in this session ended in a heap-exhausted
+  carcass rather than a failure. With it: `term-screen` (rows x cols x cursor), `CUP`/`EL`/`ED`, the
+  `A`-`D` moves, `CR`/`LF`/`BS`/`TAB`, **scrolling** past the bottom, **wrapping** at the right edge,
+  a feed-walker that honours those and COUNTS the rest (SGR dropped: this head draws roles, not
+  terminal colours), and the pane now DRAWS THE SCREEN — held by
+  `a-terminal-draws-where-the-program-addressed-the-cursor`, which is the thing a line model could
+  not do. **What remains in this project**: the rest of rano's `term/` (scroll regions, the alternate
+  screen, cursor visibility), and `ctrl-e` behind it — which is now *"run rano in a terminal"* rather
+  than an embedding problem, because the terminal exists.
   **AND THE VT RENDERER IS A PORT, NOT AN INVENTION — MEASURED 2026-10-11**: `rano` is a LOCAL project
   (`/home/dead/Projects/rano`) and ships its own terminal — `rano/src/term/`, **3021 lines across six
   modules** (`decode`, `event`, `features`, `graphics`, `links`, `terminal`). The reference head drives
