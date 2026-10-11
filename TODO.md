@@ -960,7 +960,7 @@ rest names the commit it comes from.
     an agent's as the session's labelled one — the port this box's own paragraph names. The marker is
     ticked on THAT conclusion rather than on a change: the measurement was already here, and the box
     only needed to stop reading as work.
-  - [~] **the head's smaller mirrors**: **a printed path IS a link — probed and LANDED
+  - [x] **the head's smaller mirrors**: **a printed path IS a link — probed and LANDED
     2026-10-11** (`src/links.lisp`, held by `a-link-url-is-never-built-from-content`,
     `an-image-path-becomes-a-link-and-the-url-is-head-authored` and
     `a-link-is-refused-when-the-path-is-not-honest` — the last being the security half: a URL is
@@ -990,8 +990,6 @@ rest names the commit it comes from.
     drawing a running turn over a daemon that is going. **This head leaves on `Bye`**, which is the
     same obligation discharged a different way — and its own `a-bye-is-the-end-of-the-conversation`
     holds it. So nothing here is owed. The term pane (`401e61f`) remains the `!term` project.
-    that interrupts the turns it holds (`195a813`), and the term pane born at its size
-    (`401e61f`).
 
 
 ## Filed for their own sessions — the `!term` pane, and the merge queue
