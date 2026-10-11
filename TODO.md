@@ -686,12 +686,17 @@ head runs today breaks without them.
   the `/term` verb — which opens the pane rather than sending a second `TermOpen` the daemon refuses.
   **AND THE KEYS A SHELL NEEDS**: Enter arrives as `#\return` (CR, not LF), Backspace as DEL `#x7f`
   rather than BS `#x08`, and the arm has to be FIRST in `%pane-key`'s `cond` because the pane's own
-  Enter arm is earlier than the character arms — the same ordering rule as `q`. **Two things are
-  deliberately NOT done and are recorded here rather than in a commit message**: `TAB` cannot reach a
-  program today (`:tab` is taken by the completer before a pane's cond sees it — a change to the
-  completer's routing, its own increment), and Backspace's byte mapping is written in the code with
-  its reason but UNASSERTED, because the fixture that tried compared a byte a failure message cannot
-  render, and an assertion that cannot say what went wrong is worse than none.
+  Enter arm is earlier than the character arms — the same ordering rule as `q`. **MEASURED BY A PROBE, and it corrects what the code
+  above implies** — a temporary test that printed what actually left the head for each key:
+
+      PROBE enter="<CR>" tab=NIL backspace=NIL
+
+  So **ENTER reaches the program (as CR) and TAB AND BACKSPACE DO NOT REACH IT AT ALL** — not
+  mapped wrongly, but never arriving: they are consumed EARLIER in `%handle-key`'s routing (the
+  completer takes `:tab`; something takes `:backspace` before the pane arm), so the `%pane-key` arm
+  written for them is dead code and its Backspace comment describes a mapping that never runs. The
+  fix is an arm EARLIER in the key path, not in `%pane-key` — and that is the third time in this
+  pane's short life that an ORDERING question, not a content question, was the whole problem.
   `q` closes the pane AND ends the terminal; every other key goes to the PROGRAM. **AND THE PANE SAYS
   WHAT IS MISSING**: the bytes are drawn as text because that is what arrived, and the VT EMULATOR is
   the remaining half — the one thing a head must not fake, because a faked screen makes the missing

@@ -28312,4 +28312,3 @@ single frame at 2038 items."
              (is (null (leticl::%tool-payload-rows (list :type "tool_result")))
                  "a body with no payload draws no rows")))
       (%stop-counting 'leticl::%payload-rows-of counter))))
-
