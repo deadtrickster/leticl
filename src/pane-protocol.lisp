@@ -355,7 +355,7 @@ invisible, which is worse than missing it.
 
 Trailing blanks are trimmed: a line overwritten by a shorter one would otherwise carry the old
 tail's spaces as a ragged gap."
-  (let ((out nil) (buf (make-string 0)) (col 0))
+  (let ((out nil) (buf (make-string 0)) (col 0) (dropped 0) (esc-p nil) (csi-p nil))
     (labels ((put (ch)
                (when (>= col (length buf))
                  (setf buf (concatenate 'string buf (make-string (1+ (- col (length buf)))
@@ -369,9 +369,22 @@ tail's spaces as a ragged gap."
         (cond ((char= ch #\newline) (emit))
               ((char= ch #\return) (setf col 0))
               ((char= ch #\tab) (put #\space) (put #\space) (put #\space) (put #\space) (put #\space) (put #\space) (put #\space) (put #\space))
+              ;; **A CONTROL SEQUENCE IS DROPPED AND COUNTED, never drawn and never faked.** `ESC [ …`
+              ;; is cursor addressing, colour and erasure — the VT renderer's job, which this head does
+              ;; not have. Drawing it would put `[0m` mid-line; honouring it would be worse. The count is
+              ;; the SECOND value, so a caller that wants lines is unaffected (two values and not a cons:
+              ;; a cons would change this function's shape for callers written an hour ago, which is a
+              ;; signature change wearing a feature's clothes).
+              ;;
+              ;; Two flags rather than lookahead, because this walk is character by character: ESC starts
+              ;; a sequence, `[` makes it a CSI one, and a byte in `@`..`~` ends it — which is the rule
+              ;; the notation itself is built on.
+              ((char= ch #\escape) (incf dropped) (setf esc-p t))
+              (esc-p (setf esc-p nil csi-p (char= ch #\[)))
+              (csi-p (when (<= 64 (char-code ch) 126) (setf csi-p nil)))
               (t (put ch))))
       (emit))
-    (nreverse out)))
+    (values (nreverse out) dropped)))
 
 (defmethod pane-lines ((pane term-pane) head cols room)
   "The terminal's bytes, as this head can HONESTLY draw them today, and the pane's own keys.

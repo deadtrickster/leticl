@@ -12019,6 +12019,34 @@ worked for the merge queue.
     (is (search "line discipline only" text)
         "**and the pane says what it does NOT do**, so the missing half cannot be mistaken for this one")))
 
+(def-test a-terminals-escapes-are-dropped-and-counted (:suite leticl)
+  "**Control sequences are DROPPED and COUNTED** — `ESC [ …` is cursor addressing, colour and erasure,
+  which is the VT renderer's job and this head does not have one. Drawing them would put `[0m` in the
+  middle of a line; honouring them would be worse. **The count is what keeps the pane honest**: *a half
+  that is named is missing; a half that is faked is invisible.*
+
+  (In a Lisp string an escape is `#\\escape` for the reason a return is `#\\return`: a backslash
+  escapes the next character LITERALLY, so `\\e` would be the letter `e`.)"
+  (multiple-value-bind (lines dropped)
+      (leticl::%term-lines-from-output (format nil "a~c[0mb~c[2Kc" #\escape #\escape))
+    (is (equal (list "abc") lines)
+        (format nil "**an escape sequence leaves no trace in the text**: ~s" lines))
+    (is (= 2 dropped) "**and every one of them is counted**"))
+  (multiple-value-bind (lines dropped)
+      (leticl::%term-lines-from-output "plain text, no escapes")
+    (is (equal (list "plain text, no escapes") lines) "text without escapes is text")
+    (is (= 0 dropped) "and the count is zero, which is the honest answer"))
+  ;; **AND MY EXPECTATION HERE WAS WRONG, WHICH IS THE THIRD TIME TODAY** — `ESC` followed by a
+  ;; character is a TWO-character control sequence in a terminal (`ESC M` is reverse index), so the
+  ;; character after a bare escape belongs to the sequence and is dropped WITH it. The code was right
+  ;; and the assertion was wrong, which is the failure mode a test is supposed to have: it told me
+  ;; what the head does, and what the head does is what a terminal reader expects.
+  (multiple-value-bind (lines dropped)
+      (leticl::%term-lines-from-output (format nil "a~cb~cc" #\escape #\escape))
+    (is (equal (list "a") lines)
+        (format nil "**a bare escape takes its ONE following byte with it** — so `a ESC b ESC c` is just `a`: ~s" lines))
+    (is (= 2 dropped) "and each is counted once")))
+
 (def-test a-terminal-opens-takes-keys-for-the-program-and-ends-when-asked (:suite leticl)
   "**The `!term` frames, each with the caller the suite's own invariant demands** — and the ordering
   that costs a session if it is guessed: **the pane's KEY PATH is what makes `TermInput` and
