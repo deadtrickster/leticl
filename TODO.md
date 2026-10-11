@@ -632,9 +632,13 @@ rest names the commit it comes from.
     `harnessd/src/answers.rs` + `harness.rs` (+ its own 500-line test) — the row is appended by
     the daemon and this head draws it with the speaker rule it already has (`speaker: operator`
     draws as the person's own row, `agent` as the session's labelled one), which the earlier port
-    landed. What is genuinely left in this clause is the LATERAL SEND (`af218a2`): a message to a
-    session the worker owns, drawn as a row and a turn — head-side, and worth its own measurement
-    before anybody writes it.
+    landed. **AND THE LATERAL SEND IS THE DAEMON'S TOO — MEASURED THE SAME WAY**: `af218a2` is
+    `harnessd/src/sessions.rs` + `harness.rs` (+ a 1126-line `session_channel.rs` test), so a
+    message delivered into a worker-owned session is *delivered by the daemon*; this head's part is
+    drawing the row and the turn that arrive, which is the rendering it already does for every other
+    row. **SO THE WHOLE CLAUSE IS THE OTHER HALF'S**, with this head's obligation being only that it
+    draws what arrives — and that is worth saying plainly, because the ledger's prose read as two
+    head-side features.
   - [~] **the head's smaller mirrors**: **a printed path IS a link — probed and LANDED
     2026-10-11** (`src/links.lisp`, held by `a-link-url-is-never-built-from-content`,
     `an-image-path-becomes-a-link-and-the-url-is-head-authored` and
