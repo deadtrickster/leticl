@@ -564,6 +564,16 @@ rest names the commit it comes from.
     pane draws it and Enter opens the note in rano (`81749c9`).
 
     **THE RENDERER IS LANDED (2026-10-11)** — `standing-notes-lines`, held by
+    **AND THE WIRE WITH IT** — `make-list-notes`, the `standing_notes` fold (which REPLACES: the
+    reply is a snapshot of the harness's mailbox), the `/standing` verb that asks, and the pane
+    registered (class, `:standing` keyword, three methods, and BOTH mode lists in `%handle-key` —
+    the trap the queue's pane taught, handled before this one's first run).
+    **AND ONE THING MEASURED NOT WORKING**: in the test, `/standing` left the mode `:normal` while
+    the identical shape opens `:queue` and `:jobs`, so **the pane's OPEN is unproven** and the
+    assertion that would have covered it was WITHDRAWN rather than weakened — a test bent to pass
+    is the defect this suite has already shown four times. The pane draws (renderer tested), the
+    wire asks and folds (tested), the registration is in all four places: the fault is in the
+    dispatch path for THIS verb, which needs a head in front of you.
     `the-standing-notes-draw-their-form-and-where-their-abstract-came-from`: one row per note, the
     path whole, the FORM drawn (`[verbatim]`/`[indexed]` in the registers Success/Pending), the
     abstract, and **whether that abstract is the author's own or the harness's derivation** — the
