@@ -680,7 +680,15 @@ session starts from facts and not from a summary's memory. Neither is parity deb
 the wire half of each is additive (protocol 31+ frames; leticl is 36) and nothing a
 head runs today breaks without them.
 
-- [ ] **the `!term` pane + a VT renderer** — **AND ITS WIRE IS MEASURED 2026-10-11**
+- [~] **the `!term` pane + a VT renderer** — **THE WIRE, THE PANE AND THE KEY PATH ARE LANDED
+  (2026-10-11)**, held by `a-terminal-opens-takes-keys-for-the-program-and-ends-when-asked`: the four
+  client frames (each with its caller), the `head-term` slot, the three server folds, the pane, and
+  the `/term` verb — which opens the pane rather than sending a second `TermOpen` the daemon refuses.
+  `q` closes the pane AND ends the terminal; every other key goes to the PROGRAM. **AND THE PANE SAYS
+  WHAT IS MISSING**: the bytes are drawn as text because that is what arrived, and the VT EMULATOR is
+  the remaining half — the one thing a head must not fake, because a faked screen makes the missing
+  half invisible. *The two failed attempts that preceded this are recorded below; they are why it
+  landed in one piece.* — **AND ITS WIRE IS MEASURED 2026-10-11**
   (`sessionlog/src/protocol.rs:344-460`): four client frames — `TermOpen`, `TermInput`,
   `TermResize` (the head's rectangle) and `TermClose` — and three server ones: `TermAttached`,
   `TermOutput`, `TermEnded`. **The rules the docstring states and the head must keep**: *ONE pane per
