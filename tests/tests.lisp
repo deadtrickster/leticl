@@ -12011,6 +12011,25 @@ worked for the merge queue.
       (is (search "[waiting] topic-a" t3) "the state and the branch, in that order")
       (is (search "needs: topic-b, topic-c" t3) "**with the reason the daemon gave**")
       (is (search "gate: format" t3) "every entry carries its own")
+      ;; **AND THE TWO FIELDS THE DAEMON SENDS THAT THE FIRST CUT DROPPED** — a row waiting on
+      ;; other branches looked exactly like one that was ready.
+      (setf (head-merge-queue h)
+            (list (list :id "e1" :branch "topic-a" :state "waiting" :priority "high"
+                        :needs '("e2" "e3") :evidence "needs: topic-b, topic-c")))
+      (let ((t4 (funcall text)))
+        (is (search "high" t4) "the queue's own priority is drawn")
+        (is (search "needs e2, e3" t4) "**and what the entry WAITS FOR, by id** — the fact that makes it not-ready")
+        (is (search "needs: topic-b, topic-c" t4) "with the evidence as well, which is the queue's words for it"))
+      ;; an entry with neither draws no line for them, rather than an empty one
+      (setf (head-merge-queue h) (list (list :id "e2" :branch "b" :state "taken")))
+      (is (not (search "needs" (funcall text)))
+          "a ready entry draws no dependency line at all")
+      ;; (the rest of the fixture is the earlier one; restored for the count below)
+      (setf (head-merge-queue h)
+            (list (list :id "e1" :branch "topic-a" :state "waiting"
+                        :evidence "needs: topic-b, topic-c")
+                  (list :id "e2" :branch "topic-b" :state "landed" :evidence "tip 4f2a1c9")
+                  (list :id "e3" :branch "topic-c" :state "failed" :evidence "gate: format")))
       (is (search "3 entries" t3) "and the count is said")
       ;; the registers, on the segments — a state is not just a word
       (let* ((lines (merge-queue-lines h 100))

@@ -51,6 +51,18 @@ out of a renderer."
                         (cons (format nil "[~a] " state) (merge-state-style state))
                         (cons branch (and picked '(:reverse t))))
                   out)
+            ;; **`priority` AND `needs` ARE DRAWN, because the daemon sends them and a reader
+            ;; deciding what to look at wants both**: the priority is the queue's own rank, and
+            ;; `needs` is the list of entries this one waits for — MEASURED against
+            ;; `sessionlog/src/event.rs:402` (`MergeEntry`), which carries `id, session_id, branch,
+            ;; base_sha, priority, needs, state, brief, evidence, created_ms`. The first cut drew
+            ;; only state, branch and evidence, so a row waiting on two other branches looked
+            ;; exactly like one that was ready.
+            (when (or (getf e :priority) (and (getf e :needs) (plusp (length (getf e :needs)))))
+              (push (list (cons (format nil "         ~@[~a~]~@[ · needs ~{~a~^, ~}~]"
+                                        (getf e :priority) (getf e :needs))
+                                '(:dim t)))
+                    out))
             ;; **SAID IN PLAIN LISP, not with format gymnastics** — the first cut used `~@[…~]~:[…~]`
             ;; and got the branches the wrong way round, which is how a renderer comes to say *no
             ;; reason given* about a row that has one.
