@@ -795,6 +795,13 @@ head runs today breaks without them.
     the reviews and gate steps are already on the entry (`MergeEntry.reviews`, `gate_steps`), so the
     view draws what the head holds. That is the whole of what remains here, and it is a
     `pane-enter` method plus an overlay: the two lists a pane must join (the pane arm's modes and
+    **AND IT IS LANDED (2026-10-11)** — held by
+    `enter-on-a-queue-row-opens-the-entry-in-full-and-esc-returns`: `pane-enter` on the queue sets
+    `*merge-detail*` and the `:merge-detail` mode, and the view draws the entry's facts, its ask,
+    its reviews (three facts kept apart) and its gate steps in the gate's own order; `pane-esc-target`
+    is `:queue` so Esc lands on the row the reader chose, and **no frame goes out** — asserted by
+    counting the wire before and after. An empty queue opens nothing. **So the queue's whole READ
+    half is closed**; what remains on this box is the daemon's own acts.
     the overlay's own mode) are the traps already written down twice. AND THE REFERENCE'S QUEUE PANE IS A RANO
     WIDGET** — its own header says the pane comes from *`rano::agent::queue` from the queue and the
     reviews this head holds* (`ui/panes/queue.rs:2`), so the reference draws this list through
