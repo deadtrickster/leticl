@@ -487,6 +487,11 @@ tail's spaces as a ragged gap."
   ;; **THE PEN** — the SGR state the program last set (`ESC [ … m`), copied onto each cell as it is
   ;; written. NIL is "no style", which is what a terminal starts with.
   (pen nil)
+  ;; **WHAT THE PROGRAM ASKED THE MOUSE TO REPORT** (`?9`/`?1000`/`?1002`/`?1003`/`?1006`), RECORDED and
+  ;; never performed — the reference's own split (`letibot-vt`'s `Screen::mouse`: that crate has no
+  ;; terminal, so the head is the half that acts on it). A TERMINAL's mode and not a face's: the
+  ;; alternate screen has no mouse of its own, which is why the switch below leaves it standing.
+  (mouse nil)
   ;; the ALTERNATE screen when one is up (`?1049`): `(cells top bottom)` saved whole, or NIL on the
   ;; main screen. The region is saved WITH the cells because it is part of what the program expects
   ;; to find unchanged when it comes back.
@@ -566,7 +571,8 @@ is not UTF-8 at all becomes `?` rather than an error: the pane's job is to keep 
 a frame that did not carry one — is one row or one column, never a type error."
   (let* ((rows (max 1 (or rows 1))) (cols (max 1 (or cols 1)))
          (s (%make-term-screen rows cols (%blank-cells (* rows cols)))))
-    (setf (term-screen-bottom s) (1- rows))
+    (setf (term-screen-bottom s) (1- rows)
+          (term-screen-mouse s) (list :tracking :off :sgr nil))
     s))
 
 (defun %blank-cells (n)
@@ -731,6 +737,26 @@ the cursor is inside it."
     (when (and (>= row (term-screen-top s)) (<= row bot))
       (%ts-scroll-up-in s row bot n))))
 
+(defun %ts-set-mouse (s args set)
+  "Record what the program asked the MOUSE to report — `?9`, `?1000`, `?1002`, `?1003`, `?1006`.
+
+ **RECORDED AND NEVER PERFORMED.** The reference draws that line itself (`letibot-vt`'s `Screen`:
+ *mouse modes … recorded and never acted on*, because that crate has no terminal) and so does this
+ head — what to SEND for a click is a decision about the head's own terminal, which the screen cannot
+ see. What the screen owes is the FACT: *the program asked for press-and-release, and for the SGR
+ encoding*.
+
+ **Resetting any tracking LEVEL turns tracking OFF**, which is the daemon's own rule rather than this
+ function's arithmetic: `?1000l` after `?1002h` means *stop reporting*, not *go back to
+ press-and-release*. The ENCODING is independent of the level, so `?1006l` leaves the level standing."
+  (let ((m (copy-list (or (term-screen-mouse s) '(:tracking :off :sgr nil)))))
+    (cond ((string= args "9")    (setf (getf m :tracking) (if set :x10 :off)))
+          ((string= args "1000") (setf (getf m :tracking) (if set :press :off)))
+          ((string= args "1002") (setf (getf m :tracking) (if set :drag :off)))
+          ((string= args "1003") (setf (getf m :tracking) (if set :any :off)))
+          ((string= args "1006") (setf (getf m :sgr) (and set t))))
+    (setf (term-screen-mouse s) m)))
+
 (defun %ts-set-pen (s args)
   "Fold an SGR sequence's parameters into the screen's PEN (`ESC [ … m`).
 
@@ -814,6 +840,10 @@ build does not know."
              (arg2-or (d) (let ((semi (position #\; args)))
                             (if semi (or (parse-integer (subseq args (1+ semi)) :junk-allowed t) d) d)))
              (seq (final)
+               ;; **THE MOUSE, RECORDED BEFORE THE MODES' OWN ARMS** — see `%ts-set-mouse`; a mouse
+               ;; mode is not a screen mode, so it is kept out of that cond entirely.
+               (when (and private (member args '("9" "1000" "1002" "1003" "1006") :test #'string=))
+                 (%ts-set-mouse s args (char= final #\h)))
                (case final
                  ((#\H #\f) (term-screen-cup s (arg1) (arg2)))
                  (#\K (term-screen-el s (num)))

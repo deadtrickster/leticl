@@ -12333,6 +12333,38 @@ worked for the merge queue.
                                         :key #'car :test #'string=)))
           "**the pane draws it** — the cell's style is a name this head's palette holds"))))
 
+(def-test a-terminal-records-the-mouse-the-program-asked-for (:suite leticl)
+  "**The program's mouse request is RECORDED and never performed** — the reference's own split
+  (`letibot-vt`'s `Screen::mouse`: *mouse modes … recorded and never acted on*, because that crate
+  has no terminal, so the head is the half that has one). `?9`/`?1000`/`?1002`/`?1003` choose what
+  to report and `?1006` the encoding.
+
+  **Resetting any tracking LEVEL turns tracking OFF** — the reference's rule, ported: `?1000l` after
+  `?1002h` means *stop reporting*, not *go back to press-and-release*. The encoding is independent of
+  the level. And **it is a TERMINAL's mode and not a face's**: the alternate screen has no mouse of
+  its own, so the switch leaves it standing."
+  (flet ((esc (n) (concatenate 'string (string (code-char 27)) n))
+         (mouse (s) (leticl::term-screen-mouse s)))
+    (let ((s (leticl::term-screen-new 3 10)))
+      (is (eq :off (getf (mouse s) :tracking)) "**nothing is asked for to begin with**")
+      (leticl::term-screen-feed s (esc "[?1000h"))
+      (is (eq :press (getf (mouse s) :tracking)) "**`?1000h` is press-and-release**")
+      (leticl::term-screen-feed s (esc "[?1002h"))
+      (is (eq :drag (getf (mouse s) :tracking)) "**`?1002h` adds the drag**")
+      (leticl::term-screen-feed s (esc "[?1006h"))
+      (is (getf (mouse s) :sgr) "**`?1006h` is the ENCODING**, recorded beside the level")
+      (leticl::term-screen-feed s (esc "[?1002l"))
+      (is (eq :off (getf (mouse s) :tracking))
+          "**resetting a level turns tracking OFF** — it does not step back to the last one")
+      (is (getf (mouse s) :sgr) "and the encoding is independent, so it stands")
+      ;; a terminal's mode, not a face's
+      (leticl::term-screen-feed s (esc "[?1000h"))
+      (leticl::term-screen-feed s (esc "[?1049h"))
+      (is (eq :press (getf (mouse s) :tracking))
+          "**the alternate screen has no mouse of its own** — the switch leaves it standing")
+      (leticl::term-screen-feed s (esc "[?1049l"))
+      (is (eq :press (getf (mouse s) :tracking)) "and coming back changes nothing either"))))
+
 (def-test a-head-feeds-only-the-pane-it-is-drawing (:suite leticl)
   "**A 44 daemon fans every pane's output out to every head of the session**, so a head that fed them
   all would mix two programs' bytes into one screen — the second pane's redraw landing on the first's,
