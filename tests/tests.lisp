@@ -12065,6 +12065,23 @@ worked for the merge queue.
         (format nil "**without it the tail stays** — an overwrite covers, it does not erase: ~s" lines))
     (is (= 0 dropped) "and nothing was dropped")))
 
+(def-test a-terminal-clears-when-the-program-clears-and-not-otherwise (:suite leticl)
+  "**`ESC [ 2 J` clears the screen; a bare `J` does not**, and telling them apart is what the PARAMETER
+  is for. In a line model, clearing is *drop what has been drawn* — exactly what the program asked for
+  — while erasing below the cursor needs a cursor this head cannot place. So the first is honoured and
+  the second is COUNTED, which is the line this pane holds everywhere: draw what can be drawn honestly,
+  count what cannot, never fake the difference."
+  (multiple-value-bind (lines dropped)
+      (leticl::%term-lines-from-output (format nil "one~%two~%three~c[2Jafter" #\escape))
+    (is (equal (list "after") lines)
+        (format nil "**everything drawn before the clear is gone**: ~s" lines))
+    (is (= 1 dropped) "and the sequence is still counted — the pane says what it could not draw"))
+  (multiple-value-bind (lines dropped)
+      (leticl::%term-lines-from-output (format nil "one~%two~%three~c[Jafter" #\escape))
+    (is (equal (list "one" "two" "threeafter") lines)
+        (format nil "**a bare `J` clears NOTHING** — it erases below a cursor this head cannot place: ~s" lines))
+    (is (= 1 dropped) "and it is counted rather than honoured")))
+
 (def-test a-terminal-opens-takes-keys-for-the-program-and-ends-when-asked (:suite leticl)
   "**The `!term` frames, each with the caller the suite's own invariant demands** — and the ordering
   that costs a session if it is guessed: **the pane's KEY PATH is what makes `TermInput` and

@@ -355,7 +355,8 @@ invisible, which is worse than missing it.
 
 Trailing blanks are trimmed: a line overwritten by a shorter one would otherwise carry the old
 tail's spaces as a ragged gap."
-  (let ((out nil) (buf (make-string 0)) (col 0) (dropped 0) (esc-p nil) (csi-p nil))
+  (let ((out nil) (buf (make-string 0)) (col 0) (dropped 0) (esc-p nil) (csi-p nil)
+        (csi-args ""))
     (labels ((put (ch)
                (when (>= col (length buf))
                  (setf buf (concatenate 'string buf (make-string (1+ (- col (length buf)))
@@ -379,17 +380,23 @@ tail's spaces as a ragged gap."
               ;; Two flags rather than lookahead, because this walk is character by character: ESC starts
               ;; a sequence, `[` makes it a CSI one, and a byte in `@`..`~` ends it — which is the rule
               ;; the notation itself is built on.
-              ((char= ch #\escape) (incf dropped) (setf esc-p t))
+              ((char= ch #\escape) (incf dropped) (setf esc-p t csi-args ""))
               (esc-p (setf esc-p nil csi-p (char= ch #\[)))
-              (csi-p (when (<= 64 (char-code ch) 126)
-                       (setf csi-p nil)
-                       ;; **`ESC [ K` ERASES FROM THE CURSOR TO THE END OF THE LINE**, and a shell does it
-                       ;; constantly: without it a line redrawn shorter than the last one keeps the old
-                       ;; tail hanging off it. `K`'s parameter picks the direction — 0, the default, is
-                       ;; cursor-to-end and is the one a prompt uses — and this head honours the default,
-                       ;; leaving the others counted rather than guessed at.
-                       (when (char= ch #\K)
-                         (setf buf (subseq buf 0 (min col (length buf)))))))
+              ;; **THE PARAMETER IS READ, so two sequences that differ only by their argument can be
+              ;; told apart.** `2 J` clears the screen — honourable in a line model, where clearing is
+              ;; *drop what has been drawn* — while a bare `J` erases below a cursor this head cannot
+              ;; place, so it stays COUNTED. Flat arms rather than nested ones: four clauses that each
+              ;; say one thing are easier to keep balanced than one clause with three conds inside it.
+              ((and csi-p (<= 48 (char-code ch) 57))
+               (setf csi-args (concatenate 'string csi-args (string ch))))
+              ((and csi-p (char= ch #\K))
+               (setf csi-p nil csi-args "")
+               (setf buf (subseq buf 0 (min col (length buf)))))
+              ((and csi-p (char= ch #\J) (string= csi-args "2"))
+               (setf csi-p nil csi-args "")
+               (setf out nil buf (make-string 0) col 0))
+              ((and csi-p (<= 64 (char-code ch) 126))
+               (setf csi-p nil csi-args ""))
               (t (put ch))))
       (emit))
     (values (nreverse out) dropped)))

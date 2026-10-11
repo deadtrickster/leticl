@@ -695,6 +695,13 @@ head runs today breaks without them.
   mapped wrongly, but never arriving: they are consumed EARLIER in `%handle-key`'s routing (the
   completer takes `:tab`; something takes `:backspace` before the pane arm), so the `%pane-key` arm
   written for them is dead code and its Backspace comment describes a mapping that never runs. The
+  **AND THE PARAMETER IS READ NOW, so `ESC [ 2 J` CLEARS THE SCREEN and a bare `J` does not**
+  (2026-10-11, held by `a-terminal-clears-when-the-program-clears-and-not-otherwise`): clearing is
+  *drop what has been drawn*, which is honourable in a line model, while erasing below the cursor needs
+  a cursor this head cannot place — so the first is honoured and the second stays counted. **Four FLAT
+  arms rather than one clause with conds inside it**, which is how the same shape was landed after two
+  attempts died on a stray paren.
+
   **AND `ESC [ K` IS LANDED (2026-10-11)** — held by `a-terminal-honours-the-erase-a-shell-uses`:
   erase from the cursor to the end of the line, which a shell does constantly, honouring `K`'s DEFAULT
   parameter (cursor-to-end) and leaving the others counted rather than guessed at. The two cases differ
