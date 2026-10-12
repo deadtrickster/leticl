@@ -13059,6 +13059,41 @@ whatever the gate had to say.")
                  "and so is a look it cannot read, with a role it DOES know")))
       (ignore-errors (delete-file file)))))
 
+(def-test a-theme-file-is-read-and-the-template-round-trips (:suite leticl)
+  "**A PRINTER AND A PARSER ARE ONE GRAMMAR OR THEY ARE TWO**: `look-string` writes what `parse-look`
+  reads, and the template a reader starts from is printed by the first and read by the second. The round
+  trip is asserted for every DEFAULT — the only way a printer can be kept honest about a grammar it does
+  not own.
+
+  **And head.toml's own `color.` lines WIN over the theme file's**: a named theme is a whole SET chosen at
+  once, and a single line beside it is a disagreement about one entry."
+  (dolist (pair leticl::+theme-roles+)
+    (let* ((spec (leticl::role-look (car pair)))
+           (line (leticl::look-string spec)))
+      (is (equal spec (nth-value 0 (leticl::parse-look line)))
+          (format nil "the default for ~a round-trips: ~s printed as ~s" (car pair) spec line))))
+  (let ((dir (merge-pathnames "leticl-theme-dir/" (uiop:temporary-directory))))
+    (ensure-directories-exist dir)
+    (let ((file (merge-pathnames "loud.toml" dir)))
+      (unwind-protect
+           (progn
+             (with-open-file (s file :direction :output :if-exists :supersede :if-does-not-exist :create)
+               (format s "color.failure = \"bg:#ff0000\"~%color.wat = \"bold\"~%nope = \"x\"~%"))
+             (multiple-value-bind (pairs notes) (leticl::read-theme "loud" dir)
+               (is (equal '((:failure :bg (255 0 0))) pairs)
+                   "**the file's own line is read and parsed**, by the same parser a head.toml line uses")
+               (is (some (lambda (n) (search "`wat` is not a role" n)) notes)
+                   "a role it does not know is named")
+               (is (some (lambda (n) (search "is not a theme key" n)) notes)
+                   "and so is a key that is not a theme key"))
+             (multiple-value-bind (looks notes) (leticl::theme-looks "loud" (list (cons :failure '(:fg :magenta))))
+               (declare (ignore notes))
+               (is (equal '(:fg :magenta) (getf looks :failure))
+                   "**and head.toml's own line WINS** — `getf` takes the first match, so the order is the rule"))
+             (is (equal '(nil nil) (multiple-value-list (leticl::read-theme "nosuchtheme" dir)))
+                 "**a theme file that is not there is not a note** — a reader with no themes/ is not told"))
+        (ignore-errors (delete-file file))))))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of
