@@ -38,7 +38,7 @@
     ;; five list panes, and — the sweep's own additions — the ask card's rungs and the quit card's
     ;; two choices. Selecting, never confirming: a gesture that commits on press is how a misclick
     ;; moves somebody's session.
-    ("click" . "selects the row under the pointer — in the session list, the jobs, subagents, todos and config panes, on a picker card, on the ask card's rungs and the quit card's choices, on a dashboard panel; the edge's `N jobs running` / `N subagents running` labels open their pane. Enter still confirms")
+    ("click" . "selects the row under the pointer — in the session list, the jobs, subagents, todos and config panes, on a picker card, on the ask card's rungs and the quit card's choices, on a dashboard panel; **on an edit or write row of the conversation it opens that change** (the same overlay `ctrl-]` opens a file from); the edge's `N jobs running` / `N subagents running` labels open their pane. Enter still confirms")
     ("ctrl-t" . "the todos pane: the model's plan, and the repo's TODO.md — ↑↓ moves, enter or tab unfolds (enter on your own row opens it whole), space marks, i composes a prompt from a subtree, h hides the done ones, pgup/pgdn scrolls")
     ("ctrl-g" . "the subagents pane: the tree of children this session has started — enter or o switches into one, p reads its prompt")
     ;; **`ctrl-j` AND NOT `ctrl-q`** — the operator's ruling (TODO.md, section D): LF is the jobs
