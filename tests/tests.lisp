@@ -12649,6 +12649,40 @@ equal with nothing else on the chrome, which is why the bug needed a note to be 
   (is (null (leticl::%key-for-word "notes")) "and a label alone is not a key")
   (is (null (leticl::%key-for-word "shift+drag")) "nor is the terminal's own gesture"))
 
+(defparameter +emergency-notice+
+  (format nil "EMERGENCY — `main` at 62942e2a139e in /home/dead/Projects/leticl is RED: its own merge ~
+               gate fails there.~%~%
+               The failing step is 3 of 3, `sbcl --noinform --disable-debugger --script run.lisp ~
+               test`.~%~%
+               [gate memory: peak 337 MiB of a 54.2 GiB cap]")
+  "**The daemon's own words** — the notice this session actually received on 2026-10-12, which is the
+shape `161b34d` is about: the marker, the target, the sha, the repository, the clause after `RED:`, then
+whatever the gate had to say.")
+
+(def-test an-emergency-notice-is-one-row (:suite leticl)
+  "**The daemon writes a PARAGRAPH and this head drew all of it as prose** (letibot `161b34d`, the
+  sweep's batch A): what is red, at which sha, in which repo, what failed, and then the gate's own
+  output and its memory line. The reference draws ONE line and puts the whole text behind a click.
+
+  **The line keys on the STABLE parts only** — the marker, the target, the sha, the repository's NAME
+  and the clause after `RED:` — so a sentence the daemon appends tomorrow cannot cost the line its
+  shape, which is the reference's own rule and the reason it survives a notice that grows."
+  (let ((rows (leticl::%notice-card-lines +emergency-notice+)))
+    (is (= 1 (length rows))
+        "**one row, where the paragraph had three** — the rest is what the click is for")
+    (is (search "‼ main RED at 62942e2a" (first rows))
+        "the target and the sha, cut the way the reference cuts it")
+    (is (search "leticl" (first rows)) "**the repository's NAME**, not its path")
+    (is (search "its own merge gate fails there" (first rows)) "and the clause that says why")
+    (is (not (search "failing step" (first rows))) "**and nothing else** — the gate's output is the click's")
+    (is (not (search "gate memory" (first rows))) "nor its memory line"))
+  ;; **A PARAGRAPH THAT ONLY LOOKS LIKE ONE IS DRAWN, NOT DROPPED** — a line that vanishes is worse
+  ;; than a line that is long, and the kind still folds it so it does not cost the transcript
+  (let ((odd "EMERGENCY — and then something this head does not know how to read."))
+    (is (equal (list odd) (leticl::%notice-card-lines odd))
+        "**an unreadable emergency is drawn as it stands**")
+    (is (eq :red (leticl::%notice-kind odd)) "though it is still an emergency, so it still folds")))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of

@@ -33,6 +33,10 @@ the daemon's, the same discipline as the other two: the text is what says what i
         ;; and `%notice-folds-p` needs to know it, or the whole row (heading, jobs, and the closing
         ;; paragraph addressed to the model) would be drawn as prose.
         ((and (stringp text) (uiop:string-prefix-p "[meanwhile] " text)) :meanwhile)
+        ;; **AN EMERGENCY IS A NOTICE TOO** (letibot `161b34d`): the daemon writes `EMERGENCY — \`target\`
+        ;; at SHA in REPO is RED: why`, and this head knew only the three settlement openings — so the
+        ;; whole paragraph, gate output and memory line and all, was drawn as PROSE.
+        ((and (stringp text) (uiop:string-prefix-p "EMERGENCY — " text)) :red)
         (t nil)))
 
 (defun %notice-folds-p (text)
@@ -71,6 +75,37 @@ with `- ` after trim, and everything after them is the closing sentence."
     (values opening
             (mapcar (lambda (l) (string-left-trim " -" l)) facts)
             (string-trim " " (format nil "~{~a~^ ~}" rest)))))
+
+(defun %red-target-line (text)
+  "The daemon's `EMERGENCY — …` paragraph as ONE line — or NIL when it is not the shape it claims.
+
+ **THE STABLE PARTS ONLY, and that is the reference's own rule** (letibot `161b34d`): the marker, the
+ target, the sha, the repository's NAME, and the clause after `RED:`. Everything else the daemon appends
+ — the failing step, the gate's own output, the memory line — is what the CLICK is for, so a sentence
+ added to the notice tomorrow cannot cost this line its shape.
+
+ NIL is the honest answer for a paragraph this reader has no business guessing at, and the caller draws
+ the row as it stands rather than dropping it."
+  (let* ((rest (subseq text (length "EMERGENCY — ")))
+         (open (search "`" rest))
+         (close (and open (position #\` rest :start (1+ open))))
+         (at (and close (search " at " rest :start2 (1+ close))))
+         (in (and at (search " in " rest :start2 (+ at 4))))
+         (why (search " is RED: " rest)))
+    (when (and open close at in)
+      (let* ((target (subseq rest (1+ open) close))
+             (sha (subseq rest (+ at 4) in))
+             (after (subseq rest (+ in 4)))
+             (sp (position #\space after))
+             (repo (if sp (subseq after 0 sp) after))
+             (tail (and why (string-left-trim " " (subseq rest (+ why 9)))))
+             (stop (and tail (or (position #\. tail) (position #\newline tail) (length tail)))))
+        (format nil "~a RED at ~a · ~a~@[ · ~a~] · click for details"
+                target
+                (subseq sha 0 (min 10 (length sha)))
+                (%repo-name repo)
+                (and tail (plusp (length (string-trim " " (subseq tail 0 stop))))
+                     (string-trim " " (subseq tail 0 stop))))))))
 
 (defun %notice-card-lines (text)
   "The notice as ROWS — the parts the operator asked to see, each on its own line.
@@ -113,6 +148,14 @@ it is worse than a key."
          (let* ((said (subseq line (length "[meanwhile] ")))
                 (at (search " — " said)))
            (push (format nil "Meanwhile: ~a" (if at (subseq said 0 at) said)) out)))
+        ;; **AND AN EMERGENCY IS ONE ROW** (letibot `161b34d`) — the whole paragraph is one click away,
+        ;; which is the row's own sentence. A paragraph this reader cannot parse is drawn as it stands
+        ;; rather than dropped: a line that vanishes is worse than a line that is long.
+        ((uiop:string-prefix-p "EMERGENCY — " line)
+         (push (or (let ((one (leticl::%red-target-line line)))
+                     (and one (format nil "‼ ~a" one)))
+                   line)
+               out))
         ((uiop:string-prefix-p "- " (string-left-trim " " line))
          (let* ((task-p (eq kind :task))
                 (fact (string-trim " " (remove #\` (string-trim " -" line))))
