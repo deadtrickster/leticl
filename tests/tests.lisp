@@ -12950,6 +12950,38 @@ whatever the gate had to say.")
         (is (search "waits on j99" (said (list :content "the port" :when (list :handle "j99"))))
             "nor does a job the table does not list lose its handle")))))
 
+(def-test the-waits-on-words-are-the-link-and-the-row-is-still-the-row (:suite leticl)
+  "**THE DRAWING SAYS WHERE THE WORDS ARE** (letibot `5054187`): the `waits on …` words are a click
+  target — the operator's ask, *\"waits on j97\" - make j97 a link to the real job* — and this finds it
+  by walking the ROW's own segments, so the target cannot drift from the paint.
+
+  A second arithmetic over the mark, the number, the title and the author would drift the first time any
+  one of them grew, which is the defect this pane has already been fixed for twice."
+  (let ((h (%on-head :cols 200 :rows 30))
+        (leticl::*pane-gutter* 0)
+        (leticl::*operator-todos* (list (list :id "t1" :content "the port" :status "open"
+                                              :when (list :handle "j97")))))
+    (setf (head-jobs h) (list (list :id "j97" :name "pg-timing"))
+          (session-items (head-session h)) (leticl::%items-vector nil))
+    (let ((leticl::*payload-head* h))
+      (multiple-value-bind (lines sel stops) (leticl::todos-lines h 200)
+        (declare (ignore sel stops))
+        (let* ((target (loop for n from 0 below (length lines)
+                             when (find-if (lambda (seg) (and (consp seg) (search "waits on" (car seg))))
+                                           (nth n lines))
+                               return n))
+               (x (and target
+                       (loop with col = 0
+                             for seg in (nth target lines)
+                             for text = (and (consp seg) (car seg))
+                             when (and text (search "waits on" text)) return (+ col 4)
+                             do (incf col (if text (length text) 0))))))
+          (is (not (null target)) "the row is DRAWN with its wait on it")
+          (is (equal "j97" (leticl::%todo-wait-at h target x))
+              "**the words themselves are the link** — a pointer on them answers the job")
+          (is (null (leticl::%todo-wait-at h target 0))
+              "**and a pointer anywhere else on the row is NOT** — that click belongs to the row"))))))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of

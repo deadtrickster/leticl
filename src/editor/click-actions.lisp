@@ -320,12 +320,24 @@ than from the click."
        ;; offset says how many pane LINES are hidden above it
        (let ((line (+ *pane-scroll* (- row 1))))
          (when (and (>= line 0) (< line (+ *pane-scroll* *pane-room*)) (< line *pane-lines*))
-           ;; the cursor counts ROWS and the click found a LINE; the panes that
-           ;; own a cursor report where their first row sits, so walk back
-           (let ((sel (click-row->sel head (head-mode head) line)))
-             (when sel
-               (setf (head-picker-sel head) sel
-                     (head-dirty head) t)))))
+           ;; **AND THE `waits on …` WORDS ARE A LINK** (letibot `5054187`): the operator's own ask —
+           ;; *"waits on j97" - make j97 a link to the real job*. **Asked BEFORE the row's selection**,
+           ;; because a click ON the words means the job and one anywhere else on the row means the row —
+           ;; a gesture that did both would open a window every time a reader selected a row.
+           (let ((handle (and (eq (head-mode head) :todos)
+                              (%todo-wait-at head line (getf key :x)))))
+             (if handle
+                 (let ((job (find handle (head-jobs head)
+                                  :key (lambda (j) (getf j :id)) :test #'equal)))
+                   ;; **A JOB THE TABLE NO LONGER LISTS IS NOT OPENED FROM MEMORY**: there is nothing to
+                   ;; read, and a window opened on nothing would be the pane inventing a job.
+                   (if job
+                       (progn (open-job-out job) t)
+                       (progn (say head (format nil "~a is not in the jobs table any more" handle)) t)))
+                 (let ((sel (click-row->sel head (head-mode head) line)))
+                   (when sel
+                     (setf (head-picker-sel head) sel
+                           (head-dirty head) t)))))))
        t)
       (t
        ;; **A CLICK ON AN EDIT ROW OPENS ITS CHANGE** — the reference's popup (`88b003d`) through the

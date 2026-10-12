@@ -55,6 +55,36 @@ against a list that just changed acts on a row rather than on an index that no l
          (i (if (plusp n) (min (max 0 (head-picker-sel head)) (1- n)) 0)))
     (values (if (plusp n) (nth i stops) nil) i)))
 
+(defun %todo-wait-at (head line x)
+  "The JOB HANDLE the `waits on …` words drawn on LINE stand for, when column X is on them — else NIL.
+
+ **THE DRAWING SAYS WHERE THE WORDS ARE** (letibot `5054187`, and the operator's ask inside it: *make j97
+ a link to the real job*). This walks the row's OWN segments for the one beginning `waits on `, so the
+ target cannot drift from the paint.
+
+ A second computation of the column would be the defect this pane has already been fixed for twice: the
+ marker, the number, the title and the author all sit BEFORE those words, and any one of them growing
+ would move the words without moving the arithmetic. `*pane-gutter*` is where the pane's lines start,
+ and it is the render's own number for the same reason.
+
+ NIL is the answer for a click anywhere else on the row, which is what keeps this gesture distinct from
+ selecting the row it sits on."
+  (multiple-value-bind (lines sel stops) (todos-lines head 200)
+    (declare (ignore sel))
+    (when (and (position line stops)
+               (< -1 x))
+      (loop with col = (or *pane-gutter* 0)
+            for seg in (nth line lines)
+            for text = (and (consp seg) (car seg))
+            when (and text
+                      (<= col x)
+                      (< x (+ col (length text)))
+                      (uiop:string-prefix-p " · waits on " text))
+              return (let* ((rest (subseq text (length " · waits on ")))
+                            (sp (position #\space rest)))
+                       (and (plusp (length rest)) (subseq rest 0 (or sp (length rest)))))
+            do (incf col (if text (length text) 0))))))
+
 (defun todo-stop-at-line (head line)
   "The stop index drawn on pane LINE, or NIL when that line is not a selectable row.
 
