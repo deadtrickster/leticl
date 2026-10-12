@@ -1453,5 +1453,15 @@ verb letters (`74de81a`), the editor key (`88b003d`), the skew attach (`f6e66f0`
 | `e8750ea`, `f40be66`, `b9abcf1`, `c815eed` | **already here** — the completion ghost (in the box, with the caveat that the placement differs from the reference's own legend), the wheel over a pane, one Esc inside a subagent, the way out recognised once |
 | `af6faf2`, `ef31893`, `5296c6e`, `8d5f418`, `9e82bdb`, `901acc0`, `161b34d`/`f076792`, `fd96041`, `5be9113`, `d13e32c`, `c8622b0`/`a4384ed`, `2ad7b9b` | **BUILT**, each with its own commit and test |
 
-**What is left is not triage**: the theme's remainder and the waits-on link, both filed as their own
-boxes, plus `bcfb724`'s tables if a session wants them.
+**What that paragraph called `left` has SINCE BEEN BUILT, and the four are worth naming here so this
+section does not read as an open queue**: the theme (the `*role-looks*` table over all 67 draw sites, the
+look parser, `read-theme`/`theme-looks`, `--theme-template` on the launcher and in the image — and the
+image was rebuilt and the flag RUN against it), the waits-on link (a job's window and a child's read, via
+`%todo-link-at`), `bcfb724`'s tables (with `/help` reading them too), and the last row of all — `waits on
+you`, which this section's own author had called BLOCKED ON THE WIRE and which was NOT: the wire's
+`TodoNeed` carries an `Operator` variant, and its docstring says what a head is to do with it.
+
+**The lesson worth keeping from that last one**: *blocked on the wire* sat on the board as a fact and was
+repeated in two commit messages. It came apart the moment the claim was re-checked before the row was
+closed — which is the habit that also found the split branches, the hung suite and the freeze that
+reported success while failing. Re-verify a block before you close a row; do not close it on its own text.
