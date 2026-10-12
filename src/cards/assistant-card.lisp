@@ -133,7 +133,7 @@
                                      (list (cons (make-string (activity-indent cols)
                                                               :initial-element #\space)
                                                  nil)
-                                           (cons line +role-attention+))
+                                           (cons line (role-look :attention)))
                                      cols))))))))))
   )
 

@@ -544,7 +544,7 @@ When the run settles, the counts go back to the prose's own register with it."
          ;; behind it. Both halves are needed: this marker must belong to the newest run (or be
          ;; carrying live work), AND the turn must still be running. See `render.lisp`, which
          ;; narrows it once so the two call sites cannot disagree.
-         (counts-style (if rising +role-pending+ nil))
+         (counts-style (if rising (role-look :pending) nil))
          (segs nil))
     (dolist (step rungs)
       (let* ((seam-rung (aref +hidden-run-seam-rungs+ (cdr step)))
@@ -552,7 +552,7 @@ When the run settles, the counts go back to the prose's own register with it."
         (setf segs (append
                     (%hidden-run-counts-segs items cols (aref +hidden-run-count-rungs+ (car step))
                                              live counts-style)
-                    (list (cons seam +role-faint+))))
+                    (list (cons seam (role-look :faint)))))
         (when (<= (%segs-width segs) limit)
           (return))))
     ;; The room is the frame's, and the last rung is the last word: a marker nothing can shorten
@@ -677,7 +677,7 @@ make. The seam under them says how to fold it back.
 sentence that points at it (`%marker-onto-last-line`), because a marker drawn as its own row is
 exactly what the operator's final reading rejects. The one exception is a run with no visible row
 older than it, which has no sentence to continue and stands on its own line (`%history-until`)."
-  (let ((faint +role-faint+))
+  (let ((faint (role-look :faint)))
     (append
      (let ((*verbosity* :terse))
        (loop for item in items

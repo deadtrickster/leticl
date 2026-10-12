@@ -425,7 +425,7 @@ thing would leave the `queued` line on the screen for the rest of the session."
                                collect (append
                                         (list (cons "▌ " '(:fg :blue)))
                                         (list (if (zerop i)
-                                                  (cons (format nil "~a · " tag) +role-pending+)
+                                                  (cons (format nil "~a · " tag) (role-look :pending))
                                                   (cons indent nil)))
                                         (mapcar (lambda (seg) (cons (car seg) +md-faint+))
                                                 row)))
@@ -438,7 +438,7 @@ thing would leave the `queued` line on the screen for the rest of the session."
                                 (room (- head-w (string-width seam))))
                            (list (append
                                   (list (cons "▌ " '(:fg :blue)))
-                                  (list (cons (format nil "~a · " tag) +role-pending+))
+                                  (list (cons (format nil "~a · " tag) (role-look :pending)))
                                   (mapcar (lambda (seg) (cons (car seg) +md-faint+))
                                           (%truncate-segs headline (if (>= room 16) room head-w)))
                                   (when (>= room 16)

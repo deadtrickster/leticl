@@ -100,9 +100,9 @@ three colours, none of them the reference's."
          ;; lives now — it used to be spelled again here, and the two spellings
          ;; disagreed about `not_run` and about backgrounded.
          (outcome-style (if finished
-                            (or (%outcome-style outcome) +role-pending+)
-                            +role-pending+))
-         (mark (cond (running (cons "◐" +role-pending+))
+                            (or (%outcome-style outcome) (role-look :pending))
+                            (role-look :pending)))
+         (mark (cond (running (cons "◐" (role-look :pending)))
                      (finished (cons "●" outcome-style))
                      (t (cons "○" '(:dim t)))))
          (target-raw (or (getf call :target) ""))

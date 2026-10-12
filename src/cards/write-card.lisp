@@ -68,7 +68,7 @@ viewport's seam counts rows, not files — so the number of FILES goes where no 
 it: above them, as `N files:`, and only when there is more than one. A single write is unchanged,
 which is why the edit card does not grow a header.
 
-**An unresolved write is drawn in `+role-attention+`** — *somebody has to look* — and never in
+**An unresolved write is drawn in `(role-look :attention)`** — *somebody has to look* — and never in
 the path register. The requirement's words: it is *the one the operator most needs to see*, and a
 sentence that looks like a path is a sentence that gets skimmed past. The same role a tool row's
 own `no result` takes, for the same reason: it is the row whose whole meaning is *this is not what
@@ -95,6 +95,6 @@ read*, which is a number a reader cannot misplace."
                                 (format nil "    ✎ ~d writes whose targets could not be read — the script builds them at runtime, so the gate cannot name the files"
                                         (length unresolved)))
                             w))
-        (push (list (cons l +role-attention+)) out)))
+        (push (list (cons l (role-look :attention))) out)))
     (nreverse out)))
 

@@ -49,7 +49,7 @@
     (let* ((w (getf item :warning))
            (routine (routine-warning-p w))
            (glyph (warning-glyph w))
-           (role (if routine +role-faint+ +role-failure+))
+           (role (if routine (role-look :faint) (role-look :failure)))
            (rows (wrap-segments
                   (list (cons (format nil "~a ~a" glyph (or (getf body :text) "")) nil))
                   cols))

@@ -186,7 +186,7 @@ unknown speaker can name itself in the same place."
                                   collect (%truncate-segs
                                            (append (list (cons l nil))
                                                    (if (and named last)
-                                                       (list (cons seam +role-faint+))
+                                                       (list (cons seam (role-look :faint)))
                                                        nil))
                                            (if (and named last) room head-cols)))))
                 lines))
@@ -213,11 +213,11 @@ unknown speaker can name itself in the same place."
           for i from 0
           for row-text = (format nil "~{~a~}" (mapcar #'car row))
           collect (list (cons "  " nil)
-                        (cons (if (zerop i) label indent) +role-faint+)
+                        (cons (if (zerop i) label indent) (role-look :faint))
                         (cons (if (and (= i (1- n)) (plusp (length stamp)))
                                   (format nil "~a  ~a" row-text stamp)
                                   row-text)
-                              +role-faint+)))))
+                              (role-look :faint))))))
 
 (defun %user-parts-text (body)
   "A `TranscriptItem::User`'s parts as the one string the block wraps —

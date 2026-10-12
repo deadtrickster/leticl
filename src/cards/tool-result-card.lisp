@@ -180,7 +180,7 @@ header, also printed `· 1 line` — a count for a fold with nothing to fold."
          ;; fallback `call-lines` uses, rather than the red this row used to guess.
          (outcome-style (if (string= word "ok")
                             faint
-                            (or (%outcome-style outcome) +role-pending+)))
+                            (or (%outcome-style outcome) (role-look :pending))))
          (mark (if open "▾" "▸"))
          ;; **A ROW MAY STATE ITS OWN VERB AND SUBJECT** (R24), and it is here rather
          ;; than in a second renderer because the derivation below is a DEFAULT and not

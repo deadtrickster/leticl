@@ -130,6 +130,43 @@ An abstention that looks like a spinner is §8.2's whole subject.")
 
 (defparameter +role-failure+ '(:fg :red) "Role::Failure — style.rs:175.")
 
+(defvar *role-looks* nil
+  "A THEME's overrides: role keyword → style spec, or NIL for the defaults.
+
+ **THE DEFAULTS ARE THE CONSTANTS** (`(role-look :faint)` and the four beside it), and this holds only what a
+ theme CHANGES. That is what lets a reader lay a theme over the head without the constants moving: a role
+ nobody overrides is the role the reference defines, byte for byte, and clearing this is `(setf
+ *role-looks* nil)`.
+
+ **A `defvar` AND NOT A REBINDING OF THE CONSTANTS**, and the difference is not taste. Rebinding them
+ looks simpler and is worse twice over: this head's file pusher redefines a `defparameter` on every push,
+ so a theme would be silently dropped the first time its own source was pushed into a running head — and
+ the five constants are READ by tests that pin them against the reference's roles, which a theme must not
+ be able to move.
+
+ **Keyed by KEYWORD and read through `getf`**: this is on the render's hot path, and a plist is the one
+ table shape there whose read is a few instructions.")
+
+(defun role-look (role)
+  "The style spec ROLE is drawn with: a theme's override, or the constant that defines it.
+
+ **ONE DOOR, so the rest of the theme work has exactly one place to put what it read** — a look parser, a
+ `themes/` lookup and `--theme-template` all end at this function. `NIL` for a role nobody knows is the
+ honest answer, and the same one the reference's own role table gives.
+
+ `:operator` is the operator's own block style, which lives beside its row (`user-card.lisp`) rather than
+ here: it is a BLOCK and not a role the markdown file has, and it is in this table because the reference's
+ theme overrides it too."
+  (or (getf *role-looks* role)
+      (case role
+        (:faint +role-faint+)
+        (:success +role-success+)
+        (:pending +role-pending+)
+        (:attention +role-attention+)
+        (:failure +role-failure+)
+        (:operator +operator-block-style+)
+        (t nil))))
+
 (defun %outcome-style (outcome)
   "The role a settled outcome is drawn in — `card::Outcome::role`
 (card.rs:185-196), through `display_outcome`'s mapping of the wire onto it
@@ -143,14 +180,14 @@ must not be the same colour. Backgrounded especially — the reference's own not
 rendered as `Ok` reads as something that finished with nothing to say. Both are
 wrong about a process that is still working.\"*"
   (switch ((outcome-name outcome) :test #'string=)
-    ("ok" +role-success+)
-    ("abstained" +role-attention+)
-    ("failed" +role-failure+)
-    ("denied" +role-attention+)
-    ("timeout" +role-failure+)
-    ("not_run" +role-failure+)
-    ("backgrounded" +role-faint+)
-    ("interrupted" +role-failure+)
+    ("ok" (role-look :success))
+    ("abstained" (role-look :attention))
+    ("failed" (role-look :failure))
+    ("denied" (role-look :attention))
+    ("timeout" (role-look :failure))
+    ("not_run" (role-look :failure))
+    ("backgrounded" (role-look :faint))
+    ("interrupted" (role-look :failure))
     (t nil)))
 
 (defun %first-line (text)

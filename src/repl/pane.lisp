@@ -75,15 +75,15 @@ typed line in this head lives — and the hint bar says what Enter does with it.
            ;; binding and not a literal this pane could drift from).
            (list (cons (format nil "  this head's own image, `:~a`, `*head*` bound — enter evaluates what is in the prompt"
                                (string-downcase (package-name (find-package :leticl))))
-                       +role-faint+))
+                       (role-look :faint)))
            nil)
      (when (plusp *lisp-dropped*)
        (list (list (cons (format nil "  … ~d earlier form~:p no longer held (the last ~d are)"
                                  *lisp-dropped* +lisp-entries-max+)
-                         +role-faint+))))
+                         (role-look :faint)))))
      (when (zerop n)
        (list (list (cons "  nothing evaluated yet — try `(session-seq (head-session *head*))`"
-                         +role-faint+))))
+                         (role-look :faint)))))
      (loop for entry in entries
            append (append (%lisp-entry-lines entry cols) (list nil)))
      (when (plusp n)
@@ -94,7 +94,7 @@ typed line in this head lives — and the hint bar says what Enter does with it.
                                      (format nil ", ~d failed" failed)
                                      "")
                                  (/ ms 1000.0))
-                         +role-faint+))))
+                         (role-look :faint)))))
       ;; the second value is NIL: this pane has no cursor (see the docstring). Returning no values
       ;; here would be a pane that draws NOTHING — `multiple-value-setq` takes the first.
       )

@@ -341,18 +341,18 @@ main is a high-severity emergency* and a lease nobody holds means nothing is bei
   (let ((out nil))
     (let ((unreadable (getf snapshot :unreadable)))
       (when (and (stringp unreadable) (plusp (length unreadable)))
-        (push (list (cons (truncate-to-width (format nil "  ⚠ the store ~a" unreadable) w) +role-failure+)) out)))
+        (push (list (cons (truncate-to-width (format nil "  ⚠ the store ~a" unreadable) w) (role-look :failure))) out)))
     (dolist (tg (getf snapshot :targets))
       (let* ((sha (let ((s (or (getf tg :sha) ""))) (subseq s 0 (min 10 (length s)))))
              (repo (%repo-name (getf tg :repository)))
              (state (or (getf tg :state) "")))
         (cond ((string= state "red")
-               (push (list (cons "  ‼ EMERGENCY " +role-failure+)
+               (push (list (cons "  ‼ EMERGENCY " (role-look :failure))
                            (cons (truncate-to-width
                                   (format nil "`~a` is RED at ~a in ~a — nothing lands but its fix; its tip is first in review · ~a"
                                           (getf tg :target) sha repo (%dur-human (- now (or (getf tg :checked-ms) now))))
                                   (max 1 (- w 14)))
-                                 +role-failure+))
+                                 (role-look :failure)))
                      out))
               ;; **AND A GATE THAT COULD NOT JUDGE IS NOT A FAILED ONE** (letibot R87, `c88ba67`) — and this
               ;; arm is ABOVE the `blocked` one for that reason: a killed step IS `blocked` as far as the
@@ -363,7 +363,7 @@ main is a high-severity emergency* and a lease nobody holds means nothing is bei
                                   (format nil "  ‼ `~a` UNJUDGED at ~a in ~a — ~a"
                                           (getf tg :target) sha repo (%gate-unjudged-reason tg))
                                   w)
-                                 +role-failure+))
+                                 (role-look :failure)))
                      out))
               ((member state '("timed_out" "blocked") :test #'string=)
                (push (list (cons (truncate-to-width
@@ -371,15 +371,15 @@ main is a high-severity emergency* and a lease nobody holds means nothing is bei
                                           (getf tg :target) repo (substitute #\space #\_ state) sha
                                           (%first-line (getf tg :evidence)))
                                   w)
-                                 +role-attention+))
+                                 (role-look :attention)))
                      out))
               ((string= state "gating")
                (push (list (cons (format nil "  … `~a` in ~a is being gated at ~a" (getf tg :target) repo sha)
-                                 +role-pending+))
+                                 (role-look :pending)))
                      out))
               (t
                (push (list (cons (format nil "  ✓ `~a` in ~a is green at ~a" (getf tg :target) repo sha)
-                                 +role-success+))
+                                 (role-look :success)))
                      out)))))
     (let ((leases (getf snapshot :leases)))
       (dolist (l leases)
@@ -393,10 +393,10 @@ main is a high-severity emergency* and a lease nobody holds means nothing is bei
                                      (%dur-human age)
                                      (if stale " — STALE: another daemon takes it over" ""))
                              w)
-                            (if stale +role-attention+ +role-faint+)))
+                            (if stale (role-look :attention) (role-look :faint))))
                 out)))
       (when (null leases)
-        (push (list (cons "  ⚠ no daemon holds a queue lease — nothing is serving the queues" +role-attention+)) out)))
+        (push (list (cons "  ⚠ no daemon holds a queue lease — nothing is serving the queues" (role-look :attention))) out)))
     (nreverse out)))
 
 (defun merge-queue-lines (head cols)
@@ -462,7 +462,7 @@ pane's 5 s re-read (`tick-queues`), which is what keeps a frame out of a rendere
                    (list (cons "  ▸ " '(:dim t))
                          (cons (format nil "[~a] " state) (merge-state-style state))
                          (cons branch (if (equal (getf e :kind) "target")
-                                          (append (and picked '(:reverse t)) +role-failure+)
+                                          (append (and picked '(:reverse t)) (role-look :failure))
                                           (and picked '(:reverse t)))))
                    ;; **TIME IN THE CURRENT STATE**, the repository and the daemon working it — the
                    ;; fields protocol 43 added; a row from a hand-made fixture carries none and draws
@@ -557,21 +557,21 @@ pane's 5 s re-read (`tick-queues`), which is what keeps a frame out of a rendere
   "The register a queue STATE is drawn in — the same vocabulary the panes already use: a landed
 entry is Success, a failure or a conflict is Failure, a waiting or stale one is Pending, and a
 state this build has never met is drawn plain rather than guessed at."
-  (cond ((member state '("landed" "approved") :test #'string-equal) +role-success+)
+  (cond ((member state '("landed" "approved") :test #'string-equal) (role-look :success))
         ;; **PROTOCOL 43's WORDS JOIN THE V23 ONES** (`event.rs`, `QueueReview.state` and
         ;; `QueueMerge.state`): a merge `timed_out` or `blocked` is the machine saying no, like a
         ;; failed gate; a review `rejected` or `cannot_decide` is a verdict a PERSON has to look at,
         ;; which is the Attention register and not Failure — the reference's `mark_of` draws the
         ;; same split. `reviewing`, `gating` and `queued` are in flight, beside `waiting`.
-        ((member state '("failed" "conflict" "timed_out" "blocked") :test #'string-equal) +role-failure+)
-        ((member state '("rejected" "cannot_decide") :test #'string-equal) +role-attention+)
-        ((member state '("reviewing" "gating" "queued") :test #'string-equal) +role-pending+)
+        ((member state '("failed" "conflict" "timed_out" "blocked") :test #'string-equal) (role-look :failure))
+        ((member state '("rejected" "cannot_decide") :test #'string-equal) (role-look :attention))
+        ((member state '("reviewing" "gating" "queued") :test #'string-equal) (role-look :pending))
         ;; **`taken` IS IN FLIGHT, WHICH IS A FACT RATHER THAN A TASTE** — the daemon's own
         ;; `MergeState::Taken` means a runner has the entry, so it belongs in the register *is
         ;; happening* beside waiting and stale. MEASURED against `tokencore/src/store.rs`, whose
         ;; enum has SEVEN states (`Waiting, Taken, Landed, Failed, Conflict, Stale, Vetoed`) while
         ;; this head's first cut mapped five.
-        ((member state '("waiting" "stale" "taken" "running") :test #'string-equal) +role-pending+)
+        ((member state '("waiting" "stale" "taken" "running") :test #'string-equal) (role-look :pending))
         ;; **AND `vetoed` STAYS PLAIN FOR NOW, DELIBERATELY.** It is a PERSON's act rather than a
         ;; state of the work — the daemon's `veto_entry` *parks the row* with its evidence — and
         ;; whether that reads as Failure (something went wrong) or Attention (a person must look) is

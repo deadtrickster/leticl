@@ -33,17 +33,17 @@ whole point of typing at a live image is that you find out it did not work."
      ;; uses, because that is what a form here is: a line the operator typed
      (loop for r in form-rows
            for i from 0
-           collect (list (cons (if (zerop i) "› " "  ") +role-faint+) (cons r nil)))
+           collect (list (cons (if (zerop i) "› " "  ") (role-look :faint)) (cons r nil)))
      ;; the value, and its duration on the row that carries the arrow
      (loop for r in body
            for i from 0
            collect (if (zerop i)
-                       (list (cons "  => " +role-faint+) (cons r nil)
-                             (cons (format nil " · ~d ms" ms) +role-faint+))
+                       (list (cons "  => " (role-look :faint)) (cons r nil)
+                             (cons (format nil " · ~d ms" ms) (role-look :faint)))
                        (list (cons "     " nil) (cons r nil))))
      ;; or the failure, marker and all — one register, so an error cannot read as a value
      (loop for r in why
            for i from 0
-           collect (list (cons (if (zerop i) "  !! " "     ") +role-failure+)
-                         (cons r +role-failure+))))))
+           collect (list (cons (if (zerop i) "  !! " "     ") (role-look :failure))
+                         (cons r (role-look :failure)))))))
 

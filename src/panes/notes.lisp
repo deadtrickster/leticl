@@ -108,7 +108,7 @@ renderer that wrapped here would wrap twice."
             (push (list (cons "  ▸ " (if here '(:bold t) '(:dim t)))
                         (cons path (and here '(:reverse t)))
                         (cons (format nil "  [~a]" form)
-                              (if (string-equal form "verbatim") +role-success+ +role-pending+)))
+                              (if (string-equal form "verbatim") (role-look :success) (role-look :pending))))
                   out)
             (push (list (cons "         " '(:dim t))
                         (cond ((null abstract)
@@ -151,7 +151,7 @@ exists for."
     (append
      (list (list (cons "  path  " '(:dim t)) (cons path nil))
            (list (cons "  form  " '(:dim t))
-                 (cons form (if (string-equal form "verbatim") +role-success+ +role-pending+))
+                 (cons form (if (string-equal form "verbatim") (role-look :success) (role-look :pending)))
                  (cons (if (string-equal form "verbatim")
                            "  — injected into the prompt as written"
                            "  — an index entry; the model reads the file when it needs it")

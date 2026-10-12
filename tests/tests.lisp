@@ -12878,6 +12878,33 @@ whatever the gate had to say.")
     (is (not (null (leticl::%open-decision h)))
         "**a permission is NOT put away by Esc** — that key is a refusal and the caller owns it")))
 
+(def-test a-theme-lays-over-one-role-and-the-draw-sites-follow (:suite leticl)
+  "**A THEME IS A TABLE LAID OVER THE CONSTANTS** (letibot `d7288a8`, the sweep's batch D): `role-look`
+  is the ONE door every draw site asks, so a reader may disagree with a role without the five constants
+  moving — and they must not move. This head's file pusher redefines a `defparameter` on every push, so a
+  theme held in a rebound constant would be silently dropped the first time this head's own source was
+  pushed into it; and the constants are read by tests that pin them against the reference's roles."
+  (let ((leticl::*role-looks* nil))
+    (is (eq leticl::+role-failure+ (leticl::role-look :failure))
+        "with no theme, the constant IS the answer — byte for byte what the reference defines")
+    (is (null (leticl::role-look :nobody-knows))
+        "**and a role nobody knows answers NIL**, which is what the reference's own table does")
+    (setf leticl::*role-looks* (list :failure '(:fg :magenta)))
+    (is (equal '(:fg :magenta) (leticl::role-look :failure))
+        "**a theme's entry is what that role draws with**")
+    (is (equal '(:fg :red) leticl::+role-failure+)
+        "**and the CONSTANT is untouched** — a rebound constant is the trap this table exists to avoid:
+  the file pusher redefines it on every push, and the tests pin it against the reference's roles"))
+  ;; and a DRAW SITE follows it, which is the whole point of converting sixty-seven of them
+  (let* ((leticl::*role-looks* (list :attention '(:fg :magenta)))
+         (lines (leticl::%queue-header-lines
+                 (list :targets (list (list :target "main" :sha "abc1234567" :repository "/x"
+                                            :state "blocked" :evidence "the suite failed")))
+                 0 200))
+         (styles (remove nil (mapcar #'cdr (apply #'append lines)))))
+    (is (member '(:fg :magenta) styles :test #'equal)
+        "**and a draw site draws with it** — the blocked target's row is the ATTENTION role, and it moved")))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of
