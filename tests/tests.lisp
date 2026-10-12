@@ -6021,15 +6021,36 @@ depends on whether the tree is dirty."
                                                                      nil) "%~"))))
         "a conflict is red and bold, because nothing else on that row is a demand")))
 
+(defvar *repository-workspace* nil
+  "The temporary repository `%repository-workspace` made, so the fixture and its cache agree on one path.")
+
+(defun %repository-workspace ()
+  "A workspace that IS a repository — a temporary directory with `.git/` in it — for the fixture whose
+ subject is *which repository is this workspace*.
+
+ **A FIXTURE MUST MAKE ITS OWN, AND THIS IS MEASURED RATHER THAN TIDY.** The merge queue gates every
+ branch in a LANDING TREE, and that tree has **no `.git` at all** — so the version of this test that used
+ its own checkout as the workspace passed here and failed in the gate, twice, on a head that was RIGHT.
+ A test that assumes its cwd is a repository is testing the machine rather than the head.
+
+ `%repository-p` is content with a `.git` of either shape, so a bare directory is an honest fixture and
+ no `git init` is needed: the subject is the RESOLVER, and the cache's pieces are stubbed anyway."
+  (or *repository-workspace*
+      (setf *repository-workspace*
+            (let ((ws (namestring (ensure-directories-exist
+                                   (merge-pathnames "leticl-header-ws/" (uiop:temporary-directory))))))
+              (ensure-directories-exist (merge-pathnames ".git/" (uiop:ensure-directory-pathname ws)))
+              ws))))
+
 (def-test the-header-shows-the-workspaces-repository (:suite leticl)
   "The branch is drawn beside the workspace path, and only for the workspace it was read from."
   (let* ((h (%on-head :cols 140 :rows 24))
          (s (head-session h)))
-    ;; **THE WORKSPACE IS THIS CHECKOUT, and that is the point of the fixture now**: the row asks the
+    ;; **THE WORKSPACE IS A REPOSITORY THIS TEST MAKES, and that IS the point of the fixture**: the row asks the
     ;; RESOLVER which project the workspace is, so a fixture pointing at a directory that is not a
     ;; repository is a fixture asking for the absence — which is its own test, and not this one.
-    (setf (session-wiring s) (list* :workspace (namestring (uiop:getcwd)) (session-wiring s)))
-    (let ((leticl::*git-cache* (list :dir (namestring (uiop:getcwd))
+    (setf (session-wiring s) (list* :workspace (%repository-workspace) (session-wiring s)))
+    (let ((leticl::*git-cache* (list :dir (%repository-workspace)
                                     :pieces (list (cons "main" '(:fg :green))
                                                   (cons "!1" '(:fg :yellow))
                                                   (cons "?2" '(:dim t)))
