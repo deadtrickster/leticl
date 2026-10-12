@@ -12479,6 +12479,46 @@ worked for the merge queue.
       (is (search "waits on j12" (said both)) "a row carrying both draws its clock")
       (is (search "needs job j9" (said both)) "**and its edge with it**"))))
 
+(defparameter +meanwhile-notice+
+  (format nil "[meanwhile] 2 results arrived while you were busy — nothing in your plan was waiting ~
+               on them, so they were held for this break instead of interrupting you.~%~%
+               [job] 2 jobs you backgrounded have ended:~%
+                 - `release-build · j1042` exited 0 after 2m54s, wrote 1008 bytes: cargo build --release~%
+                 - `j1043` exited 101 after 4.4s, wrote 0 bytes: cargo test -p letibot-tui~%
+               This is the completion arriving on its own — you do not need to wait for it, and ~
+               `job_wait` would only block you for a result you already have. Read what it wrote with ~
+               `job_output` (job=\"…\"), then carry on with what you were doing.")
+  "**Pinned to the daemon's own text**, whole: letibot's
+`crates/tui/src/app/tests/fixtures/job_notice_meanwhile.txt`, which `harnessd`'s
+`the_meanwhile_notice_is_the_heads_fixture` regenerates BYTE-FOR-BYTE. So a copy kept anywhere else
+would be a test of this head against a sentence nobody sends; the file is quoted here and the daemon
+test that owns it is named, which is the discipline the compaction fixtures already keep.")
+
+(def-test a-meanwhile-batch-draws-its-heading-and-two-rows-per-job (:suite leticl)
+  "**The `[meanwhile]` batch is a heading and ordinary job rows** (letibot R79, `fd96041`): the heading
+  folds to ONE row (`Meanwhile:` and the text before its dash) and the jobs under it stay two rows each
+  — the same head and result every settlement draws.
+
+  **Before this, the whole batch was PROSE**: `[meanwhile] ` matched no arm, so the heading was dropped,
+  the job facts were `- ` lines under a kind nobody set, and the closing paragraph addressed to the
+  MODEL — including its `job_output` advice — was drawn in full. That is the same defect `[task]` was
+  fixed for, one heading over."
+  (let* ((rows (leticl::%notice-card-lines +meanwhile-notice+))
+         (text (format nil "~{~a~^~%~}" rows)))
+    (is (= 5 (length rows))
+        "**one heading row and two per job** — the reference's own count, and the assertion its
+ `a_meanwhile_batch_draws_its_heading_and_two_lines_per_job` makes")
+    (is (search "Meanwhile: 2 results arrived while you were busy" text)
+        "**the heading is the part BEFORE the dash** — the reason clause is the detail, not the sentence")
+    (is (search "cargo build --release" text) "both jobs are under it")
+    (is (search "cargo test -p letibot-tui" text) "including the second")
+    (is (not (search "nothing in your plan was waiting on them" text))
+        "and the reason clause is NOT drawn")
+    (is (not (search "you do not need to wait" text))
+        "nor the closing paragraph addressed to the model")
+    (is (eq :meanwhile (leticl::%notice-kind +meanwhile-notice+))
+        "its own kind, so `%notice-folds-p` is true and `/t` can open it")))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of

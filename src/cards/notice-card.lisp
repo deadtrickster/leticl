@@ -3,7 +3,7 @@
 
 (in-package #:leticl)
 
-(defparameter +notice-prefixes+ (list "[job] " "[task] " "[todo check] ")
+(defparameter +notice-prefixes+ (list "[job] " "[task] " "[todo check] " "[meanwhile] ")
   "The daemon's own openings for a completion notice: a settled job, and a finished subagent.
 
 **The prefix is the daemon's, not this head's invention** — the same discipline as keying a note's
@@ -27,6 +27,12 @@ the daemon's, the same discipline as the other two: the text is what says what i
   (cond ((and (stringp text) (uiop:string-prefix-p "[job] " text)) :job)
         ((and (stringp text) (uiop:string-prefix-p "[task] " text)) :task)
         ((and (stringp text) (uiop:string-prefix-p "[todo check] " text)) :todo)
+        ;; **`[meanwhile] ` IS THE BATCH HEADING** (letibot R79, `fd96041`): the work that ran BESIDE a
+        ;; turn is published under this heading over the ordinary `[job] `/`[task] ` groups. It is a
+        ;; kind of its own because the heading is not a settlement — it is a STATEMENT about a batch —
+        ;; and `%notice-folds-p` needs to know it, or the whole row (heading, jobs, and the closing
+        ;; paragraph addressed to the model) would be drawn as prose.
+        ((and (stringp text) (uiop:string-prefix-p "[meanwhile] " text)) :meanwhile)
         (t nil)))
 
 (defun %notice-folds-p (text)
@@ -97,6 +103,16 @@ it is worse than a key."
       (cond
         ((uiop:string-prefix-p "[job] " line) (setf kind :job))
         ((uiop:string-prefix-p "[task] " line) (setf kind :task))
+        ;; **AND THE `[meanwhile]` HEADING IS ONE ROW** (letibot R79, `fd96041`) — the reference's own
+        ;; rule: `Meanwhile:` and the text before its dash, with the jobs UNDER it still two rows each
+        ;; (the `[job] `/`[task] ` arms below, unchanged). The closing paragraph is not drawn, like
+        ;; every other notice's. **A heading with no dash is drawn as it stands** rather than dropped:
+        ;; the reference draws such a row RAW, and the nearest honest thing here is not to lose its
+        ;; words — the part before a dash is a detail, not the sentence.
+        ((uiop:string-prefix-p "[meanwhile] " line)
+         (let* ((said (subseq line (length "[meanwhile] ")))
+                (at (search " — " said)))
+           (push (format nil "Meanwhile: ~a" (if at (subseq said 0 at) said)) out)))
         ((uiop:string-prefix-p "- " (string-left-trim " " line))
          (let* ((task-p (eq kind :task))
                 (fact (string-trim " " (remove #\` (string-trim " -" line))))
