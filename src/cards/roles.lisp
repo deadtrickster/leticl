@@ -218,6 +218,25 @@ wrong about a process that is still working.\"*"
  screen apart."
   (car (cdr (assoc (string-downcase (or name "")) *verb-map* :test #'string=))))
 
+(defun %drawn-as (name edit)
+  "The KIND a tool row is DRAWN AS — the verb's own, except for the one tool that writes files
+  without being one of the verbs.
+
+ **`notes` IS THAT TOOL, and this is measured rather than guessed** (letibot `d13e32c`): the notes tool
+ returns a result carrying an `:edit` excerpt — *a write carries its before/after pair* — so a note it
+ rewrote IS a file change, while `%verb-kind` answers NIL for its name. NIL is not neutral here: the row
+ then falls into the DETECTED branch, which draws a diff under a header reading *detected afterwards …
+ not made by `edit`* — false, the tool wrote it — and names the file twice, once in the row's subject
+ and again on the diff's own path line.
+
+ **The excerpt is what decides, and only for `notes`.** A row without one keeps whatever the table
+ says, so this cannot silently reclassify a tool whose name somebody has yet to add; and `:created` is
+ the daemon's own word for a file that did not exist before, which is a WRITE rather than an edit."
+  (or (%verb-kind name)
+      (and (equal (string-downcase (or name "")) "notes")
+           (consp edit)
+           (if (getf edit :created) :write :edit))))
+
 (defun %payload-lines (payload)
   "PAYLOAD split as Rust's `str::lines` splits it: a final newline ends the last
 line and does not start an empty one, and an empty payload is NO lines.

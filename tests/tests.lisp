@@ -12548,6 +12548,31 @@ equal with nothing else on the chrome, which is why the bug needed a note to be 
     ;; thirty-four of them, all of them innocent. The head's own kind of defect, in a fixture.
     (setf leticl::*pick-open* nil)))
 
+(def-test a-notes-tool-that-wrote-a-file-is-drawn-as-the-write-it-is (:suite leticl)
+  "**The notes tool writes a file but is not one of the verbs** (letibot `d13e32c`): `%verb-kind` answers
+  NIL for its name, so a note the tool rewrote fell into the DETECTED branch — a diff under a header
+  reading *detected afterwards … not made by `edit`*, which is FALSE, the tool wrote it — with the file
+  named twice, once in the row's subject and again on the diff's own path line.
+
+  **The excerpt is what decides, and only for `notes`**: a row without one keeps whatever the table
+  says, so this cannot silently reclassify a tool whose name somebody has yet to add."
+  (flet ((as (name edit) (leticl::%drawn-as name edit)))
+    (is (eq :write (as "notes" (list :path "notes/x.md" :created t)))
+        "**a note the tool CREATED is a write** — the daemon's own word for a file that was not there")
+    (is (eq :edit (as "notes" (list :path "notes/x.md" :created nil)))
+        "and one it rewrote is an edit")
+    (is (null (as "notes" nil))
+        "**without an excerpt the name is still unknown here** — no reclassifying on the name alone"))
+  ;; and it reaches the ROW, not just the predicate
+  (let* ((item (list :item-id "n1" :kind "tool_result"
+                     :item (list :type "tool_result" :name "notes"
+                                 :edit (list :path "notes/x.md" :created t
+                                             :before "" :after "hello"))))
+         (text (segs-of (item-lines item 80 (list :show-tools t :tools-open t)))))
+    (is (search "notes/x.md" text) "the row names the file it wrote")
+    (is (not (search "not made by" text))
+        "**and does NOT say the change was merely detected** — the tool made it")))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of

@@ -200,7 +200,12 @@ header, also printed `· 1 line` — a count for a fold with nothing to fold."
          ;; `verb.is_an_edit()`, and it decides WHERE a diff goes: under an edit verb the diff IS
          ;; the body; under any other it is a panel the daemon detected after the command, drawn
          ;; after the command's own output (letibot `e09d77c`, `6ba1ede`; sweep B.7).
-         (edit-verb (and (member (%verb-kind name) '(:edit :write)) t))
+         ;; **`%drawn-as`, NOT `%verb-kind`** (letibot `d13e32c`): the notes tool writes a file but is
+         ;; not one of the verbs, so `%verb-kind` answers NIL for it and the row fell into the DETECTED
+         ;; branch — a diff under a header saying *not made by `edit`*, which is false. The excerpt is
+         ;; what says a note was a file change. (The live-call card needs no such thing: a call still
+         ;; in flight has no excerpt yet, so nothing there can be drawn as a change it has not made.)
+         (edit-verb (and (member (%drawn-as name (getf body :edit)) '(:edit :write)) t))
          (split (string= (or (getf prefs :diff) "unified") "split"))
          ;; Sanitised FIRST and filtered second, the reference's order
          ;; (app.rs:9712) — a payload's bytes are the command's, not this
