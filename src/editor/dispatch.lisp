@@ -169,6 +169,29 @@ for the lists)."
       ((and (member (head-mode head)
                     '(:help :status :jobs :subagents :todos :picker :slash :dash :lisp :queue :standing :merge-detail :term))
             (%pane-key head key type)))
+      ;; **THE READ OVERLAY, OVER THE CONVERSATION** — see the transcript branch's own note in
+      ;; `render/history-cache.lisp`. It owns only the way OUT and the scrolling; **everything else
+      ;; FALLS THROUGH**, because a decision card that arrives over an open change must keep its keys
+      ;; (letibot `af6faf2`: *a decision under the diff popup keeps its keys, and the bar says so*).
+      ;; It sits BELOW every card and pane arm for the same reason, and above `%normal-key` because
+      ;; that is where the transcript's own keys live.
+      ((read-overlay-open-p head)
+       (case type
+         ((:esc) (close-read-overlay head) t)
+         ((:up) (pane-scroll-by -1) (setf (head-dirty head) t) t)
+         ((:down) (pane-scroll-by 1) (setf (head-dirty head) t) t)
+         ((:page-down) (pane-scroll-by (max 1 (1- *pane-room*))) (setf (head-dirty head) t) t)
+         ((:page-up) (pane-scroll-by (- (max 1 (1- *pane-room*)))) (setf (head-dirty head) t) t)
+         ((:wheel-down) (pane-scroll-by (* (%wheel-notches key) *scroll-notch*))
+          (setf (head-dirty head) t) t)
+         ((:wheel-up) (pane-scroll-by (- (* (%wheel-notches key) *scroll-notch*)))
+          (setf (head-dirty head) t) t)
+         ;; `q` closes it only on an EMPTY composer — in a pane the same key is the composer's the
+         ;; moment there is a word to type, and this is the transcript's half of that rule.
+         ((:char) (and (zerop (length (composer-buffer (head-composer head))))
+                       (eql (getf key :ch) #\q)
+                       (close-read-overlay head)))
+         (t nil)))
       (t (%normal-key head key)))))
 
 (defun %withdraw-queued (head)

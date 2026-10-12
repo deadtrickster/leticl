@@ -12417,6 +12417,31 @@ worked for the merge queue.
       (is (not (leticl::read-overlay-open-p h))
           "a click past every bound resolves to no item, and does nothing"))))
 
+(def-test the-read-overlay-is-drawn-over-the-conversation (:suite leticl)
+  "**The state was set and nothing was drawn** — the overlay's drawers are `:around` methods on PANES
+  (`pane-lines`/`pane-hint`), so a change opened over the CONVERSATION was invisible: the sweep's own
+  click feature (`%show-edit-change`) and `ctrl-]`'s door on a note had no way to show anything at all.
+  MEASURED by the sweep's subagent (batch B, letibot `af6faf2`).
+
+  **And the test that should have caught it asserted the STATE** (`read-overlay-open-p`), which a state
+  satisfies on an empty screen — the class of defect this head keeps finding in others, found here."
+  (let ((h (%on-head :cols 100 :rows 30)))
+    (setf (session-items (head-session h)) (leticl::%items-vector nil))
+    (leticl::%render h)
+    (is (not (search "esc returns" (%screen-text h))) "nothing is up to begin with")
+    (leticl::open-read-overlay h :normal "change — src/fib.lisp"
+                               (list (list (cons "  a diff line" nil))))
+    (leticl::%render h)
+    (is (search "change — src/fib.lisp" (%screen-text h))
+        "**the overlay is DRAWN over the conversation** — not merely recorded")
+    (is (search "a diff line" (%screen-text h)) "with its body")
+    (is (search "esc returns" (%screen-text h)) "**and the way back on it**")
+    ;; and it can be left again
+    (leticl::%handle-key h (list :type :esc))
+    (is (not (leticl::read-overlay-open-p h)) "**`esc` closes it**")
+    (leticl::%render h)
+    (is (not (search "a diff line" (%screen-text h))) "and the screen is the conversation again")))
+
 (def-test a-todo-row-says-what-it-waits-for (:suite leticl)
   "**`TodoNeed` rides the row and this pane drew NONE of it** — a plan is a GRAPH, and a row that waits
   on another row, on a CHILD session or on a job is a row whose edges a reader needs to see. The wire's

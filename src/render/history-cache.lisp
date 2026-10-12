@@ -1547,9 +1547,19 @@ scrolls the transcript by a row every keystroke.
              (%place-lines s wait (+ body-top skip) (1- body-bottom) cols gutter)))
           (t
            ;; the transcript viewport gets whatever the chrome left
-           (let* ((want (max 1 (- body-bottom body-top)))
-                  (lines (%viewport-lines head cols want)))
-             (%place-lines s lines body-top (+ body-top (length lines) -1) cols gutter))))
+           (let* ((room (max 1 (- body-bottom body-top)))
+                  ;; **AND THE READ OVERLAY IS A SURFACE OVER THE CONVERSATION TOO**, not only over the
+                  ;; panes it was written for. It is opened from HERE by a click on an edit row
+                  ;; (`%show-edit-change`) and by `ctrl-]`'s door on a note — both over the conversation
+                  ;; — while the `:around` methods that DRAW it (`pane-lines`/`pane-hint`) are reached
+                  ;; only for pane modes. So the state was set and nothing was drawn: MEASURED by the
+                  ;; sweep's subagent (batch B, `af6faf2`), and the reason its test passed anyway is
+                  ;; that a state can be asserted and a screen cannot — the same class of defect this
+                  ;; head keeps fixing in others.
+                  (over (and (read-overlay-open-p head) (read-overlay-lines head cols)))
+                  (lines (or over (%viewport-lines head cols room))))
+             (%place-lines s (if over (pane-view over) lines)
+                           body-top (1- (+ body-top room)) cols gutter))))
         ;; the chrome, top to bottom, exactly the order the ladder counted it in
         (let* ((room-for-card card-rows)
                ;; **R20: THE LADDER KEEPS ITS ROWS AND THE CONTENT GETS THE REST.**
