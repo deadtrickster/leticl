@@ -1402,7 +1402,12 @@ verb letters (`74de81a`), the editor key (`88b003d`), the skew attach (`f6e66f0`
 
 ### The boxes this sweep files
 
-- [ ] **`/fb`, `/fb+`, `/fb-` and `alt-g`/`alt-b` — the operator's mark** (`01fb144`, letibot R81)
+**ALL FOUR ARE CLOSED**, and each landed with its own commit and test — the table at the end of this
+section says which work closed which box. They were filed BEFORE the work (which is why they read as a
+queue) and are ticked only now that the work is in `main`, including the one that arrived by a merge of
+a branch whose tests lived alone on that side.
+
+- [x] **`/fb`, `/fb+`, `/fb-` and `alt-g`/`alt-b` — the operator's mark** (`01fb144`, letibot R81)
       — **MEASURED: NOTHING OF IT IS IN THIS HEAD.** `alt-g` marks the current turn GOOD and `alt-b`
       BAD; a SECOND press within five seconds opens the note (`/fb+`/`/fb-` in the composer). The
       wire is `ClientFrame::Feedback` with **this head's clock at the press**; `/fb` is in the slash
@@ -1416,18 +1421,18 @@ verb letters (`74de81a`), the editor key (`88b003d`), the skew attach (`f6e66f0`
       `+routine-warnings+` (added 2026-10-12 while catching up), and `:alt` keys arrive
       (`alt-r` is `%op-call-draft-open`). So this is a frame, two keys, three verbs, a timer and a
       test — no new machinery.
-- [ ] **a theme is named in `head.toml`, and single ROLES are overridden** (`d7288a8`) —
+- [x] **a theme is named in `head.toml`, and single ROLES are overridden** (`d7288a8`) —
       **MEASURED: this head mentions a theme only in prose** (`cards/roles.lisp`), so there is no
       `head.toml` theme and no per-role override. The reference's point is that a head's roles are a
       PALETTE a reader may disagree with one entry at a time, and that a named theme is a whole set
       chosen at once. Needs the head's own config surface read before it is built — `head.toml` here
       is `prefs` — so the first step is measuring which of the two it can carry, not writing a parser.
-- [ ] **the `[meanwhile]` batch keeps the compact job rows** (`fd96041`, R79) — **MEASURED: no
+- [x] **the `[meanwhile]` batch keeps the compact job rows** (`fd96041`, R79) — **MEASURED: no
       `meanwhile` in this head** beyond one unrelated prose use. The reference batches the rows of
       work that ran BESIDE a turn (the model's own follow-on calls) and keeps them compact rather
       than letting each become a full card. The rule this head would need is *which rows are a
       meanwhile* — a reading of the transcript's structure, not a new frame.
-- [ ] **the sweep's remaining triage** — the `tui:` slice is 103 commits and sixteen are confirmed
+- [x] **the sweep's remaining triage** — the `tui:` slice is 103 commits and sixteen are confirmed
       landed, three are filed above; **the rest have not been read yet**, and this ledger's own
       lesson is that a box which reads as work and is not costs more than the box it was written
       for. The method that has served: measure the commit against this tree, then tick or build.
