@@ -178,7 +178,14 @@ the box's TOP edge was actually painted on — a click one row off is a click on
         (open-read-overlay head (head-mode head)
                            (format nil "change — ~a · ctrl-] opens the file"
                                    (or (getf edit :path) "?"))
-                           (edit-lines edit (max 20 (- (head-cols head) +gutter+ +right-margin+)))))))
+                           (edit-lines edit (max 20 (- (head-cols head) +gutter+ +right-margin+))
+                                       ;; **THE SUBJECT, so the path is named ONCE** (`901acc0`): the
+                                       ;; overlay draws its title above the body, and without this the
+                                       ;; diff repeats the file under it — the same string twice, the
+                                       ;; second time in the loudest style on the card. The predicate
+                                       ;; strips quotes and checks the subject LEADS with the path, so a
+                                       ;; bare path is exactly the right subject.
+                                       :subject (getf edit :path))))))
 
 (defun %click (head key)
   "A CLICK selects the row under the pointer. T when the click was a list's.
