@@ -1407,7 +1407,15 @@ scrolls the transcript by a row every keystroke.
     ;; looking at. See `refresh-call-targets`/`*call-targets-generation*` for the measurement.
     (refresh-call-targets head)
     (setf *link-enabled* (not (null (getf (head-prefs head) :links)))
-          *link-cwd* (getf (session-wiring (head-session head)) :workspace))
+          ;; **AND WITH NO SESSION WORKSPACE A RELATIVE PATH RESOLVES AGAINST THE HEAD'S OWN DIRECTORY**
+          ;; (letibot `6186949`, the sweep's batch B). A session may have no workspace at all — a head
+          ;; attached to one that has never run a command — and the links layer was handed NIL, which is
+          ;; not *no root* but *a root that cannot resolve*: every relative path in a replay drew as a
+          ;; broken link. The head's own directory is the honest fallback, and it is what a reader who
+          ;; started this head from a directory means. `head`'s workspace still wins wherever there is
+          ;; one, which is the common case; this is the one it was missing.
+          *link-cwd* (or (getf (session-wiring (head-session head)) :workspace)
+                         (namestring (uiop:getcwd))))
     ;; The card that owns the keyboard, in the reference's own order
     ;; (app.rs:5053-5066): a password, then a decision, then the way out, then a
     ;; picker. The `allow-all` question rides at the FRONT of all of it, because

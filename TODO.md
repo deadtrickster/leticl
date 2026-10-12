@@ -1440,3 +1440,18 @@ verb letters (`74de81a`), the editor key (`88b003d`), the skew attach (`f6e66f0`
       the reference's rule AND its reason (*neither is an answer, and letting a click through could act
       on a surface under the question*). Ticked rather than built — the fourth time this sweep has
       found a box that read as work and was not.
+
+### The triage's verdicts — every commit the four batches read is now PLACED
+
+| what | verdict |
+|---|---|
+| the first ~30 `tui:` commits | **an internal refactor** — no behaviour to mirror, so nothing to port |
+| the next ~10 (rano adoption) | **not portable** — a Lisp head cannot link `rano`; the parity that matters there is what the SCREEN looks like (`scripts/compare-heads`) |
+| `579c991` — the queue pane draws both queues, who serves them, time in state | **already here**, measured: `panes/jobs.lisp` draws the one snapshot, the leases with `STALE`, the two views and the red target first |
+| `6186949` — a send with no session workspace | **a real gap, and small — BUILT** (`*link-cwd*` falls back to the head's own directory; the workspace still wins where there is one) |
+| `bcfb724` — each surface declares its keys once | **a real gap and a BIG one**: 61 hand-written lists would become readers of per-surface tables. Its `ctrl-n notes` divergence is DECLINED with a reason: the hint bar's length is a measured fit, and a longer word there breaks a different guarantee for a cosmetic gain |
+| `e8750ea`, `f40be66`, `b9abcf1`, `c815eed` | **already here** — the completion ghost (in the box, with the caveat that the placement differs from the reference's own legend), the wheel over a pane, one Esc inside a subagent, the way out recognised once |
+| `af6faf2`, `ef31893`, `5296c6e`, `8d5f418`, `9e82bdb`, `901acc0`, `161b34d`/`f076792`, `fd96041`, `5be9113`, `d13e32c`, `c8622b0`/`a4384ed`, `2ad7b9b` | **BUILT**, each with its own commit and test |
+
+**What is left is not triage**: the theme's remainder and the waits-on link, both filed as their own
+boxes, plus `bcfb724`'s tables if a session wants them.

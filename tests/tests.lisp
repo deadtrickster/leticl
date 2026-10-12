@@ -12905,6 +12905,24 @@ whatever the gate had to say.")
     (is (member '(:fg :magenta) styles :test #'equal)
         "**and a draw site draws with it** — the blocked target's row is the ATTENTION role, and it moved")))
 
+(def-test a-relative-path-resolves-with-no-session-workspace (:suite leticl)
+  "**A SESSION MAY HAVE NO WORKSPACE AT ALL**, and the links layer was handed NIL for its root — which is
+  not *no root* but *a root that cannot resolve*, so every relative path in a replay drew as a broken
+  link (letibot `6186949`, the sweep's batch B).
+
+  The head's own directory is the honest fallback: it is what a reader who started this head from a
+  directory means — and a session that has a workspace still wins, which is the common case and the one
+  that must not change."
+  (let ((h (%on-head :cols 100 :rows 30)))
+    (setf (session-wiring (head-session h)) nil)
+    (leticl::%render h)
+    (is (equal (namestring (uiop:getcwd)) leticl::*link-cwd*)
+        "**with no workspace the root is the head's own directory**")
+    (setf (session-wiring (head-session h)) (list :workspace "/tmp"))
+    (leticl::%render h)
+    (is (equal "/tmp" leticl::*link-cwd*)
+        "and a session's own workspace is still what it resolves against")))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of
