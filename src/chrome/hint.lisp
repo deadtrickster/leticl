@@ -63,13 +63,23 @@ the transcript's own rows use, so the ellipsis is the head's usual one rather th
                  ;; position, because the panes share one arm now.
                  ((and *pick-open* (not (member (head-mode head) '(:slash :picker))))
                   "a row number switches · ↑↓ then enter · or type a name · esc closes")
-                  ((pane-hint (current-pane head) head))
+                  ;; **A CARD OWNS THE KEYBOARD, SO THE BAR DESCRIBES THE CARD** (letibot `af6faf2`, the sweep's
+                 ;; batch B). This arm used to sit BELOW the pane's, so a decision that arrived over a
+                 ;; pane was described by the pane's words — the bottom row naming keys the card was
+                 ;; eating. `pane-hint` is still one arm down for the opposite case: a pane is described
+                 ;; by its own words exactly when nothing that owns the keyboard is over it.
+                 ((%open-decision head) "a row number answers · ↑↓ then enter · or type an option · /help")
+                 ;; **AND THE READ OVERLAY IS A SURFACE WITH KEYS OF ITS OWN** — the third thing this
+                 ;; bar could not say, because the overlay was drawn only over panes and the pane's
+                 ;; words were asked first. `esc returns to the list, on the row you chose` is the row
+                 ;; INSIDE it; this is the BAR, and it is the one a reader who scrolled the box owns.
+                 ((read-overlay-open-p head) "esc closes · ↑↓ page and wheel scroll · the row under it says where you were")
+                 ((pane-hint (current-pane head) head))
                  ((head-secret-req head) "enter submits · esc refuses the password")
                  ;; **the operator-call composer** (R24 part two). The two keys it owns,
                  ;; said in the register the secret card's own row uses — and this arm is
                  ;; what makes the card's promise checkable from the bottom row.
                  ((op-call-draft-open-p) "the tool's own JSON, then enter asks the daemon to admit it as your act · esc cancels")
-                 ((%open-decision head) "a row number answers · ↑↓ then enter · or type an option · /help")
                  ;; **`ctrl-n` IS SECOND, AND THE PLACEMENT IS A MEASUREMENT** (R22).
                  ;; This bar is 136 characters — the same 136 as letibot's, item for
                  ;; item — and at the usual 80 columns everything past column 80 is off

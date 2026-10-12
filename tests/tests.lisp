@@ -12573,6 +12573,22 @@ equal with nothing else on the chrome, which is why the bug needed a note to be 
     (is (not (search "not made by" text))
         "**and does NOT say the change was merely detected** — the tool made it")))
 
+(def-test the-hint-bar-names-the-overlays-keys-when-one-is-open (:suite leticl)
+  "**THE READ OVERLAY IS A SURFACE WITH KEYS, AND THE BAR HAD NO BRANCH FOR IT** (letibot `af6faf2`,
+  the sweep's batch B). It takes Esc and the scroll keys, it is drawn over whatever was there — a pane,
+  or the conversation — and the bottom row went on describing the thing UNDERNEATH it.
+
+  The same commit's other half is the ORDER, fixed with this: the decision arm sat below `pane-hint`, so
+  a card that arrived over a pane was described by the pane's words, naming keys the card was eating."
+  (let ((h (%on-head :cols 120 :rows 30)))
+    (flet ((bar () (format nil "~{~a~}" (mapcar #'car (hint-bar h 120)))))
+      (is (not (search "esc closes" (bar))) "nothing is up to begin with")
+      (setf (head-mode h) :todos)
+      (leticl::open-read-overlay h :todos "a row" (list (list (cons "x" nil))))
+      (is (search "esc closes" (bar))
+          "**with the overlay up the bar names the overlay's keys** — the branch that was missing, and
+  the one a reader needs exactly when they have scrolled past what the pane's words describe"))))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of
