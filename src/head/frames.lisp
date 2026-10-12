@@ -563,8 +563,19 @@ empty pane on every attach, which is the defect the guard exists to prevent, inv
      ;; CONVERSATION's — carrying one session's bill onto another's header is
      ;; wrong in the direction that costs money. Cleared, not guessed.
      (reset-spent)
-     ;; the wait is over: the cat stands down
-     (setf *attach-started-ms* nil)
+     ;; **THE WAIT IS OVER — UNLESS THE HEAD ASKED FOR A DIFFERENT SESSION** (letibot `ef31893`).
+     ;; This Hello attaches whatever session the daemon is on, and `--resume` then asks for another one
+     ;; through the pending check below. Clearing the cat HERE spent the whole restore showing *has said
+     ;; nothing yet* over a session the head had not been asked about yet — the placeholder standing in
+     ;; for a conversation nobody had claimed.
+     ;;
+     ;; The asked-for id is still live at this point (the pending check consumes it twenty lines down),
+     ;; so this needs no second piece of state: a Hello for the ASKED session clears the cat as it always
+     ;; did, one for any other leaves it standing until `%switch-to` brings the asked one in.
+     (unless (and *pending-resume*
+                  (plusp (length *pending-resume*))
+                  (not (equal *pending-resume* (session-session-id (head-session head)))))
+       (setf *attach-started-ms* nil))
      ;; THE HEAD'S OWN session-scoped state goes with the session, the way
      ;; `ingest-snapshot` drops the session's (app.rs:1902-1934). These four are
      ;; not in any snapshot and nothing cleared them, so a `/switch` carried the
