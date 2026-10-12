@@ -12710,6 +12710,31 @@ whatever the gate had to say.")
     (is (search "‼ agent/x · BLOCKED" (first (leticl::%notice-card-lines blocked)))
         "a BLOCKED review is the same row, with the other opening")))
 
+(def-test a-notice-row-opens-its-whole-text (:suite leticl)
+  "**The row is a hook and the paragraph is the fact** (letibot `161b34d`/`f076792`, the sweep's batch
+  A): an emergency draws as ONE line and a stopped review as ONE line, because the alternative was a
+  screenful of prose at the moment a reader wants the sentence.
+
+  The prose is not thrown away — the CLICK is what it is for, and it reads the text off the item the
+  daemon sent rather than from a second copy this head kept somewhere for the purpose."
+  (let ((h (%on-head :cols 120 :rows 30)))
+    (setf (session-items (head-session h)) (leticl::%items-vector nil))
+    (is (not (leticl::read-overlay-open-p h)) "nothing is up to begin with")
+    (leticl::%show-notice h (list :item-id "e1" :kind "user"
+                                  :item (list :type "user"
+                                              :parts (list (list :kind "text"
+                                                                 :text +emergency-notice+)))))
+    (is (leticl::read-overlay-open-p h)
+        "**a notice row opens its whole text** — the paragraph the one-liner summarises")
+    (is (search "gate memory"
+                (format nil "~{~a~}"
+                        (mapcar #'car (getf leticl::*read-overlay* :lines))))
+        "**including what the ROW does not draw** — the gate's own memory line"))
+  ;; and the transcript arm asks the same question the card does, so the two cannot disagree
+  (is (eq :red (leticl::%notice-kind +emergency-notice+)) "an emergency row is recognised")
+  (is (null (leticl::%notice-kind "just something the operator typed"))
+      "and an ordinary row is not — which is what stops a click opening an overlay over prose"))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of

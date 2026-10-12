@@ -259,6 +259,19 @@ the box's TOP edge was actually painted on — a click one row off is a click on
         ((and (eq (getf key :type) :ctrl) (eql (getf key :ch) #\|)) nil)
         (t (progn (%handle-key head key) t))))))
 
+(defun %show-notice (head item)
+  "A notice row's WHOLE text in the read overlay — what its one-line summary is a SUMMARY of.
+
+ **The row is a hook and the paragraph is the fact** (letibot `161b34d`/`f076792`): an emergency is one
+ line naming the target and the reason, and a stopped review is one line naming the branch and the
+ verdict, because the alternative was a screenful of prose. The prose is not thrown away — it is here,
+ read off the item the daemon sent rather than from a second copy this head kept."
+  (let ((text (item-display-text item)))
+    (open-read-overlay head (head-mode head)
+                       (or (getf (item-body item) :name) "the daemon's notice")
+                       (mapcar (lambda (l) (list (cons l nil)))
+                               (uiop:split-string text :separator '(#\newline))))))
+
 (defun %click (head key)
   "A CLICK selects the row under the pointer. T when the click was a list's.
 
@@ -337,6 +350,12 @@ than from the click."
                            (find (first bound) (session-items (head-session head))
                                  :key #'item-id :test #'string=))))
            (when (and item (item-shows-an-edit-p item))
-             (%show-edit-change head item))))
+             (%show-edit-change head item))
+           ;; **AND A NOTICE ROW OPENS ITS WHOLE TEXT** (letibot `161b34d`/`f076792`, the sweep's batch
+           ;; A): the row carries the target and the reason, or the branch and the verdict, and the
+           ;; paragraph it came from is what the click is FOR. Asked of the item the click resolved to,
+           ;; so nothing has to remember where the ready-made row came from.
+           (when (and item (ignore-errors (%notice-kind (item-display-text item))))
+             (%show-notice head item))))
        t))))
 
