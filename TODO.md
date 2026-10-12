@@ -1376,3 +1376,62 @@ head runs today breaks without them.
     the daemon's own semantics (a `taken` row is *in flight*, a `vetoed` one is *a person said
     no*) — **not** from a guess, and not before the events that carry them are watched on a live
     queue.
+## Sweep 2026-10-12 — the reference moved 728 commits
+
+**THE GAP, MEASURED.** The pin is letibot `149edf91` (2026-10-04); letibot's `main` is now
+`50b3e55` (2026-10-12). That is **728 commits**, of which **103 carry `tui:`** — the head-side
+slice, and the only part this tree can mirror.
+
+**TWO BLOCKS IN THAT SLICE ARE NOT PORTABLE, AND SAILING PAST THEM IS THE POINT:**
+
+- **the first ~30 are a REFACTOR** (`0b28a71`…`c4a4030`: `app/mod.rs` split by concern, `key()`
+  dispatching per owner, one test file per theme). No behaviour, so nothing to mirror;
+- **the next ~10 ADOPT RANO AS THE RENDERER** (`43bdc1f`, `c29cf66`, `60a79f7`, `8bf17ce`, `7a264c0`,
+  `d5355d0`, `853d9df`, `57b9fde`, and the two `rano 0.8.2` pins). The reference's every row is now
+  drawn by `rano::agent`/`rano::markdown` — a Rust crate — so a Lisp head cannot follow, and the
+  parity that matters for those is what the SCREEN looks like, not what draws it. Those are read as
+  *"the screens should still match"*, which is what `scripts/compare-heads` is for.
+
+**AND SIXTEEN MORE `tui:` COMMITS CAME *AFTER* THE PIN'S DATE BUT ARE ALREADY HERE**, each measured
+this session rather than assumed: the editor pane (`1b3ff62`/`a8f5e83`/`8e91a4b`, `ctrl-]`), the
+pinned prompt (`26b9e08`), the diff after a command (`e09d77c`), the standing notes (`ccee82a`), a
+path as a link (`5b3843f`), the queue pane's two views and gate steps (`0b05003`/`5b925b6`), the
+verb letters (`74de81a`), the editor key (`88b003d`), the skew attach (`f6e66f0`), the queued echo
+(`0eecc87`/`7ae99d6`), the `!term` mouse rule (`6bf6238`), and the `Responding` spinner
+(`c570b3f`, `chrome/carry.lisp:197`).
+
+### The boxes this sweep files
+
+- [ ] **`/fb`, `/fb+`, `/fb-` and `alt-g`/`alt-b` — the operator's mark** (`01fb144`, letibot R81)
+      — **MEASURED: NOTHING OF IT IS IN THIS HEAD.** `alt-g` marks the current turn GOOD and `alt-b`
+      BAD; a SECOND press within five seconds opens the note (`/fb+`/`/fb-` in the composer). The
+      wire is `ClientFrame::Feedback` with **this head's clock at the press**; `/fb` is in the slash
+      table and `/help`. **Scrolled back it names the row the view is ANCHORED to** — *the head has
+      no row cursor, so the anchored row is the nearest thing*, which is `*scroll-anchor*` here.
+      Two placements are the reference's own and are the work's shape rather than decoration:
+      `alt-b` is readline's word-left and **stays it wherever there is a line to move over** (the
+      `ctrl-e` rule — the same reasoning this head used for `ctrl-]`), so it marks only on an empty
+      composer; and the five-second window is the gesture, not a keystroke.
+      **The head already has the vocabulary this lands in**: `feedback` is a `Class::Routine` code in
+      `+routine-warnings+` (added 2026-10-12 while catching up), and `:alt` keys arrive
+      (`alt-r` is `%op-call-draft-open`). So this is a frame, two keys, three verbs, a timer and a
+      test — no new machinery.
+- [ ] **a theme is named in `head.toml`, and single ROLES are overridden** (`d7288a8`) —
+      **MEASURED: this head mentions a theme only in prose** (`cards/roles.lisp`), so there is no
+      `head.toml` theme and no per-role override. The reference's point is that a head's roles are a
+      PALETTE a reader may disagree with one entry at a time, and that a named theme is a whole set
+      chosen at once. Needs the head's own config surface read before it is built — `head.toml` here
+      is `prefs` — so the first step is measuring which of the two it can carry, not writing a parser.
+- [ ] **the `[meanwhile]` batch keeps the compact job rows** (`fd96041`, R79) — **MEASURED: no
+      `meanwhile` in this head** beyond one unrelated prose use. The reference batches the rows of
+      work that ran BESIDE a turn (the model's own follow-on calls) and keeps them compact rather
+      than letting each become a full card. The rule this head would need is *which rows are a
+      meanwhile* — a reading of the transcript's structure, not a new frame.
+- [ ] **the sweep's remaining triage** — the `tui:` slice is 103 commits and sixteen are confirmed
+      landed, three are filed above; **the rest have not been read yet**, and this ledger's own
+      lesson is that a box which reads as work and is not costs more than the box it was written
+      for. The method that has served: measure the commit against this tree, then tick or build.
+      Candidates worth the measurement first: `5296c6e` (every key hint is a button that types its
+      key), `bcfb724` (each surface declares its keys once; the bar and `/help` are generated from
+      them), `579c991` (the queue pane's lease and time-in-state), `e8750ea` (completions drawn in
+      the composer's bottom edge), `08bc5d5`, `f40be66`, `af6faf2`, `b9abcf1`, `6186949`, `ef31893`.

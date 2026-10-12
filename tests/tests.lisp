@@ -2111,7 +2111,12 @@ than an oversight."
                     ;; and a list of areas that omits the one a constructor moved into would report
                     ;; a live call as missing — the same shape the comment below records for the
                     ;; space rule.
-                    "pane-protocol"))
+                    "pane-protocol"
+                    ;; **AND THE FILE THE MARK'S OWN MODULE LIVES IN** — `send-mark` is the only caller
+                    ;; of `make-feedback`, exactly as `%term-send-octets` is of its constructor, and the
+                    ;; list is of src AREAS: a constructor whose one caller is a new file reads as
+                    ;; called-from-nowhere until that file is named here.
+                    "feedback"))
       (ignore-errors (setf sent (concatenate 'string sent (source-of name)))))
     (dolist (ctor (protocol-constructors))
       ;; the call is `(ctor` followed by anything that is not a symbol

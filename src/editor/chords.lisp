@@ -139,9 +139,23 @@ Esc was a second thing to remember per pane."
             ;; here by this head's own reader, so it cannot be confused with `ctrl-r`, which
             ;; IS a control byte and flips the thinking fold. Handling it above the `:ctrl`
             ;; guard is what keeps the two apart: both arrive as `#\r` and differ only in type.
-            (and (eq (getf key :type) :alt) (eql (getf key :ch) #\r)))
+            (and (eq (getf key :type) :alt) (member (getf key :ch) '(#\r #\g #\b) :test #'eql)))
     (if (eq (getf key :type) :alt)
-        (progn (%op-call-draft-open head) t)
+        ;; **THE ALT CHORDS, EACH IN ITS OWN WORD.** `alt-r` opens the operator-call draft; `alt-g` and
+        ;; `alt-b` MARK THE TURN (letibot R81) — *good* and *bad*, and a second press inside five seconds
+        ;; opens the composer to say why.
+        ;;
+        ;; **`alt-b` KEEPS READLINE'S WORD-LEFT WHEREVER THERE IS A WORD TO MOVE OVER**, which is the
+        ;; rule this head already applied to `ctrl-]` against `ctrl-e`: it marks only when the composer
+        ;; is EMPTY, and NIL is what hands the key back to the ladder so the movement it has always meant
+        ;; is untouched. `alt-g` was nobody's, so it needs no gate — and a gate there would be a second
+        ;; rule for a key with no first one.
+        (case (getf key :ch)
+          (#\r (%op-call-draft-open head) t)
+          (#\g (mark-key head "good"))
+          (#\b (if (zerop (length (composer-buffer (head-composer head))))
+                   (mark-key head "bad")
+                   nil)))
     (flet ((pane (mode verb)
              (if (eq (head-mode head) mode)
                  (setf (head-mode head) :normal (head-dirty head) t)

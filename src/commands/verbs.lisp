@@ -42,6 +42,12 @@
     ("switch" . "ID — go to another session")
     ("rename" . "NAME — name the session you are in")
     ("help" . "the key and command reference")
+    ;; **THE OPERATOR'S MARK ON A TURN** (letibot R81): `alt-g` and `alt-b` are the KEYS, and these are
+    ;; the spellings the second press writes into the composer — so the key and the typed verb are the
+    ;; same door, which is what keeps a reader who prefers typing from needing a second path.
+    ("fb" . "NOTE — mark this turn as a note; /fb+ good and /fb- bad")
+    ("fb+" . "NOTE — mark this turn good")
+    ("fb-" . "NOTE — mark this turn bad")
     ("status" . "telemetry, full screen")
     ;; **THE REPL — the head's own image as a screen** (`repl.lisp`). It shares `hack-eval-form`
     ;; with the eval socket, so a form that works at `tui-eval` works here, and the two cannot
