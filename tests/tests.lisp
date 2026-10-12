@@ -12519,6 +12519,35 @@ test that owns it is named, which is the discipline the compaction fixtures alre
     (is (eq :meanwhile (leticl::%notice-kind +meanwhile-notice+))
         "its own kind, so `%notice-folds-p` is true and `/t` can open it")))
 
+(def-test a-click-on-the-pick-card-reads-the-row-the-render-drew (:suite leticl)
+  "**The card's row is READ OFF THE PAINT, not recomputed** (letibot `9e82bdb`). The render places a
+  card at `chrome-top` — the composer's row minus the NOTICE and the STALL rows — while
+  `%pick-card-top` counted only the hint bar, the box and the card. So **with any head note up every
+  click landed one rung off**, and a click on the FIRST rung computed a negative line and selected
+  nothing at all.
+
+  MEASURED by the sweep's batch A, and the fix is the shape the panes have kept all along: the render
+  records where it drew the card (`*card-top*`) and the click reads that."
+  (let* ((h (%on-head :cols 100 :rows 30))
+         (cols (- 100 leticl::+gutter+ leticl::+right-margin+)))
+    (setf (session-items (head-session h)) (leticl::%items-vector nil)
+          leticl::*pick-open* :verbosity)
+    (say h "a note")
+    (leticl::%render h)
+    (let ((top leticl::*card-top*)
+          (bottom-up (- (head-rows h) 1
+                        (length (composer-line h cols))
+                        (length (pick-card-lines h cols)))))
+      (is (integerp top) "**the render RECORDS the row it drew the card from**")
+      (is (not (= top bottom-up))
+          "**and it is NOT the bottom-up number** — a note is up, and that is the one subtraction the
+the old arithmetic could not do. This is the assertion that fails on the unfixed version (:both are
+equal with nothing else on the chrome, which is why the bug needed a note to be seen)"))
+    ;; **AND THE GLOBAL GOES BACK.** `*pick-open*` is a defvar, so a test that sets it and walks away
+    ;; renders a PICK CARD in every test after it — which is how this test's first version broke
+    ;; thirty-four of them, all of them innocent. The head's own kind of defect, in a fixture.
+    (setf leticl::*pick-open* nil)))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of

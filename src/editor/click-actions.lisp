@@ -14,16 +14,23 @@
 (defun %pick-card-top (head)
   "The screen row the picker card's FIRST line landed on.
 
-Recomputed from the layout rather than read off the last paint, because the
-render records where a PANE landed (`*pane-room*`, `*pane-scroll*`) and nothing
-records where a CARD did. The arithmetic is `%render`'s own, bottom up: the hint
-bar is the last row, the composer box sits on it, and the card sits on the box
-(render.lisp:306-312, 396-398). A `*card-top*` set by the render would be the
-honest version of this and belongs to that file."
-  (let* ((cols (max 20 (- (head-cols head) +gutter+ +right-margin+)))
-         (composer-rows (length (composer-line head cols)))
-         (card-rows (length (pick-card-lines head cols))))
-    (- (head-rows head) 1 composer-rows card-rows)))
+ **READ OFF THE LAST PAINT, not recomputed** (letibot `9e82bdb`). The render places a card at
+ `chrome-top`, which is the composer's row minus the NOTICE and the STALL rows — and the arithmetic
+ this used to do counted only the hint bar, the box and the card, so **with any head note up every
+ click landed one rung off**, and a click on the FIRST rung computed a negative line and selected
+ nothing. MEASURED by the sweep's batch A. The render now records the row it drew the card from
+ (`*card-top*` in `render/history-cache.lisp`), which is the same shape the panes have kept all along
+ (`*pane-top*`, `*pane-room*`) — and the old arithmetic survives here ONLY as the fallback for a caller
+ that asks before any paint, where it is the version that is wrong when a note is up."
+  (or *card-top*
+      ;; **THE FALLBACK, and it is the version that is wrong when a note is up** — kept so a caller
+      ;; that asks before any frame has been drawn gets a number rather than a NIL it would have to
+      ;; handle. A click cannot arrive before a frame, so this path is the tests' and the first
+      ;; frame's own, and `chrome-top`'s subtractions (the notice and the stall) are what it cannot do.
+      (let* ((cols (max 20 (- (head-cols head) +gutter+ +right-margin+)))
+             (composer-rows (length (composer-line head cols)))
+             (card-rows (length (pick-card-lines head cols))))
+        (- (head-rows head) 1 composer-rows card-rows))))
 
 (defun %pick-click (head row)
   "A click on the mode/model picker card: the row under the pointer becomes the

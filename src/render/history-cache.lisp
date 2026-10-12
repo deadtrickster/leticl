@@ -774,6 +774,19 @@ it. `%anchor-end` is what re-finds it, `%anchor-forget` is what says a row is go
 against the list it was counted in: the bounds and the lines come out of one walk, so the answer
 to *which row is line 812* is derived from the same arithmetic that made the lines.")
 
+(defvar *card-top* nil
+  "The screen row the CARD's first line landed on, or NIL when no card was drawn.
+
+ **Set by the render where the card is placed, and it exists because the click could not compute it**
+ (letibot `9e82bdb`): a card sits at `chrome-top`, which is the composer's row minus the NOTICE and
+ STALL rows — and the click's own arithmetic (`%pick-card-top`) counted only the hint bar, the box and
+ the card, so with any head note up every click landed one rung off, and a click on the FIRST rung
+ computed a negative line and selected nothing. MEASURED by the sweep's batch A.
+
+ **NIL means no card was drawn**, which is what a click should act on: a state the render never
+ produced is a screen the reader never saw. `%pick-card-top` keeps its old arithmetic only as the
+ fallback for a caller that asks before any paint.")
+
 (defvar *view-start* 0
   "The index, in the SAME list `*hist-bounds*` was counted in, of the first line of the window
  `%viewport-lines` drew last — so a mouse ROW can be turned into an item.
@@ -1584,6 +1597,10 @@ scrolls the transcript by a row every keystroke.
                ;; between what the card was offered and what it took is handed back to
                ;; the transcript rather than left as a gap above it.
                (r (- chrome-top (- room-for-card card-total))))
+          ;; **AND HERE IS THE CARD'S REAL TOP FOR THE CLICK** — `r` is the row the first line is drawn
+          ;; at, after the notice and stall rows have had theirs, which is exactly what `%pick-card-top`
+          ;; could not work out (letibot `9e82bdb`). Set beside `*pane-top*` for the same reason.
+          (setf *card-top* r)
           (flet ((row (line) (put-segments s r gutter line) (incf r)))
             (dolist (line content) (row line))
             (dolist (line card-ladder) (row line))
