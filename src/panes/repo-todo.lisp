@@ -616,11 +616,29 @@ two entries."
             ;; `(when …)` in the segment list, which would leave a NIL segment on every
             ;; unconditional row — a nil in a segment list is a segment the painter cannot
             ;; draw, and the well-formedness check exists to catch exactly that.
-            (let ((handle (getf (getf item :when) :handle))
-                  (needs (getf item :needs)))
+            (let* ((handle (getf (getf item :when) :handle))
+                   ;; **THE JOB'S OWN NAME BESIDE ITS COUNTER** (letibot `5054187`, and the operator's own
+                   ;; ask in it: *«"waits on j97" - make j97 a link to the real job, also render job
+                   ;; slug»*). `j57` is a counter, so the handle alone tells a reader nothing about WHICH
+                   ;; job — the daemon's table already holds the name the caller gave it, and this row
+                   ;; can reach it. **A name and NOT the command**: `job-label` falls back to the command
+                   ;; for a pane with a column to spare, and a todo row has no room for one — a job the
+                   ;; table does not name, or does not list at all, draws the bare handle as before.
+                   ;; **THE HEAD IS `*payload-head*`, WHICH IS THIS ROW'S PAINTER'S OWN.**
+                   ;; `%todo-item-lines` takes an item and no head — it is called from a pane's draw, which
+                   ;; the render calls, and `*payload-head*` is the global the render binds for exactly
+                   ;; this shape (*a row's line function is handed an item, and it needs the head for one
+                   ;; question*). Reaching for `*head*` instead would read whatever other head is in
+                   ;; scope, which is the guess that global exists to avoid.
+                   (job (and handle *payload-head*
+                             (find handle (head-jobs *payload-head*)
+                                   :key (lambda (j) (getf j :id)) :test #'equal)))
+                   (named (let ((n (and job (getf job :name))))
+                            (and n (plusp (length n)) n)))
+                   (needs (getf item :needs)))
               (append
                (and handle
-                    (list (cons (format nil " · waits on ~a" handle) '(:dim t))))
+                    (list (cons (format nil " · waits on ~a~@[ · ~a~]" handle named) '(:dim t))))
                ;; **AND THE ROW'S `needs` EDGES — the plan's DAG, which this pane drew none of.** A row
                ;; that waits on another row, on a CHILD session or on a job, in the wire's own three
                ;; words (`%todo-needs-said`), DIM like the wait above: both are asides ABOUT the row and

@@ -12923,6 +12923,33 @@ whatever the gate had to say.")
     (is (equal "/tmp" leticl::*link-cwd*)
         "and a session's own workspace is still what it resolves against")))
 
+(def-test a-todo-row-that-waits-on-a-job-names-it (:suite leticl)
+  "**`j57` IS A COUNTER**, so a handle alone tells a reader nothing about WHICH job a row is waiting for —
+  the operator's own ask, and letibot `5054187` carries it verbatim: *«\"waits on j97\" - make j97 a link to
+  the real job, also render job slug»*. The daemon's table already holds the name the caller gave the job,
+  and the row can reach it.
+
+  **The NAME and not the command**: `job-label` falls back to the command for a pane with a column to
+  spare, and a todo row has no room for one. A job nobody named — or one the table does not list — draws
+  the bare handle exactly as before."
+  (let ((h (%on-head :cols 140 :rows 30)))
+    (setf (head-jobs h) (list (list :id "j97" :name "pg-timing" :command "cargo bench")
+                              (list :id "j98" :name "" :command "the fold's tests"))
+          (session-items (head-session h)) (leticl::%items-vector nil))
+    (let ((leticl::*payload-head* h))
+      (flet ((said (item)
+               (format nil "~{~a~}"
+                       (mapcar (lambda (l) (if (null l) "" (format nil "~{~a~}" (mapcar #'car l))))
+                               (leticl::%todo-item-lines item "model" nil)))))
+        (is (search "waits on j97 · pg-timing" (said (list :content "the port" :when (list :handle "j97"))))
+            "**the row names the job it waits on, beside its counter**")
+        (is (search "waits on j98" (said (list :content "the port" :when (list :handle "j98"))))
+            "and a job NOBODY named draws the bare handle")
+        (is (not (search "j98 ·" (said (list :content "the port" :when (list :handle "j98")))))
+            "**with no stray separator** — the command is not smuggled in where the name would be")
+        (is (search "waits on j99" (said (list :content "the port" :when (list :handle "j99"))))
+            "nor does a job the table does not list lose its handle")))))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of
