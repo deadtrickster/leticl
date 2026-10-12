@@ -1356,16 +1356,16 @@ nothing is worse than a shorter hint."
 ;;; arm above it matched `:jobs` first, so it had never been drawn. Same words, same
 ;;; place, one arm.
 
-(defmethod pane-hint ((pane help-pane) head) (declare (ignore head)) "esc closes this")
-(defmethod pane-hint ((pane status-pane) head) (declare (ignore head)) "esc closes this")
+(defmethod pane-hint ((pane help-pane) head) (declare (ignore head)) (surface-hint :help))
+(defmethod pane-hint ((pane status-pane) head) (declare (ignore head)) (surface-hint :status))
 
 (defmethod pane-hint ((pane slash-pane) head)
   (declare (ignore head))
-  "↑↓ and the wheel scroll · esc closes")
+  (surface-hint :slash))
 
 (defmethod pane-hint ((pane picker-pane) head)
   (declare (ignore head))
-  "type a number to switch · /new [title] · esc closes")
+  (surface-hint :picker))
 
 (defmethod pane-hint ((pane todos-pane) head)
   (declare (ignore head))
@@ -1420,6 +1420,17 @@ nothing is worse than a shorter hint."
 (surface-bind :todos "h" "hides the done ones")
 (surface-bind :todos "pgup/pgdn" "scrolls")
 (surface-bind :todos "esc" "closes")
+;; **AND THE PANES THAT DESCRIBE THEMSELVES**, each beside the method that draws it. The four here are
+;; the ones whose hint was a sentence typed into that method; the panes whose hints are SEGMENT lists
+;; (the term pane's, whose sentence is about the PROGRAM rather than about this head's keys) are their own
+;; question and are not forced into a shape they do not have.
+(surface-bind :help "esc" "closes this")
+(surface-bind :status "esc" "closes this")
+(surface-bind :slash "↑↓ and the wheel" "scrolls")
+(surface-bind :slash "esc" "closes")
+(surface-bind :picker "a number" "switches to that session")
+(surface-bind :picker "/new [title]" "starts a fresh session")
+(surface-bind :picker "esc" "closes")
 
 
 ;; the dashboard's hint is GENERATED FROM ITS OWN BINDING TABLE (dash.lisp), so a pane

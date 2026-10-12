@@ -110,5 +110,16 @@ way."
                                   (list (cons (make-string 19 :initial-element #\space) nil)
                                         (cons l nil)))))
               *help-rows*)
+     ;; **AND EACH PANE'S OWN KEYS, READ FROM THE PANE** (letibot `bcfb724`). The rows above are the
+     ;; CONVERSATION's keys, kept by hand because they are the head's own; these are what each SURFACE
+     ;; declared, so a pane that changed its keys changed this page too — which is the whole reason the
+     ;; bottom bar and this screen are one table rather than two lists in step.
+     (loop for mode in (remove-duplicates (mapcar #'first *surface-keys*))
+           append (list nil
+                        (list (cons (format nil "  the ~(~a~) pane's own keys:" mode) '(:dim t)))
+                        (mappend (lambda (pair)
+                                   (list (cons (format nil "  ~16a" (first pair)) '(:fg :cyan))
+                                         (cons (second pair) nil)))
+                                 (surface-keys mode))))
      (list nil (list (cons "  /help or esc closes this" '(:dim t)))))))
 
