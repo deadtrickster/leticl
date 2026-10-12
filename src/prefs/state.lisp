@@ -23,6 +23,16 @@
                              ; renderer's business
         :thinking "folded"   ; `open` or `folded`
         :tools "folded"
+        ;; **A THEME, AND THE ROLES IT OVERRIDES** (letibot `d7288a8`, the sweep's batch D). `:theme` is
+        ;; the NAME of a file under the head's own `themes/` directory; `:colors` is what `color.ROLE =
+        ;; "…"` lines resolved to, as `(ROLE-KEYWORD . STYLE-SPEC)` — parsed HERE rather than at paint
+        ;; time, so a role the head does not draw is named in `load-prefs`' notes and not ignored.
+        ;;
+        ;; **BOTH ARE ABSENT FROM `save-prefs`' `ours` LIST ON PURPOSE.** That function preserves every
+        ;; line it does not own, so a theme survives the config pane and a hand-edited one survives
+        ;; everything — which is the reference's own rule for exactly these two keys.
+        :theme nil
+        :colors nil
         :raw-calls nil       ; show the model's `<function=…>` markup under a call
         ;; **A NEW PROJECT'S STARTER TODOS.** `nil` is off; `t` reads the default template file
         ;; (`todo-template-path`); a STRING is a path to another file, which is what makes this one
@@ -76,6 +86,8 @@
 (defun prefs-todo-template (p) (getf p :todo-template))
 (defun prefs-path (p)     (getf p :path))
 (defun prefs-git-format (p) (getf p :git-format))
+(defun prefs-theme (p)     (getf p :theme))
+(defun prefs-colors (p)    (getf p :colors))
 
 (defun %prefs-with-every-key (p)
   "P with every key in `*prefs-defaults*` present, a missing one pushed on the FRONT.
@@ -110,5 +122,7 @@ the caller still holds, so the honest place to repair it is where the plist is a
 (defun (setf prefs-verbosity) (v p) (setf (getf p :verbosity) v))
 (defun (setf prefs-todo-template) (v p) (setf (getf p :todo-template) v))
 (defun (setf prefs-path) (v p)     (setf (getf p :path) v))
+(defun (setf prefs-theme) (v p)  (setf (getf p :theme) v))
+(defun (setf prefs-colors) (v p) (setf (getf p :colors) v))
 (defun (setf prefs-git-format) (v p) (setf (getf p :git-format) v))
 

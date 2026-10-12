@@ -13035,6 +13035,30 @@ whatever the gate had to say.")
   (is (every (lambda (pair) (not (null (leticl::role-look (car pair))))) leticl::+theme-roles+)
       "**and every role in it is one the draw sites actually ask**"))
 
+(def-test a-theme-and-a-color-line-are-read-and-a-stranger-is-named (:suite leticl)
+  "**A THEME IS CONFIGURATION, AND CONFIGURATION NAMES WHAT IT CANNOT READ** (letibot `d7288a8`, the
+  sweep's batch D): `theme = \"loud\"` names a file under the head's own `themes/`, and
+  `color.failure = \"fg:red bold\"` overrides one role.
+
+  **Both halves are checked where the reader is TOLD** — `load-prefs`' notes are the only place that is
+  — so a role the head does not draw and a look it cannot read are each named rather than dropped. The
+  reference's own acceptance test expects exactly *``wat`` is not a role*."
+  (let ((file (merge-pathnames "leticl-theme-test.toml" (uiop:temporary-directory))))
+    (unwind-protect
+         (progn
+           (with-open-file (s file :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (format s "theme = \"loud\"~%color.failure = \"fg:red bold\"~%color.wat = \"bold\"~%color.pending = \"fg:nope\"~%"))
+           (multiple-value-bind (p notes) (leticl::load-prefs file)
+             (is (equal "loud" (leticl::prefs-theme p))
+                 "**the theme NAME is kept as written** — nothing resolves it here")
+             (is (equal '((:failure :bold t :fg :red)) (leticl::prefs-colors p))
+                 "and a colour line is PARSED, here, into this head's own canonical style spec")
+             (is (some (lambda (n) (search "`wat` is not a role" n)) notes)
+                 "**a name that is not a role is NAMED** — the reference's acceptance test's own words")
+             (is (some (lambda (n) (search "not a colour or an attribute" n)) notes)
+                 "and so is a look it cannot read, with a role it DOES know")))
+      (ignore-errors (delete-file file)))))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of

@@ -315,6 +315,30 @@ than the bad line. Returns `(values prefs notes)`."
                                         value
                                         (mapcar #'verbosity-name +verbosity-ladder+))
                                 notes)))))
+              ;; **A THEME, AND THE ROLES IT OVERRIDES** (letibot `d7288a8`): `theme = "loud"` names a file
+              ;; under the head's own `themes/`, and `color.failure = "fg:red bold"` overrides one role.
+              ;;
+              ;; **BOTH HALVES ARE CHECKED HERE RATHER THAN AT PAINT TIME.** A role the head does not draw
+              ;; and a look it cannot read are each NAMED in the notes — the only place a reader is told
+              ;; anything — and the reference's own acceptance test expects exactly *`wat` is not a
+              ;; role*. A theme that parsed and then painted as nothing would be a reader believing they
+              ;; had changed something they had not.
+              ((string= key "theme")
+               (setf (prefs-theme p) value))
+              ((uiop:string-prefix-p "color." key)
+               (let* ((name (subseq key 6))
+                      (role (theme-role-of name)))
+                 (cond
+                   ((null role)
+                    (push (format nil "head.toml: `~a` is not a role" name) notes))
+                   (t
+                    (multiple-value-bind (spec bad) (parse-look value)
+                      (if bad
+                          (push (format nil "head.toml: color.~a: `~a` is not a colour or an attribute"
+                                        name bad)
+                                notes)
+                          (setf (prefs-colors p)
+                                (append (prefs-colors p) (list (cons role spec))))))))))
               ((string= key "git_format")
                 ;; **A QUOTED TEMPLATE, or `false` for the default.** A bare `git_format = %b`
                 ;; would be a template nobody meant, so it has to be quoted the way
