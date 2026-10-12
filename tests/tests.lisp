@@ -12486,6 +12486,20 @@ worked for the merge queue.
     (is (search "needs child s-abc"
                 (said (list :content "the port" :needs (list (list :kind "child" :id "s-abc")))))
         "**a CHILD edge is drawn with the id `task` handed back**")
+    ;; **A CHILD IS DRAWN BY ITS SHORT NAME** (letibot `5054187`, `wait_label`'s own arm): what tells two
+    ;; children apart is the TAIL of an `s-…-sub-…` id, and the whole thing is what the row's DETAIL
+    ;; view is for — `registry::short_id`'s rule, which is `…` and the last eight characters.
+    (is (search "…03570463"
+                (said (list :content "the port"
+                            :needs (list (list :kind "child"
+                                               :id "s-1789919514688401228-sub-1791743034603570463")))))
+        "**a child's whole id is shortened to its LAST EIGHT characters** — `registry::short_id`'s own
+  rule, with the `…` that says so")
+    (is (not (search "1789919514688401228"
+                     (said (list :content "the port"
+                                 :needs (list (list :kind "child"
+                                                    :id "s-1789919514688401228-sub-1791743034603570463"))))))
+        "and the head of a long id is NOT on the row")
     (is (search "needs \"land the gate\""
                 (said (list :content "the port"
                             :needs (list (list :kind "row" :content "land the gate")))))

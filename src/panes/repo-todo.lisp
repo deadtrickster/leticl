@@ -538,6 +538,16 @@ error."
        (mapcar (lambda (l) (list (cons (format nil "~a        ~a" pad l) '(:dim t))))
                detail)))))
 
+(defun %short-id (id)
+  "ID as the reference shortens one: `…` and its LAST EIGHT characters, or the whole thing when it is
+ already short.
+
+ **The rule is `registry::short_id`'s own** (letibot `5054187`), and it is the right one here because a
+ child's id is `s-…-sub-…`: what tells two children apart is the TAIL, and the whole id is kept in the
+ row's detail view — which the reference's own comment says is the one place it can still be read."
+  (let ((n (length id)))
+    (if (<= n 10) id (format nil "…~a" (subseq id (- n 8))))))
+
 (defun %todo-needs-said (needs)
   "A row's `needs` EDGES as one sentence — *what the row waits on before it can start*.
 
@@ -548,7 +558,20 @@ error."
  be lost*), so a reader that drew nothing for it would be showing a plan with a hole in it."
   (format nil " · needs ~{~a~^, ~}"
           (mapcar (lambda (n)
-                    (cond ((equal (getf n :kind) "child") (format nil "child ~a" (or (getf n :id) "?")))
+                    (cond ((equal (getf n :kind) "child")
+                           ;; **A CHILD IS DRAWN BY ITS SHORT NAME, AND ITS ROLE WHEN THE PANE KNOWS IT**
+                           ;; (letibot `5054187`, `wait_label`'s own arm): the whole `s-…-sub-…` is what
+                           ;; the row's detail view is for. `*payload-head*` is the head this row's
+                           ;; painter runs under — the same global the wait line's job lookup uses.
+                           (let* ((id (or (getf n :id) "?"))
+                                  (row (and *payload-head*
+                                            (ignore-errors
+                                             (find id (subagent-rows *payload-head*)
+                                                   :key (lambda (r) (getf r :session-id))
+                                                   :test #'equal))))
+                                  (role (getf row :role)))
+                             (format nil "child ~a~@[ · ~a~]" (%short-id id)
+                                     (and role (plusp (length role)) role))))
                           ((equal (getf n :kind) "job") (format nil "job ~a" (or (getf n :handle) "?")))
                           ((equal (getf n :kind) "row") (format nil "\"~a\"" (or (getf n :content) "?")))
                           (t "a kind this build does not know")))
