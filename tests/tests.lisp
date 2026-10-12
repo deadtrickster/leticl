@@ -6033,11 +6033,20 @@ depends on whether the tree is dirty."
                                     :pieces (list (cons "main" '(:fg :green))
                                                   (cons "!1" '(:fg :yellow))
                                                   (cons "?2" '(:dim t)))
-                                    :at 0)))
+                                    ;; **`:at` IS NOW, AND `0` MADE THIS A FLAKE — MEASURED ON
+                                    ;; `main`'s MERGE GATE (2026-10-11).** The cache is judged stale at
+                                    ;; `(>= (- now (getf cache :at)) +git-refresh-ms+)`, so a stub dated
+                                    ;; 0 is ALWAYS stale: the reader thread was free to re-read git
+                                    ;; and draw the REAL branch between the stub and the assertion. It
+                                    ;; passed here and failed in the gate, which is what a race looks
+                                    ;; like from outside — a fresh stamp means nothing refreshes
+                                    ;; under the assertion.
+                                    :at (leticl::internal-real-time-ms))))
       (leticl::%render h)
       (is (search "(main!1?2)" (%screen-text h)) "the segments are drawn beside the workspace")
       (setf leticl::*git-cache* (list :dir "/somewhere/else"
-                                      :pieces (list (cons "trunk" '(:fg :green))) :at 0))
+                                      :pieces (list (cons "trunk" '(:fg :green)))
+                                      :at (leticl::internal-real-time-ms)))
       (leticl::%render h)
       (is (not (search "trunk" (%screen-text h)))
           "another directory's reading is NOT drawn under this workspace"))
@@ -8266,12 +8275,17 @@ SENTENCE is still a note, because a note is all there is."
   "The announcement, published BEFORE the compaction runs, from the same code.")
 
 (defparameter +letibot-no-progress+
-  (format nil "compacted from 943000 to 940000 tokens and that is STILL within 62499 ~
-               of the 999999 window, so automatic compaction is now off for this ~
-               session rather than looping once per turn. The summary itself is near ~
-               the wall: start a fresh session, or raise --context-window if the ~
-               server really has more.")
-  "A compaction that ran and did not help.")
+  (format nil "compacted from 943000 to 940000 tokens (MEASURED by the provider) and that is ~
+               STILL within 62499 of the 999999 window after every fold — ordinary, smaller ~
+               tail, sliced — so compaction before a turn is off for this session rather than ~
+               looping once per turn. A turn the provider refuses is still folded; a measured ~
+               count under 937500 re-arms it, as do `/compact` and `/auto-compact on`. The ~
+               summary itself is near the wall: start a fresh session, or raise ~
+               --context-window if the server really has more.")
+  "A compaction that ran and did not help — **letibot `50b3e55`'s wording**, where the sentence grew
+`(MEASURED by the provider)` beside the numbers and now says what RE-ARMS it. The parser reads the
+numbers by position around its fixed words, so the reword left it working; the guard above is what
+proves that rather than assuming it.")
 
 (defparameter +letibot-with-summary+
   (format nil "compacted: 941290 → 9449 tokens, on transcript s-1#t15. Nothing of the ~
@@ -8667,8 +8681,14 @@ pass on a string that only LOOKS right."
 the facts on a compaction row from. If it moved, `compaction-facts` moves with it; until
 then every compaction is a note again." marker)))
           (dolist (marker '("{r} of {w} {unit} resident{basis}, leaving less than the {h} the next turn needs"
-                            "compacted: {before} → {} {unit} resident{estimated}."
-                            "compacted from {r} to {} tokens and that is STILL within {h} of the {w} window"
+                            ;; **RE-PINNED AT THE MERGE GATE (2026-10-11)**: letibot `50b3e55` reworded
+                            ;; both of these — the account is now `resident.` (or `resident, estimated
+                            ;; until the next round …`), and the no-progress sentence grew `(MEASURED by
+                            ;; the provider)` and renamed its arguments (`{r}`/`{w}`/`{h}` became
+                            ;; `{before}`/`{window}`/`{headroom}`). The guard fired on `main`'s merge
+                            ;; gate, which is where a reword is supposed to be caught.
+                            "compacted: {before} → {} {unit} resident."
+                            "compacted from {before} to {measured} {unit} (MEASURED by the provider) and that is STILL within {headroom} of the {window} window"
                             "the automatic compaction did not run"))
             (is (search marker harness)
                 (format nil "**letibot's harness.rs still writes `~a`** — see above." marker)))

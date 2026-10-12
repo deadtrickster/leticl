@@ -249,6 +249,23 @@ answered together or not at all.")
     ;; list and draw red. Caught by `a-routine-warning-code-is-one-letibot-calls-routine` in
     ;; the 2026-10-11 sweep, which is the guard working.
     "merge_queue_recovered" "queue_lease_lost"
+    ;; **SEVEN MORE, ALL `Class::Routine` IN letibot's TABLE, FOUND BY THE GUARD ON `main`'s MERGE GATE**
+    ;; (2026-10-11): `reseat_tight` (`50b3e55`, *a verbatim reseat that went ahead under the window
+    ;; but short of a turn's room — compaction makes the room, as before*), `restart_restored` and
+    ;; `restart_reminded`, `queue_waiting_for_vm` and `queue_target_proposed` (`prefix_current`,
+    ;; `operator_question_settled`). Letibot had moved and this head's copy had not, which is exactly
+    ;; the drift `a-routine-warning-code-is-one-letibot-calls-routine` exists to catch — and it caught
+    ;; it at the merge gate rather than on the operator's screen, which is the whole point of the guard.
+    "restart_restored" "restart_reminded" "reseat_tight"
+    "queue_waiting_for_vm" "queue_target_proposed"
+    "prefix_current" "operator_question_settled"
+    ;; **AND SIX MORE FROM THE SAME DIFF** — the merge gate's guard is bidirectional and letibot had
+    ;; moved further than the first list showed: `feedback`, `cleared`, `auto_decision` (*a question's
+    ;; default taken when the operator did not answer*), `nags_paused` and `nags_resumed` (the nag
+    ;; being silenced and coming back), and `store_busy_wait`. All `Class::Routine` in
+    ;; `crates/sessionlog/src/warning.rs`, which is the file the guard reads.
+    "feedback" "cleared" "auto_decision"
+    "nags_paused" "nags_resumed" "store_busy_wait"
     ;; **`daemon_stopping_runs`** — the daemon is stopping and there are runs in
     ;; flight; a receipt for the wait. Routine because the daemon said it would
     ;; stop and did.
