@@ -12683,6 +12683,33 @@ whatever the gate had to say.")
         "**an unreadable emergency is drawn as it stands**")
     (is (eq :red (leticl::%notice-kind odd)) "though it is still an emergency, so it still folds")))
 
+(def-test a-stopped-review-is-one-row-with-the-clause-that-turns-it (:suite leticl)
+  "**A REVIEW THAT STOPPED IS A PARAGRAPH AND WAS DRAWN AS ONE** (letibot `f076792`, the sweep's batch
+  A): the daemon writes what the reviewer said, at length, with the two verbs that would move it folded
+  into the middle of the prose. The reference draws ONE row — the branch, the verdict word, and the
+  clause that turns it — and leaves the rest to the click.
+
+  **The clause that turns it is the `BUT` sentence**, which is the reference's own marker, and the tests
+  below use the daemon's real shapes (`review_cannot_decide_notice.txt`, `review_blocked_notice.txt`)."
+  (let ((decided (format nil "The reviewer of `agent/panic-groupingsets-join` (`s-1-sub-2`), a branch of ~
+                             your tree, could not decide: the two root causes are the right ones and both ~
+                             patches are correct in themselves. The patch is at the right site. But not ~
+                             the wrong ones. BUT the ask's acceptance cannot be met on this base, and the ~
+                             branch's own measurements say it was not met. The operator is asked.")))
+    (let ((row (first (leticl::%notice-card-lines decided))))
+      (is (search "‼ agent/panic-groupingsets-join · could not decide" row)
+          "**the branch and the verdict, in one row**")
+      (is (search "the ask's acceptance cannot be met" row)
+          "**and the clause that TURNS it** — the `BUT` sentence, not the first sentence")
+      (is (not (search "The operator is asked" row))
+          "and the two verbs that would move it are the CLICK's, not the row's"))
+    (is (eq :review (leticl::%notice-kind decided)) "its own kind, so it folds like the settlements do"))
+  ;; and the other shape the daemon writes, which opens differently
+  (let ((blocked (format nil "The review of `agent/x` (`s-1-sub-2`), a branch of your tree, is BLOCKED and ~
+                              nothing lands it: the reviewer vanished without a verdict")))
+    (is (search "‼ agent/x · BLOCKED" (first (leticl::%notice-card-lines blocked)))
+        "a BLOCKED review is the same row, with the other opening")))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of

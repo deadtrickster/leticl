@@ -37,6 +37,12 @@ the daemon's, the same discipline as the other two: the text is what says what i
         ;; at SHA in REPO is RED: why`, and this head knew only the three settlement openings — so the
         ;; whole paragraph, gate output and memory line and all, was drawn as PROSE.
         ((and (stringp text) (uiop:string-prefix-p "EMERGENCY — " text)) :red)
+        ;; **AND A REVIEW THAT STOPPED** (letibot `f076792`): the daemon says the review of a branch
+        ;; *could not decide*, or is `BLOCKED`, and writes a paragraph about why — with the two verbs
+        ;; that would move it folded into the middle of that prose.
+        ((and (stringp text)
+              (or (uiop:string-prefix-p "The reviewer of " text)
+                  (uiop:string-prefix-p "The review of " text))) :review)
         (t nil)))
 
 (defun %notice-folds-p (text)
@@ -107,6 +113,30 @@ with `- ` after trim, and everything after them is the closing sentence."
                 (and tail (plusp (length (string-trim " " (subseq tail 0 stop))))
                      (string-trim " " (subseq tail 0 stop))))))))
 
+(defun %review-line (text)
+  "The daemon's review notice as ONE line — or NIL when it is not the shape it claims.
+
+ **THE STABLE PARTS ONLY**, the reference's own rule for this one (`f076792`): the BRANCH, the verdict
+ word, and — when a sentence answers *why it stopped* — the clause that opens `BUT`, which is the
+ reference's own marker for the sentence that turns a verdict. The rest of the paragraph, the operator's
+ two verbs included, is what the CLICK is for."
+  (let* ((branch-open (search "`agent/" text))
+         (branch (and branch-open
+                      (let ((close (position #\` text :start (1+ branch-open))))
+                        (and close (subseq text (1+ branch-open) close)))))
+         (verdict (cond ((search "could not decide" text) "could not decide")
+                        ((search "BLOCKED" text) "BLOCKED")
+                        ((search "needs a person" text) "needs a person")
+                        (t nil)))
+         (but (search "BUT " text))
+         (clause (and but
+                      (let* ((from (+ but 4))
+                             (stop (or (position #\. text :start from) (length text))))
+                        (string-trim " " (subseq text from stop))))))
+    (when (and branch verdict)
+      (format nil "‼ ~a · ~a~@[ · ~a~] · click for details"
+              branch verdict (and clause (plusp (length clause)) clause)))))
+
 (defun %notice-card-lines (text)
   "The notice as ROWS — the parts the operator asked to see, each on its own line.
 
@@ -154,6 +184,15 @@ it is worse than a key."
         ((uiop:string-prefix-p "EMERGENCY — " line)
          (push (or (let ((one (leticl::%red-target-line line)))
                      (and one (format nil "‼ ~a" one)))
+                   line)
+               out))
+        ;; **AND A REVIEW THAT STOPPED IS ONE ROW TOO** (letibot `f076792`) — the paragraph it comes in
+        ;; runs to hundreds of words of reasoning and ends with the two verbs that would move it; the
+        ;; row keeps the branch, the verdict and the clause that turns it, and the click keeps the rest.
+        ((or (uiop:string-prefix-p "The reviewer of " line)
+             (uiop:string-prefix-p "The review of " line))
+         (push (or (let ((one (%review-line line)))
+                     (and one one))
                    line)
                out))
         ((uiop:string-prefix-p "- " (string-left-trim " " line))
