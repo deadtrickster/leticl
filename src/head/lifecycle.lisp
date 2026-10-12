@@ -47,6 +47,19 @@ uses, so the two doors cannot disagree about which frame brings a session in (T4
     ;; reading here means the very first paint is already right (S5).
     (dolist (note (load-prefs-into head))
       (say head (format nil "~a~@[ · ~a~]" note (head-status-note head))))
+    ;; **AND THE THEME, WHICH IS WHAT THOSE PREFS SAY EVERY ROLE IS DRAWN WITH** (letibot `d7288a8`).
+    ;; The prefs are in, so this is the first moment `*role-looks*` can be told — and it is told ONCE per
+    ;; head rather than per frame, because a theme is a FILE: a file read in a paint path is a file read
+    ;; sixty times a second, and the render is the one place this head cannot afford that.
+    ;;
+    ;; **A NOTE HERE IS SAID LIKE ANY OTHER STARTUP NOTE.** A theme line that names a role nobody draws,
+    ;; or a look the parser cannot read, is exactly the kind of thing the reader is owed a sentence about
+    ;; — and `theme-looks` names them rather than dropping them.
+    (multiple-value-bind (looks theme-notes)
+        (theme-looks (prefs-theme (head-prefs head)) (prefs-colors (head-prefs head)))
+      (setf *role-looks* looks)
+      (dolist (note theme-notes)
+        (say head (format nil "~a~@[ · ~a~]" note (head-status-note head)))))
     ;; **THE DASHBOARDS THIS HEAD SHIPS, registered at startup and COLLECTING LATER.** Without
     ;; this a fresh head had the vocabulary and no panels — measured: *"I restarted, no
     ;; dashboards"* — because the only thing that ever registered one was a hand-typed eval.
