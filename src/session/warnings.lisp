@@ -241,6 +241,16 @@ answered together or not at all.")
     ;; operator typed at the `!` prompt and the daemon ran; the same class as
     ;; `operator_call_ran` — a sentence about something that worked.
     "operator_shell_ran"
+    ;; **FOUR MORE FROM THE REFERENCE, `warning.rs:385-393`**, and the guard caught all four the day
+    ;; letibot moved — the reverse of what it usually catches, which is why it is written as a SET
+    ;; comparison rather than as a list this head only adds to.
+    ;;
+    ;; `target_green` and `queue_branch_kept` are *reports, not faults* in the reference's own comment
+    ;; (a queue branch is green, or it is kept because it is dirty or its session still lives); a daemon
+    ;; worker's START (`daemon_starting`) and the start itself (`daemon_started`) are the same class.
+    ;; This head drew every one of them RED — an alarm for housekeeping, which is R19 itself, and exactly
+    ;; the direction the guard exists for.
+    "target_green" "queue_branch_kept" "daemon_starting" "daemon_started"
     ;; **`subagents_stopped`** — from the supervision tree (daemon `fb479d8`): the
     ;; daemon stopped a session's tree and this is the receipt. A sentence about
     ;; something the operator asked for that worked.
