@@ -12996,6 +12996,45 @@ whatever the gate had to say.")
           (is (null (leticl::%todo-wait-at h target 0))
               "**and a pointer anywhere else on the row is NOT** — that click belongs to the row"))))))
 
+(def-test a-look-line-parses-into-this-heads-own-style-spec (:suite leticl)
+  "**THE PARSER IS THE WHOLE OF WHAT A THEME FILE CAN SAY** (letibot `d7288a8`, the sweep's batch D).
+
+  Three colour forms — a slot name, `#rrggbb` and `cube:N` — which are exactly `%color-sgr`'s own, so a
+  parsed look cannot be something the renderer cannot draw. Six attributes, which are exactly
+  `%style-sgr`'s arms. `plain` for the default, which is a thing a reader may say DELIBERATELY — an empty
+  `color.x =` is a typo far more often than a decision.
+
+  **And a word it cannot read answers with the WORD**, so a caller can say which part of a line was wrong
+  rather than that the line was: a reader fixing a theme should not have to guess at it."
+  (flet ((look (s) (multiple-value-list (leticl::parse-look s))))
+    (is (equal '((:fg :red) nil) (look "fg:red")) "a slot name")
+    (is (equal '((:bold t :fg :cyan :bg :green) nil) (look "bold fg:cyan bg:green"))
+        "**two colours and an attribute, in `*style-key-order*` however they were written**")
+    (is (equal '((:fg (255 0 0)) nil) (look "fg:#ff0000")) "truecolor")
+    (is (equal '((:fg 123) nil) (look "fg:cube:123")) "and the cube")
+    (is (equal '((:reverse t) nil) (look "reverse")) "an attribute alone")
+    (is (equal '(nil nil) (look "plain")) "**`plain` is the default, said on purpose**")
+    ;; --- and the refusals, each naming the word that stopped it
+    (is (equal '(nil "wat") (look "bold wat"))
+        "**a word nobody knows is refused WITH THE WORD** — not silently ignored")
+    (is (equal '(nil "fg:notacolour") (look "fg:notacolour"))
+        "and so is a colour outside the three forms")
+    (is (equal '(nil "fg:#gg0000") (look "fg:#gg0000")) "including a malformed `#rrggbb`")
+    (is (equal '(nil "fg:cube:999") (look "fg:cube:999")) "and a cube index past 255")))
+
+(def-test the-theme-role-table-refuses-a-name-it-does-not-know (:suite leticl)
+  "**THE TABLE IS THE CONTRACT** (letibot `d7288a8`): the reference's own acceptance test expects
+  *``wat`` is not a role*, and a silent drop is how a reader comes to believe they have themed something
+  they have not. The keywords are `role-look`'s own, because that is the door every draw site asks."
+  (is (eq :failure (leticl::theme-role-of "failure")) "a role the table names")
+  (is (eq :operator (leticl::theme-role-of "operator_block"))
+      "**and the file's own spelling of the operator's block** — a person writes `operator_block`")
+  (is (null (leticl::theme-role-of "wat")) "while a name it does not know answers NIL")
+  (is (null (leticl::theme-role-of "fg")) "including a colour word, which is not a role either")
+  ;; every role the table names must be one `role-look` can answer, or a theme would set a door nobody reads
+  (is (every (lambda (pair) (not (null (leticl::role-look (car pair))))) leticl::+theme-roles+)
+      "**and every role in it is one the draw sites actually ask**"))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of
