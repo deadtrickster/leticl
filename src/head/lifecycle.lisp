@@ -22,7 +22,7 @@ push ran `(defparameter *stdout* nil)` and the operator's head exited)."
       (setf *stdout* (sb-sys:make-fd-stream 1 :output t :element-type 'character
                                             :external-format :utf-8 :buffering :none))))
 
-(defun run (&key socket-path session-id new-title resume-id)
+(defun run (&key socket-path session-id new-title resume-id theme-template)
   "Attach to a daemon and run until /quit or ctrl+d. NEW-TITLE asks the daemon for
 a fresh session under that name right after the attach — `letibot --new TITLE`
 through `scripts/leticl-head`, the same two frames `/new` sends from the composer.
@@ -32,6 +32,14 @@ daemon HOLDS is named on the ATTACH; one on disk is not the daemon's yet, so an 
 refused. `--resume ID` therefore attaches as it would with no id and holds the ask in
 `*pending-resume*`, which the first Hello consumes — through `%switch-to`, the same path the picker
 uses, so the two doors cannot disagree about which frame brings a session in (T4 in `TODO.md`)."
+  ;; **THEME-TEMPLATE PRINTS AND LEAVES** (letibot `d7288a8`, whose `--theme-template` does the same):
+  ;; it is a question about THIS BUILD rather than about a session — *which roles may I set, and what do
+  ;; they look like now* — so it answers on stdout and returns before a daemon is looked for. A flag that
+  ;; needed a running daemon to list a table would be a flag nobody can use to write their first theme.
+  (when theme-template
+    (write-string (theme-template) *standard-output*)
+    (force-output)
+    (return-from run nil))
   (setf *pending-resume* (and resume-id (plusp (length resume-id)) resume-id))
   (%open-stdout)
   (unless (plusp (%isatty 1))
