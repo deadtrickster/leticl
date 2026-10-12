@@ -1643,6 +1643,10 @@ scrolls the transcript by a row every keystroke.
         ;; Clamped at BOTH ends: the ladder can be beaten on a two-row terminal,
         ;; and a negative caret row is a cursor the terminal puts wherever it
         ;; likes.
+        ;; **AND THE READER'S SELECTION, LAST OF ALL.** `%paint-selection` reverses the cells the drag
+        ;; covers IN THE BUFFER, so it belongs after everything the frame draws and before the painter
+        ;; diffs it — the diff then emits the change without knowing a selection exists.
+        (%paint-selection s)
         (let ((caret (composer-caret head cols :boxed boxed :max-rows body-rows)))
           (setf *caret* (cons (max 0 (min (1- rows) (+ cursor (car caret))))
                               (max 0 (min (1- term-cols) (+ gutter (cdr caret)))))))))))

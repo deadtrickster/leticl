@@ -124,17 +124,22 @@ for the lists)."
              (shut-overlays)
              (setf (head-mode head) :normal (head-dirty head) t)))
        t)
-      ;; **THE POINTER'S MOVES ARE THEIR OWN ARMS** (letibot `c8622b0`/`a4384ed`, the sweep's batch A):
-      ;; the terminal is asked for any-event tracking (`?1003h`), so motion arrives with NO button down as
-      ;; well as during a drag — and until these arms existed BOTH were dropped on the floor, which is why
-      ;; hover was impossible and why *the whole clickable block lights up* had nothing to light it. They
-      ;; record the cell and mark the frame dirty; what LIGHTS is the render's business.
+      ;; **THE POINTER'S GESTURE IS PRESS → MOTION → RELEASE** (letibot `c8622b0`/`a4384ed`, the sweep's
+      ;; batch A). The terminal is asked for any-event tracking (`?1003h`), so motion arrives with NO
+      ;; button down as well as during a drag — and until these arms existed every one of them was
+      ;; dropped on the floor, which is why hover was impossible and why *the whole clickable block
+      ;; lights up* had nothing to light it.
       ;;
-      ;; Above the press arm and below everything that owns the keyboard, so a card that owns the pointer
-      ;; still gets it: motion over a card is the card's, exactly as its keys are.
-      ((and (eq type :mouse) (eq (getf key :kind) :motion)) (%pointer-move head key))
-      ((and (eq type :mouse) (eq (getf key :kind) :release)) (%pointer-move head key))
-      ((and (eq type :mouse) (eq (getf key :kind) :press) (%click head key)))
+      ;; **THE CLICK IS MADE ON THE RELEASE, NOT THE PRESS**, and that is the reference's own design: a
+      ;; press that acted at once would have opened its overlay before a reader dragged across the row
+      ;; to select part of it. `%pointer-release` hands a single-cell gesture to `%click` with the cell
+      ;; it was PRESSED on, so nothing about a plain click changes except when it happens.
+      ;;
+      ;; Above the press arm and below everything that owns the keyboard, so a card that owns the
+      ;; pointer still gets it: motion over a card is the card's, exactly as its keys are.
+      ((and (eq type :mouse) (eq (getf key :kind) :press)) (%pointer-press head key))
+      ((and (eq type :mouse) (eq (getf key :kind) :motion)) (%pointer-motion head key))
+      ((and (eq type :mouse) (eq (getf key :kind) :release)) (%pointer-release head key))
       ;; **The three overlays keep the arrows even under an ask.** Each is opened
       ;; deliberately, and a permission arriving while one is up must not take the
       ;; arrows out from under the row being read — the reference keeps the

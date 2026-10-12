@@ -3435,13 +3435,30 @@ the head's own stream, a string stream standing in for the socket."
 
 ;;; ------------------------------------------------------- bindings (S9) ;;;
 
+(defun %click-at (head x y)
+  "A COMPLETE click — press and release on the same cell.
+
+ **A CLICK IS TWO EVENTS AND THE HEAD MAKES IT ON THE SECOND** (letibot `c8622b0`): the release is what
+ tells a point (a click) from a span (a selection), so a test that sent only the press would be sending
+ half a gesture and asserting on a click the head never made. The SGR encoding is `M` down and `m` up,
+ and a terminal sends both, so this is what the key loop actually receives."
+  (leticl::%handle-key head (list :type :mouse :x x :y y :button 0 :kind :press))
+  (leticl::%handle-key head (list :type :mouse :x x :y y :button 0 :kind :release)))
 (defun %press (head &rest keys)
   "Press each key in order on HEAD, as the key loop would.
 
 Through `%handle-key`, which is what the loop calls: the head's own chords run
 above every view now, so pressing one straight into `%normal-key` would test a
 path the operator cannot reach."
-  (dolist (k keys) (leticl::%handle-key head k)))
+  ;; **A MOUSE PRESS IS FOLLOWED BY ITS RELEASE, because that is what a terminal sends** — the SGR
+  ;; encoding is `M` for the button going down and `m` for it coming up, and nothing arrives on one
+  ;; without the other. The head makes its CLICK on the RELEASE now (a press with no motion between is a
+  ;; point, not a span), so a helper that stopped after the press tested half a gesture and left the click
+  ;; unmade — thirteen tests failed exactly that way.
+  (dolist (k keys)
+    (leticl::%handle-key head k)
+    (when (and (consp k) (eq (getf k :type) :mouse) (eq (getf k :kind) :press))
+      (leticl::%handle-key head (list* :type :mouse :kind :release (cddr k))))))
 
 (def-test the-new-chords-reach-the-features-they-name (:suite leticl)
   "A chord bound to a feature that does not exist is worse than no chord, which is
@@ -12759,6 +12776,44 @@ whatever the gate had to say.")
     (leticl::%handle-key h (list :type :mouse :kind :motion :x 5 :y 29))
     (is (head-dirty h) "and a different one does")))
 
+(def-test a-drag-selects-a-span-and-a-click-is-a-point (:suite leticl)
+  "**A DRAG IS A SPAN AND A CLICK IS A POINT, and the same three events carry both** (letibot
+  `c8622b0`): press, motion with the button down, release. **The RELEASE decides** — a span of one cell
+  was a click and goes to `%click` with the cell it was PRESSED on, a span of more is a selection and is
+  left standing on the screen.
+
+  **And it is DRAWN**: the selection is a style change on the cells it covers, made in the buffer, so the
+  painter emits it without knowing a selection exists — a selection nobody can see is not a selection."
+  (let ((h (%on-head :cols 100 :rows 30)))
+    (flet ((mouse (kind x y)
+             (leticl::%handle-key h (list :type :mouse :kind kind :x x :y y :button 0))))
+      ;; --- a drag: press, move, release
+      (mouse :press 5 3)
+      (is (null leticl::*selection*) "**a press selects nothing yet** — it is the gesture's first half")
+      (mouse :motion 12 3)
+      (is (equal '((5 . 3) . (12 . 3)) leticl::*selection*) "the motion grows the span")
+      (mouse :release 12 3)
+      (is (equal '((5 . 3) . (12 . 3)) leticl::*selection*)
+          "**and the release LEAVES it standing** — a selection is something the reader made")
+      ;; --- a point, not a span
+      (mouse :press 5 3)
+      (mouse :release 5 3)
+      (is (null leticl::*selection*) "**a press and release on ONE cell is a click**, so no selection")
+      ;; --- and the cells under it are reversed in the buffer itself
+      (mouse :press 4 2)
+      (mouse :motion 8 2)
+      (mouse :release 8 2)
+      (leticl::%render h)
+      (let* ((s (head-screen h))
+             ;; **QUALIFIED, because the test package does not inherit an INTERNAL symbol**: bare
+             ;; `screen-cells` here names `leticl/tests::screen-cells`, which is a different symbol
+             ;; and an undefined function. The head's own code is in the package and needs no prefix.
+             (id (leticl::cell-style
+                  (aref (leticl::screen-cells s)
+                        (+ (* 2 (leticl::screen-cols s)) 5)))))
+        (is (member :reverse (aref leticl::*styles* id))
+            "**the selected cells are REVERSED** — put on top of whatever they already were")))))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of
@@ -16025,15 +16080,15 @@ opens the subagents pane, `1 job running` the jobs pane.
       (is (not (null sub)) (format nil "**the subagents label is a target** while one runs: ~s" targets))
       (is (not (null job)) "and so is the jobs label")
       ;; --- a click on the subagents label opens its pane
-      (leticl::%handle-key h (list :type :mouse :kind :press :x (second sub) :y row))
+      (%click-at h (second sub) row)
       (is (eq :subagents (head-mode h)) "**a click on `N subagents running` opens the subagents pane**")
       (setf (head-mode h) :normal)
       ;; --- and on the jobs label, one column inside its span
-      (leticl::%handle-key h (list :type :mouse :kind :press :x (1+ (second job)) :y row))
+      (%click-at h (1+ (second job)) row)
       (is (eq :jobs (head-mode h)) "and a click on `N jobs running` the jobs pane")
       (setf (head-mode h) :normal)
       ;; --- a click on the EDGE but off the labels is nobody's: the border is not a button
-      (leticl::%handle-key h (list :type :mouse :kind :press :x 8 :y row))
+      (%click-at h 8 row)
       (is (eq :normal (head-mode h))
           "a click elsewhere on the edge opens nothing — the border is not a button")
       ;; --- and with nothing running there is no label, so no target
@@ -16042,7 +16097,7 @@ opens the subagents pane, `1 job running` the jobs pane.
       (leticl::%render-and-paint h)
       (is (null (leticl::%composer-edge-buttons h))
           "**no legend, no buttons** — a target is what the reader can SEE")
-      (leticl::%handle-key h (list :type :mouse :kind :press :x (second sub) :y row))
+      (%click-at h (second sub) row)
       (is (eq :normal (head-mode h))
           "and the coordinates of a label that is no longer drawn open nothing"))))
 
@@ -16064,7 +16119,7 @@ misclick moves somebody's session (app.rs:3639-3651)."
     (let* ((rows (uiop:split-string (%screen-text h) :separator '(#\newline)))
            (row (position-if (lambda (l) (search "writes allowed" l)) rows)))
       (is (not (null row)) "the third choice is on the screen")
-      (leticl::%handle-key h (list :type :mouse :kind :press :x 10 :y row))
+      (%click-at h 10 row)
       (is (= 2 (head-picker-sel h)) "the click marks the row it landed on")
       (is (eq :mode leticl::*pick-open*) "the card stays open")
       (is (null (%sent wire)) "and nothing is taken"))))

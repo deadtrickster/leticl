@@ -292,6 +292,109 @@ coming."
             (head-dirty head) t))
     t))
 
+(defvar *selection* nil
+  "The reader's SELECTION, as `((AX . AY) . (CX . CY))` — the cell the drag started on and the one it is
+ on now — or NIL when nothing is selected.
+
+ **A DRAG IS A SPAN AND A CLICK IS A POINT**, and the two arrive on the same wire: a press, some motion
+ with the button down, and a release. The reference's rule (`c8622b0`) is the one kept here — a press
+ records the anchor, motion with a button down grows the span, and the RELEASE decides: a span of one
+ cell was a click and is handed to `%click`, a span of more is a selection and is not.")
+
+(defvar *press-key* nil
+  "The KEY EVENT the button went down on, whole — kept because the click is finally MADE with it.
+
+ Rebuilding the event from its coordinates was a real bug the suite caught: the arms read more of a mouse
+ key than where it happened (`:button` among them), so a rebuilt one acted differently from the press
+ the reader made. The event is the truth; the cell is derived.")
+
+(defvar *press-at* nil
+  "The cell the button went down on, kept until the release decides which gesture it was.
+
+ It is also the ORIGIN the click is finally made with: by the time a reader has pressed, dragged and
+ released over a row, the cell they meant is the one they PRESSED on, not the one they let go over.")
+
+(defun %pointer-press (head key)
+  "The button went down: remember where, and act on NOTHING at all.
+
+ **THE CLICK MOVES TO THE RELEASE** (letibot `c8622b0`), and that is the whole reason this is not
+ `%click`: a press that acted at once would have opened its overlay before the reader dragged across the
+ row to select part of it. The reference's own test keeps the two apart — *press and release with no
+ motion still opens the edit card it started on* — which is the behaviour this restores by moving it one
+ event later."
+  (setf *press-key* key
+        *press-at* (cons (getf key :x) (getf key :y))
+        *selection* nil
+        (head-dirty head) t)
+  t)
+
+(defun %pointer-motion (head key)
+  "Motion: it GROWS a span when a button is down, and else it is a hover. T either way.
+
+ **The same event means two things and the button is what says which** — a drag's motion is about the
+ selection, and a bare pointer's motion is about what a click would do."
+  (if *press-at*
+      (let ((now (cons (getf key :x) (getf key :y)))
+            (seen (cdr (or *selection* *press-at*))))
+        (unless (equal now seen)
+          (setf *selection* (cons *press-at* now)
+                (head-dirty head) t))
+        t)
+      (progn (%pointer-move head key) t)))
+
+(defun %pointer-release (head key)
+  "The button came up: a SPAN is a selection, a POINT is a click. T always — the gesture was the head's."
+  (let ((was *press-at*)
+        (span *selection*))
+    (setf *press-at* nil)
+    (if (and span (not (equal (car span) (cdr span))))
+        ;; **A SELECTION STAYS UP** — it is something the reader made, and it is cleared by the next
+        ;; press rather than by the act of finishing it, so the copy door has something to read.
+        (progn (setf (head-dirty head) t) t)
+        (progn
+          (setf *selection* nil)
+          (if *press-key*
+              ;; **THE PRESS'S OWN EVENT, with the kind put back** — the arms read more of a mouse key
+              ;; than its coordinates (`:button` among them), so the click is made with the event the
+              ;; reader actually sent.
+              (%click head (list* :type :mouse :kind :press (cddr *press-key*)))
+              (progn (setf (head-dirty head) t) t))))))
+
+(defun %paint-selection (screen)
+  "Reverse the cells the reader has selected, in the buffer ITSELF. T when anything was reversed.
+
+ **THE BUFFER IS WHERE THIS BELONGS.** A frame is a rectangle of cells, each carrying an INTERNED style,
+ so a selection is a style change on the cells it covers — and the painter, which diffs cells, then emits
+ it without knowing what a selection is. Nothing in the paint path learns a new concept.
+
+ **`*styles*` IS THE ID→SPEC TABLE** `style-index` fills, which is why a cell's current look can be read
+ back and a `:reverse` put ON TOP of it rather than replacing it: a selected comment stays the comment's
+ own colour, and a selected keyword stays bold.
+
+ **AN EMPTY SPAN DRAWS NOTHING**, and a span of one cell never becomes a selection at all — it is a
+ click, and `%pointer-release` hands it to `%click` rather than leaving a lone reversed cell behind."
+  (when (and *selection* (not (equal (car *selection*) (cdr *selection*))))
+    (let* ((a (car *selection*))
+           (c (cdr *selection*))
+           ;; **ORDERED BY POSITION, NOT BY TIME**: a drag runs in any direction, and reading the span
+           ;; as *from A to C* would reverse nothing at all on the way back up.
+           (p (if (or (< (cdr a) (cdr c))
+                     (and (= (cdr a) (cdr c)) (<= (car a) (car c))))
+                  a c))
+           (q (if (eq p a) c a))
+           (cols (screen-cols screen))
+           (rows (screen-rows screen)))
+      (loop for y from (cdr p) to (cdr q) do
+        (when (and (>= y 0) (< y rows))
+          (let ((from (if (= y (cdr p)) (car p) 0))
+                (to (if (= y (cdr q)) (car q) (1- cols))))
+            (loop for x from (max 0 from) to (min (1- cols) to) do
+              (let* ((cell (aref (screen-cells screen) (+ (* y cols) x)))
+                     (id (cell-style cell))
+                     (spec (and (< id (length *styles*)) (aref *styles* id))))
+                (setf (cell-style cell)
+                      (style-index (cons :reverse (cons t spec)))))))))
+      t)))
 (defun %hover-on-row-p (head row)
   "Is the pointer standing on ROW? — the question every hovered thing asks.
 
