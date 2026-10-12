@@ -263,6 +263,42 @@ coming."
             (head-dirty *head*) t)
       t)))
 
+(defvar *pointer-x* nil
+  "Where the POINTER is — its column — or NIL when it is not over this head.
+
+ **A CELL, and it is what a hover IS.** The render asks these two the way it asks `*pane-top*` and
+ `*card-top*`, so the row that LIGHTS and the row a click would act on cannot name different things.
+
+ NIL is the honest reading of *no motion lately*: a terminal sends motion only while the pointer is over
+ the frame, so the last cell a reader passed over is not where it still is.")
+
+(defvar *pointer-y* nil
+  "The ROW the pointer is on — `*pointer-x*`'s other half, and the one the render draws with.")
+
+(defun %pointer-move (head key)
+  "Remember where the pointer is and let the frame redraw. T: the event was the pointer's.
+
+ **A HOVER IS A QUESTION, NOT AN ACT** (letibot `c8622b0`): *what would a click here do?* A pointer that
+ acted as it moved would open a different overlay on every row a reader passed over, so this records the
+ cell and nothing else — what the render draws with it is the whole of the difference between a hovered
+ row and a still one.
+
+ It marks the frame dirty ONLY when the cell actually changed, because motion arrives on every pixel and
+ a redraw per pixel is the one way this feature could cost more than it gives."
+  (let ((x (getf key :x)) (y (getf key :y)))
+    (unless (and (equal x *pointer-x*) (equal y *pointer-y*))
+      (setf *pointer-x* x
+            *pointer-y* y
+            (head-dirty head) t))
+    t))
+
+(defun %hover-on-row-p (head row)
+  "Is the pointer standing on ROW? — the question every hovered thing asks.
+
+ `head` is taken so a caller cannot read another head's pointer by accident, and because a test builds
+ its heads directly as often as it drives the live one."
+  (declare (ignore head))
+  (and *pointer-y* (eql *pointer-y* row)))
 (defun click-row->sel (head mode line)
   "The cursor ROW a click on pane LINE means, or NIL when it is not a row.
 

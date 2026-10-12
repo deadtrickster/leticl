@@ -135,16 +135,23 @@ only latency (wire.rs flushes per frame for the same reason)."
 
 ;;; term.rs:188 — alt screen, cursor hide, bracketed paste, mouse motion+SGR,
 ;;; steady block cursor.
+;;
+;; **`?1003h` IS `?1002h` PLUS THE POINTER WITH NO BUTTON DOWN** (letibot `c8622b0`/`a4384ed`, the
+;; sweep's batch A). `?1002h` is button-event tracking: motion arrives only while a button is HELD, which
+;; is a DRAG and nothing else. `?1003h` is any-event tracking, and it is what makes HOVER possible — the
+;; pointer moving over a row without pressing anything on it. Both are asked for rather than only the
+;; superset: 1003 subsumes 1002 in every terminal that implements both, but a multiplexer or a build
+;; that honours one and drops the other would then leave this head with NO motion at all.
 (defun enter-tui (out)
-  (write-string (format nil "~C[?1049h~C[?25l~C[?2004h~C[?1002h~C[?1006h~C[2 q"
-                        +esc+ +esc+ +esc+ +esc+ +esc+ +esc+)
+  (write-string (format nil "~C[?1049h~C[?25l~C[?2004h~C[?1002h~C[?1003h~C[?1006h~C[2 q"
+                        +esc+ +esc+ +esc+ +esc+ +esc+ +esc+ +esc+)
                 out)
   (force-output out))
 
 ;;; term.rs:461 — the exact reverse, synchronized-output off first.
 (defun leave-tui (out)
-  (write-string (format nil "~C[?2026l~C[?1006l~C[?1002l~C[?2004l~C[0 q~C[?25h~C[?1049l"
-                        +esc+ +esc+ +esc+ +esc+ +esc+ +esc+ +esc+)
+  (write-string (format nil "~C[?2026l~C[?1006l~C[?1003l~C[?1002l~C[?2004l~C[0 q~C[?25h~C[?1049l"
+                        +esc+ +esc+ +esc+ +esc+ +esc+ +esc+ +esc+ +esc+)
                 out)
   (force-output out))
 

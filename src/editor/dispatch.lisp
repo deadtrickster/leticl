@@ -124,6 +124,16 @@ for the lists)."
              (shut-overlays)
              (setf (head-mode head) :normal (head-dirty head) t)))
        t)
+      ;; **THE POINTER'S MOVES ARE THEIR OWN ARMS** (letibot `c8622b0`/`a4384ed`, the sweep's batch A):
+      ;; the terminal is asked for any-event tracking (`?1003h`), so motion arrives with NO button down as
+      ;; well as during a drag — and until these arms existed BOTH were dropped on the floor, which is why
+      ;; hover was impossible and why *the whole clickable block lights up* had nothing to light it. They
+      ;; record the cell and mark the frame dirty; what LIGHTS is the render's business.
+      ;;
+      ;; Above the press arm and below everything that owns the keyboard, so a card that owns the pointer
+      ;; still gets it: motion over a card is the card's, exactly as its keys are.
+      ((and (eq type :mouse) (eq (getf key :kind) :motion)) (%pointer-move head key))
+      ((and (eq type :mouse) (eq (getf key :kind) :release)) (%pointer-move head key))
       ((and (eq type :mouse) (eq (getf key :kind) :press) (%click head key)))
       ;; **The three overlays keep the arrows even under an ask.** Each is opened
       ;; deliberately, and a permission arriving while one is up must not take the

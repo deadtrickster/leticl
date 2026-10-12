@@ -12735,6 +12735,30 @@ whatever the gate had to say.")
   (is (null (leticl::%notice-kind "just something the operator typed"))
       "and an ordinary row is not — which is what stops a click opening an overlay over prose"))
 
+(def-test motion-is-routed-and-a-hover-does-not-act (:suite leticl)
+  "**THE POINTER PASS'S FIRST HALF** (letibot `c8622b0`/`a4384ed`, the sweep's batch A). The terminal is
+  asked for any-event tracking (`?1003h`), so motion arrives with no button down — and until these arms
+  existed BOTH the hover and the drag were dropped on the floor, which is why *the whole clickable block
+  lights up* had nothing to light it.
+
+  **A hover is a QUESTION, not an act**: `%pointer-move` records the cell and marks the frame dirty, and
+  nothing else. A pointer that acted as it moved would open a different overlay on every row a reader
+  passed over — and it redraws only when the cell actually CHANGED, because motion arrives per pixel."
+  (let ((h (%on-head :cols 120 :rows 30)))
+    (setf (session-items (head-session h)) (leticl::%items-vector nil))
+    (is (null leticl::*pointer-y*) "nothing has moved yet, and NIL is *not over this head*")
+    (leticl::%handle-key h (list :type :mouse :kind :motion :x 4 :y 29))
+    (is (eql 29 leticl::*pointer-y*) "**motion is ROUTED and recorded** — it used to be dropped")
+    (is (leticl::%hover-on-row-p h 29) "and the row it stands on can ask")
+    (is (not (leticl::%hover-on-row-p h 12)) "while another row answers no")
+    ;; **THE SAME CELL AGAIN IS NOT A REDRAW.** A terminal sends motion for every pixel a pointer crosses,
+    ;; and a frame per pixel is the one way this feature could cost more than it gives.
+    (setf (head-dirty h) nil)
+    (leticl::%handle-key h (list :type :mouse :kind :motion :x 4 :y 29))
+    (is (not (head-dirty h)) "**the same cell does not dirty the frame**")
+    (leticl::%handle-key h (list :type :mouse :kind :motion :x 5 :y 29))
+    (is (head-dirty h) "and a different one does")))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of

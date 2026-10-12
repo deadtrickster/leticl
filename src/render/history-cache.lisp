@@ -1623,7 +1623,20 @@ scrolls the transcript by a row every keystroke.
                  (w (loop for seg in segs sum (string-width (car seg)))))
             (put-segments s hint-row
                           (+ gutter (max 0 (floor (- cols (* 2 gutter) w) 2)))
-                          segs)))
+                          ;; **AND THE WHOLE BAR LIGHTS UNDER THE POINTER** (letibot `a4384ed`, the
+                          ;; sweep's batch A). Every word on it is a button (`%hint-click`), so the bar
+                          ;; is ONE clickable block — and the reference's rule is that the whole block
+                          ;; lights, not the word the pointer happens to be over.
+                          ;;
+                          ;; **REVERSED RATHER THAN RECOLOURED**: a colour on this row would have to be
+                          ;; chosen against whatever the terminal's own theme already means, and the
+                          ;; roles this head draws with are the READER's to override, not the
+                          ;; pointer's. Reverse is the one style that reads as *the pointer is here*
+                          ;; in every palette there is.
+                          (if (%hover-on-row-p head hint-row)
+                              (mapcar (lambda (seg) (cons (car seg) (cons :reverse (cons t (cdr seg)))))
+                                      segs)
+                              segs))))
         ;; **and where the terminal's own caret goes.** The painter emits the move
         ;; and `ESC[?25h` after the frame; without it the head hid the cursor at
         ;; startup and never showed it again, so the composer had no caret at all.
