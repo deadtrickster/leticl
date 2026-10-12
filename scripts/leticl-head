@@ -60,7 +60,12 @@ while [ $# -gt 0 ]; do
     # to `--session` it named the id on the ATTACH, which the daemon refuses for a session it has
     # never opened, so a stored session was reachable from the picker and not from the CLI.
     --resume)      args+=(--resume "$2"); shift 2 ;;
-    --new-session) args+=(--new "$2"); shift 2 ;;
+    # **`--theme-template` PRINTS AND LEAVES** (letibot `d7288a8`): it is a question about THIS
+    # BUILD rather than about a session — *which roles may I set, and what do they look like now* — so
+    # the image answers it on stdout and returns before a daemon is looked for. Passed through like
+    # `--resume`, and for the same reason: the launcher is a flag-passing shape and the image decides
+    # what a flag means.
+    --theme-template) args+=(--theme-template t); shift ;;
     *) echo "leticl-head: unknown argument from the launcher: $1" >&2; exit 2 ;;
   esac
 done

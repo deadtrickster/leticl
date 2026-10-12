@@ -6,3 +6,6 @@
 =======
 {"session":"s-1791151788256943467","handle":"j83","kind":"job","arrived_at_ms":1791803816006,"delivered_at_ms":1791804021049,"waited_ms":205043,"rule":"turn_end","batch":1}
 >>>>>>> feature/fb-mark
+{"session":"s-1791151788256943467","handle":"j411","kind":"job","arrived_at_ms":1791811684039,"delivered_at_ms":1791811691317,"waited_ms":7278,"rule":"turn_end","batch":1}
+{"session":"s-1791151788256943467","handle":"j413","kind":"job","arrived_at_ms":1791811715264,"delivered_at_ms":1791811723003,"waited_ms":7739,"rule":"turn_end","batch":1}
+{"session":"s-1791151788256943467","handle":"j417","kind":"job","arrived_at_ms":1791811783067,"delivered_at_ms":1791811783133,"waited_ms":65,"rule":"idle","batch":1}

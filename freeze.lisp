@@ -189,7 +189,14 @@ answers the default size and the diff is then 40 rows of nothing."
       ;; and the daemon refuses a session it has never opened, so a stored session was unreachable
       ;; from the CLI while the picker could reach it with a keystroke. The reference draws the same
       ;; line at `app.rs:1602-1610`.
-      ((string= (first args) "--resume")
+      ;; **`--theme-template` PRINTS AND LEAVES** (letibot `d7288a8`, whose own flag does the same): it
+       ;; is a question about THIS BUILD rather than about a session — *which roles may I set, and what do
+       ;; they look like now* — so it answers on stdout and returns before a daemon is looked for. A flag
+       ;; that needed a running daemon to list a table would be a flag nobody can use to write their first
+       ;; theme, which is the one moment it exists for.
+       ((string= (first args) "--theme-template")
+        (uiop:symbol-call :leticl '#:run :theme-template t))
+       ((string= (first args) "--resume")
        (uiop:symbol-call :leticl '#:run :resume-id (or (second args) "")))
       ;; the launcher's `--new TITLE`, through scripts/leticl-head
       ((string= (first args) "--new")
