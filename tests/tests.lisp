@@ -13094,6 +13094,32 @@ whatever the gate had to say.")
                  "**a theme file that is not there is not a note** — a reader with no themes/ is not told"))
         (ignore-errors (delete-file file))))))
 
+(def-test a-surfaces-keys-are-declared-once-and-its-hint-is-generated (:suite leticl)
+  "**THE KEYBOARD IS THE DOCUMENTATION OR IT IS A LIE** — `dash-bindings`' own sentence, and the reason
+  letibot `bcfb724` exists. A hint naming a key the ladder does not have is worse than a SHORTER hint:
+  the reader who finds it out has learnt to distrust every hint on the screen, which is the defect R29
+  keeps naming one surface over.
+
+  **The row is GENERATED from the declaration**, so a surface that gains a key gains it in one place —
+  and this asserts the two agree rather than that either is right."
+  (is (search "↑↓ moves" (leticl::surface-hint :todos))
+      "the declared label, as the row draws it")
+  (is (search "space marks a line done" (leticl::surface-hint :todos))
+      "**including a key the hand-written sentence never named** — `space` marks a line, and the old row
+  described the pane without it")
+  (is (search "esc closes" (leticl::surface-hint :todos))
+      "and the way out, which every surface owes its reader")
+  (is (equal '("↑↓" "enter or tab" "space" "i" "h" "pgup/pgdn" "esc")
+             (mapcar #'first (leticl::surface-keys :todos)))
+      "**the declarations, in order** — the list the row and any `/help` reader share")
+  ;; --- and the honest answer for a surface nobody has converted yet
+  (is (null (leticl::surface-hint :no-such-surface))
+      "**NIL for a surface that has declared none**, so an unconverted one keeps the sentence it has")
+  ;; --- the table is idempotent by (mode key), as `dash-bind` is by name
+  (leticl::surface-bind :todos "esc" "closes")
+  (is (equal 1 (count "esc" (mapcar #'first (leticl::surface-keys :todos)) :test #'string=))
+      "redeclaring a key replaces it rather than drawing it twice"))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of

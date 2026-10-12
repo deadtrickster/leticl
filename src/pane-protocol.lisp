@@ -1369,7 +1369,58 @@ nothing is worse than a shorter hint."
 
 (defmethod pane-hint ((pane todos-pane) head)
   (declare (ignore head))
-  "↑↓ moves · enter or tab unfolds · pgup/pgdn and the wheel scroll · esc closes")
+  ;; **GENERATED FROM THE TABLE, which is the whole point** (letibot `bcfb724`): the keys this pane
+  ;; answers to are declared BESIDE this method, so the row cannot describe a key the ladder does not
+  ;; have — and adding one is one line rather than two in step.
+  (surface-hint :todos))
+;;; **A SURFACE'S KEYS ARE DECLARED ONCE, AND THE HINT IS GENERATED FROM THE DECLARATION**
+;;; (letibot `bcfb724`). `dash-bindings` was the ONE surface in this head that did it, and its docstring
+;;; is the rule: *the keyboard is the documentation or it is a lie*. A hint naming a key the ladder does
+;;; not have is worse than a shorter hint — the reader who finds it out has learnt to distrust every hint
+;;; on the screen, which is the same defect R29 keeps naming one surface over.
+
+(defvar *surface-keys* nil
+  "`(MODE KEY LABEL)` triples — one per key a surface offers, in the order it draws them.
+
+ **KEYED BY THE PANE'S MODE** rather than by its class, because the mode is what the ladder dispatches
+ on: a table and the arm that reads it are then about the same surface by construction, and not by
+ whoever remembered to keep two names in step.")
+
+(defun surface-bind (mode key label)
+  "Declare that MODE's surface offers KEY, described as LABEL. Idempotent by `(MODE KEY)`.
+
+ **A FUNCTION AND NOT A FORMS, for `dash-bind`'s own reason**: a surface that can be registered is one a
+ different build can describe differently, and the file that DECLARES a pane is the right place to say
+ what it answers to."
+  (setf *surface-keys*
+        (remove-if (lambda (e) (and (eq (first e) mode) (string= (second e) key))) *surface-keys*))
+  (setf *surface-keys* (append *surface-keys* (list (list mode key label))))
+  label)
+
+(defun surface-keys (mode)
+  "The `(KEY LABEL)` pairs MODE declares, in the order it declared them — or NIL for a surface that has
+ declared none, which is the honest answer for one whose hint is still a sentence."
+  (loop for (m k l) in *surface-keys* when (eq m mode) collect (list k l)))
+
+(defun surface-hint (mode)
+  "MODE's keys as ONE hint row, or NIL when it has declared none.
+
+ **NIL RATHER THAN AN EMPTY STRING**, so a caller can fall back to whatever else it knows: a surface
+ mid-conversion keeps the sentence it had, and the next one to be converted shrinks that list by one."
+  (let ((pairs (surface-keys mode)))
+    (and pairs (format nil "~{~a~^ · ~}" (mapcar (lambda (p) (format nil "~a ~a" (first p) (second p)))
+                                                  pairs)))))
+
+;; **THE TODOS PANE'S KEYS, DECLARED WHERE ITS HINT IS DRAWN.** Every one of them is answered by
+;; `%pane-key`'s todos arm; the point of the table is that the two are now the same list.
+(surface-bind :todos "↑↓" "moves")
+(surface-bind :todos "enter or tab" "unfolds")
+(surface-bind :todos "space" "marks a line done")
+(surface-bind :todos "i" "composes a prompt from a subtree")
+(surface-bind :todos "h" "hides the done ones")
+(surface-bind :todos "pgup/pgdn" "scrolls")
+(surface-bind :todos "esc" "closes")
+
 
 ;; the dashboard's hint is GENERATED FROM ITS OWN BINDING TABLE (dash.lisp), so a pane
 ;; that offers a key it does not have cannot describe itself that way — serenedash's
