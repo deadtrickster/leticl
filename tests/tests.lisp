@@ -13152,6 +13152,31 @@ whatever the gate had to say.")
           (is (null (leticl::%todo-link-at h target 0))
               "while a pointer elsewhere on the row is the row's own gesture"))))))
 
+(def-test a-row-waiting-on-the-operator-says-so (:suite leticl)
+  "**THIS HEAD NAMED TWO OF THE WIRE'S KINDS \"a kind this build does not know\"**, and one of them is
+  the kind a reader most needs: letibot's own docstring for `TodoNeed::Operator` says *a head draws it as
+  `waits on you` and opens the question card from it*, and the operator's ask behind the variant was
+  *\"the heads show loud notification that im waited\"*. A row is this head's surface for that.
+
+  **And an `answered` edge is not a WAIT at all** — it is the RECORD of one, kept on the wire so what was
+  asked and what came back are not lost. Drawing it in a sentence about what a row waits on would be the
+  wrong tense, so the arm answers NIL and the sentence DROPS it rather than printing the word `NIL`."
+  (is (search "waits on you"
+              (leticl::%todo-needs-said
+               (list (list :kind "operator" :question "which one?" :options (list "a" "b")))))
+      "**a row waiting on the operator says so** — `waits on you`, the reference's own words for it")
+  (is (not (search "does not know" (leticl::%todo-needs-said (list (list :kind "operator")))))
+      "and it is no longer drawn as a kind this build does not know")
+  ;; **AN ANSWERED EDGE IS DROPPED, AND CLEANLY** — the assertion is the WHOLE sentence, because that is
+  ;; what would catch a NIL leaking into it: the `remove` is the arm's other half.
+  (is (equal " · needs \"land the gate\""
+             (leticl::%todo-needs-said (list (list :kind "row" :content "land the gate")
+                                             (list :kind "answered" :question "q" :reply "yes"))))
+      "**an answered edge is not a wait** — it is left out rather than printed as `NIL`")
+  ;; and a kind this build truly does not know is STILL said, which is the arm that was there before
+  (is (search "does not know" (leticl::%todo-needs-said (list (list :kind "something-new"))))
+      "while a kind nobody has taught it is still named, as the wire's own comment asks"))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of

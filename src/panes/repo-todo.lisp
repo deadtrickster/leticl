@@ -557,8 +557,11 @@ error."
  know is SAID rather than dropped** — the wire keeps an unknown edge on purpose (*a plan is what would
  be lost*), so a reader that drew nothing for it would be showing a plan with a hole in it."
   (format nil " · needs ~{~a~^, ~}"
-          (mapcar (lambda (n)
-                    (cond ((equal (getf n :kind) "child")
+          ;; **A NIL FROM AN ARM IS DROPPED**, because a kind that is not a WAIT must not become the word
+          ;; `NIL` in the sentence: see the `answered` arm below, which is a record rather than a wait.
+          (remove nil
+                  (mapcar (lambda (n)
+                            (cond ((equal (getf n :kind) "child")
                            ;; **A CHILD IS DRAWN BY ITS SHORT NAME, AND ITS ROLE WHEN THE PANE KNOWS IT**
                            ;; (letibot `5054187`, `wait_label`'s own arm): the whole `s-…-sub-…` is what
                            ;; the row's detail view is for. `*payload-head*` is the head this row's
@@ -574,8 +577,18 @@ error."
                                      (and role (plusp (length role)) role))))
                           ((equal (getf n :kind) "job") (format nil "job ~a" (or (getf n :handle) "?")))
                           ((equal (getf n :kind) "row") (format nil "\"~a\"" (or (getf n :content) "?")))
+                          ;; **THE OPERATOR IS A WAIT, AND IT IS THE ONE A READER MOST NEEDS TO SEE**
+                          ;; (letibot's own words for the variant: *a head draws it as `waits on you`*).
+                          ;; The operator's ask was *"the heads show loud notification that im waited"* —
+                          ;; and a row is the head's own surface for it.
+                          ((equal (getf n :kind) "operator") "waits on you")
+                          ;; **AND AN ANSWERED EDGE IS NOT A WAIT** — it is the RECORD of one, kept on the
+                          ;; wire so what was asked and what came back are not lost. Drawing it in a
+                          ;; sentence about what a row WAITS ON would be the wrong tense, and NIL here is
+                          ;; dropped rather than printed.
+                          ((equal (getf n :kind) "answered") nil)
                           (t "a kind this build does not know")))
-                  needs)))
+                          needs))))
 
 (defun %todo-item-lines (item author show-detail &optional here (number nil))
   "ITEM as the pane's lines: the mark, the words, and whose they are — plus the description under
