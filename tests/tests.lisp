@@ -7414,9 +7414,12 @@ section. The two heads must teach the same keys the same way."
     ;; `/config` row (the operator's running binary predates it, so its screen
     ;; still shows 36 — the source is the reference here, the binary the evidence),
     ;; and R10 added `/notes`, which the reference teaches too (`app.rs:9793-9797`)
-    (is (= 50 (count-if (lambda (l) (plusp (length l))) text))
-        "~d non-blank rows drawn; 50 expected at the capture's width — MEASURED after the 2026-10-11
+    (is (= 51 (count-if (lambda (l) (plusp (length l))) text))
+        "~d non-blank rows drawn; 51 expected at the capture's width — MEASURED after the 2026-10-11
  sweep added the six rows the pane was missing (ctrl-g, ctrl-j, ctrl-o, /queue, /standing, /term)
+ and, from the sweep's batch C (`5be9113`), the `ctrl-]` row the reference has had BEFORE AND AFTER that
+ commit while this head had none of it — `%open-editor` is the whole of the editor here, and a key a
+ reader cannot look up is a key they do not use
  and rewrote the wheel and click rows, which now wrap once each at 210; before that, 42: the
  reference's 36 plus /config and
  /notes and, from R22, the `ctrl-n` row — which letibot lands too — and R24 part two's

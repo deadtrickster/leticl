@@ -27,6 +27,11 @@
     ("ctrl-z" . "undo — a word at a time, and a kill is always its own step")
     ("paste" . "five lines or more collapses to a marker and is sent in full")
     ("ctrl-s" . "the session list: type a number or part of a name to switch")
+    ;; **THE EDITOR'S DOOR** — the reference's help has this row before AND after the commit this sweep
+    ;; is measured against (`5be9113`), and this head had NONE of it: `ctrl-]` opens rano on the newest
+    ;; file the conversation changed (`%open-editor`). A key a reader cannot look up is a key they do
+    ;; not use, and this one is the whole of the editor here.
+    ("ctrl-]" . "open rano on the newest file this conversation changed — the file itself, not rano's review overlay")
     ("tab" . "complete the /command being typed; more tabs walk the matches")
     ;; **THE CLICK ROW NAMES EVERY SURFACE `%click` ROUTES TO** (click-actions.lisp), not the one
     ;; it was written for: the edge's count labels, the picker card, the dashboard's panels, the
