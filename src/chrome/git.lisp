@@ -243,6 +243,17 @@ the branch. A field dropped whole is the behaviour this replaces."
         do (push p out) (incf used (string-width (car p)))
         finally (return (nreverse out))))
 
+(defun %repository-p (dir)
+  "Is DIR the top of a repository — `.git` there, as a DIRECTORY **or as a FILE**?
+
+ **A FILE COUNTS, and that is the whole reason this is a function.** A git WORKTREE and a SUBMODULE
+ both have a `.git` FILE pointing at the real store rather than a directory of their own — and the merge
+ queue gates every branch in a worktree, so with only `directory-exists-p` the header drew NO BRANCH
+ there. MEASURED on the gate's own landing tree (2026-10-12): the same suite that is green in the main
+ checkout failed `the-header-shows-the-workspaces-repository` in a worktree of it, and the header a
+ reader would have seen had no branch in it at all."
+  (and (probe-file (merge-pathnames ".git" (uiop:ensure-directory-pathname dir))) t))
+
 (defun %project-dir (ws)
   "The directory whose repository the header reports: the workspace, or the one repository below it.
 
@@ -257,10 +268,9 @@ nothing when there is none or several, because guessing between two checkouts is
 name the wrong tree."
   (when (and ws (plusp (length ws)))
     (let ((w (uiop:ensure-directory-pathname ws)))
-      (cond ((uiop:directory-exists-p (merge-pathnames ".git/" w)) ws)
+      (cond ((%repository-p w) ws)
             (t (let ((repos (ignore-errors
-                              (remove-if-not (lambda (d)
-                                               (uiop:directory-exists-p (merge-pathnames ".git/" d)))
+                              (remove-if-not #'%repository-p
                                              (directory (merge-pathnames "*/" w))))))
                  (and (= (length repos) 1) (namestring (first repos)))))))))
 
