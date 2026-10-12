@@ -332,6 +332,29 @@ a size the program has not heard, which is the only resize this head knows about
 `TermEnded`: two different facts, and the pane draws which."
   (list* :frame "term_close" (%term-pane-field)))
 
+(defun make-feedback (polarity &key at-ms note item-id)
+  "**The operator's own mark on a turn** — `ClientFrame::Feedback` (protocol 45, letibot R81): `good`,
+ `bad` or `note`, with **this head's clock at the press** rather than the daemon's receipt time, the
+ operator's own words (`#tags` inside, empty for a bare key) and the row they were reading back.
+
+ **THE CLOCK IS THE HEAD'S, AND THAT IS THE POINT OF THE FIELD.** A mark is about the turn the reader
+ was WATCHING; a daemon that stamped it on receipt would move it to whatever arrived while the frame
+ was in flight. The frame says so in its own words: *the head's clock at the key press — not the
+ daemon's receipt time*.
+
+ **`item-id` IS THE ANCHORED ROW, and NIL is *now*.** There is no third answer, because a head with no
+ row cursor has no *selected* row to name — so a reader scrolled back marks the row their view is
+ anchored to, which is `*scroll-anchor*`'s row here, and a reader at the bottom marks the turn.
+
+ **SENT ONLY TO A DAEMON THAT SPEAKS 45** — the same both-ways rule `%term-pane-field` keeps. This
+ frame is what 45 ADDED, so a 44 daemon refuses the whole `ClientFrame` rather than this one, and a
+ head that sent it blind would trade a mark for a dead socket."
+  (list :frame "feedback"
+        :at-ms (or at-ms (internal-real-time-ms))
+        :polarity polarity
+        :note (or note "")
+        :item-id item-id))
+
 (defun make-list-notes ()
   "The STANDING notes — what the harness is reading into this session's prompt right now.
 

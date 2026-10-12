@@ -94,6 +94,12 @@
      ("length_batch_refused" . "the turn was not sent as one batch; ask again, or split it")
      ;; **the session is under pressure and the reader can act.**
      ("context_wall" . "this turn stopped: /compact summarises now, or /new starts a fresh session")
+     ;; **A TARGET THE GATE COULD NOT JUDGE** (letibot R87, `c88ba67`) — and the acts are the DAEMON'S
+     ;; OWN, quoted from the notice it writes: *"The cap is `[memory] gate` in providers.toml (unset, it
+     ;; is half of what is free when the gate starts); raise it … and gate it again."* Nothing lands on
+     ;; the target until then — which is why these two must say what to do rather than only what broke.
+     ("gate_killed" . "the gate's step was killed before it judged the code — raise `[memory] gate` in providers.toml (or the fraction of what is free), then gate the tip again")
+     ("gate_setup_failed" . "the gate's own setup failed, so the code was never judged — fix the setup, then gate the tip again")
      ("auto_compact_skipped" . "automatic compaction is off for this session; /compact runs one now")
      ("auto_compact_no_progress" . "compacting again will not help; /new starts a fresh session")
      ("auto_compact_failed" . "/compact runs one now, by hand, and says what it did")

@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 {"session":"s-1791151788256943467","handle":"s-1791151788256943467-sub-1791804331483615355","kind":"child","arrived_at_ms":1791804563637,"delivered_at_ms":1791804628382,"waited_ms":64745,"rule":"turn_end","batch":1}
 {"session":"s-1791151788256943467","handle":"s-1791151788256943467-sub-1791804308614305812","kind":"child","arrived_at_ms":1791804676202,"delivered_at_ms":1791804713950,"waited_ms":37748,"rule":"turn_end","batch":1}
 {"session":"s-1791151788256943467","handle":"s-1791151788256943467-sub-1791804323362744538","kind":"child","arrived_at_ms":1791804752938,"delivered_at_ms":1791804772002,"waited_ms":19064,"rule":"turn_end","batch":1}
 {"session":"s-1791151788256943467","handle":"s-1791151788256943467-sub-1791804316241472514","kind":"child","arrived_at_ms":1791804791762,"delivered_at_ms":1791804791765,"waited_ms":3,"rule":"idle","batch":1}
+=======
+{"session":"s-1791151788256943467","handle":"j83","kind":"job","arrived_at_ms":1791803816006,"delivered_at_ms":1791804021049,"waited_ms":205043,"rule":"turn_end","batch":1}
+>>>>>>> feature/fb-mark

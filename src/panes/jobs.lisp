@@ -300,6 +300,29 @@ none. Drawn only with a snapshot: without the history there is nothing honest to
                                 '(:dim t))))
                   moves)))))
 
+(defun %gate-evidence-tag (tg)
+  "The evidence's opening WORD — `GATE_KILLED`, `GATE_SETUP_FAILED`, or whatever else — or NIL.
+
+ It is a WORD because that is the daemon's own shape (`c88ba67`: *the evidence opening `GATE_KILLED`*),
+ and reading it as one keeps this from matching a tag that merely appears later in the sentence."
+  (let ((e (or (getf tg :evidence) "")))
+    (when (plusp (length e))
+      (let ((sp (position #\space e)))
+        (subseq e 0 (or sp (length e)))))))
+
+(defun %gate-unjudged-reason (tg)
+  "What the daemon says killed it, in ITS OWN WORDS — the evidence minus its opening tag, first line.
+
+ **The head does not name the reason, and that is the reference's rule**: *a killed step is not drawn as
+ `failed`; what killed it is the line's word*. A memory cap, the machine, a setup that broke — the
+ daemon wrote which, so this prints what it wrote rather than inventing a category."
+  (let* ((e (or (getf tg :evidence) ""))
+         (sp (position #\space e))
+         (rest (string-left-trim " " (if sp (subseq e (1+ sp)) e)))
+         (nl (position #\newline rest)))
+    (let ((said (string-trim " " (subseq rest 0 (or nl (length rest))))))
+      (if (plusp (length said)) said "the gate could not judge the code"))))
+
 (defun %queue-tab-strip (standings)
   "`[review queue (N)]  merge queue (M)   · /queue review|merge switches` — the view that is up in
 bold, the other faint, each with its OPEN count."
@@ -329,6 +352,17 @@ main is a high-severity emergency* and a lease nobody holds means nothing is bei
                                   (format nil "`~a` is RED at ~a in ~a — nothing lands but its fix; its tip is first in review · ~a"
                                           (getf tg :target) sha repo (%dur-human (- now (or (getf tg :checked-ms) now))))
                                   (max 1 (- w 14)))
+                                 +role-failure+))
+                     out))
+              ;; **AND A GATE THAT COULD NOT JUDGE IS NOT A FAILED ONE** (letibot R87, `c88ba67`) — and this
+              ;; arm is ABOVE the `blocked` one for that reason: a killed step IS `blocked` as far as the
+              ;; snapshot's state goes, so the arm below would call it failed and print the raw tag as
+              ;; the reason, which is exactly the wrong line the reference fixed.
+              ((member (%gate-evidence-tag tg) '("GATE_KILLED" "GATE_SETUP_FAILED") :test #'string=)
+               (push (list (cons (truncate-to-width
+                                  (format nil "  ‼ `~a` UNJUDGED at ~a in ~a — ~a"
+                                          (getf tg :target) sha repo (%gate-unjudged-reason tg))
+                                  w)
                                  +role-failure+))
                      out))
               ((member state '("timed_out" "blocked") :test #'string=)

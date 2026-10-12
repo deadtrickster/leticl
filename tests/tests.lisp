@@ -2111,7 +2111,12 @@ than an oversight."
                     ;; and a list of areas that omits the one a constructor moved into would report
                     ;; a live call as missing — the same shape the comment below records for the
                     ;; space rule.
-                    "pane-protocol"))
+                    "pane-protocol"
+                    ;; **AND THE FILE THE MARK'S OWN MODULE LIVES IN** — `send-mark` is the only caller
+                    ;; of `make-feedback`, exactly as `%term-send-octets` is of its constructor, and the
+                    ;; list is of src AREAS: a constructor whose one caller is a new file reads as
+                    ;; called-from-nowhere until that file is named here.
+                    "feedback"))
       (ignore-errors (setf sent (concatenate 'string sent (source-of name)))))
     (dolist (ctor (protocol-constructors))
       ;; the call is `(ctor` followed by anything that is not a symbol
@@ -12813,6 +12818,37 @@ whatever the gate had to say.")
                         (+ (* 2 (leticl::screen-cols s)) 5)))))
         (is (member :reverse (aref leticl::*styles* id))
             "**the selected cells are REVERSED** — put on top of whatever they already were")))))
+(def-test a-killed-gate-is-unjudged-and-not-a-failure (:suite leticl)
+  "**A gate killed before it judged anything is NOT a failed gate** (letibot R87, `c88ba67`): its
+  evidence opens `GATE_KILLED`, and the reference's rule is *a killed step is not drawn as `failed`;
+  what killed it is the line's word*.
+
+  **The ORDER is the fix and not tidiness**: a killed step IS `blocked` as far as the snapshot's state
+  goes, so an arm that read the state first would call it failed and print the raw tag as the reason —
+  which is exactly the wrong line the reference fixed on the operator's own gate, the day it was killed
+  at its memory cap. `GATE_SETUP_FAILED` is the same class in letibot's table (`warning.rs:360-361`) and
+  gets the same treatment, and an ORDINARY failure keeps the line it always had."
+  (flet ((line (tg)
+           (format nil "~{~a~}"
+                   (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l)))
+                           (leticl::%queue-header-lines (list :targets (list tg)) 0 200)))))
+    (let ((killed (list :target "main" :sha "9562d70c4be1"
+                        :repository "/home/dead/Projects/letibot/letibot"
+                        :state "blocked"
+                        :evidence "GATE_KILLED gate killed at its memory cap")))
+      (is (search "UNJUDGED" (line killed)) "**a killed gate is UNJUDGED**")
+      (is (search "gate killed at its memory cap" (line killed))
+          "**and the reason is the daemon's OWN words** — the evidence minus its tag, not a category")
+      (is (not (search "is blocked at" (line killed)))
+          "**and it is not drawn as blocked/failed** — the wrong line the reference fixed"))
+    (let ((broke (list :target "main" :sha "abc1234567" :repository "/x"
+                       :state "blocked" :evidence "GATE_SETUP_FAILED the checkout was gone")))
+      (is (search "UNJUDGED" (line broke)) "a setup failure is UNJUDGED too")
+      (is (search "the checkout was gone" (line broke)) "with its own reason"))
+    (let ((failed (list :target "main" :sha "abc1234567" :repository "/x"
+                        :state "blocked" :evidence "the suite failed: 3 assertions")))
+      (is (not (search "UNJUDGED" (line failed)))
+          "**an ordinary failure keeps its own line** — the arm does not swallow the state it sits above"))))
 
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest

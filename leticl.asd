@@ -185,6 +185,7 @@ through an eval socket and see the change on the next frame."
                 ;; whose functions its methods delegate to, and BEFORE `render`/`editor`/
                 ;; `chrome`, which were the files dispatching on the mode keyword by hand.
                 (:file "src/pane-protocol")
+                (:file "src/feedback")
                ;; `render` is the frame engine: it composes the screen out of
                ;; the cards, chrome and panes above, and owns the segment and
                ;; viewport machinery. Three files now: `wrapping` how a row is wrapped

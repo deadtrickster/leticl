@@ -12,8 +12,51 @@
 (in-package #:leticl)
 
 ;;; ------------------------------------------------------------- keys ;;;
+(defvar *decisions-away* nil
+  "The decisions the operator has PUT AWAY, by `:req-id`, oldest first.
+
+ **PUTTING ONE AWAY IS A VIEW AND NOT AN ANSWER** (letibot `2ad7b9b`): the card is still open on the
+ daemon, so the question can still be answered and a restarted head shows it again — what it is not is in
+ the reader's way while they think about something else. The reference's words for the gesture are
+ *Esc puts it away*, and `alt-a` brings the oldest back.
+
+ A LIST and not a set: `alt-a` restores the OLDEST, and the order the reader put them away in is the only
+ thing that can mean.")
+
+(defun %decision-away-p (d)
+  "Has the operator put D away? NIL for NIL, so a caller can ask without guarding."
+  (and d (member (getf d :req-id) *decisions-away* :test #'equal)))
+
 (defun %open-decision (head)
-  (first (session-open-decisions (head-session head))))
+  "The card on the screen: the first open decision the operator has NOT put away, or NIL.
+
+ **ONE DOOR, AND THAT IS WHY THE AWAY SET IS INVISIBLE TO EVERYTHING ELSE.** Every caller — the render,
+ the key ladder, the hint bar — asks this, so a decision that is put away is put away from all of them at
+ once rather than from each in turn."
+  (find-if-not #'%decision-away-p (session-open-decisions (head-session head))))
+
+(defun %decision-away (head d)
+  "Put D away and say so. T.
+
+ **IT SAYS SO BECAUSE A CARD THAT VANISHED SILENTLY IS INDISTINGUISHABLE FROM ONE THAT WAS ANSWERED** —
+ and the reader is the only one who knows which they meant."
+  (setf *decisions-away* (append *decisions-away* (list (getf d :req-id)))
+        (head-decision-sel head) 0
+        (head-dirty head) t)
+  (say head "the question is put away — alt-a brings it back")
+  t)
+
+(defun %decision-restore (head)
+  "Bring back the OLDEST question the operator put away. T when there was one to bring back."
+  (let ((id (first *decisions-away*)))
+    (if id
+        (progn
+          (setf *decisions-away* (rest *decisions-away*)
+                (head-decision-sel head) 0
+                (head-dirty head) t)
+          (say head "the question is back")
+          t)
+        (progn (say head "no question is put away") nil))))
 
 ;;; **A ROW IS ONE OF TWO SHAPES AND EVERY ACCESSOR HAS TO KNOW IT.**
 ;;; A `permission`'s row is a `DecisionOption` — a plist with `:label` and

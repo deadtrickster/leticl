@@ -303,6 +303,16 @@ on ClientFrame::Slash)."
        ;; the delete key, so what travels as a typed verb here is the pair that has no key —
        ;; which is the reference's own ruling for exactly this act.
        (todo-postpone-command head rest))
+      ((member verb '("fb" "fb+" "fb-") :test #'string=)
+       ;; **THE MARK, TYPED** — the three spellings differ in POLARITY and nothing else: `fb+` good,
+       ;; `fb-` bad, `fb` a note (`good`, `bad` and `note` are the wire's own three words). One arm,
+       ;; because everything else about a mark is the same frame — the head's clock, the anchored row,
+       ;; and the operator's words after the verb.
+       (send-mark head (cond ((string= verb "fb+") "good")
+                             ((string= verb "fb-") "bad")
+                             (t "note"))
+                  (string-trim " " (or rest "")))
+       t)
       ((string= verb "todos")
        ;; **`/todos add` opens the card without opening the pane** (R44): the verb is the
        ;; keystroke-saving spelling of the pane's own first row, and `add` is a word this verb

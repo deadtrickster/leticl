@@ -178,6 +178,14 @@ the reason this is a pointer at a screen rather than a silence.")
 (defparameter +failure-warnings+
   '("auto_compact_failed" "auto_compact_skipped" "auto_compact_no_progress"
     "context_wall" "gate" "gate_timeout" "turn_failed"
+    ;; **A TARGET THE GATE COULD NOT JUDGE** (letibot R87, `c88ba67`): `gate_setup_failed` when the gate's
+    ;; own setup broke, and `gate_killed` when its step was killed before it judged anything — *its
+    ;; memory cap, the machine*. Both are `Class::Failure` in letibot's table (`warning.rs:360-361`), and
+    ;; the distinction they carry is the one the reference's line turns on: **a killed step is not
+    ;; FAILED.** The operator's own gate was killed at its cap this very day, and the notice's own words
+    ;; are *the tip is UNJUDGED, not red*. Nothing lands on the target until it is gated again, which is
+    ;; why they are loud rather than routine.
+    "gate_setup_failed" "gate_killed"
     "job_output_refused" "session_unavailable" "resume_failed"
     "reseat_refused" "reseat_unchecked" "mode_unknown" "mode_set_refused"
     "mode_unpersisted" "length_batch_refused" "length_empty_turn"

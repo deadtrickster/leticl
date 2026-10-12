@@ -56,6 +56,15 @@ long as the picker stayed open."
          (empty (zerop (length (composer-buffer (head-composer head))))))
     (when (and decision (plusp n))
       (case type
+        ;; **ESC PUTS A QUESTION AWAY** (letibot `2ad7b9b`): *a question card moves on after an answer, and
+        ;; Esc puts it away.* **A QUESTION only** — a permission's Esc means something else (it is a
+        ;; refusal, and a card that quietly vanished instead of denying would be a permission nobody
+        ;; answered), so the kind is what gates it rather than the fact that a card is up.
+        ;;
+        ;; The card is still OPEN ON THE DAEMON: this is a view, `alt-a` brings it back, and a head that
+        ;; restarts shows it again because the question was never answered.
+        ((:esc) (when (equal (getf decision :kind) "question")
+                  (%decision-away head decision)))
         ((:up) (setf (head-decision-sel head) (max 0 (1- (head-decision-sel head)))
                      (head-dirty head) t))
         ((:down) (setf (head-decision-sel head)
