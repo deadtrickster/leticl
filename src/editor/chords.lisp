@@ -139,7 +139,7 @@ Esc was a second thing to remember per pane."
             ;; here by this head's own reader, so it cannot be confused with `ctrl-r`, which
             ;; IS a control byte and flips the thinking fold. Handling it above the `:ctrl`
             ;; guard is what keeps the two apart: both arrive as `#\r` and differ only in type.
-            (and (eq (getf key :type) :alt) (member (getf key :ch) '(#\r #\g #\b) :test #'eql)))
+            (and (eq (getf key :type) :alt) (member (getf key :ch) '(#\r #\g #\b #\a) :test #'eql)))
     (if (eq (getf key :type) :alt)
         ;; **THE ALT CHORDS, EACH IN ITS OWN WORD.** `alt-r` opens the operator-call draft; `alt-g` and
         ;; `alt-b` MARK THE TURN (letibot R81) — *good* and *bad*, and a second press inside five seconds
@@ -155,6 +155,13 @@ Esc was a second thing to remember per pane."
           (#\g (mark-key head "good"))
           (#\b (if (zerop (length (composer-buffer (head-composer head))))
                    (mark-key head "bad")
+                   nil))
+          ;; **AND `alt-a` BRINGS BACK A QUESTION THE OPERATOR PUT AWAY** (letibot `2ad7b9b`, the sweep's
+          ;; batch B): Esc puts a question away, and this is the only way back to it. **The empty-composer
+          ;; guard is the same rule `alt-b` keeps** — where there is a line to move over, the chord is the
+          ;; composer's, and NIL is what hands it back to the ladder below.
+          (#\a (if (zerop (length (composer-buffer (head-composer head))))
+                   (%decision-restore head)
                    nil)))
     (flet ((pane (mode verb)
              (if (eq (head-mode head) mode)

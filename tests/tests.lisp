@@ -12850,6 +12850,34 @@ whatever the gate had to say.")
       (is (not (search "UNJUDGED" (line failed)))
           "**an ordinary failure keeps its own line** — the arm does not swallow the state it sits above"))))
 
+(def-test esc-puts-a-question-away-and-alt-a-brings-it-back (:suite leticl)
+  "**ESC PUTS A QUESTION AWAY** (letibot `2ad7b9b`, the sweep's batch B): *a question card moves on after
+  an answer, and Esc puts it away.* **The card stays OPEN ON THE DAEMON** — this is a view, so the
+  question can still be answered, and `alt-a` brings the oldest one back.
+
+  **A PERMISSION's Esc is not this**: that key is a refusal and its caller owns what it means. A card
+  that quietly vanished instead of denying would be a permission nobody answered."
+  (let ((h (%on-head :cols 100 :rows 30)))
+    (setf (session-open-decisions (head-session h))
+          (list (list :req-id "q1" :kind "question" :choices (list "yes" "no"))))
+    (is (not (null (leticl::%open-decision h))) "the card is up to begin with")
+    ;; --- Esc puts it away
+    (leticl::%decision-key h (list :type :esc) :esc)
+    (is (null (leticl::%open-decision h)) "**Esc puts the question away**")
+    (is (equal (list "q1") leticl::*decisions-away*) "and the head remembers WHICH, in order")
+    ;; --- and alt-a brings it back
+    (leticl::%handle-key h (list :type :alt :ch #\a))
+    (is (not (null (leticl::%open-decision h))) "**`alt-a` brings it back**")
+    (is (null leticl::*decisions-away*) "and forgets that it was put away")
+    ;; --- a PERMISSION is not a question
+    (setf (session-open-decisions (head-session h))
+          (list (list :req-id "p1" :kind "permission"
+                      :options (list (list :label "Allow once" :option-id "allow")
+                                     (list :label "Deny" :option-id "deny")))))
+    (leticl::%decision-key h (list :type :esc) :esc)
+    (is (not (null (leticl::%open-decision h)))
+        "**a permission is NOT put away by Esc** — that key is a refusal and the caller owns it")))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of
