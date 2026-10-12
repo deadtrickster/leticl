@@ -12589,6 +12589,34 @@ equal with nothing else on the chrome, which is why the bug needed a note to be 
           "**with the overlay up the bar names the overlay's keys** — the branch that was missing, and
   the one a reader needs exactly when they have scrolled past what the pane's words describe"))))
 
+(def-test a-resume-keeps-the-cat-until-the-asked-session-is-here (:suite leticl)
+  "**A HELLO IS NOT THE END OF THE WAIT WHEN THE HEAD ASKED FOR ANOTHER SESSION** (letibot `ef31893`,
+  the sweep's batch B). Every Hello cleared `*attach-started-ms*` twenty lines BEFORE the pending-resume
+  check consumed it, so `--resume` spent the whole restore showing *has said nothing yet* over a session
+  the head had not been asked about yet — the placeholder standing in for a conversation nobody had
+  claimed.
+
+  **Both directions asserted, because one alone would pass on the unfixed version**: a Hello for another
+  session must LEAVE the cat up, and with nothing asked for a Hello must clear it as it always did."
+  (let ((h (%on-head :cols 100 :rows 30)))
+    (flet ((hello (id)
+             (leticl::%handle-frame
+              h (list :frame "hello" :session-id id :seq 1 :sessions nil :items nil
+                      :items-dropped 0 :dropped 0 :stored-items 0 :turn nil
+                      :open-decisions nil :settled-decisions nil :warnings nil))))
+      ;; the head was asked for a session the daemon has not brought it yet
+      (setf leticl::*pending-resume* "s-asked"
+            leticl::*attach-started-ms* (leticl::internal-real-time-ms))
+      (hello "s-fresh")
+      (is (leticl::attaching-p h)
+          "**a Hello for ANOTHER session leaves the cat standing** — the asked one is not here yet")
+      ;; and with nothing asked for, the cat stands down as it always did
+      (setf leticl::*pending-resume* nil
+            leticl::*attach-started-ms* (leticl::internal-real-time-ms))
+      (hello "s-fresh")
+      (is (not (leticl::attaching-p h))
+          "**and with nothing asked for a Hello clears it** — the ordinary attach is unchanged"))))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of
