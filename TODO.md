@@ -1434,4 +1434,9 @@ verb letters (`74de81a`), the editor key (`88b003d`), the skew attach (`f6e66f0`
       Candidates worth the measurement first: `5296c6e` (every key hint is a button that types its
       key), `bcfb724` (each surface declares its keys once; the bar and `/help` are generated from
       them), `579c991` (the queue pane's lease and time-in-state), `e8750ea` (completions drawn in
-      the composer's bottom edge), `08bc5d5`, `f40be66`, `af6faf2`, `b9abcf1`, `6186949`, `ef31893`.
+      the composer's bottom edge), `f40be66`, `af6faf2`, `b9abcf1`, `6186949`, `ef31893`.
+      **AND `08bc5d5` IS ALREADY HERE, MEASURED 2026-10-12** — the wheel falls through and a click is
+      swallowed with the `allow-all` card up (`mode-confirm-key`, `panes/pick.lisp:378-381`), which is
+      the reference's rule AND its reason (*neither is an answer, and letting a click through could act
+      on a surface under the question*). Ticked rather than built — the fourth time this sweep has
+      found a box that read as work and was not.
