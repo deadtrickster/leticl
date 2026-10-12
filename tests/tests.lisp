@@ -12617,6 +12617,38 @@ equal with nothing else on the chrome, which is why the bug needed a note to be 
       (is (not (leticl::attaching-p h))
           "**and with nothing asked for a Hello clears it** — the ordinary attach is unchanged"))))
 
+(def-test a-hint-is-a-button-that-types-its-key (:suite leticl)
+  "**THE BAR IS A LIST OF BUTTONS** (letibot `5296c6e`, the sweep's batch A): every key the bottom row
+  names is on it because a reader may want it, and a reader with a mouse should not have to lift their
+  hand to the keyboard to take the advice the screen just gave them.
+
+  **Read from the DRAWN row** rather than the format string, because the bar drops items from its end
+  as it is squeezed — so the word under the pointer and the word the router types cannot disagree."
+  (let ((bar "  ctrl-s sessions · ctrl-n notes · /t row window · tab completes · /help"))
+    ;; the word under the pointer is the KEY; the label after the space belongs to the button
+    (is (equal "ctrl-s" (leticl::%hint-word-at bar 4))
+        "**the key is the word** — `ctrl-s sessions` is one button named `ctrl-s`")
+    (is (equal "/t" (leticl::%hint-word-at bar (position #\/ bar)))
+        "and a verb's button is the verb")
+    ;; **A POINTER ON THE SEPARATOR IS NOBODY'S BUTTON**, and it must miss rather than crash — the
+    ;; first version handed `subseq` a start past its end and took six tests down with it
+    (is (null (leticl::%key-for-word (leticl::%hint-word-at bar 19)))
+        "**a click between two buttons types nothing**")
+    (is (null (leticl::%key-for-word (leticl::%hint-word-at bar 999)))
+        "nor does one off the row")))
+
+(def-test the-hint-vocabulary-is-read-and-a-stranger-does-nothing (:suite leticl)
+  "**`↑↓` NAMES TWO KEYS AND IS NOT A BUTTON** — choosing between them for the reader would be a guess,
+  and a guess that scrolls is worse than a button that does nothing. The vocabulary is the bar's own:
+  three names, the two chord spellings, and a slash verb."
+  (is (equal '(:type :ctrl :ch #\s) (leticl::%key-for-word "ctrl-s")) "a ctrl chord")
+  (is (equal '(:type :alt :ch #\g) (leticl::%key-for-word "alt-g")) "and an alt one")
+  (is (equal '(:type :esc) (leticl::%key-for-word "esc")) "a bare name")
+  (is (equal '(:type :slash :verb "t") (leticl::%key-for-word "/t")) "a slash verb")
+  (is (null (leticl::%key-for-word "↑↓")) "**two keys in one word is not a button**")
+  (is (null (leticl::%key-for-word "notes")) "and a label alone is not a key")
+  (is (null (leticl::%key-for-word "shift+drag")) "nor is the terminal's own gesture"))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of

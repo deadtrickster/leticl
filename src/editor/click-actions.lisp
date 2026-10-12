@@ -194,6 +194,71 @@ the box's TOP edge was actually painted on — a click one row off is a click on
                                        ;; bare path is exactly the right subject.
                                        :subject (getf edit :path))))))
 
+;;;; --- THE HINTS ARE BUTTONS (letibot `5296c6e`, the sweep's batch A) ---------------------- ;;;;
+
+(defun %key-for-word (word)
+  "The KEY EVENT the hint bar's WORD stands for, or NIL when it is not a key's own name.
+
+ **THE BAR'S VOCABULARY, READ RATHER THAN GUESSED**: `esc`, `enter`, `tab`, `ctrl-x`, `alt-x` and
+ `/verb`. `↑↓` is deliberately NOT here — it names two keys, and a button that had to choose would be
+ guessing — and neither is `shift+drag`, which is the terminal's own gesture and not this head's. A
+ word this cannot read answers NIL, and the click does NOTHING with it."
+  (cond
+    ((or (null word) (zerop (length word))) nil)
+    ((string-equal word "esc") '(:type :esc))
+    ((string-equal word "enter") '(:type :enter))
+    ((string-equal word "tab") '(:type :tab))
+    ((and (= (length word) 6) (string-equal (subseq word 0 5) "ctrl-"))
+     (let ((ch (char-downcase (char word 5))))
+       (and (alpha-char-p ch) (list :type :ctrl :ch ch))))
+    ((and (= (length word) 5) (string-equal (subseq word 0 4) "alt-"))
+     (let ((ch (char-downcase (char word 4))))
+       (and (alpha-char-p ch) (list :type :alt :ch ch))))
+    ((and (> (length word) 1) (char= (char word 0) #\/))
+     (list :type :slash :verb (subseq word 1)))))
+
+(defun %hint-word-at (text x)
+  "The whitespace-delimited token of the DRAWN hint row that column X lies in.
+
+ `ctrl-s sessions` is ONE button and this answers `ctrl-s`: the bar's shape is *key label · key
+ label*, so the label after the space belongs to the button rather than naming it."
+  (when (and text (<= 0 x) (< x (length text)))
+    (let* ((n (length text))
+           (right (or (position #\space text :start x) n))
+           (left (1+ (or (position #\space text :end (min (1+ x) n) :from-end t) -1))))
+      ;; **A CLICK ON A SEPARATOR IS NOBODY'S BUTTON.** The bar's items are separated by spaces and
+      ;; `cdot`, so a pointer landing BETWEEN two words belongs to neither — and without this guard
+      ;; `subseq` was handed a start past its end, which is a crash rather than a miss.
+      (when (< left right)
+        (string-trim " ·" (subseq text left right))))))
+
+(defun %hint-click (head x)
+  "A click on the hint bar TYPES THE KEY THE HINT NAMES (letibot `5296c6e`).
+
+ **THE BAR IS A LIST OF BUTTONS, and this head drew it as prose for so long that a reader with a
+ mouse had to lift their hand to the keyboard to take the advice the screen had just given them.** It
+ is read from the DRAWN row rather than from the format string: the bar drops items from its end as it
+ is squeezed, so the glass is the only honest answer to *what is under the pointer* — the same reading
+ `%composer-edge-click` already does for the composer's edge.
+
+ **THREE GUARDS, the reference's own, and each one is a way this could hurt a reader**:
+   · a `/command` goes in ONLY into an empty composer — a verb typed over half-written prose is a line
+     the reader did not write;
+   · `ctrl-\\` is NEVER typed: it is the way out of a terminal pane, and a misclick that detaches from
+     a running program is not a thing anybody asked for;
+   · a word this head cannot read as a key does NOTHING at all.
+
+ T when the click was the bar's and a key was sent."
+  (let* ((row (1- (head-rows head)))
+         (key (%key-for-word (%hint-word-at (%screen-row-text head row) x))))
+    (when key
+      (cond
+        ((eq (getf key :type) :slash)
+         (and (zerop (length (composer-buffer (head-composer head))))
+              (progn (%run-command head (getf key :verb)) t)))
+        ((and (eq (getf key :type) :ctrl) (eql (getf key :ch) #\|)) nil)
+        (t (progn (%handle-key head key) t))))))
+
 (defun %click (head key)
   "A CLICK selects the row under the pointer. T when the click was a list's.
 
@@ -209,6 +274,14 @@ than from the click."
       ;; subagents pane, and on `1 job running` the jobs pane. The targets come from the PAINTED
       ;; row (`%composer-edge-buttons`), so this cannot disagree with what the reader sees.
       ((%composer-edge-click head key) t)
+      ;; **AND THE HINT BAR IS A LIST OF BUTTONS TOO** (letibot `5296c6e`) — read from the cells, so a bar
+      ;; that has dropped its tail items cannot offer a button that is not on the glass.
+      ;;
+      ;; **BELOW THE EDGE, WHICH SHARES THIS ROW.** When the fit ladder drops the hint bar the
+      ;; COMPOSER takes the last row, and its count labels are buttons of their own — so they are asked
+      ;; first and this answers for what is left. Asking this one first made a click on
+      ;; `N subagents running` type nothing at all, which is how the suite caught the order.
+      ((%hint-click head (getf key :x)) t)
       (*pick-open* (%pick-click head row))
       ;; **THE ASK CARD'S RUNGS ARE A LIST TOO** (sweep 2026-10-11, B.3) — the router had no card
       ;; arm, so a click on `▸ Allow once` fell through to the transcript and did nothing while
