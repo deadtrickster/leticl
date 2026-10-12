@@ -224,7 +224,12 @@ than from the click."
          (when (and (>= line 0) (< line (+ *pane-scroll* *pane-room*)) (< line *pane-lines*))
            (dash-click-sel head line)))
        t)
-      ((member (head-mode head) '(:picker :jobs :subagents :todos :config))
+      ;; **AND THE QUEUE PANES, WHICH WERE MISSING FROM THIS LIST** (letibot `8d5f418`, the sweep's batch
+      ;; A). A click on a queue row — which HAS a cursor and the `a/v/d/r` verbs — did nothing here and
+      ;; fell through to the TRANSCRIPT arm below, which opens an edit row read off `*hist-bounds*`: a
+      ;; pane had replaced the transcript, so those bounds name rows nobody can see. Both views are the
+      ;; same list (`*queue-view*`), and both have a cursor the click can move.
+      ((member (head-mode head) '(:picker :jobs :subagents :todos :config :queue :standing))
        ;; the pane starts at screen row 1 (row 0 is the top border), and the
        ;; offset says how many pane LINES are hidden above it
        (let ((line (+ *pane-scroll* (- row 1))))
