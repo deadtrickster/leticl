@@ -13120,6 +13120,38 @@ whatever the gate had to say.")
   (is (equal 1 (count "esc" (mapcar #'first (leticl::surface-keys :todos)) :test #'string=))
       "redeclaring a key replaces it rather than drawing it twice"))
 
+(def-test a-childs-edge-is-a-link-too (:suite leticl)
+  "**A CHILD'S EDGE IS THE SAME GESTURE** (letibot `79c32c1`): the words a row admits to waiting on are
+  the way to the thing it waits for, so the test that finds `waits on j97` finds `needs child …` as well.
+
+  **The row draws the SHORT id and the frame wants the WHOLE one**, so the caller matches by the tail
+  `%short-id` printed — the same rule read backwards, and the reason the link carries the short form."
+  (let ((h (%on-head :cols 200 :rows 30))
+        (leticl::*pane-gutter* 0)
+        (leticl::*operator-todos*
+         (list (list :id "t1" :content "the port" :status "open"
+                     :needs (list (list :kind "child"
+                                        :id "s-1789919514688401228-sub-1791743034603570463"))))))
+    (setf (session-items (head-session h)) (leticl::%items-vector nil))
+    (let ((leticl::*payload-head* h))
+      (multiple-value-bind (lines sel stops) (leticl::todos-lines h 200)
+        (declare (ignore sel stops))
+        (let* ((target (loop for n from 0 below (length lines)
+                             when (find-if (lambda (seg) (and (consp seg) (search "needs child" (car seg))))
+                                           (nth n lines))
+                               return n))
+               (x (and target
+                       (loop with col = 0
+                             for seg in (nth target lines)
+                             for text = (and (consp seg) (car seg))
+                             when (and text (search "needs child" text)) return (+ col 4)
+                             do (incf col (if text (length text) 0))))))
+          (is (not (null target)) "the row is DRAWN with the edge on it")
+          (is (equal (cons :child "…03570463") (leticl::%todo-link-at h target x))
+              "**and the edge is a `:child` link carrying the short id** — what the pane drew")
+          (is (null (leticl::%todo-link-at h target 0))
+              "while a pointer elsewhere on the row is the row's own gesture"))))))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of

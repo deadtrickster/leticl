@@ -55,35 +55,47 @@ against a list that just changed acts on a row rather than on an index that no l
          (i (if (plusp n) (min (max 0 (head-picker-sel head)) (1- n)) 0)))
     (values (if (plusp n) (nth i stops) nil) i)))
 
-(defun %todo-wait-at (head line x)
-  "The JOB HANDLE the `waits on …` words drawn on LINE stand for, when column X is on them — else NIL.
+(defun %todo-link-at (head line x)
+  "The LINK the drawn words on LINE, column X stand for — `(KIND . WHAT)` — or NIL.
 
- **THE DRAWING SAYS WHERE THE WORDS ARE** (letibot `5054187`, and the operator's ask inside it: *make j97
- a link to the real job*). This walks the row's OWN segments for the one beginning `waits on `, so the
- target cannot drift from the paint.
+ **ONE TEST FOR BOTH LINKS, because they are the same gesture** (letibot `5054187` and `79c32c1`): the
+ words a row admits to waiting on are the way to the thing it waits for. KIND is:
 
- A second computation of the column would be the defect this pane has already been fixed for twice: the
- marker, the number, the title and the author all sit BEFORE those words, and any one of them growing
- would move the words without moving the arithmetic. `*pane-gutter*` is where the pane's lines start,
- and it is the render's own number for the same reason.
+   `:job`    the `waits on …` words — WHAT is the handle;
+   `:child`  a `needs child …` edge — WHAT is the SHORT id, which is what the row draws and what the
+             caller matches a child by (the tail is what `%short-id` prints, and the whole id is in the
+             row's detail view).
 
- NIL is the answer for a click anywhere else on the row, which is what keeps this gesture distinct from
- selecting the row it sits on."
+ **THE DRAWING SAYS WHERE THE WORDS ARE.** This walks the row's OWN segments, so the target cannot drift
+ from the paint: the marker, the number, the title and the author all sit BEFORE them, and any one
+ growing would move the words without moving the arithmetic."
   (multiple-value-bind (lines sel stops) (todos-lines head 200)
     (declare (ignore sel))
-    (when (and (position line stops)
-               (< -1 x))
+    (when (and (position line stops) (< -1 x))
       (loop with col = (or *pane-gutter* 0)
             for seg in (nth line lines)
             for text = (and (consp seg) (car seg))
-            when (and text
-                      (<= col x)
-                      (< x (+ col (length text)))
-                      (uiop:string-prefix-p " · waits on " text))
-              return (let* ((rest (subseq text (length " · waits on ")))
-                            (sp (position #\space rest)))
-                       (and (plusp (length rest)) (subseq rest 0 (or sp (length rest)))))
+            when (and text (<= col x) (< x (+ col (length text))))
+              return (cond
+                       ((uiop:string-prefix-p " · waits on " text)
+                        (let* ((rest (subseq text (length " · waits on ")))
+                               (sp (position #\space rest)))
+                          (and (plusp (length rest))
+                               (cons :job (subseq rest 0 (or sp (length rest)))))))
+                       ((uiop:string-prefix-p " · needs child " text)
+                        (let* ((rest (subseq text (length " · needs child ")))
+                               (sp (position #\space rest)))
+                          (and (plusp (length rest))
+                               (cons :child (subseq rest 0 (or sp (length rest))))))))
             do (incf col (if text (length text) 0))))))
+
+(defun %todo-wait-at (head line x)
+  "The JOB HANDLE the `waits on …` words on LINE stand for — `%todo-link-at`'s job half.
+
+ Kept as its own name because the JOB is the common case and the caller reads better for it; the general
+ question is the one above, and this is the narrowing."
+  (let ((link (%todo-link-at head line x)))
+    (and (eq (car link) :job) (cdr link))))
 
 (defun todo-stop-at-line (head line)
   "The stop index drawn on pane LINE, or NIL when that line is not a selectable row.

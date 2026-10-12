@@ -324,16 +324,34 @@ than from the click."
            ;; *"waits on j97" - make j97 a link to the real job*. **Asked BEFORE the row's selection**,
            ;; because a click ON the words means the job and one anywhere else on the row means the row —
            ;; a gesture that did both would open a window every time a reader selected a row.
-           (let ((handle (and (eq (head-mode head) :todos)
-                              (%todo-wait-at head line (getf key :x)))))
-             (if handle
-                 (let ((job (find handle (head-jobs head)
-                                  :key (lambda (j) (getf j :id)) :test #'equal)))
-                   ;; **A JOB THE TABLE NO LONGER LISTS IS NOT OPENED FROM MEMORY**: there is nothing to
-                   ;; read, and a window opened on nothing would be the pane inventing a job.
-                   (if job
-                       (progn (open-job-out job) t)
-                       (progn (say head (format nil "~a is not in the jobs table any more" handle)) t)))
+           (let ((link (and (eq (head-mode head) :todos)
+                            (%todo-link-at head line (getf key :x)))))
+             (if link
+                 (cond
+                   ((eq (car link) :job)
+                    (let ((job (find (cdr link) (head-jobs head)
+                                     :key (lambda (j) (getf j :id)) :test #'equal)))
+                      ;; **A JOB THE TABLE NO LONGER LISTS IS NOT OPENED FROM MEMORY**: there is nothing to
+                      ;; read, and a window opened on nothing would be the pane inventing a job.
+                      (if job
+                          (progn (open-job-out job) t)
+                          (progn (say head (format nil "~a is not in the jobs table any more" (cdr link))) t))))
+                   (t
+                    ;; **A CHILD'S EDGE OPENS THE CHILD'S READ** (letibot `79c32c1`), through the same door
+                    ;; `/peek` uses. **The row draws the SHORT id and the frame wants the WHOLE one**, so
+                    ;; the child is found by the tail `%short-id` printed — the same rule, read backwards
+                    ;; — and a child this session does not know is SAID rather than silently ignored.
+                    (let ((want (cdr link))
+                          (child nil))
+                      (dolist (r (ignore-errors (subagent-rows head)))
+                        (let ((id (getf r :session-id)))
+                          (when (and (stringp id) (<= (length want) (length id))
+                                     (string= want (subseq id (- (length id) (length want)))))
+                            (setf child r))))
+                      (if child
+                          (progn (%send head (make-peek (getf child :session-id))) t)
+                          (progn (say head (format nil "~a is not a subagent this session knows" want))
+                                 t)))))
                  (let ((sel (click-row->sel head (head-mode head) line)))
                    (when sel
                      (setf (head-picker-sel head) sel
