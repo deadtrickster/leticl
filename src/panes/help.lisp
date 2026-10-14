@@ -23,6 +23,10 @@
     ;; long as those existed — `%pane-key` and `%decision-key` both have wheel arms. A help row
     ;; that names one of five surfaces is R29's defect on the page that IS the contract.
     ("wheel" . "scroll whatever is in front — a pane, an output window, the ask card's content — else the transcript; shift+drag selects text")
+    ;; **AND A ROW FOR THE CARDS THEMSELVES** (letibot `9d327dc`, R90.32): a reader who has a card up has
+    ;; keys that belong to no list and no pane, and the page that IS the contract said nothing about them.
+    ;; The sentence is the cards' own three keys, in the register the rest of this table uses.
+    ("a row number" . "answers a numbered card — ↑↓ marks a row, enter answers it, esc puts a question away")
     ("ctrl-a ctrl-e" . "start and end of the line; ctrl-w and ctrl-u kill, ctrl-y yanks")
     ("ctrl-z" . "undo — a word at a time, and a kill is always its own step")
     ("paste" . "five lines or more collapses to a marker and is sent in full")
