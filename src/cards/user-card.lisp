@@ -90,6 +90,54 @@ the operator has read both and prefers the quiet one.
 A `defparameter` so the choice is one edit and a live push, and named for what it is rather than
 inlined at the draw site, because a register that lives in two places is two registers.")
 
+(defun %asked-row-question (item)
+  "The daemon's question text when ITEM is the row it writes for `ask_user_question` — else NIL.
+
+ **THE ROW'S OWN OPENING IS THE FACT** (`Harness::question_row_text`, letibot `asked_card.rs`):
+ `asked: QUESTION`, and then — when the tool offered any — either `options offered: A | B | …` on the
+ same shape, or `options offered:` with one `- OPTION` line each. Parsing it HERE rather than at the
+ answer is what lets the answer find it: the daemon writes the two rows together and this head holds
+ both, so the pairing needs nothing off the wire."
+  (let ((text (item-display-text item)))
+    (when (and (stringp text) (uiop:string-prefix-p "asked: " text))
+      (strip-asked-options (subseq text (length "asked: "))))))
+
+(defun strip-asked-options (text)
+  "TEXT without the `options offered:` tail, whichever of the two shapes it has."
+  (let* ((at (or (search (format nil "~%options offered:") text)
+                 (search (format nil "~%options offered: ") text))))
+    (if at (subseq text 0 at) text)))
+
+(defun %asked-summary (text cols)
+  "The question's first sentence, backticks taken off and cut to fit — what a reader needs to know WHICH
+ question an answer replied to.
+
+ **ONE sentence and not the whole paragraph**: the row is a pointer back to a question the reader has
+ already answered, and it is drawn faint under somebody's own words. `…` says it was cut rather than
+ pretending the sentence ended there."
+  (let* ((flat (remove #\` text))
+         (one (or (first (uiop:split-string flat :separator '(#\newline))) flat))
+         (stop (or (search ". " one) (length one)))
+         (sen (string-trim " " (subseq one 0 stop)))
+         (room (max 20 (- cols 30))))
+    (if (> (length sen) room) (format nil "~a…" (subseq sen 0 room)) sen)))
+
+(defun asked-re-line (items i cols)
+  "The faint `re: \"…\"` line to draw UNDER the operator's answer at ITEMS[I] — or NIL.
+
+ **THE OPERATOR'S OWN ASK** (letibot `asked_card.rs`, quoted there): *\"my reply doesnt have any hint
+ on the question. lets mention the question i replied to\"*. Nothing on the wire pairs a question with
+ its answer, so the pairing is THIS HEAD'S — read off two rows it already has, the question being the
+ one immediately before the answer, which is where the session writes them.
+
+ NIL for anything that is not an answer to a question: a `re:` under every operator row would be a
+ second transcript of the conversation, which is the thing a `re:` line is supposed to save the reader
+ from having to reconstruct."
+  (let ((before (and (plusp i) (aref items (1- i)))))
+    (let ((q (and before (%asked-row-question before))))
+      (when q
+        (list (list (cons (format nil "re: \"~a\"" (%asked-summary q cols)) '(:dim t))))))))
+
 (defun %operator-block-lines (text stamp cols)
   "THE OPERATOR'S OWN MESSAGE — a blue `▌` bar, the message in `+operator-block-style+`, the
 timestamp right-aligned on the first row.

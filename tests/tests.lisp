@@ -13684,6 +13684,50 @@ whatever the gate had to say.")
       (is (not (leticl::reseat-card-p h)) "**the daemon's clearing takes the card down**")
       (is (null (leticl::reseat-strip-line h 100)) "and the strip with it — the head never decides this"))))
 
+(def-test an-answer-remembers-the-question-it-replied-to (:suite leticl)
+  "**THE OPERATOR'S OWN ASK** (letibot `asked_card.rs`, which quotes them): *\"my reply doesnt have any
+  hint on the question. lets mention the question i replied to\"*.
+
+  The daemon writes a question row (`asked: …` and then its `options offered:` — either the one-line
+  `A | B | C` shape or the `- OPTION` list) and the operator's answer after it, and **nothing on the
+  wire pairs the two** — so the pairing is this head's, read off the two rows it already holds."
+  (flet ((mk (id text)
+           (list :item-id id :kind "user" :ts 1000000
+                 :item (list :type "user" :parts (list (list :kind "text" :text text))))))
+    (let* ((question (format nil "asked: Row 4: DuckDB's generated slt_good_* family is 605 files under ~
+test/random and test/index, and it is one of three such families.~%options offered:~%- in scope~%- out of scope"))
+           (items (vector (mk "q1" question)
+                          (mk "a1" "A — in scope, via a DuckDB dialect frontend"))))
+      ;; **EACH PIECE ASSERTED ON ITS OWN, so a failure names WHICH one** — the error that brought this
+      ;; test here was an arity error reported only as *invalid number of arguments*, which says nothing
+      ;; about where. `ignore-errors` makes the piece a VALUE, so the message carries it.
+      (let ((q (ignore-errors (leticl::%asked-row-question (aref items 0)))))
+        (is (stringp q) "**the question row is PARSED** — `asked: …`, options and all (got ~s)" q)
+        (is (not (search "options offered" (or q "")))
+            "**with the tool's menu taken off** — the question is what an answer replies to")
+        (let ((sum (ignore-errors (leticl::%asked-summary (or q "") 100))))
+          (is (and (stringp sum) (search "slt_good_*" sum))
+              "**and summarised in its own words** (got ~s)" sum)))
+      ;; **`handler-case` AND NOT `ignore-errors`**: the latter turns a raised error into NIL, which is
+      ;; exactly the value these two assert — a test that would pass on a crash. The handler answers with
+      ;; a STRING instead, so a broken call fails the assertion AND says what broke.
+      (is (null (handler-case (leticl::asked-re-line items 0 100)
+                  (error (e) (format nil "~a" e))))
+          "**the FIRST row has nothing before it**, so no stray `re:`")
+      (let ((said (ignore-errors
+                    (format nil "~{~a~^~%~}"
+                            (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l)))
+                                    (leticl::asked-re-line items 1 100))))))
+        (is (and (stringp said) (search "re: \"" said))
+            "**and the answer carries a `re:` line** (got ~s)" said)
+        (is (not (search "options offered" (or said ""))) "which does not repeat the menu"))
+      (let ((plain (vector (mk "o1" "just something the operator typed")
+                           (mk "o2" "and a reply"))))
+        (is (null (handler-case (leticl::asked-re-line plain 1 100)
+                    (error (e) (format nil "~a" e))))
+            "and an operator row after an ordinary one gets none — a `re:` under every reply would be a
+  second transcript of the conversation")))))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of

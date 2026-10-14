@@ -409,7 +409,12 @@ thirty rows appended, and the view jumped to `row-62`."
           ;; after the loop.
           do (progn
                (let* ((item (aref items next-i))
-                      (il (item-lines item cols (head-prefs head)))
+                      ;; **AND THE `re: "…"` LINE UNDER AN ANSWER** (letibot `asked_card.rs`, R90): the
+                      ;; operator's own complaint was that a reply carries no hint of the question it
+                      ;; answers. Nothing pairs them on the wire, so `asked-re-line` reads the row just
+                      ;; before this one — where the session writes a question and its answer together.
+                      (il (append (item-lines item cols (head-prefs head))
+                                  (asked-re-line items next-i cols)))
                       (class (item-row-class item))
                       ;; **ONE ANSWER TO *IS THIS ROW ON THE SCREEN*** — the same predicate
                       ;; `newest-hidden-run-id` cuts the run with, so the run the walk flushes and the
