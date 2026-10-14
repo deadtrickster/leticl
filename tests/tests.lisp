@@ -12895,8 +12895,13 @@ whatever the gate had to say.")
                       :options (list (list :label "Allow once" :option-id "allow")
                                      (list :label "Deny" :option-id "deny")))))
     (leticl::%decision-key h (list :type :esc) :esc)
+    (is (null (leticl::%open-decision h))
+        "**a permission is put away by Esc TOO** (letibot `4d95678`, R90.5) — the alternative was not a\n  refusal but a FALL-THROUGH: the reference's own message says that Esc on a permission card *closed a\n  pane behind the card, or reached the editor and armed the Esc-Esc interrupt, so a second Esc\n  interrupted the turn waiting on the card*, and a kind gate did exactly that here")
+    ;; **AND THE WAY BACK IS WHAT MAKES PUTTING IT AWAY SAFE**: nothing was answered, the card is still
+    ;; open on the daemon, and `alt-a` brings it back — the same door the question uses.
+    (leticl::%handle-key h (list :type :alt :ch #\a))
     (is (not (null (leticl::%open-decision h)))
-        "**a permission is NOT put away by Esc** — that key is a refusal and the caller owns it")))
+        "and `alt-a` brings the permission back, so a put-away card is never an answered one")))
 
 (def-test a-theme-lays-over-one-role-and-the-draw-sites-follow (:suite leticl)
   "**A THEME IS A TABLE LAID OVER THE CONSTANTS** (letibot `d7288a8`, the sweep's batch D): `role-look`

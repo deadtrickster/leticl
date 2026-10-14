@@ -56,15 +56,22 @@ long as the picker stayed open."
          (empty (zerop (length (composer-buffer (head-composer head))))))
     (when (and decision (plusp n))
       (case type
-        ;; **ESC PUTS A QUESTION AWAY** (letibot `2ad7b9b`): *a question card moves on after an answer, and
-        ;; Esc puts it away.* **A QUESTION only** — a permission's Esc means something else (it is a
-        ;; refusal, and a card that quietly vanished instead of denying would be a permission nobody
-        ;; answered), so the kind is what gates it rather than the fact that a card is up.
+        ;; **ESC PUTS A CARD AWAY — EVERY CARD** (letibot `4d95678` for the permission, R90.5, and
+        ;; `2ad7b9b` before it for the question). The reference's own message for the permission half IS
+        ;; the measurement:
         ;;
-        ;; The card is still OPEN ON THE DAEMON: this is a view, `alt-a` brings it back, and a head that
-        ;; restarts shows it again because the question was never answered.
-        ((:esc) (when (equal (getf decision :kind) "question")
-                  (%decision-away head decision)))
+        ;;   *Esc on a permission card fell through `key_decision`: it closed a pane behind the card, or*
+        ;;   *reached the editor and armed the Esc-Esc interrupt, so a second Esc interrupted the turn*
+        ;;   *waiting on the card.*
+        ;;
+        ;; **That is exactly what a kind gate did here.** This arm took a QUESTION only, on the reasoning
+        ;; that a permission's Esc is a REFUSAL — and the reasoning was wrong twice over: putting a card
+        ;; away answers NOTHING, and the key it fell through to was not a refusal either. It reached
+        ;; `%normal-key`, where Esc closes a pane behind the card or arms the interrupt.
+        ;;
+        ;; The card stays OPEN ON THE DAEMON either way: this is a view, `alt-a` brings it back, and a
+        ;; head that restarts shows it again because nothing was answered.
+        ((:esc) (%decision-away head decision))
         ((:up) (setf (head-decision-sel head) (max 0 (1- (head-decision-sel head)))
                      (head-dirty head) t))
         ((:down) (setf (head-decision-sel head)

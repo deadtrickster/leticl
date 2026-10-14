@@ -237,7 +237,7 @@ never scrolled. The content becomes a viewport that SHRINKS to whatever room is 
                              lad))))
           (cond
             (question
-             (ladder "  ↑↓ to choose · Enter to answer · or type the id · esc leaves it open"
+             (ladder "  ↑↓ to choose · Enter to answer · or type the id · esc puts it away"
                      '(:fg :yellow)))
             ((%option-kind-p options "allow_always")
              ;; the rule an *always allow* will write is in the option's own
@@ -245,9 +245,9 @@ never scrolled. The content becomes a viewport that SHRINKS to whatever room is 
              ;; one: the offer that never said which tool and verb it would
              ;; permit was a pattern the operator could not see and so could not
              ;; adjust
-             (ladder "  ↑↓ to choose · Enter to answer · or type the id ·              `allow_always <glob>` to widen or narrow the rule shown above"
+             (ladder "  ↑↓ to choose · Enter to answer · or type the id · esc puts it away ·              `allow_always <glob>` to widen or narrow the rule shown above"
                      '(:fg :yellow)))
-            (t (ladder "  ↑↓ to choose · Enter to answer · or type the id"
+            (t (ladder "  ↑↓ to choose · Enter to answer · or type the id · esc puts it away"
                        '(:fg :yellow))))
           ;; **the option that asks for words says where to type them.** Its label
           ;; promised "tell the model why" and the card never said how, so the why
