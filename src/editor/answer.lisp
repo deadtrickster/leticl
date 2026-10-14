@@ -27,6 +27,17 @@
   "Has the operator put D away? NIL for NIL, so a caller can ask without guarding."
   (and d (member (getf d :req-id) *decisions-away* :test #'equal)))
 
+(defvar *line-when-card-arrived* nil
+  "The composer's line at the moment a card ARRIVED, or NIL when the card came to an empty composer.
+
+ **A QUESTION MUST NOT TAKE WHAT WAS ALREADY BEING TYPED** (letibot `07509a3`, R90.3). A card arriving
+ while a reader is mid-sentence is the NORMAL case, not the corner — and the composer IS a question's
+ field, so Enter answered the question with half a message and the reader lost both the line and the
+ decision.
+
+ **The line is HELD**: while it is unchanged, a free-form answer that would be that line is REFUSED with
+ a sentence, and the reader either clears the line or records it as an answer on purpose.")
+
 (defun %open-decision (head)
   "The card on the screen: the first open decision the operator has NOT put away, or NIL.
 

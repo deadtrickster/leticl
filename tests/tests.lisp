@@ -13312,6 +13312,31 @@ whatever the gate had to say.")
       "**the tag is in the list that decides** — the list is named for what the HEAD reads, not for what
   the folder folds, which is why an event folded to nothing still belongs in it"))
 
+(def-test a-question-does-not-take-the-line-being-typed (:suite leticl)
+  "**A CARD ARRIVING OVER A HALF-WRITTEN MESSAGE IS THE NORMAL CASE** (letibot `07509a3`, R90.3), not the
+  corner — and the composer IS a question's field, so Enter took the message as the ANSWER: the reader lost
+  the line AND the decision. The line is HELD instead, and a free-form answer that would be it is refused
+  with a sentence rather than silently, because a line that did nothing would read as a broken composer."
+  (let* ((*stdout* (make-string-output-stream))
+         (h (%on-head :cols 100 :rows 24))
+         (wire (%wire h)))
+    (setf (session-open-decisions (head-session h))
+          (list (list :req-id "q1" :kind "question" :options (list "a" "b"))))
+    ;; a reader mid-sentence when the card arrived, recorded by the hook that fires per FRESH card
+    (setf (composer-buffer (head-composer h)) "the thing I was writing"
+          leticl::*line-when-card-arrived* "the thing I was writing")
+    (leticl::%submit-line h)
+    (is (null (%sent wire))
+        "**nothing was answered** — that line was being typed before the card existed")
+    (is (search "already being typed" (or (head-status-note h) ""))
+        "and the head SAYS so, rather than swallowing the Enter — `say` writes the status slot")
+    ;; --- **AND A LINE THE READER MADE THEIR OWN ANSWERS AS IT ALWAYS DID**
+    (setf (composer-buffer (head-composer h)) "on purpose"
+          leticl::*line-when-card-arrived* "the thing I was writing")
+    (leticl::%submit-line h)
+    (is (not (null (%sent wire)))
+        "a line written FOR the card answers it — the hold is not a lock")))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of

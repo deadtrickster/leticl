@@ -157,9 +157,17 @@ text — which is what makes the ledger safe to forget about."
               (:index (%send head (make-answer-question
                                    (getf decision :req-id)
                                    (question-answer :option pick :note why))))
-              (:free (%send head (make-answer-question
-                                  (getf decision :req-id)
-                                  (question-answer :free pick)))))
+              ;; **A QUESTION DOES NOT TAKE WHAT WAS ALREADY BEING TYPED** (letibot `07509a3`, R90.3): see
+              ;; `*line-when-card-arrived*`. REFUSED with a sentence rather than silently — a line that did
+              ;; nothing would read as the composer being broken, and the reader would retype it.
+              (:free (if (and *line-when-card-arrived*
+                              (equal pick *line-when-card-arrived*))
+                         (progn
+                           (say head "that line was already being typed when the question arrived — clear it, or retype it to answer with it")
+                           nil)
+                         (%send head (make-answer-question
+                                      (getf decision :req-id)
+                                      (question-answer :free pick))))))
             (setf (head-decision-sel head) 0))
            ;; **IT NAMED NO OPTION, AND THERE ARE TWO KINDS OF THAT.**
            ;;

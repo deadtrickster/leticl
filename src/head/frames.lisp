@@ -801,7 +801,12 @@ empty pane on every attach, which is the defect the guard exists to prevent, inv
           (unless (member (getf env :req-id)
                           (session-open-decisions (head-session head))
                           :key (lambda (d) (getf d :req-id)) :test #'string=)
-            (setf (head-decision-sel head) 0
+            ;; **AND THE LINE A READER HAD GOING IS HELD** (letibot `07509a3`, R90.3): recorded the moment
+            ;; a FRESH card arrives, and checked by `%submit-line` before a free-form answer may be sent.
+            ;; This hook is the right place for it for the same reason it is the right place for the
+            ;; cursor reset: it fires once per NEW question, not once per event about one.
+            (setf *line-when-card-arrived* (composer-buffer (head-composer head))
+                  (head-decision-sel head) 0
                   (head-dirty head) t)))
          ;; **THE ONE EVENT THAT MAKES THE QUEUES LIVE RATHER THAN A SNAPSHOT** (protocol 43):
          ;; `QueueMoved {queue, id, to, why}` replaced `MergeEntryAdded`/`MergeEntryMoved`/
