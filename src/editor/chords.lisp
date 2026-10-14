@@ -140,7 +140,7 @@ Esc was a second thing to remember per pane."
             ;; here by this head's own reader, so it cannot be confused with `ctrl-r`, which
             ;; IS a control byte and flips the thinking fold. Handling it above the `:ctrl`
             ;; guard is what keeps the two apart: both arrive as `#\r` and differ only in type.
-            (and (eq (getf key :type) :alt) (member (getf key :ch) '(#\r #\g #\b #\a) :test #'eql)))
+            (and (eq (getf key :type) :alt) (member (getf key :ch) '(#\r #\g #\b #\a #\n) :test #'eql)))
     (if (eq (getf key :type) :alt)
         ;; **THE ALT CHORDS, EACH IN ITS OWN WORD.** `alt-r` opens the operator-call draft; `alt-g` and
         ;; `alt-b` MARK THE TURN (letibot R81) — *good* and *bad*, and a second press inside five seconds
@@ -163,7 +163,21 @@ Esc was a second thing to remember per pane."
           ;; composer's, and NIL is what hands it back to the ladder below.
           (#\a (if (zerop (length (composer-buffer (head-composer head))))
                    (%decision-restore head)
-                   nil)))
+                   nil))
+          ;; **AND `alt-n` OPENS THE NEWEST NOTICE WHOLE** (letibot `c7435d8`, R89). A notice is ONE line
+          ;; with its details *a click or `alt-n` away* — the click half was built (`%show-notice`, the
+          ;; sweep's batch A) and this half was not, so a reader without a mouse had to go and find the
+          ;; row. **The NEWEST**, because the notice that just arrived is the one being read.
+          ;;
+          ;; **No composer guard**, for `alt-g`'s reason: this key was nobody's, so there is no first
+          ;; meaning to keep — a gate here would be a second rule for a key with no first one. `find-if`
+          ;; asks the SAME question the click's arm asks of the row it resolved to, so the two doors
+          ;; cannot drift about what a notice is.
+          (#\n (let ((item (find-if (lambda (i)
+                                     (ignore-errors (%notice-kind (item-display-text i))))
+                                   (session-items (head-session head))
+                                   :from-end t)))
+                 (if item (progn (%show-notice head item) t) nil))))
     (flet ((pane (mode verb)
              (if (eq (head-mode head) mode)
                  (setf (head-mode head) :normal (head-dirty head) t)

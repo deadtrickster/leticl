@@ -13415,6 +13415,32 @@ whatever the gate had to say.")
       (is (null leticl::*frozen-frame*)
           "while an unfrozen head owes nothing special — the ordinary path draws it"))))
 
+(def-test alt-n-opens-the-newest-notice-whole (:suite leticl)
+  "**A NOTICE IS ONE LINE, ITS DETAILS A CLICK OR `alt-n` AWAY** (letibot `c7435d8`, R89). The click half
+  was built (`%show-notice`, the sweep's batch A) and the key half was not — so a reader without a mouse
+  had to go and find the row the notice was already on.
+
+  **The NEWEST**, because the notice that just arrived is the one being read, and the same predicate the
+  click's arm asks of the row it resolved to: the two doors cannot disagree about what a notice is."
+  (let ((h (%on-head :cols 100 :rows 24))
+        (leticl::*read-overlay* nil))
+    ;; a notice ROW, in the shape the daemon sends one — the item's own parts carry the text, which is
+    ;; what `item-display-text` reads and what `%notice-kind` recognises.
+    (setf (session-items (head-session h))
+          (leticl::%items-vector
+           (list (list :item-id "e1" :kind "user"
+                       :item (list :type "user"
+                                   :parts (list (list :kind "text"
+                                                      :text +emergency-notice+)))))))
+    (leticl::%handle-key h (list :type :alt :ch #\n))
+    (is (not (null leticl::*read-overlay*))
+        "**`alt-n` opens the newest notice WHOLE** — the paragraph its one line was a summary of")
+    ;; --- and with nothing to open the key does nothing, rather than erroring
+    (setf (session-items (head-session h)) (leticl::%items-vector nil)
+          leticl::*read-overlay* nil)
+    (leticl::%handle-key h (list :type :alt :ch #\n))
+    (is (null leticl::*read-overlay*) "and with no notice on the screen it opens nothing")))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of
