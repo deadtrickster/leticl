@@ -111,11 +111,12 @@ daemon stayed both times, with the head that asked already gone."
       ((:ctrl) (when (eql (getf key :ch) #\c)
                  (setf (head-quit-open head) nil (head-dirty head) t)
                  (say head "staying")))
-      ;; **A CLICK SELECTS A CHOICE, AND TAKES NOTHING** (sweep 2026-10-11, B.3; the reference's
-      ;; `QuitCard` hit). This card is asked before the click router, so the router's card arm
-      ;; cannot reach it — the arm is here. A wheel is still swallowed: the fail-closed rule above.
-      ((:mouse) (when (eq (getf key :kind) :press)
-                  (%quit-card-click head (getf key :y))))
+      ;; **A CLICK ON THIS CARD IS THE ROUTER'S NOW** (letibot `d70d70f`, R90). The arm was here, on the
+      ;; reasoning that *this card is asked before the click router, so the router's arm cannot reach
+      ;; it* — which stopped being true when the card moved below the decision (and so below the mouse
+      ;; arms) to agree with the SLOT. The press goes to `%pointer-press`, the release to `%click`, and
+      ;; `%click` has the arm. Leaving it here would be a second spelling of one gesture, reachable
+      ;; only by whichever ladder order happened to be in force.
       (t nil)))
   t)
 

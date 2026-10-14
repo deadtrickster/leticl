@@ -305,9 +305,17 @@ than from the click."
       (*pick-open* (%pick-click head row))
       ;; **THE ASK CARD'S RUNGS ARE A LIST TOO** (sweep 2026-10-11, B.3) — the router had no card
       ;; arm, so a click on `▸ Allow once` fell through to the transcript and did nothing while
-      ;; the picker card one row over took clicks. The quit card is not here because it owns every
-      ;; key before this router is reached (`%quit-card-key`), and its click arm lives there.
+      ;; the picker card one row over took clicks.
       ((and (%open-decision head) (eq (head-mode head) :normal) (%decision-click head row)) t)
+      ;; **AND THE QUIT CARD'S CLICK IS HERE, UNDER THE ASK'S, FOR THE SAME REASON THE SLOT PUTS IT
+      ;; THERE** (letibot `d70d70f`, R90). Its arm used to live in `%quit-card-key`, on the reasoning
+      ;; that *this card is asked before the click router, so the router's arm cannot reach it* — which
+      ;; held only while the ladder asked the quit card ABOVE the mouse arms. It cannot sit that high:
+      ;; the SLOT draws the decision first (`render/history-cache.lisp:1432` before `:1443`) and the
+      ;; ladder has to agree with what the reader SEES. Below the mouse arms the press goes to
+      ;; `%pointer-press` and the release to `%click`, so the card's own arm is never reached — the
+      ;; click lives in the router now, as the ask card's does.
+      ((head-quit-open head) (when (integerp row) (%quit-card-click head row)) t)
       ;; **THE DASHBOARD IS A LIST OF PANELS, AND A CLICK PICKS ONE.** It goes ahead of the shared
       ;; pane arm because a panel's row is a LINE and not an index into a per-row list — the boxes
       ;; are different heights, so `click-row->sel`'s arithmetic (which assumes one or two lines per

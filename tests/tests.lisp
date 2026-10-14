@@ -13245,6 +13245,26 @@ whatever the gate had to say.")
         (is (search "type the title" (bar))
             "and the new-todo card, which does too — the worst case for a chord a typing reader cannot press")))))
 
+(def-test the-quit-card-does-not-take-keys-from-a-decision (:suite leticl)
+  "**THE LADDER AGREES WITH THE SLOT** (letibot `d70d70f`, R90). The slot draws the DECISION first
+  (`render/history-cache.lisp:1432` before `:1443`), and the ladder handed the quit card the keys at
+  `:98` — ABOVE the decision.
+
+  **So with both cards up the screen showed the decision and every keystroke went to the quit card
+  underneath it**: the reader presses the row the card in front of them is showing, and a different card
+  acts. That is worse than the bar naming the wrong keys, because the reader can see this one."
+  (let ((h (%on-head :cols 100 :rows 30)))
+    (setf (head-quit-open h) t
+          (leticl::head-quit-sel h) 0
+          (session-open-decisions (head-session h))
+          (list (list :req-id "q1" :kind "question" :choices (list "a" "b"))))
+    ;; a Down belongs to the card the READER CAN SEE
+    (leticl::%handle-key h (list :type :down))
+    (is (= 1 (leticl::head-decision-sel h))
+        "**the DECISION's cursor moved** — it is the card in front")
+    (is (= 0 (leticl::head-quit-sel h))
+        "and the quit card behind it did not move at all")))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of

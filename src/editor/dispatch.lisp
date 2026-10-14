@@ -95,7 +95,11 @@ for the lists)."
       ;; key should have a second meaning — and the one thing that must not happen is a reader
       ;; believing the two heads agree about it. If it is ever made to fall through, this comment
       ;; is the finding to change first.
-      ((head-quit-open head) (%quit-card-key head key type))
+      ;; **THE QUIT CARD'S ARM IS NOT HERE ANY MORE — IT SITS UNDER THE DECISION**, because the SLOT
+      ;; draws the decision first (`render/history-cache.lisp:1432` before `:1443`) and the ladder has to
+      ;; agree with what the reader SEES. Above the decision, it meant that with both cards up the screen
+      ;; showed the decision and every keystroke went to the quit card underneath — worse than the bar
+      ;; naming the wrong keys, because the reader presses the row in front of them and another card acts.
       ;; the head's own chords, before any view — see `%global-chord`
       ((%global-chord head key))
       ;; `ctrl-c` closes whatever list is on the screen, exactly as Esc does
@@ -162,6 +166,8 @@ for the lists)."
       ;; is T5, and `%decision-key`'s own `when` is what keeps every key it does
       ;; not own falling through to the lists below.
       ((%decision-key head key type))
+      ;; **AND THE WAY OUT, UNDER IT** — see the note where this arm used to live, above.
+      ((head-quit-open head) (%quit-card-key head key type))
       ;; **THE OPERATOR-CALL COMPOSER** (R24 part two), after an open ask and before every
       ;; list. After the ask because a card nobody asked for outranks a card the operator
       ;; opened; before the lists because the field it fills IS the composer, so anything it
@@ -269,7 +275,11 @@ what the hint bar says while one runs (`esc interrupt · ctrl+c clear`)."
               (ms (/ internal-time-units-per-second 1000.0)))
           (if (and *ctrlc-at* (< (- now *ctrlc-at*) (* *ctrlc-window-ms* ms)))
               (setf *ctrlc-at* nil
-                    (head-quit-open head) t
+                    ;; **A DECISION IN FRONT IS NOT COVERED UP** (letibot `d70d70f`, R90): the slot
+                    ;; draws the decision first, so opening the way out over it put a card on the
+                    ;; screen that the ladder would not give the keys to — the reader presses the row
+                    ;; they can see and the card behind it acts.
+                    (head-quit-open head) (and (null (%open-decision head)) t)
                     (head-quit-sel head) 0
                     (head-dirty head) t)
               (setf *ctrlc-at* now (head-dirty head) t))))))
