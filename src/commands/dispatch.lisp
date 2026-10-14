@@ -243,6 +243,30 @@ on ClientFrame::Slash)."
               (sub (string-downcase (or (first words) "")))
               (arg (second words)))
          (cond
+           ;; **AND THE SCOPE** (letibot R92.5): `/queue here` comes back to this session's repository,
+           ;; `/queue all` shows every one the daemon serves, and `/queue /PATH` cuts to a tree the
+           ;; reader names. **THE PANE'S SCOPE AND NOT THE EDGE'S** — `%queue-scope` is always this
+           ;; session's — so widening the pane cannot make the chrome alarm about other trees.
+           ((member sub '("here" "all") :test #'string=)
+            (setf *queue-scope* (if (string= sub "all") :all :here))
+            (queue-refresh-rows head)
+            (say head (queue-scope-line head))
+            (unless (eq (head-mode head) :queue)
+              (%toggle-pane head :queue (lambda () (ask-queues head)))))
+           ;; a PATH the reader names — anything that looks like one, rather than a word this verb
+           ;; already means, so a repository called `review` is still nameable by its full path.
+           ;; **THE PATH IS THE FIRST WORD**: `/queue /tmp/one` is one word, and requiring a second
+           ;; measured as *a PATH cuts to a tree the reader names* failing while the arm looked right.
+           ((and (plusp (length sub))
+                 (not (member sub '("review" "merge" "approve" "veto" "rm" "restart"
+                                    "reset" "clean")
+                              :test #'string=))
+                 (member (char sub 0) '(#\/ #\. #\~) :test #'char=))
+            (setf *queue-scope* sub)
+            (queue-refresh-rows head)
+            (say head (queue-scope-line head))
+            (unless (eq (head-mode head) :queue)
+              (%toggle-pane head :queue (lambda () (ask-queues head)))))
            ((zerop (length rest))
             (%toggle-pane head :queue (lambda () (ask-queues head)))
             (say head "asking the daemon for the queues…"))

@@ -89,6 +89,10 @@
     ("term" . "a terminal in this session — /term CMD runs one, /term attaches, /term status asks what runs")
     ("standing" . "the notes the harness is reading into this session")
     ("queue" . "the review and merge queues — /queue review|merge picks a view; /queue approve|veto|rm|restart ID")
+    ;; **AND THE SCOPE THE PANE SHOWS** (letibot R92.5): the daemon serves every repository at once, so
+    ;; the pane opens on THIS session's and these are how a reader widens or narrows it.
+    ("queue here" . "show only this session's repository (the default)")
+    ("queue all" . "show every repository the daemon serves")
     ("jobs" . "the background-jobs pane")
     ("subagents" . "the subagent tree")
     ("todos" . "the plan and the repo's TODO.md — or /todos add for one of your own")

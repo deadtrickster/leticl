@@ -14115,6 +14115,39 @@ test/random, and it is one of three.~%options offered:~%- in scope~%- out of sco
     (is (null (leticl::%followed-repo h (list #p"/tmp/one/")))
         "**a repository the workspace no longer holds is not trusted** — the pin is a path, not a promise")))
 
+(def-test the-queue-pane-shows-one-repository-and-says-which (:suite leticl)
+  "**THE PANE'S SCOPE AND THE EDGE'S ARE DIFFERENT QUESTIONS** (letibot R92.5, `031239d`): the snapshot
+  is DAEMON-level and holds every repository's rows, so a pane that drew them all made the reader hunt
+  for their own work among strangers'. The EDGE is always this session's, whatever the pane shows —
+  because a reader who widened a pane must not thereby make the chrome alarm about other trees.
+
+  **And a filter nobody can see is a pane that lies about what exists**, so the pane says which one it is
+  showing — and a session in no repository is TOLD, rather than quietly filtered by nothing."
+  (let ((h (%on-head :cols 100 :rows 30))
+        (leticl::*queue-scope* :here)
+        (leticl::*queues* nil))
+    ;; --- the scope's own states
+    (is (eq :here leticl::*queue-scope*) "the pane opens on THIS session's repository")
+    (leticl::%command h "queue all")
+    (is (eq :all leticl::*queue-scope*) "**`/queue all` widens it**")
+    (is (search "every repository" (leticl::queue-scope-line h))
+        "**and the pane SAYS which scope it is in** — a filter nobody can see is a pane that lies")
+    (leticl::%command h "queue here")
+    (is (eq :here leticl::*queue-scope*) "**and `/queue here` comes back to this session's**")
+    (leticl::%command h "queue /tmp/one")
+    (is (equal "/tmp/one" leticl::*queue-scope*) "**and a PATH cuts to a tree the reader names**")
+    ;; --- and the filter the pane actually applies
+    (is (not (leticl::%queue-row-here-p (list :repository "/tmp/two") "/tmp/one"))
+        "**a row from another tree is not in this scope**")
+    (is (leticl::%queue-row-here-p (list :repository "/tmp/one") "/tmp/one")
+        "and a row from it is")
+    ;; --- **AND THE EDGE IS NOT THE PANE**: widening what is DRAWN must never widen what the chrome
+    ;; counts, or a reader who wanted to see other trees would alarm their own head about them (R92.5).
+    (let ((before (leticl::%queue-scope h)))
+      (setf leticl::*queue-scope* :all)
+      (is (equal before (leticl::%queue-scope h))
+          "**the EDGE ignores the pane's scope** — `/queue all` widens the pane and nothing else"))))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of

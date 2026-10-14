@@ -213,7 +213,16 @@ tell which queue it came from without being told."
   "Recompute `head-merge-queue` from the snapshot for the current view, and keep the cursor on a
 row that exists. A no-op without a snapshot, so a test that put rows on the head by hand keeps them."
   (when *queues*
-    (setf (head-merge-queue head) (queue-view-rows *queues* *queue-view*))
+    (setf (head-merge-queue head)
+          ;; **AND THE PANE'S COPY IS CUT TO THE SCOPE IT SHOWS** (letibot R92.5): the snapshot is
+          ;; daemon-level and holds every repository's rows, so a pane that drew them all made the
+          ;; reader hunt for their own work among strangers'. The EDGE is a different question —
+          ;; `%queue-scope`, always this session's — and it is deliberately not this one.
+          (let ((rows (queue-view-rows *queues* *queue-view*))
+                (scope (queue-pane-scope head)))
+            (if scope
+                (remove-if-not (lambda (r) (%queue-row-here-p r scope)) rows)
+                rows)))
     (setf (head-picker-sel head)
           (max 0 (min (head-picker-sel head) (max 0 (1- (length (head-merge-queue head)))))))
     (setf (head-dirty head) t)))
@@ -509,7 +518,10 @@ pane's 5 s re-read (`tick-queues`), which is what keeps a frame out of a rendere
          (entries (head-merge-queue head))
          (now (queue-now-ms))
          (standings (queue-standings head))
-         (out (list (list (cons "review queue · merge queue" '(:bold t))))))
+         (out (list (list (cons "review queue · merge queue" '(:bold t)))
+                    ;; **AND WHICH SCOPE THIS IS** (letibot R92.5): the pane can show one repository or
+                    ;; all of them, and a reader who widened it has to be able to see that they did.
+                    (list (cons (queue-scope-line head) '(:dim t))))))
     (push nil out)
     (when *queues*
       (dolist (l (%queue-header-lines *queues* now w)) (push l out))
@@ -709,6 +721,42 @@ makes a row ring a bell.*"
     (if (and (stringp name) (plusp (length name)))
         name
         (or (and job (getf job :command)) ""))))
+
+(defvar *queue-scope* :here
+  "Which repository the `/queue` PANE shows — `:here` (this session's, the default), `:all`, or a path.
+
+ **THE PANE'S SCOPE, AND NOT THE EDGE'S** (letibot R92.5, `031239d`). The edge ALWAYS counts this
+ session's repository whatever the pane shows — that is `%queue-scope`, a different question with a
+ different answer — and collapsing the two is how a pane that a reader widened would start alarming
+ about other trees in the chrome.
+
+ `:here` is the DEFAULT because the daemon serves every repository at once and a pane that opened on
+ all of them made the reader hunt for their own work among strangers'. `/queue all` widens it and
+ `/queue /PATH` narrows it to one tree the reader names.")
+
+(defun queue-pane-scope (head)
+  "The repository the PANE filters to — a directory name, or NIL for *show everything*.
+
+ NIL has two causes and both mean the same to the caller: `/queue all`, and a session whose repository
+ this head cannot name — because a filter it cannot evaluate must not hide rows it cannot judge."
+  (cond ((eq *queue-scope* :all) nil)
+        ((stringp *queue-scope*) (string-right-trim "/" *queue-scope*))
+        (t (%queue-scope head))))
+
+(defun queue-scope-line (head)
+  "The pane's own sentence about WHICH repository it is showing — never NIL.
+
+ **A FILTER NOBODY CAN SEE IS A PANE THAT LIES ABOUT WHAT EXISTS** (letibot R92.5): the pane can show
+ one repository or all of them, and a reader who widened it has to be able to see that they did.
+
+ **And a session in no repository is TOLD, not filtered**: `%queue-scope` answers NIL when it cannot
+ name one, so the pane shows everything — which is the right answer and would be a confusing one without
+ this line saying why. That case names no verb, because there is nothing to come back from."
+  (let ((scope (queue-pane-scope head)))
+    (cond ((stringp *queue-scope*) (format nil "showing ~a only · /queue here comes back" scope))
+          ((eq *queue-scope* :all) "showing every repository · /queue here for this one only")
+          (scope (format nil "showing ~a only · /queue all for every repository" scope))
+          (t "this session is in no repository — showing every repository"))))
 
 (defun %queue-scope (head)
   "The repository the EDGE counts, or NIL when this head cannot name one.
