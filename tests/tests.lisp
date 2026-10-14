@@ -14148,6 +14148,41 @@ test/random, and it is one of three.~%options offered:~%- in scope~%- out of sco
       (is (equal before (leticl::%queue-scope h))
           "**the EDGE ignores the pane's scope** — `/queue all` widens the pane and nothing else"))))
 
+(def-test the-clipboard-is-base64-over-utf8-bytes (:suite leticl)
+  "**OSC 52 CARRIES BASE64, AND THE BYTES ARE UTF-8** — the two halves of the escape, and both are the
+  kind of thing that looks right and pastes wrong.
+
+  The standard vectors, because they are the format: a decoder is not something this head can watch, so
+  the only honest test is against strings whose encoding is not in dispute."
+  ;; --- the format, in four words
+  (is (string= "aGVsbG8=" (leticl::%base64 "hello")) "**`hello` is `aGVsbG8=`**")
+  (is (string= "aGk=" (leticl::%base64 "hi"))
+      "**and a payload that is not a multiple of three is PADDED** — `hi` is two bytes, so one `=`")
+  (is (string= "YQ==" (leticl::%base64 "a")) "one byte, two `=`s")
+  (is (string= "" (leticl::%base64 "")) "and nothing encodes to nothing")
+  ;; --- **AND UTF-8 BYTES, NOT CHARACTER CODES** — the case that would look right and paste wrong
+  (is (string= "w6k=" (leticl::%base64 "é"))
+      "**`é` is TWO bytes in UTF-8**, and a loop over `char-code` would have written one — a copied answer
+  with one accented word in it would arrive mangled, and only there")
+  ;; --- and what `/copy` takes
+  (let ((h (%on-head :cols 100 :rows 30)))
+    (is (null (leticl::%copy-text h)) "a session with no reply has nothing to copy")
+    (setf (session-items (head-session h))
+          (leticl::%items-vector
+           (list (list :item-id "i1" :kind "assistant" :ts 1
+                       :item (list :type "assistant" :text "the answer")))))
+    (is (equal "the answer" (leticl::%copy-text h))
+        "**else the LAST REPLY** — the rule's second half")
+    ;; and it is the LAST one, not the first
+    (setf (session-items (head-session h))
+          (leticl::%items-vector
+           (list (list :item-id "i1" :kind "assistant" :ts 1
+                       :item (list :type "assistant" :text "the first"))
+                 (list :item-id "i2" :kind "assistant" :ts 2
+                       :item (list :type "assistant" :text "the second")))))
+    (is (equal "the second" (leticl::%copy-text h))
+        "**the NEWEST reply, not the oldest** — a reader copying means the one they just read")))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of

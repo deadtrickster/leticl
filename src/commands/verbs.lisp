@@ -93,6 +93,8 @@
     ;; the pane opens on THIS session's and these are how a reader widens or narrows it.
     ("queue here" . "show only this session's repository (the default)")
     ("queue all" . "show every repository the daemon serves")
+    ;; **AND THE CLIPBOARD** (letibot's `/copy`): what is on screen, or what was last said.
+    ("copy" . "the open window, else the last reply, onto the terminal's clipboard")
     ("jobs" . "the background-jobs pane")
     ("subagents" . "the subagent tree")
     ("todos" . "the plan and the repo's TODO.md — or /todos add for one of your own")

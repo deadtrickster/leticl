@@ -241,7 +241,10 @@ protocol goldens, wire framing (see PLAN.md §11)."
                (:file "tests/sweep-transcript")
                (:file "tests/sweep-stability")
                ;; the net under `scripts/compare-1-1`: a fixture in, a screen out
-               (:file "tests/replay"))
+               (:file "tests/replay")
+               ;; **THE CLIPBOARD, LAST** because it is the one file that calls into both the render
+               ;; (`%open-stdout`, the read overlay) and the session (the items a reply is found in).
+               (:file "src/clipboard"))
   :perform (asdf:test-op (o c)
              (declare (ignore o c))
              (uiop:symbol-call :leticl/tests '#:run-all)))

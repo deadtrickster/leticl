@@ -388,6 +388,9 @@ on ClientFrame::Slash)."
        ;; answered itself would be a key that acted before the reader had read the list.
        (setf *repo-card-open* t
              (head-dirty head) t))
+      ((string= verb "copy")
+       ;; **THE CLIPBOARD** (letibot's `/copy`): the open window if one is up, else the last reply.
+       (copy-command head rest))
       ((string= verb "reseat")
        ;; `/reseat summarise` asks for the LOSSY kind by name and got the other
        ;; one, with no word either way: the argument was parsed off and dropped,
