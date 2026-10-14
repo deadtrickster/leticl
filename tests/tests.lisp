@@ -13981,6 +13981,25 @@ test/random, and it is one of three.~%options offered:~%- in scope~%- out of sco
         "**a row with no seat opens nothing** — the map is the whole test, not a guess at the row")
     (is (null leticl::*hidden-run-open*) "and nothing was opened")))
 
+(def-test esc-folds-an-open-run (:suite leticl)
+  "**AN OPEN RUN CLOSES ON ESC** (letibot `7eab116`, its second clause): a run's rows are a VIEW over the
+  transcript — the marker's counts say how much work there was and the open rows are that work — so Esc
+  puts it back the way the marker drew it.
+
+  **Through `%set-hidden-run-open`, the ONE writer**, which bumps the history generation — so the frame
+  is rebuilt with its marker rather than left drawn open with nothing over it. The reference's own words:
+  *Esc closes it as it closes any open run, and now rebuilds the history the way `ctrl-t`'s close does,
+  so the marker is back on the next frame.*"
+  (let ((h (%on-head :cols 100 :rows 30))
+        (leticl::*hidden-run-open* "leticl-run-i5"))
+    (is (leticl::%handle-key h (list :type :esc))
+        "**Esc claims the press** — with a run open it is not the composer's `esc esc` arm")
+    (is (null leticl::*hidden-run-open*) "**and the run is folded**")
+    (is (head-dirty h) "and the frame will be drawn again, so the marker is back with it")
+    ;; --- and with nothing open the key is whatever it always was
+    (is (not (null (leticl::%handle-key h (list :type :esc))))
+        "a second Esc still reaches the ladder below — nothing was left claimed")))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of

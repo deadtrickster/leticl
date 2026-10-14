@@ -457,6 +457,22 @@ of R36 keeps — the anchor is a record of the top row of the last frame, never 
          (composer-insert c (string #\newline))
          (setf (head-dirty head) t)))
       ((:esc)
+       ;; **AND AN OPEN RUN CLOSES FIRST** (letibot `7eab116`). A run's open rows are a VIEW over the
+       ;; transcript — the marker's counts say how much work there was and the rows are that work — so
+       ;; Esc puts it back the way the marker drew it.
+       ;;
+       ;; **Through `%set-hidden-run-open`, which is the ONE writer and bumps the history generation**,
+       ;; so the frame is REBUILT with the marker rather than leaving the rows drawn open with nothing
+       ;; over them. The reference's own words for this half: *Esc closes it as it closes any open run,
+       ;; and now rebuilds the history the way `ctrl-t`'s close does, so the marker is back on the next
+       ;; frame* — the same door, so the two keys cannot disagree about what closing means.
+       ;;
+       ;; **Claimed, not shared**: with a run open the press is spent here, so it never falls through to
+       ;; the composer and arms the `esc esc` interrupt.
+       (when *hidden-run-open*
+         (%set-hidden-run-open nil)
+         (setf (head-dirty head) t)
+         (return-from %normal-key t))
        ;; **A SINGLE ESC INSIDE A SUBAGENT'S SESSION IS THE WAY BACK UP THE TREE.**
        ;;
        ;; The operator, measured twice — once on the reference (letibot `b9abcf1`) and
