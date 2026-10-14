@@ -14042,6 +14042,42 @@ test/random, and it is one of three.~%options offered:~%- in scope~%- out of sco
           "**and the marker is REVERSED, carrying what it already had**: a light that dropped the
   marker's own attributes would be a different marker, not a lit one"))))
 
+(def-test the-held-counter-rides-the-responding-row (:suite leticl)
+  "**THE OPERATOR'S OWN ASK**, quoted in the daemon's source (R79): *\"what would be useful is a counter
+  of how much and what kind is held - somewhere close to Responding\"*.
+
+  **NOT TRANSCRIPT CONTENT** — the reference's view folds `HeldResults` to nothing (`view.rs:964`) — so it
+  never becomes a row of its own: it rides the responding row, which is where *close to Responding* is.
+  Three rules come with it from the daemon's own source: the kinds are counted SEPARATELY, **nothing is
+  drawn once they are all zero**, and it is EPHEMERAL — *a count from four minutes ago is a lie about
+  now* — so a snapshot drops it rather than carrying it forward."
+  (let ((h (%on-head :cols 100 :rows 30))
+        (leticl::*held-results* nil))
+    (is (null (leticl::held-results-note 100)) "nothing is held to begin with")
+    ;; --- the daemon's frame: the counts BY KIND
+    (leticl::%handle-frame h (list :frame "event" :seq 1 :event "held_results"
+                                   :jobs 2 :subagents 1 :failed 0))
+    (is (equal '(2 1 0) leticl::*held-results*) "**the counts are taken by kind**")
+    (let ((said (leticl::held-results-note 100)))
+      (is (search "2 jobs" said) (format nil "**the row says how much** (got ~s)" said))
+      (is (search "1 subagent" said) "**and what kind** — the operator asked for both")
+      (is (not (search "failed" said))
+          "**and a kind with nothing held is not named** — `holding 0 failed` is noise, not a count"))
+    ;; --- all zero draws nothing, which is the daemon's own rule
+    (leticl::%handle-frame h (list :frame "event" :seq 2 :event "held_results"
+                                   :jobs 0 :subagents 0 :failed 0))
+    (is (null (leticl::held-results-note 100)) "**all zero draws NOTHING**")
+    ;; --- and a frame too narrow gives it up rather than pushing the legend off
+    (setf leticl::*held-results* '(1 0 0))
+    (is (null (leticl::held-results-note 40))
+        "**a narrow frame gives the count up** — the legend the operator asked for by name outranks it")
+    (is (search "1 job" (leticl::held-results-note 100)) "and it comes back when there is room")
+    ;; --- **AND A SNAPSHOT DROPS IT**: ephemeral, and the daemon will say it again
+    (setf leticl::*held-results* '(1 1 1))
+    (leticl::ingest-snapshot (head-session h) (list :session-id "s1"))
+    (is (null leticl::*held-results*)
+        "**a snapshot drops it** — carrying it forward would be this head repeating a fact that expired")))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of

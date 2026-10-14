@@ -827,6 +827,18 @@ empty pane on every attach, which is the defect the guard exists to prevent, inv
          ((:queue-moved)
           (queue-moved head env)
           :dirty)
+         ;; **AND THE DAEMON'S HELD COUNT** (the reference's `SessionEvent::HeldResults`, R79): *what this
+         ;; session is holding back from its model right now … counted by kind*. **NOT transcript
+         ;; content** — the reference's view folds it to nothing and this head files it as an event it
+         ;; READS rather than folds — so it never becomes a row of its own: it rides the responding row.
+         ;; The daemon publishes it every time the held set changes and says nothing once they are all
+         ;; zero, so the head draws what it was last given.
+         ((:held-results)
+          (setf *held-results* (list (or (getf env :jobs) 0)
+                                     (or (getf env :subagents) 0)
+                                     (or (getf env :failed) 0))
+                (head-dirty head) t)
+          :dirty)
          ((:job-settled)
           ;; FOLDED INTO THE ROW THE DAEMON GAVE US, never invented. The jobs
           ;; pane draws `head-jobs`, which is only ever the `Jobs` reply, so an

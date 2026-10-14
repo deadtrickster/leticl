@@ -517,7 +517,16 @@ it is a typing aid, not a message. What changed is only where the row lands."
                     ;; quietly stopped reminding about a plan is the one thing this must never do by
                     ;; accident, so the pause takes this row and says when it ends.
                     (let ((paused (nag-state-line head cols))) (and paused paused))
-                    (turn-report-row head cols))
+                    ;; **AND THE DAEMON'S HELD COUNT RIDES THE RESPONDING ROW** (the reference's
+                    ;; `HeldResults`): *not transcript content*, and the operator asked for it
+                    ;; *"somewhere close to Responding"* — which is this row and not one of its own.
+                    ;; Appended, so a count appearing and going does not move the conversation by a
+                    ;; line; the daemon says nothing outside a turn, so there is nothing to hide.
+                    (let ((report (turn-report-row head cols))
+                          (held (held-results-note cols)))
+                      (cond ((and report held) (format nil "~a · ~a" report held))
+                            (report report)
+                            (t nil))))
                 (list (composer-box-top head cols))
                 (composer-box-body head cols max-rows)
                 (when ghost (list (composer-ghost-row ghost cols)))

@@ -336,6 +336,12 @@ thing that knows whether this is the same conversation (app.rs:1897-1934)."
         (session-warnings session) (reverse (getf snapshot :warnings))
         (session-heads session) (getf snapshot :heads)
         (session-items session) (%items-vector (getf snapshot :items)))
+  ;; **AND THE HELD COUNT IS DROPPED HERE** (the reference's `HeldResults`, R79): it is EPHEMERAL —
+  ;; *a count from four minutes ago is a lie about now* — and the daemon says it again the moment the
+  ;; held set changes. A snapshot that carried one forward would be this head repeating a fact that
+  ;; expired, which is the opposite of what a resync is for. Nothing else in this function is dropped,
+  ;; and that is why this says why rather than sitting beside its neighbours silently.
+  (setf *held-results* nil)
   ;; **THE PARENT'S CHILDREN, CARRIED BY THE SNAPSHOT — the fix for the count that
   ;; disappeared on a switch back.** The wire's `Snapshot` grows a `subagents` field
   ;; (`#[serde(default)]`, so a daemon older than it omits it and this `member` is the

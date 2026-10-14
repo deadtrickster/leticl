@@ -97,6 +97,44 @@ move without an event*, so a pane that waited for `QueueMoved` would draw a leas
              (>= (- (internal-real-time-ms) *job-asked-ms*) +job-refresh-ms+))
     (ask-job-window head)))
 
+(defvar *held-results* nil
+  "What the daemon is holding back from its model right now — `(JOBS SUBAGENTS FAILED)` — or NIL.
+
+ **THE REFERENCE'S `SessionEvent::HeldResults`** (`event.rs:2212`), and its own source has the whole
+ spec: *what this session is holding back from its model right now: the results nothing in the plan waits
+ on, held so a RUNNING turn is not interrupted, **counted by kind***. The operator asked for it in these
+ words — *\"what would be useful is a counter of how much and what kind is held - somewhere close to
+ Responding\"* — and that is exactly where it is drawn (`turn-report-row`).
+
+ **NOT TRANSCRIPT CONTENT**, which is the half that decides the shape: the reference's view folds it to
+ nothing (`view.rs:964`) and this head files it as an event it READS rather than folds, so it never
+ becomes a row of its own. It is appended to the responding row instead, which is why a count appearing
+ or going does not move the conversation by a line.
+
+ **EPHEMERAL, so a snapshot DROPS it ** — *a count from four minutes ago is a lie about now*, and the
+ daemon says it again the moment the held set changes. Holding exists only while a turn runs (the
+ operator: *\"once turn ends no reason to hold\"*), so outside a turn the counts are zero and the row
+ says nothing.")
+
+(defun held-results-note (cols)
+  "The held counts as one clause — or NIL when there is nothing held, or no room for it.
+
+ **ZERO DRAWS NOTHING** (the daemon's own rule: *draws nothing once they are all zero*), and the kinds
+ are named only when they are non-zero: `holding 2 jobs, 1 subagent` and never `holding 0 subagents`.
+
+ NIL when the frame cannot afford it: this row also carries the turn's own report and the operator's
+ asked-for legend, and a count that pushed the legend off a narrow terminal would be trading the thing
+ they asked for against a thing they mentioned."
+  (let ((j (or (first *held-results*) 0))
+        (s (or (second *held-results*) 0))
+        (f (or (third *held-results*) 0)))
+    (when (and *held-results* (plusp (+ j s f)) (>= cols 60))
+      (format nil "holding ~{~a~^, ~}"
+              (remove nil
+                      (list (and (plusp j) (format nil "~d job~:p" j))
+                            (and (plusp s) (format nil "~d subagent~:p" s))
+                            (and (plusp f) (format nil "~d failed" f))))))))
+
 (defparameter +lease-stale-ms+ 90000
   "A heartbeat older than this is drawn STALE — the daemon's own lease lifetime
 (`mergequeue::lease::LEASE_TTL_MS`, the reference's `LEASE_STALE_MS`), so the pane's word and the
