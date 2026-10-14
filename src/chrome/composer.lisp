@@ -490,7 +490,19 @@ it is a typing aid, not a message. What changed is only where the row lands."
                 ;; `turn-report-row` for the operator's spec and for why a permanent row is the
                 ;; axiom read as a layout rule: a row that came and went with the turn would move
                 ;; the transcript on every exchange.
-                (turn-report-row head cols)
+                ;; **AND THE TRANSIENT RIDES THIS ROW — THE ROW THAT IS ALWAYS THERE** (letibot
+                ;; `516c5a4`/`0266a81`, R91). The note and the stall had rows of their OWN in the fit
+                ;; ladder, so every `say` took a transcript row for NOTICE_MS and handed it back: with a
+                ;; one-second poll that is a **jump every second**, and it is the operator's own report —
+                ;; *"they were on their bottom lines and conversation was jumping back and forth"*.
+                ;;
+                ;; **The order is the one the ladder kept**: the stall outlived the notice there, so it
+                ;; outranks it here. And both outrank the turn's own text, which is the reference's own
+                ;; rule — *a narrow status row drops the transient before the turn* — because a reader
+                ;; who pressed a key needs the answer more than the clock.
+                (or (let ((stall (stall-row head cols))) (and stall stall))
+                    (let ((notice (notice-line head cols))) (and notice notice))
+                    (turn-report-row head cols))
                 (list (composer-box-top head cols))
                 (composer-box-body head cols max-rows)
                 (when ghost (list (composer-ghost-row ghost cols)))

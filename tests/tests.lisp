@@ -12601,10 +12601,14 @@ test that owns it is named, which is the discipline the compaction fixtures alre
                         (length (composer-line h cols))
                         (length (pick-card-lines h cols)))))
       (is (integerp top) "**the render RECORDS the row it drew the card from**")
-      (is (not (= top bottom-up))
-          "**and it is NOT the bottom-up number** — a note is up, and that is the one subtraction the
-the old arithmetic could not do. This is the assertion that fails on the unfixed version (:both are
-equal with nothing else on the chrome, which is why the bug needed a note to be seen)"))
+      (is (= top bottom-up)
+          "**and it EQUALS the bottom-up number — with a note up, which is the case the old arithmetic
+could not do.** The note and the stall used to be chrome rows of their own, so subtracting the
+composer alone was one row short and every click under a card landed a rung off. They ride the
+composer's own row now (`composer-lines`), so the subtraction is the whole chrome — and these two
+numbers agreeing is what says so. **The assertion is the OPPOSITE of the one that failed on the
+unfixed version, and that is the point**: it failed because a note cost a row, and it cannot fail that
+way any more."))
     ;; **AND THE GLOBAL GOES BACK.** `*pick-open*` is a defvar, so a test that sets it and walks away
     ;; renders a PICK CARD in every test after it — which is how this test's first version broke
     ;; thirty-four of them, all of them innocent. The head's own kind of defect, in a fixture.
@@ -18035,35 +18039,37 @@ is an argument; this asserts the order itself."
              (screen-resize (head-prev-screen h) 80 rows)
              (leticl::%render h)
              (%screen-text h)))
-      (let ((wide (frame 20)))
+      ;; **EVERY WIDTH IS MEASURED FIRST**, because the assertions below compare them — and a chain of
+      ;; sibling `let`s cannot see each other's frames. Measured: a digest of the five widths came out
+      ;; `UNBOUND-VARIABLE WIDE`, which is a mistake this restructure removes rather than works around.
+      (let* ((wide (frame 20))
+             (r7 (frame 7))
+             (r6 (frame 6))
+             (r5 (frame 5))
+             (r4 (frame 4))
+             (r3 (frame 3)))
         (is (search "/help" wide) "at 20 rows the completions are there")
-        (is (not (search "ctrl-s sessions" wide))
-            "**and they are standing on the hint bar's row** — see `%render`: one of the two is the\n last row of the frame, and while a command is being typed the completions are the better\n answer to *what can i type next*")
-        (is (search "the head has something to say" wide) "and the notice")
-        (is (search "nothing received for" wide) "and the stall sentence")
-        (is (search "╭" wide) "and the box"))
-      (let ((r7 (frame 7)))
-        ;; **The completions are no longer a chrome row, and this is where the order starts now.**
-        ;; They are the box's own last row, standing on the HINT BAR's row — see `%render` — so the
-        ;; row given up first is still the row the completions live on, and giving it up takes them
-        ;; with it. The operator's reason is that the two say the same kind of thing: the hint bar's
-        ;; own `tab completes /commands` is exactly what the ghost is showing.
+        (is (search "nothing received for" wide)
+            "**and the STALL is what the reserved row shows** — it outranks the notice, which is the order
+ the ladder kept: it dropped the notice before the stall, and one row holds one transient")
+        (is (search "╭" wide) "and the box")
+
+        ;; **THE TRANSIENTS DO NOT MOVE WITH THE WIDTH — that is the whole fix** (letibot
+        ;; `516c5a4`). Before it, each one took a row from the transcript and handed it back
+        ;; NOTICE_MS later: with a one-second poll, a jump every second.
+        (dolist (f (list (cons 7 r7) (cons 6 r6) (cons 5 r5) (cons 4 r4)))
+          (is (search "nothing received for" (cdr f))
+              (format nil "**at ~a rows the stall is on the same row it was at 20** — the row above
+ the box is always drawn, so the conversation's height does not depend on it" (car f))))
+
         (is (search "/help" r7) "at 7 rows the ghost is inside the box")
-        (is (search "│" r7) "and it is the box that carries it")
         (is (not (search "ctrl-s sessions" r7))
-            "**the hint bar's row is what paid for it** — same kind of row, one line of advice\n about what you can type next"))
-      (let ((r6 (frame 6)))
-        (is (not (search "/help" r6)) "and when that row goes, the completions go with it")
-        (is (not (search "ctrl-s sessions" r6)) "the hint bar goes next")
-        (is (search "the head has something to say" r6) "the notice is still there"))
-      (let ((r5 (frame 5)))
-        (is (not (search "the head has something to say" r5)) "then the notice")
-        (is (search "nothing received for" r5) "the stall outlives it — it is the
-only thing on the screen saying why nothing is happening"))
-      (let ((r4 (frame 4)))
-        (is (not (search "nothing received for" r4)) "then the stall")
-        (is (search "╭" r4) "the box outlives it"))
-      (let ((r3 (frame 3)))
+            "**the hint bar's row is what paid for it** — same kind of row, one line of advice
+ about what you can type next")
+        (is (search "/help" r5)
+            "**and the completions last to five rows now** — two rows the ladder no longer spends on
+ transients, which is the honest dividend of not giving them rows of their own")
+        (is (not (search "/help" r4)) "at four the row goes and takes the completions with it")
         (is (not (search "╭" r3)) "and the box is last of the chrome")
         (is (search "›" r3) "the composer is what is left"))
       ;; **and the moment the command is not being typed, the hint bar is back in that row** — which
@@ -18072,7 +18078,15 @@ only thing on the screen saying why nothing is happening"))
       (setf (composer-buffer (head-composer h)) "")
       (let ((back (frame 20)))
         (is (search "ctrl-s sessions" back) "the hint bar returns with the ghost gone")
-        (is (not (search "/help the key" back)) "and the completions are gone with it")))))
+        (is (not (search "/help the key" back)) "and the completions are gone with it"))
+      ;; --- **AND WITH NO TURN RUNNING THE SAME ROW SHOWS THE NOTICE**, which is the other half of *a
+      ;; transient rides the reserved row*: the row is ONE and the occupants are several, chosen by the
+      ;; priority the ladder already had.
+      (setf (session-turn (head-session h)) nil)
+      (let ((only-notice (frame 20)))
+        (is (search "the head has something to say" only-notice)
+            "**with the turn gone the same row shows the NOTICE** — one reserved row, several occupants")
+        (is (not (search "nothing received for" only-notice)) "and the stall is gone with the turn")))))
 
 (def-test the-frame-never-returns-more-rows-than-the-terminal-has (:suite leticl)
   "The backstop (app.rs:5206-5208): `the ladder above cannot always win — h can

@@ -1205,8 +1205,10 @@ transcript."
         (dec card-rows))
     (loop
       (let ((n (+ dec
-                  (if stall-p 1 0)
-                  (if notice-p 1 0)
+                  ;; **THE NOTE AND THE STALL COST NO BODY ROW** (letibot `516c5a4`/`0266a81`, R91): they
+                  ;; ride the row above the box, which is always there, so the conversation's height no
+                  ;; longer depends on whether something has just been said. The ladder's half of the
+                  ;; rule `composer-lines` states for that row.
                   (if comp-p 1 0)
                   (if boxed 2 (if (alarmed-p head) 1 0))
                   body-rows
@@ -1214,9 +1216,9 @@ transcript."
         (when (< n rows) (return))
         (cond (comp-p (setf comp-p nil))
               (hint (setf hint nil))
-              (notice-p (setf notice-p nil))
+              ;; the note and the stall are NOT rows to give up any more: they are text the row above
+              ;; the box shows when it has something to show, so there is nothing here to drop.
               ((> body-rows 1) (decf body-rows))
-              (stall-p (setf stall-p nil))
               (boxed (setf boxed nil))
         ;; **THE CARD'S FLOOR IS THE LADDER, AND THAT IS R20.** This arm used to
         ;; read `((> dec 1) (decf dec))` — the card shrank to one row like
@@ -1513,7 +1515,7 @@ scrolls the transcript by a row every keystroke.
              ;; composer is one row taller, so it starts one row higher
              ;; (`cursor`, above), and the hint bar's row has already been given to
              ;; that same composer.
-             (chrome-top (- cursor (if notice-p 1 0) (if stall-p 1 0) card-rows))
+             (chrome-top (- cursor card-rows))
              ;; **the header is not drawn on a screen too short for it.** The
              ;; reference gates it on `h >= 6 && !session_id.is_empty()`
              ;; (app.rs:5231); ours drew it at row 0 unconditionally, so a
@@ -1612,8 +1614,9 @@ scrolls the transcript by a row every keystroke.
           (flet ((row (line) (put-segments s r gutter line) (incf r)))
             (dolist (line content) (row line))
             (dolist (line card-ladder) (row line))
-            (when stall-p (row (first stall)))
-            (when notice-p (row (first notice)))
+            ;; **THE NOTE AND THE STALL ARE NOT DRAWN HERE ANY MORE** — they ride the row above the
+            ;; composer box (`composer-lines`), which exists whether or not there is anything to say.
+            ;; Two rows that came and went were two ways for the conversation to jump.
             ;; **NO completions row here** — it is inside the box, drawn with the composer.
             ;; See `composer-ghost-row` for the screen that moved it.
             (dolist (line composer) (row line))))
