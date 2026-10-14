@@ -83,7 +83,13 @@ long as the picker stayed open."
            ;; a digit that names no row is the composer's, as is every digit
            ;; once a line is being typed
            (when (and empty digit (<= 1 digit n))
-             (%answer-decision head (1- digit)))))
+             ;; **A DIGIT MARKS THE ROW — IT DOES NOT ANSWER IT** (letibot `fee1620`, R90.2/R90.23). It
+             ;; used to send the answer outright, so a reader reaching for the row numbers the card
+             ;; draws got a DECISION TAKEN on one keystroke — and there is no undo for an answer. Enter
+             ;; answers; the digit does exactly what ↑↓ does, which is why the card's rows can carry
+             ;; numbers at all.
+             (setf (head-decision-sel head) (1- digit)
+                   (head-dirty head) t))))
         ;; **PAGE, THE WHEEL AND HOME/END SCROLL THE CONTENT VIEWPORT, AND THAT IS
         ;; R20.** The ladder is pinned and never scrolls, so the content above it needs
         ;; keys of its own — and they cannot be ↑/↓, which are the ladder's (the

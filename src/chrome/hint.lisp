@@ -89,7 +89,7 @@ the transcript's own rows use, so the ellipsis is the head's usual one rather th
                  ;; pane was described by the pane's words — the bottom row naming keys the card was
                  ;; eating. `pane-hint` is still one arm down for the opposite case: a pane is described
                  ;; by its own words exactly when nothing that owns the keyboard is over it.
-                 ((%open-decision head) "a row number answers · ↑↓ then enter · or type an option · /help")
+                 ((%open-decision head) "a row number marks it · ↑↓ then enter · or type an option · /help")
                  ;; **THE TWO DRAFTS THE LADDER ASKS AT `:176`/`:180`, below the decision** — so they sit here,
                  ;; and each says what its own key function says it keeps. Both take EVERY printable key (the
                  ;; text being typed is the value), which is exactly why a bar that fell through to the

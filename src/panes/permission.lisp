@@ -229,9 +229,13 @@ never scrolled. The content becomes a viewport that SHRINKS to whatever room is 
                 do (let* ((label (if question o (or (getf o :label) "?")))
                           (oid (and (not question) (getf o :option-id)))
                           (picked (= i sel))
+                          ;; **THE ROW CARRIES ITS NUMBER** (letibot `fee1620`, R90.23): the card told the
+                          ;; reader *a row number answers*, and the row had no number on it — so the one
+                          ;; thing a number could mean was the ANSWER. With the digit a MARKER (see
+                          ;; `%decision-key`), the number is what makes the card's own sentence true.
                           (body (if oid
-                                    (format nil "~a ~a  (~a)" (if picked "▸" " ") label oid)
-                                    (format nil "~a ~a" (if picked "▸" " ") label))))
+                                    (format nil "~d ~a ~a  (~a)" (1+ i) (if picked "▸" " ") label oid)
+                                    (format nil "~d ~a ~a" (1+ i) (if picked "▸" " ") label))))
                      (dolist (l (wrap-text (format nil "  ~a" body) w))
                        (push (list (cons l (if picked '(:reverse t) '(:fg :yellow))))
                              lad))))

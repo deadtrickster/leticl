@@ -9657,10 +9657,16 @@ leftovers in the set."
     (leticl::%handle-frame h (%warning-frame "context_wall" "the context is nearly full" 1))
     (setf (session-open-decisions (head-session h)) (list (%decision-with)))
     (let ((wire (%wire h)))
-      ;; the digits still answer the ask while an ask is open
+      ;; **A DIGIT MARKS THE ROW; ENTER ANSWERS** (letibot `fee1620`, R90.2/R90.23). The digit used to send
+      ;; the answer outright — a decision taken on one keystroke, with no undo — and that is why the card's
+      ;; rows can carry numbers at all now.
       (leticl::%handle-key h (list :type :char :ch #\1))
+      (is (zerop (leticl::head-decision-sel h)) "the digit marks the first row")
+      (is (null (%sent wire))
+          "**and nothing is answered** — a digit is the same act as ↑↓, not the act of answering")
+      (leticl::%handle-key h (list :type :enter))
       (is (equal "allow_once" (getf (first (%sent wire)) :option-id))
-          "a digit under an ask still answers the ask"))
+          "and Enter is what answers the row the digit marked"))
     ;; and the chord still works with the pane arm in front of the composer
     (setf (head-mode h) :todos)
     (leticl::%handle-key h (list :type :ctrl :ch #\n))
@@ -13227,12 +13233,12 @@ whatever the gate had to say.")
       ;; --- a decision alone: the card describes itself, as it must
       (setf (session-open-decisions (head-session h))
             (list (list :req-id "q1" :kind "question" :choices (list "a" "b"))))
-      (is (search "a row number answers" (bar)) "a card alone is described by the CARD")
+      (is (search "a row number marks it" (bar)) "a card alone is described by the CARD")
       ;; --- and a SECRET over it wins, because the ladder asks the secret first
       (setf (head-secret-req h) (list :req-id "s1" :prompt "password?"))
       (is (search "esc refuses the password" (bar))
           "**a password card's bar describes the PASSWORD**, not the card it is standing over")
-      (is (not (search "a row number answers" (bar)))
+      (is (not (search "a row number marks it" (bar)))
           "and nothing of the card underneath — the row must not name a key the secret is eating")
       ;; --- **AND THE THREE CARDS THAT NAMED NOTHING AT ALL** (`fe3c131`): with the card up but no arm, the
       ;; bar fell through to the chords — `ctrl-s sessions · ctrl-n notes…` — every one of which the card
