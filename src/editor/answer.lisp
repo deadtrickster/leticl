@@ -54,7 +54,14 @@
   (setf *decisions-away* (append *decisions-away* (list (getf d :req-id)))
         (head-decision-sel head) 0
         (head-dirty head) t)
-  (say head "the question is put away — alt-a brings it back")
+  (say head (if (%parent-session-id head)
+                ;; **INSIDE A CHILD, THE SENTENCE SAYS THE OTHER HALF TOO** (letibot `4d95678`): *a decision
+                ;; put away keeps the operator in the child (said, not armed)*. Without it the card
+                ;; vanished and the reader could not tell whether Esc had taken them somewhere.
+                "the card is put away, and you are still in this subagent — alt-a brings it back, and esc goes up"
+                ;; and the kind is not in the sentence: a permission and a question are put away the same
+                ;; way, which is why this says *the card* rather than *the question*.
+                "the card is put away — alt-a brings it back"))
   t)
 
 (defun %decision-restore (head)

@@ -2685,8 +2685,17 @@ head actually drew, not the segments that were put there."
                               "")))))
 
 (defun %on-head (&key (cols 60) (rows 20) (buffer ""))
-  "A head with a screen of the given size and an optional composer buffer."
+  "A head with a screen of the given size and an optional composer buffer.
+
+**AND THE HEAD'S OWN OUTSIDE STATE IS CLEARED, because it is a defvar rather than a slot.**
+`*decisions-away*` is filtered by `%open-decision`, so one test leaving a card put away leaves every
+LATER test unable to open one — measured: five failures the day Esc started putting every card away.
+`*line-when-card-arrived*` is the same shape one feature over. Clearing them here is one place rather
+than a binding in each of the nine tests that touch a decision, and it is what each of those tests
+means by *a head like a fresh one*."
   (let ((h (%make-head)))
+    (setf leticl::*decisions-away* nil
+          leticl::*line-when-card-arrived* nil)
     (setf (head-cols h) cols (head-rows h) rows)
     (screen-resize (head-screen h) cols rows)
     (screen-resize (head-prev-screen h) cols rows)
@@ -6553,8 +6562,9 @@ envelope's `session_id`, which is the parent's."
       (setf leticl::*esc-at* nil)
       (seat "s-parent" (list (list :req-id "r1" :kind "permission")))
       (leticl::%handle-key h (list :type :esc))
-      (is (search "a decision is waiting in this subagent" (head-status-note h))
-          "**the one thing that keeps them there says why**")
+      (is (search "still in this subagent" (head-status-note h))
+          "**the one thing that keeps them there says why** — and it is PUT AWAY, not answered")
+      (is (null (leticl::%open-decision h)) "and the card is away, so `alt-a` can bring it back")
       (is (null leticl::*esc-at*) "and two presses interrupt nothing")
       ;; --- outside a child, Esc is exactly what it was
       (setf leticl::*esc-at* nil)

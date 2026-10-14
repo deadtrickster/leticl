@@ -54,7 +54,12 @@ long as the picker stayed open."
          (options (decision-options decision))
          (n (length options))
          (empty (zerop (length (composer-buffer (head-composer head))))))
-    (when (and decision (plusp n))
+    ;; **THE GATE IS THE CARD, NOT THE COUNT OF ITS OPTIONS** (letibot `fd82696`, R90.22). It used to be
+    ;; `(and decision (plusp n))`, so a card with NO options — a note, a question whose choices arrive
+    ;; late — skipped every arm here, including the SCROLL ones. On a short terminal that card's own seam
+    ;; named `pgdn` while the key scrolled the TRANSCRIPT underneath it: the seam and the key disagreeing
+    ;; about which surface the reader was reading.
+    (when decision
       (case type
         ;; **ESC PUTS A CARD AWAY — EVERY CARD** (letibot `4d95678` for the permission, R90.5, and
         ;; `2ad7b9b` before it for the question). The reference's own message for the permission half IS
@@ -75,7 +80,9 @@ long as the picker stayed open."
         ((:up) (setf (head-decision-sel head) (max 0 (1- (head-decision-sel head)))
                      (head-dirty head) t))
         ((:down) (setf (head-decision-sel head)
-                       (min (1- n) (1+ (head-decision-sel head)))
+                       ;; `n` can be 0 now that the outer gate is the card rather than the count: a
+                       ;; choice-less card has no row below the first to move to.
+                       (if (plusp n) (min (1- n) (1+ (head-decision-sel head))) 0)
                        (head-dirty head) t))
         ((:enter) (when empty (%answer-decision head (head-decision-sel head))))
         ((:char)

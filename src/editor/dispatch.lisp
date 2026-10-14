@@ -468,9 +468,17 @@ of R36 keeps — the anchor is a record of the top row of the last frame, never 
        ;; the transcript they are IN — leaving is the larger act.
        (let ((parent (%parent-session-id head)))
          (when parent
-           (if (session-open-decisions (head-session head))
+           (if (%open-decision head)
+               ;; **THE CARD GOES AWAY AND THE OPERATOR STAYS** (letibot `4d95678`, its own third paragraph):
+               ;; *a decision put away inside a subagent keeps the operator in the child (said, not armed)*
+               ;; — instead of the next Esc leaving it unseen behind a waiting line filtered to the
+               ;; PARENT's session, which is the outcome the reference's message says it was fixing.
+               ;;
+               ;; The kind does not matter here for the reason it does not matter anywhere else in this
+               ;; head now: Esc puts a card away, and nothing is answered by that.
                (progn
-                 (say head "a decision is waiting in this subagent — answer it, then esc goes up")
+                 (%decision-away head (%open-decision head))
+                 (say head "the decision is put away and you are still in this subagent — alt-a brings it back, and esc goes up")
                  (setf (head-dirty head) t))
                (%switch-to head parent))
            (return-from %normal-key nil)))

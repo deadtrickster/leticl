@@ -595,7 +595,15 @@ one thing this head must not need."
                ;; footer would name `up/down scrolls` and move nothing — the
                ;; defect `peek-row-count`'s own docstring records, one pane over
                (:slash (scroll n))
-               (t (move-cursor n))))
+               ;; **A PANE WITH NO CURSOR SCROLLS** (letibot `7a493c3`, R90.8). ↑↓ on `:help` or `:status`
+               ;; moved a cursor those panes do not have, so the keys did NOTHING while the pane's own
+               ;; footer named them — the same defect the `:slash` arm above was written for, and it says
+               ;; so in its own comment (*the defect `peek-row-count`'s docstring records, one pane over*).
+               ;;
+               ;; **Asked of `rows` rather than listed per mode**, which is what makes it the last of these
+               ;; arms: a pane that grows a cursor needs no change here, and one that loses it falls back to
+               ;; scrolling without anybody remembering to say so.
+               (t (if (plusp (rows)) (move-cursor n) (scroll n)))))
            t)
           ;; **→ and ← PAGE the job-output overlay**, by the offsets the daemon
           ;; named — and they are the overlay's alone: anywhere else these are the
