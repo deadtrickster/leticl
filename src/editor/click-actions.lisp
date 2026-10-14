@@ -396,6 +396,11 @@ than from the click."
                                  :key #'item-id :test #'string=))))
            (when (and item (item-shows-an-edit-p item))
              (%show-edit-change head item))
+           ;; **AND A RUN'S MARKER OPENS THAT RUN** (letibot `7eab116`): every marker on the screen, not
+           ;; only the newest — which is what `ctrl-t` can reach. The seat is the walk's own reading
+           ;; (`marker-run-open`), so a click and the paint cannot disagree about which run a row is in.
+           (when (and item (marker-run-open item))
+             t)
            ;; **AND A NOTICE ROW OPENS ITS WHOLE TEXT** (letibot `161b34d`/`f076792`, the sweep's batch
            ;; A): the row carries the target and the reason, or the branch and the verdict, and the
            ;; paragraph it came from is what the click is FOR. Asked of the item the click resolved to,

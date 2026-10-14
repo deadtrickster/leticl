@@ -685,6 +685,22 @@ older than it, which has no sentence to continue and stands on its own line (`%h
      (list (list (cons (format nil "  … /t folds this back into ~d line~:p" (length items))
                        faint))))))
 
+(defun marker-run-open (item)
+  "Open the run whose marker rides ITEM's last line — T when there was one.
+
+ **THE SEAT IS COLLECTED BY THE WALK THAT DRAWS THE MARKER** (see `%viewport-lines`' `seats`), so this
+ asks the SAME reading the screen was built from rather than working out which run a row belongs to a
+ second time. `%row-invisible-p`'s docstring names the alternative: a second answer to *is this row on
+ the screen* is how a seam comes out naming the wrong chord.
+
+ **EVERY MARKER, NOT ONLY THE NEWEST** (letibot `7eab116`): `ctrl-t` opens the newest run and leaves
+ every other one unreachable, which is the behaviour this replaces. The door is `%set-hidden-run-open`,
+ so the history is rebuilt and the marker comes back — drawn open — on the next frame."
+  (let ((seat (and *hist-cache* (assoc (item-id item) (sixth *hist-cache*) :test #'string=))))
+    (when seat
+      (%set-hidden-run-open (cdr seat))
+      t)))
+
 (defun %set-hidden-run-open (id)
   "The ONE writer of `*hidden-run-open*`, and it invalidates the rendered history.
 

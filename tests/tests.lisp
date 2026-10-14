@@ -13958,6 +13958,29 @@ test/random, and it is one of three.~%options offered:~%- in scope~%- out of sco
     (is (not (search "option" (first (leticl::%notice-card-lines "asked: q with no menu"))))
         "and its row says nothing about one")))
 
+(def-test a-click-on-a-run-marker-opens-that-run (:suite leticl)
+  "**EVERY MARKER, NOT ONLY THE NEWEST** (letibot `7eab116`). `ctrl-t` opens the newest run and leaves
+  every other one unreachable — so a reader looking at a marker from three turns ago had to scroll to the
+  bottom and press a chord that opens a DIFFERENT run.
+
+  The seat is collected by the walk that DRAWS the marker, so a click asks the same reading the screen
+  was built from rather than deciding again which run a row belongs to; and the door is
+  `%set-hidden-run-open`, which rebuilds the history — so the marker comes back drawn open next frame."
+  (let ((h (%on-head :cols 100 :rows 30))
+        (leticl::*hidden-run-open* nil)
+        (leticl::*hist-cache* nil))
+    ;; the cache's SIXTH element is the seats — the walk's own row→run map
+    (setf leticl::*hist-cache* (list nil nil nil nil nil (list (cons "i7" "leticl-run-i5"))))
+    (is (leticl::marker-run-open (list :item-id "i7" :kind "tool_result"))
+        "**a marker's row opens ITS run** — the seat the walk recorded")
+    (is (equal "leticl-run-i5" leticl::*hidden-run-open*)
+        "and it is the run the seat named, not the newest")
+    ;; --- and a row with no marker is not a hit region
+    (setf leticl::*hidden-run-open* nil)
+    (is (null (leticl::marker-run-open (list :item-id "i9" :kind "assistant")))
+        "**a row with no seat opens nothing** — the map is the whole test, not a guess at the row")
+    (is (null leticl::*hidden-run-open*) "and nothing was opened")))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of

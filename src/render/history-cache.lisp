@@ -323,11 +323,20 @@ thirty rows appended, and the view jumped to `row-62`."
     ;; evaluated in the enclosing environment, so the second would have read the global `live` and
     ;; the head died on `The variable LIVE is unbound` at the first frame.
     (let* ((bounds (if cached (fifth cached) nil))
+           ;; **AND THE MARKERS' SEATS, WHICH THE CACHE MUST CARRY TOO** (letibot `7eab116`): the walk
+           ;; that groups runs is what knows them, and a HIT is the common case for every row above the
+           ;; live turn — seats collected only on a miss would be a hit map that goes empty exactly when
+           ;; the reader is scrolling, which is when they would use it.
+           (seats (if cached (sixth cached) nil))
           (raw nil)
           ;; **THE RUN OF HIDDEN ROWS** (R37 amended): consecutive items this rung hides, counted
           ;; here because this is the function that turns a SEQUENCE of items into lines and a run
           ;; is a property of the sequence. `item-lines` cannot see it — it is handed one item.
           (run nil)
+          ;; **THE SEATS ARE BOUND ABOVE, FROM THE CACHE** — binding them a second time here shadowed
+          ;; that one, so the walk pushed into a fresh list every frame and the cache's copy was never
+          ;; read. Measured by reading it rather than by a test: a map that is empty on every frame is
+          ;; a click that never fires, and nothing else would have said so.
           ;; **THE WORK STILL IN FLIGHT** (the operator's *"nothing for awhile while you write a
           ;; tool call and tool executes … otherwise it looks like you hanged"*). A run is defined by
           ;; ROWS, and a call that has not returned has none — so the window between the colon and the
@@ -534,6 +543,10 @@ thirty rows appended, and the view jumped to `row-62`."
                                        (list il nil)))
                            (il (first joined))
                            (glued (second joined)))
+                     ;; **THE MARKER WENT ONTO THIS ITEM'S LINE** — so a click on this row opens THIS
+                     ;; run, which is `7eab116`'s headline: every marker, not only the newest.
+                     (when (and marker-items glued)
+                       (push (cons (getf item :item-id) (%hidden-run-id marker-items)) seats))
                       ;; **an OPEN run draws its rows between this row and the newer one** — this
                       ;; row is prepended after them, so they land in the gap the counts would have
                       ;; filled. They are real lines now, and the anchor may name them.
@@ -710,7 +723,7 @@ thirty rows appended, and the view jumped to `row-62`."
         (setf bounds (mapcar (lambda (r)
                                (list (car r) (- total (cddr r)) (- total (cadr r))))
                              (nreverse raw)))))
-    (setf *hist-cache* (list key lines next-i class-above bounds))
+    (setf *hist-cache* (list key lines next-i class-above bounds seats))
     (values lines bounds))))
 
 (defun %window-of (hist tail start end)
