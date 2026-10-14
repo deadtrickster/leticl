@@ -29288,10 +29288,13 @@ turn, `:rate` and `:out` still from the last round."
         (is (not (equal (duration 4474) seg))
             (format nil "**the status bar does NOT show the last round's duration** while a turn
  runs — that sentence, beside the word Responding, claims the turn began 4.5s ago: ~s" seg))
-        ;; **AND IT SHOWS THE TURN'S**, computed the same way the composer edge computes it.
-        (is (equal (duration 151000) seg)
-            (format nil "**and it EQUALS the composer edge's duration** — the two timers on the
- screen now derive from one source: ~s" seg)))
+        ;; **AND NOT THE TURN'S EITHER** (letibot `189edd5`): the operator's own words, on the reference,
+        ;; 2026-10-13 — *"the top line has the same responding timer, i think it is redundant - i never
+        ;; look at it"*. This comment used to say the header SHOWS the turn's duration: that was the
+        ;; ruling this one supersedes.
+        (is (not (equal (duration 151000) seg))
+            (format nil "**the header does NOT repeat the composer's running clock** — the composer
+ row is the one clock while a turn runs: ~s" seg)))
       ;; ---------- 2. IDLE: the last round's duration is what there is to show ----------
       (setf (leticl::session-turn s)
             (list :turn-id "t" :text "" :reasoning "" :raw-calls "" :tokens 0

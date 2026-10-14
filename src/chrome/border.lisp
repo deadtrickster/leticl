@@ -215,13 +215,24 @@ turn as `(:total :cache :processed :time-ms)` and had no reader."
     ;;
     ;; The guard is `%turn-elapsed-ms`, which is the same thing the composer edge reads, so the two
     ;; timers cannot drift apart again — and it REFUSES A NEGATIVE, measured: see its docstring.
-    (let ((elapsed-ms (or (%turn-elapsed-ms)
-                          ;; **IDLE: THE LAST TURN'S DURATION IS THE ONLY ONE THERE IS**, and it is
-                          ;; kept past the end of the turn — which is what `last_timings` is for.
-                          (and timings
-                               (numberp (getf timings :wall-ms))
-                               (plusp (getf timings :wall-ms))
-                               (getf timings :wall-ms)))))
+    ;; **NO DURATION WHILE A TURN RUNS** (letibot `189edd5`). The composer row already counts the running
+    ;; turn (*Responding · 2m30s*) and the header repeated the same clock beside it — **the operator, on
+    ;; the reference, 2026-10-13: *"the top line has the same responding timer, i think it is redundant -
+    ;; i never look at it"*.** IDLE still shows the last turn's wall-ms, which is what `last_timings` is
+    ;; for and the only clock there is when nothing is running.
+    ;;
+    ;; **AND THIS SUPERSEDES THE RULING RECORDED HERE BEFORE IT**, which put the running duration on
+    ;; BOTH heads on the ground that *after this change NEITHER head matches the reference*. The
+    ;; reference removed it the next day at the operator's word, so the ground is gone — and the reader
+    ;; that note was written for, somebody diffing the two heads, now finds them agreeing again.
+    ;;
+    ;; The composer edge is the one clock, and it reads `%turn-elapsed-ms` — the same function, so the
+    ;; two cannot drift. It REFUSES A NEGATIVE, measured: see its docstring.
+    (let ((elapsed-ms (and (not (%turn-elapsed-ms))
+                           timings
+                           (numberp (getf timings :wall-ms))
+                           (plusp (getf timings :wall-ms))
+                           (getf timings :wall-ms))))
       (when elapsed-ms (push (cons :elapsed (duration elapsed-ms)) parts)))
     (when (and usage (numberp (getf usage :predicted-tokens))
                (plusp (getf usage :predicted-tokens)))
