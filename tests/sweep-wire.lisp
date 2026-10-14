@@ -174,8 +174,8 @@ and `moved` (protocol 41) carries the operator's hand on the model's rows."
 
 (def-test queue-moved-moves-the-row-in-place-and-files-nothing-as-unknown (:suite leticl)
   "`QueueMoved {queue,id,to,why}` is broadcast to EVERY session's log; it used to file an *unknown
-event* row on every head and bump the alarm. It moves the row in place, and asks again only while
-the pane is open and no ask is in flight."
+event* row on every head and bump the alarm. It moves the row in place, and **asks again on every move,
+whether or not the pane is open** — coalesced while one ask is in flight (letibot `031239d`, R92.5)."
   (%sw-reset-queues)
   (let* ((h (%make-head))
          (wire (%wire h))
@@ -192,14 +192,19 @@ the pane is open and no ask is in flight."
       (is (equal "the operator approved it" (getf row :evidence)) "with the reason"))
     (is (find "r1" (getf leticl::*queues* :recent) :key (lambda (m) (getf m :entry-id)) :test #'equal)
         "and the move is in the history")
-    (is (not (find "list_merge_queue" (%sent wire) :key #'frame-name :test #'string=))
-        "**a closed pane asks nothing** — the event is quiet")
-    ;; open pane: one ask, and a second move while it is in flight asks nothing more
+    ;; **AND A MOVE IS READ WHETHER OR NOT THE PANE IS OPEN** (letibot `031239d`, R92.5): the edge shows
+    ;; this session's queue standing on EVERY head, so a head looking at the conversation has as much
+    ;; reason to re-read as one looking at the pane. **This assertion is the OPPOSITE of the one the old
+    ;; rule needed**, and that rule's own defect is why: a head that had never opened `/queue` drew no
+    ;; standing at all, and one that had opened it once kept that snapshot for ever.
+    (is (= 1 (count "list_merge_queue" (%sent wire) :key #'frame-name :test #'string=))
+        "**the move asks with the pane CLOSED** — the edge is on every head")
+    ;; open pane: nothing more while that ask is IN FLIGHT, which is the coalescing and not the gate
     (setf (head-mode h) :queue)
     (leticl::%handle-frame h (list :frame "event" :seq 3 :event "queue_moved" :queue "merge" :id "m2" :to "queued" :why "restarted"))
     (leticl::%handle-frame h (list :frame "event" :seq 4 :event "queue_moved" :queue "merge" :id "m2" :to "gating" :why ""))
-    (is (= 1 (count "list_merge_queue" (%sent wire) :key #'frame-name :test #'string=))
-        "an open pane re-reads ONCE while the ask is in flight")
+    (is (= 0 (count "list_merge_queue" (%sent wire) :key #'frame-name :test #'string=))
+        "and a move while the ask is IN FLIGHT asks nothing more — one re-read, not one per move")
     (let ((row (find "m2" (getf leticl::*queues* :merges) :key (lambda (r) (getf r :id)) :test #'equal)))
       (is (equal "gating" (getf row :state)) "the state moves")
       (is (equal "restarted" (getf row :evidence)) "**and a move that says nothing keeps the reason we have**"))
@@ -434,3 +439,21 @@ the enum (`crates/transcript/src/lib.rs`) and check each payload variant is eith
           (is (>= seen 5) "the five payload variants were read: ~d" seen)
           (is (equal '("failed" "abstained" "not_run") leticl::+outcomes-taking-a-reason+)
               "and the keys this head supplies are the three a runner here answers")))))
+
+(def-test seating-asks-for-the-queues-whatever-the-head-is-showing (:suite leticl)
+  "**THE HEAD'S ONLY ASK WAS OPENING THE PANE** (letibot `031239d`, R92.5) — plus a `QueueMoved` seen
+  while one was open. So a head that had never opened `/queue` drew NO standing on its composer edge at
+  all, and one that had opened it once kept that snapshot for ever (`‼ 1 red target(s)` long after main
+  was green). *Not all heads still show the queue* is the same defect from the reader's side.
+
+  Seating is where a head learns what it is attached to, so it is where it asks what that repository's
+  queue is doing — and a re-attach and a switch come through this same arm."
+  (%sw-reset-queues)
+  (let* ((h (%make-head))
+         (wire (%wire h)))
+    (leticl::%handle-frame h (list :frame "hello" :protocol-version leticl:+protocol-version+
+                                   :session-id "s-1" :head-id "h1" :dropped 0 :sessions nil
+                                   :wiring nil :resumed-from nil :scrubbed nil :snapshot nil))
+    (is (= 1 (count "list_merge_queue" (%sent wire) :key #'frame-name :test #'string=))
+        "**seating asks for the queue standing** — the edge is drawn on every head, not only at the pane")
+    (%sw-reset-queues)))

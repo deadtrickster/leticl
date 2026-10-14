@@ -202,10 +202,9 @@ a row this head has never been told about invents nothing: it arrives with the n
                           (list (list :queue (or which "") :entry-id id :repository (or (getf row :repository) "")
                                       :from from :to (or to "") :at-ms now :by "" :why (or why ""))))))))
       (queue-refresh-rows head))
-    (when (and (eq (head-mode head) :queue)
-               (head-connected head)
-               (not *queues-in-flight*))
-      (ask-queues head))
+      (when (and (head-connected head)
+                 (not *queues-in-flight*))
+        (ask-queues head))
     (setf (head-dirty head) t)))
 
 (defun queue-row-by-id (head id)

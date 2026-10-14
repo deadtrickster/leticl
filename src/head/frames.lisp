@@ -613,6 +613,14 @@ empty pane on every attach, which is the defect the guard exists to prevent, inv
       ;; `%ask-if-short-snapshot`: a snapshot that is not the whole conversation is the one failure
       ;; that looks exactly like an empty session, and nothing else in this head would notice it.
       (%ask-if-short-snapshot head)
+    ;; **AND THE QUEUES ARE ASKED FOR AT SEATING** (letibot `031239d`, R92.5). The head's only ask for
+    ;; the queues' snapshot was OPENING THE PANE, plus a `QueueMoved` seen while it was open — so a head
+    ;; that had never opened `/queue` drew NO standing on its composer edge at all, and one that had
+    ;; opened it once kept that snapshot for ever (`‼ 1 red target(s)` long after main was green).
+    ;; Seating is where a head learns what it is attached to, so it is where it asks what that
+    ;; repository's queue is doing. A re-attach and a switch come through this same arm.
+    (when (head-connected head)
+      (ask-queues head))
      ;; **`--resume ID`, AT THE MOMENT THE LIST EXISTS** (T4 in `TODO.md`). A session the daemon does
      ;; not hold cannot be attached to BY ID: `--session ID` puts the id on the ATTACH, and the daemon
      ;; refuses a session it has never opened (`app.rs:1602-1610` is the reference's own note on why
