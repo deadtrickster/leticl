@@ -1641,7 +1641,18 @@ scrolls the transcript by a row every keystroke.
                           ;; roles this head draws with are the READER's to override, not the
                           ;; pointer's. Reverse is the one style that reads as *the pointer is here*
                           ;; in every palette there is.
-                          (if (%hover-on-row-p head hint-row)
+                          ;; **THE LIGHT IS DERIVED FROM THE FRAME, NOT KEPT** (letibot `9c3e0b1`).
+                          ;; The first version asked *is the pointer on the hint row* — and anything drawn
+                          ;; over that row lit up, which is the reference's own defect (*the click that put
+                          ;; the diff popup up lit the popup's text*). `%hint-key-at` reads the CELLS and
+                          ;; answers what a click at that column would ACT on: a word the table does not
+                          ;; know is not a key, wherever it happens to be drawn.
+                          ;;
+                          ;; **A DRAG LIGHTS NOTHING** — the reference's rule for the same reason a pointer
+                          ;; mid-gesture is not asking what a click would do; it is already doing it.
+                          (if (and (null *selection*)
+                                   *pointer-x*
+                                   (%hint-key-at head *pointer-x*))
                               (mapcar (lambda (seg) (cons (car seg) (cons :reverse (cons t (cdr seg)))))
                                       segs)
                               segs))))

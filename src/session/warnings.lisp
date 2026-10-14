@@ -251,6 +251,13 @@ answered together or not at all.")
     ;; This head drew every one of them RED — an alarm for housekeeping, which is R19 itself, and exactly
     ;; the direction the guard exists for.
     "target_green" "queue_branch_kept" "daemon_starting" "daemon_started"
+    ;; **`context_wall_continued`** — from the same day's batch (`warning.rs:444-447`, the table's own
+    ;; growth log says *146, not 145*). The reference's words: *a wall the prompt goes on past —
+    ;; compacted, room for the next turn, continuations left: one routine line in place of the red
+    ;; failure each one used to publish. The wall that ends the prompt is still `turn_failed`.* That
+    ;; distinction is the reason it is a separate code rather than a flag on `turn_failed`: a wall the
+    ;; turn survived is housekeeping, and one that ended it is not.
+    "context_wall_continued"
     ;; **`subagents_stopped`** — from the supervision tree (daemon `fb479d8`): the
     ;; daemon stopped a session's tree and this is the receipt. A sentence about
     ;; something the operator asked for that worked.

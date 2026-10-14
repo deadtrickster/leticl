@@ -232,25 +232,32 @@ the box's TOP edge was actually painted on — a click one row off is a click on
       (when (< left right)
         (string-trim " ·" (subseq text left right))))))
 
+(defun %hint-key-at (head x)
+  "The KEY the drawn hint bar stands for at column X — or NIL. **A PURE QUERY: it acts on nothing.**
+
+ **IT IS A QUERY AND NOT ONLY A CLICK'S FIRST HALF, which is the whole point** (letibot `9c3e0b1`):
+ *the hover is worked out from the frame that is drawn, not kept*. The render asks this for the light, and
+ the click asks it for the act — so the light IS what a click at the pointer would act on now, and the two
+ cannot disagree about which row is a button.
+
+ **THE KEPT VERSION WAS WRONG IN A WAY NO TEST WOULD HAVE CAUGHT HERE**: it compared a ROW, so anything
+ drawn over that row lit up — the reference's own words for the same defect are *the click that put the
+ diff popup up lit the popup's text*. Reading the CELLS cannot do that: a word the table does not know is
+ not a key, wherever it happens to be."
+  (let ((text (%screen-row-text head (1- (head-rows head)))))
+    (when text
+      (%key-for-word (%hint-word-at text x)))))
+
 (defun %hint-click (head x)
   "A click on the hint bar TYPES THE KEY THE HINT NAMES (letibot `5296c6e`).
 
- **THE BAR IS A LIST OF BUTTONS, and this head drew it as prose for so long that a reader with a
- mouse had to lift their hand to the keyboard to take the advice the screen had just given them.** It
- is read from the DRAWN row rather than from the format string: the bar drops items from its end as it
- is squeezed, so the glass is the only honest answer to *what is under the pointer* — the same reading
- `%composer-edge-click` already does for the composer's edge.
+ **THE BAR IS A LIST OF BUTTONS**, and this head drew it as prose for so long that a reader with a
+ mouse had to lift their hand to the keyboard to take the advice the screen had just given them.
 
- **THREE GUARDS, the reference's own, and each one is a way this could hurt a reader**:
-   · a `/command` goes in ONLY into an empty composer — a verb typed over half-written prose is a line
-     the reader did not write;
-   · `ctrl-\\` is NEVER typed: it is the way out of a terminal pane, and a misclick that detaches from
-     a running program is not a thing anybody asked for;
-   · a word this head cannot read as a key does NOTHING at all.
-
- T when the click was the bar's and a key was sent."
-  (let* ((row (1- (head-rows head)))
-         (key (%key-for-word (%hint-word-at (%screen-row-text head row) x))))
+ **THE THREE GUARDS, the reference's own, each a way this could hurt a reader**: a `/command` goes in
+ only into an EMPTY composer; `ctrl-\\` is never typed (a misclick that detaches from a running program
+ is not a thing anybody asked for); and a word this head cannot read does NOTHING at all."
+  (let ((key (%hint-key-at head x)))
     (when key
       (cond
         ((eq (getf key :type) :slash)
