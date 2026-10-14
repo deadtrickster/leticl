@@ -254,7 +254,42 @@ the branch. A field dropped whole is the behaviour this replaces."
  reader would have seen had no branch in it at all."
   (and (probe-file (merge-pathnames ".git" (uiop:ensure-directory-pathname dir))) t))
 
-(defun %project-dir (ws)
+(defun %workspace-repos (ws)
+  "Every repository at or one level below WS, as directory names.
+
+ **THE OPERATOR'S LAYOUT IS NESTED** (`%project-dir`), so this is the workspace itself when it IS one
+ plus each child that is. **A folder of THREE is what the old resolver could not answer** — it took a
+ single child repository or nothing — and this is the list that makes the several case sayable."
+  (when (and ws (plusp (length ws)))
+    (let* ((w (uiop:ensure-directory-pathname ws))
+           (children (ignore-errors
+                      (remove-if-not #'%repository-p (directory (merge-pathnames "*/" w))))))
+      (if (%repository-p w) (cons w children) children))))
+
+(defun %repo-holding (path repos)
+  "The repository in REPOS that holds PATH, or NIL. Both are directory names.
+
+ A PREFIX TEST on the namestrings, which is the same question `uiop:subpathp` answers and one this tree
+ already asks elsewhere (`uiop:string-prefix-p`) — and both sides go through
+ `uiop:ensure-directory-pathname` first, so a trailing slash cannot decide it."
+  (when (and path repos)
+    (let ((dir (namestring (uiop:ensure-directory-pathname
+                            (uiop:pathname-directory-pathname path)))))
+      (find-if (lambda (r) (uiop:string-prefix-p (namestring (uiop:ensure-directory-pathname r)) dir))
+               repos))))
+
+(defun %followed-repo (head repos)
+  "The repository the session's NEWEST WORK is in, among REPOS — or NIL.
+
+ **DERIVED FROM THE ROWS ON EACH READING, NOT KEPT** (letibot `e207349`): which repository a session
+ is working in is a fact about the WORK, and the work is the rows this head already holds — the newest
+ edit's path through `%newest-changed-file`, the same door `ctrl-]` opens the file with. Nothing new is
+ remembered, so nothing new can drift.
+
+ NIL when there is nothing to follow yet, which is a state the header says rather than guesses."
+  (and head repos (%repo-holding (%newest-changed-file head) repos)))
+
+(defun %project-dir (ws &optional head)
   "The directory whose repository the header reports: the workspace, or the one repository below it.
 
 **The operator's layout is NESTED** — *Projects/letibot/letibot with the session living in
@@ -264,15 +299,22 @@ path. Parity with letibot's `fde7f6e`, and one resolver rather than two for thei
 one repository and a TODO.md from another would each be true alone.
 
 The workspace itself wins when it IS a repository; otherwise a SINGLE repository one level below, and
-nothing when there is none or several, because guessing between two checkouts is how a header comes to
-name the wrong tree."
+nothing when there is none.
+
+**AND IN A WORKSPACE OF SEVERAL IT FOLLOWS THE WORK** (letibot `e207349`): a folder of three used to
+be none of those cases and drew NO FIELD AT ALL — the operator's own report, *a session in
+~/Projects/stroppy-io, which holds stroppy, stroppy-contrib and website with none of them the main
+one*. It now reads the repository the newest edit's path is in (`%followed-repo`), and NIL when there
+is nothing to follow yet — a header that says how many there are rather than guessing between two
+checkouts, which is the wrong-tree failure this resolver was written to avoid."
   (when (and ws (plusp (length ws)))
     (let ((w (uiop:ensure-directory-pathname ws)))
       (cond ((%repository-p w) ws)
-            (t (let ((repos (ignore-errors
-                              (remove-if-not #'%repository-p
-                                             (directory (merge-pathnames "*/" w))))))
-                 (and (= (length repos) 1) (namestring (first repos)))))))))
+            (t (let ((repos (ignore-errors (%workspace-repos ws))))
+                 (cond ((= (length repos) 1) (namestring (first repos)))
+                       ((rest repos) (let ((r (%followed-repo head repos)))
+                                       (and r (namestring r))))
+                       (t nil))))))))
 
 (defun %git-command (dir)
   "The argv for one reading.
@@ -365,7 +407,7 @@ exactly this. So the loop sets a directory and starts a thread; the reading happ
 the paint reads whatever the last one left."
   (let ((dir (getf (session-wiring (head-session head)) :workspace)))
     (when (and dir (plusp (length dir)))
-      (let ((dir (%project-dir dir)))
+      (let ((dir (%project-dir dir head)))
         (unless (equal dir *git-dir*) (setf *git-dir* dir)))
       (git-start))))
 
@@ -463,7 +505,7 @@ its end, and a token count is not recoverable from anywhere else on the screen."
       (let* ((pieces (getf *git-cache* :pieces))
              (room (- cols left-cols tail-cols 2))
              (fit (and (equal (getf *git-cache* :dir)
-                               (%project-dir (getf (session-wiring s) :workspace)))
+                               (%project-dir (getf (session-wiring s) :workspace) head))
                        (%git-fit pieces room))))
         (when fit
           (setf left (append left (list (cons " (" '(:dim t))))

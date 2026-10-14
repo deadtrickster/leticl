@@ -13445,6 +13445,44 @@ whatever the gate had to say.")
     (leticl::%handle-key h (list :type :alt :ch #\n))
     (is (null leticl::*read-overlay*) "and with no notice on the screen it opens nothing")))
 
+(def-test the-git-field-follows-the-work-in-a-workspace-of-several (:suite leticl)
+  "**A FOLDER OF THREE DREW NO FIELD AT ALL** (letibot `e207349`) — the operator's own report: *a session
+  in ~/Projects/stroppy-io, which holds stroppy, stroppy-contrib and website with none of them the main
+  one*. The resolver took the workspace as a repository, its same-named child, or its ONLY repository
+  child, and a folder of several is none of those.
+
+  **It follows the newest work now** — the newest edit's path, through the same door `ctrl-]` uses —
+  and answers NIL when there is nothing to follow, which is a state the header says rather than
+  guesses. Both directions are asserted, because the guess is the failure this resolver exists to
+  avoid: a branch beside the wrong tree is worse than no branch."
+  (let* ((root (uiop:ensure-directory-pathname
+                (format nil "/tmp/leticl-repos-~a/" (random 1000000))))
+         (alpha (merge-pathnames "alpha/" root))
+         (beta (merge-pathnames "beta/" root))
+         (h (%on-head :cols 100 :rows 24)))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist (merge-pathnames ".git/" alpha))
+           (ensure-directories-exist (merge-pathnames ".git/" beta))
+           (is (= 2 (length (leticl::%workspace-repos (namestring root))))
+               "the workspace holds two repositories")
+           (is (null (leticl::%project-dir (namestring root) h))
+               "**and with nothing done yet it answers NIL** — the header says how many there are rather
+  than naming one of them")
+           ;; --- the newest edit's path decides
+           (setf (session-items (head-session h))
+                 (leticl::%items-vector
+                  (list (list :item-id "e1" :kind "user"
+                              :item (list :type "user"
+                                          :edit (list :path (namestring
+                                                             (merge-pathnames "src/x.lisp" beta))))))))
+           (is (equal (namestring beta) (leticl::%project-dir (namestring root) h))
+               "**the repository the newest edit is in is the one it answers**")
+           ;; --- and the two cases that already worked read exactly as before
+           (is (equal (namestring alpha) (leticl::%project-dir (namestring alpha) h))
+               "a workspace that IS a repository is unchanged"))
+      (ignore-errors (uiop:delete-directory-tree root :validate t)))))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of
