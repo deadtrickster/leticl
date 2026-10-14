@@ -178,6 +178,9 @@ for the lists)."
       ;; chain, and for the same reason: it is not an ask the daemon made, so a decision or a quit card
       ;; keeps every key it already owns.
       ((operator-card-p head) (%operator-card-key head key type))
+      ;; **AND THE `/repo` CARD, LAST OF ALL** (letibot `e207349`) — the same low place it has in the draw
+      ;; chain: it is not an ask the daemon made, so a decision or a quit card keeps every key it owns.
+      ((and *repo-card-open* t) (%repo-card-key head key type))
       ;; **THE OPERATOR-CALL COMPOSER** (R24 part two), after an open ask and before every
       ;; list. After the ask because a card nobody asked for outranks a card the operator
       ;; opened; before the lists because the field it fills IS the composer, so anything it

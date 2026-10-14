@@ -278,6 +278,84 @@ the branch. A field dropped whole is the behaviour this replaces."
       (find-if (lambda (r) (uiop:string-prefix-p (namestring (uiop:ensure-directory-pathname r)) dir))
                repos))))
 
+(defvar *repo-pin* nil
+  "The repository the reader TOOK on the `/repo` card — NIL when the header is following the work.
+
+ **THE ONE STATE THE CARD SETS** (letibot `e207349`): *a repository taken there is pinned for this head
+ until following is taken again*. And *for this head* is the whole scope — a `defvar` and not a session
+ field, because pinning is a reading of the screen rather than a fact about the session: two heads on one
+ session may be looking at different trees on purpose.
+
+ **A PATH**, so the pin survives a re-read of the workspace: `%workspace-repos` is recomputed every
+ reading (`%followed-repo`'s own rule — *derived from the rows on each reading, not kept*) and a pin
+ held as a record would go stale the moment a repository was added or removed.")
+
+(defvar *repo-card-open* nil
+  "T while the `/repo` card is up.")
+
+(defun %workspace-of (head)
+  "The workspace this head's session is seated at, as a directory name — or NIL.
+
+ Its own function because TWO readers want it now — the header's field and the card that can pin one of
+ its repositories — and a second spelling of *where this session lives* is how a header and a card come
+ to disagree about which trees exist."
+  (let ((ws (getf (session-wiring (head-session head)) :workspace)))
+    (and ws (plusp (length ws)) (uiop:ensure-directory-pathname ws))))
+
+(defun repo-card-lines (head cols)
+  "The `/repo` card: *following the work*, and every repository with its branch.
+
+ **THE FIRST ROW IS THE DEFAULT, NOT AN ESCAPE HATCH** (letibot `e207349`): the header follows the work
+ unless something is pinned, so *following the work* is row one and taking it UNPINS. The rows below it
+ are the workspace's repositories, each drawn by the name the header uses and the branch the header would
+ show for it — the same doors, so a repository cannot be called one thing here and another there.
+
+ **And a repository whose git cannot be read is still listed**: a tree with no branch is a fact about
+ that tree, and a card that dropped it would be a list the reader cannot check against their folder."
+  (declare (ignore cols))
+  (let* ((repos (ignore-errors (%workspace-repos (%workspace-of head)))))
+    (append
+     (list (list (cons "which repository should the header read?" '(:bold t))))
+     (list (list (cons (if *repo-pin* "   1  " "▸  1  ") nil)
+                 (cons "following the work — the repository the session's newest work is in"
+                       (if *repo-pin* nil '(:bold t)))))
+     (loop for r in repos
+           for i from 2
+           for pinned = (and *repo-pin* (equal *repo-pin* (namestring r)))
+           collect (list (cons (format nil "~a ~2d  " (if pinned "▸" " ") i) nil)
+                         (cons (format nil "~a — ~a"
+                                       (%repo-name r)
+                                       (or (ignore-errors (%git-text (%git-action r) r))
+                                           "no branch to read"))
+                               (if pinned '(:bold t) nil))))
+     (list (list (cons "" nil)))
+     (list (list (cons (if repos
+                           "digits take a row · esc puts this away"
+                           "this session has no workspace of repositories to choose from")
+                       '(:dim t)))))))
+
+(defun repo-card-answer (head i)
+  "Take row I of the card: 1 is *following the work* (which UNPINS), and 2.. are the repositories."
+  (let ((repos (and (plusp i) (ignore-errors (%workspace-repos (%workspace-of head))))))
+    (cond
+      ((= i 1) (setf *repo-pin* nil *repo-card-open* nil) t)
+      ((and repos (>= i 2) (<= i (1+ (length repos))))
+       (setf *repo-pin* (namestring (nth (- i 2) repos))
+             *repo-card-open* nil)
+       t)
+      (t nil))))
+
+(defun %repo-card-key (head key type)
+  "The card's keys: a digit takes a row, Esc puts it away, nothing else is claimed."
+  (declare (ignore type))
+  (let ((ch (and (eq (getf key :type) :char) (getf key :ch))))
+    (cond
+      ((and ch (digit-char-p ch)) (repo-card-answer head (digit-char-p ch)))
+      ((eq (getf key :type) :esc)
+       (setf *repo-card-open* nil (head-dirty head) t)
+       t)
+      (t nil))))
+
 (defun %followed-repo (head repos)
   "The repository the session's NEWEST WORK is in, among REPOS — or NIL.
 
@@ -286,8 +364,17 @@ the branch. A field dropped whole is the behaviour this replaces."
  edit's path through `%newest-changed-file`, the same door `ctrl-]` opens the file with. Nothing new is
  remembered, so nothing new can drift.
 
- NIL when there is nothing to follow yet, which is a state the header says rather than guesses."
-  (and head repos (%repo-holding (%newest-changed-file head) repos)))
+ NIL when there is nothing to follow yet, which is a state the header says rather than guesses.
+
+ **AND THE PIN WINS WHEN THE READER HAS TAKEN ONE** (letibot `e207349`): *a repository taken there is
+ pinned for this head until following is taken again*. So the derivation below is the DEFAULT and not the
+ rule — and the pin is matched against REPOS rather than trusted, because a repository this reading no
+ longer lists (a folder moved, a `git init` undone) must fall back to following the work rather than draw
+ a branch for a tree that is not there."
+  (and head repos
+       (or (and *repo-pin*
+                (find *repo-pin* repos :key #'namestring :test #'equal))
+           (%repo-holding (%newest-changed-file head) repos))))
 
 (defun %project-dir (ws &optional head)
   "The directory whose repository the header reports: the workspace, or the one repository below it.

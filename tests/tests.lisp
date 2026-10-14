@@ -14078,6 +14078,43 @@ test/random, and it is one of three.~%options offered:~%- in scope~%- out of sco
     (is (null leticl::*held-results*)
         "**a snapshot drops it** — carrying it forward would be this head repeating a fact that expired")))
 
+(def-test the-repo-card-pins-a-repository-for-this-head (:suite leticl)
+  "**THE OTHER HALF OF `e207349`**: *a click on the field, or `/repo`, opens a card listing following the
+  work and each repository with its branch and marks; **a repository taken there is pinned for this head
+  until following is taken again***.
+
+  The card is where a reader can see WHICH TREES EXIST — the header can only show the one it read — and
+  the pin is what lets them stop the header following a workspace of several."
+  (let ((h (%on-head :cols 100 :rows 30))
+        (leticl::*repo-pin* nil)
+        (leticl::*repo-card-open* nil))
+    (is (not leticl::*repo-card-open*) "the card is shut to begin with")
+    ;; --- `/repo` is the row's own `or`, and this is that half
+    (leticl::%command h "repo")
+    (is (not (null leticl::*repo-card-open*)) "**`/repo` opens the card**")
+    (let ((said (format nil "~{~a~^~%~}"
+                        (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l)))
+                                (leticl::repo-card-lines h 100)))))
+      (is (search "following the work" said)
+          (format nil "**row one is the DEFAULT**, not an escape hatch (got ~s)" said))
+      (is (search "which repository" said) "and the card asks what it is for"))
+    ;; --- taking *following the work* UNPINS, which is the card's other half of the rule
+    (setf leticl::*repo-pin* "/tmp/one/")
+    (is (leticl::repo-card-answer h 1) "1 is *following the work*")
+    (is (null leticl::*repo-pin*) "**and taking it unpins** — until following is taken again")
+    (is (not leticl::*repo-card-open*) "and the card stands down")
+    (is (not (leticl::repo-card-answer h 9))
+        "**a row that is not there answers nothing** — a digit past the list is not a repository")
+    ;; --- **AND THE PIN WINS OVER THE DERIVATION**, matched against what this reading lists
+    (setf leticl::*repo-pin* "/tmp/one/")
+    (is (equal "/tmp/one/"
+               (namestring (leticl::%followed-repo h (list #p"/tmp/one/" #p"/tmp/two/"))))
+        "**a pinned repository is what the header reads** — following the work is the default, not the rule")
+    ;; --- and a pin this reading no longer lists FALLS BACK rather than drawing a branch for a gone tree
+    (setf leticl::*repo-pin* "/tmp/gone/")
+    (is (null (leticl::%followed-repo h (list #p"/tmp/one/")))
+        "**a repository the workspace no longer holds is not trusted** — the pin is a path, not a promise")))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of

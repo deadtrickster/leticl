@@ -1525,6 +1525,11 @@ scrolls the transcript by a row every keystroke.
           ;; their own plan, and it must never outrank a question the daemon is waiting on.
           ((operator-card-p head)
            (setf card-lines (operator-card-lines head cols)))
+          ;; **AND THE `/repo` CARD** (letibot `e207349`) — which tree the header reads. Last of all for
+          ;; the reseat card's reason: it is the head telling the reader something about their own
+          ;; screen, and it must never outrank a question the daemon is waiting on.
+          ((and *repo-card-open* t)
+           (setf card-lines (repo-card-lines head cols)))
           ;; **the operator-call composer, between the way out and a picker.** The order is
           ;; the keyboard's: the quit card and an open ask are asked for keys before this
           ;; one (`%handle-key`), so they are drawn before it — a card drawn above

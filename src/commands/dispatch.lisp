@@ -358,6 +358,12 @@ on ClientFrame::Slash)."
        ;; `/nag` (the state), `/nag pause [30m|2h|1h30m]`, `/nag resume` — the operator's own ask:
        ;; *"i need a way to stop todo nags"*, then *"or rather - pause and the pause must be LOUD"*.
        (nag-command head rest))
+      ((string= verb "repo")
+       ;; **WHICH TREE THE HEADER READS** (letibot `e207349`): the CARD, which is the other half of the
+       ;; click on the git field. Nothing is answered here — the card is a choice, and a slash verb that
+       ;; answered itself would be a key that acted before the reader had read the list.
+       (setf *repo-card-open* t
+             (head-dirty head) t))
       ((string= verb "reseat")
        ;; `/reseat summarise` asks for the LOSSY kind by name and got the other
        ;; one, with no word either way: the argument was parsed off and dropped,

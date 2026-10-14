@@ -112,6 +112,10 @@
     ("nag" . "the plan-checks' state — `pause [30m|2h|1h30m]` stops them, `resume` starts them again")
     ("nag pause" . "30m | 2h | 1h30m — stop the plan checks for a while, and say so loudly")
     ("nag resume" . "start them again")
+    ;; **AND WHICH TREE THE HEADER READS** (letibot `e207349`): *a click on the field, or `/repo`, opens a
+    ;; card listing following the work and each repository with its branch; a repository taken there is
+    ;; pinned for this head until following is taken again*.
+    ("repo" . "which repository the header reads — following the work, or one pinned until you take back")
     ("promote" . "move the RUNNING COMMAND to the background (ctrl-o)")
     ("interrupt" . "stop the running turn")
     ;; the door and the oracle
