@@ -13265,6 +13265,29 @@ whatever the gate had to say.")
     (is (= 0 (leticl::head-quit-sel h))
         "and the quit card behind it did not move at all")))
 
+(def-test a-card-says-how-many-are-waiting-behind-it (:suite leticl)
+  "**A READER CANNOT TELL whether the card in front is the only question or the first of five**
+  (letibot `9d327dc`, R90.9) — and a queue of decisions one does not know about is a queue one answers
+  badly. So the card that is IN FRONT says how many are behind it, in the reference's own words."
+  (let ((h (%on-head :cols 100 :rows 30)))
+    (flet ((card ()
+             ;; **BOTH VALUES**: `permission-card-lines` returns the card's body and its ladder, and the
+             ;; `+N more waiting` line joins the LADDER — a reader that took only the first value would
+             ;; be reading half the card.
+             (multiple-value-bind (out lad) (permission-card-lines h 80)
+               (segs-of (append out lad)))))
+      (setf (session-open-decisions (head-session h))
+            (list (list :req-id "q1" :kind "question" :options (list "a" "b"))
+                  (list :req-id "q2" :kind "question" :options (list "c" "d"))
+                  (list :req-id "q3" :kind "question" :options (list "e" "f"))))
+      (is (search "+2 more waiting behind this card" (card))
+          (format nil "**the front card names the two behind it** — the count is the OTHERS (~s)" (card)))
+      ;; and a lone card says nothing about a queue it is not in
+      (setf (session-open-decisions (head-session h))
+            (list (list :req-id "q1" :kind "question" :options (list "a" "b"))))
+      (is (not (search "more waiting" (card)))
+          "and a card alone says nothing at all — no `+0 more` nobody asked for"))))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of

@@ -305,6 +305,12 @@ never scrolled. The content becomes a viewport that SHRINKS to whatever room is 
             (when (or time silence)
               (ladder (format nil "  ~{~a~^ · ~}"
                               (remove nil (list time silence)))
-                      '(:dim t)))))
+                      '(:dim t)))
+            ;; **AND HOW MANY ARE WAITING BEHIND THIS ONE** (letibot `9d327dc`, R90.9). A reader looking at
+            ;; a card cannot tell whether it is the only question or the first of five — and a queue of
+            ;; decisions one does not know about is a queue one answers badly. The reference's own words.
+            (let ((behind (1- (length (session-open-decisions (head-session head))))))
+              (when (plusp behind)
+                (ladder (format nil "  +~d more waiting behind this card" behind) '(:dim t))))))
         (values (nreverse out) (nreverse lad))))))
 
