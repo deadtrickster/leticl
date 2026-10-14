@@ -143,6 +143,22 @@ stop that is an OUTCOME\"."
        (list (list (cons (truncate-to-width (format nil "· ~a" note) cols)
                          '(:fg :magenta))))))))
 
+(defun %jobs-going-down (head)
+  "The background jobs a stop takes with it — the RUNNING ones, named — or NIL.
+
+ **THE ROW'S OTHER HALF, and the half a reader cannot guess**: asking the daemon to stop is asking for
+ everything it is running, and a row that said only *waiting for it to go* left them to find that out
+ afterwards. `job-label` is the pane's own namer, so a job is called here what it is called there — a
+ name the caller gave it, else its command, never its `j12`.
+
+ NIL when nothing is running: a list of zero is a sentence about nothing."
+  (let ((running (remove-if-not (lambda (j) (getf j :running)) (head-jobs head))))
+    (when running
+      (format nil "~d background job~:p ~a with it: ~{~a~^, ~}"
+              (length running)
+              (if (= 1 (length running)) "goes" "go")
+              (mapcar #'job-label running)))))
+
 (defun stop-wait-row (head cols)
   "The row the head waits under while a daemon it asked to stop has not gone.
 NIL when nothing is pending.
@@ -151,11 +167,16 @@ NIL when nothing is pending.
 `+notice-ttl-ms+` and this fact must not: the whole defect was a request whose
 outcome nobody ever learned, and a sentence that disappears while the wait runs is
 that defect with a sentence attached. Yellow, the stall line's role — this is a
-thing that is taking longer than it should, not a failure."
-  (declare (ignorable head))
-  (let ((text (stop-wait-text)))
-    (when text
-      (list (list (cons (truncate-to-width text cols) '(:fg :yellow)))))))
+thing that is taking longer than it should, not a failure.
+
+**AND IT NAMES THE JOBS THAT GO WITH IT** — see `%jobs-going-down`. The row has the HEAD, which is why
+that half is here and not in `stop-wait-text`: the text is a global a test can set, and this needs what
+this head is actually running."
+  (let* ((text (stop-wait-text))
+         (jobs (and text (%jobs-going-down head)))
+         (said (and text (format nil "~a~@[ · ~a~]" text jobs))))
+    (when said
+      (list (list (cons (truncate-to-width said cols) '(:fg :yellow)))))))
 
 (defun %completions-text (head)
   "The live `/command` matches as ONE STRING, or NIL — the completion row's content.

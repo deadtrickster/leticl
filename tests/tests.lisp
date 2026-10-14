@@ -13893,6 +13893,41 @@ test/random and test/index, and it is one of three such families.~%options offer
     (is (search "nags resumed" (head-status-note h))
         "**and the head SAYS so** — a lapse nobody hears reads as *it will never remind me again*")))
 
+(def-test the-stop-row-names-the-jobs-that-go-with-it (:suite leticl)
+  "**THE ROW A READER WAITS UNDER WHILE A DAEMON STOPS** says what the stop COSTS — the background jobs
+  that go down with it. The half a reader cannot guess: asking the daemon to stop is asking for
+  everything it is running, and a row that said only *waiting for it to go* left them to find that out
+  afterwards.
+
+  `job-label` is the pane's own namer, so a job is called here what it is called there — **a name the
+  caller gave it, else its command, never its `j12`** — which is the rule this head already keeps for
+  every sentence about a job."
+  (let ((h (%on-head :cols 120 :rows 30)))
+    (flet ((row ()
+             (let ((r (leticl::stop-wait-row h 200)))
+               (and r (format nil "~{~a~}" (mapcar #'car (first r)))))))
+      ;; --- a stop in flight with two jobs running
+      (setf (head-jobs h) (list (list :id "j12" :name "release-build" :running t :command "cargo build")
+                                (list :id "j13" :name "" :running t :command "cargo test")
+                                (list :id "j14" :name "done-long-ago" :running nil :command "true")))
+      (let ((leticl::*stop-request* (list :asked-at (leticl::internal-real-time-ms) :heard nil)))
+        (is (search "2 background jobs go with it" (row))
+            (format nil "**the row names what goes down with it** (got ~s)" (row)))
+        (is (search "release-build" (row)) "**a named job by its name**")
+        (is (search "cargo test" (row)) "and an unnamed one by its command, not its `j13`")
+        (is (not (search "done-long-ago" (row))
+                )
+            "**and a job that has already settled is not going anywhere** — it is not a cost of stopping"))
+      ;; --- and with nothing running the row says only what it always said
+      (setf (head-jobs h) (list (list :id "j14" :name "done" :running nil :command "true")))
+      (let ((leticl::*stop-request* (list :asked-at (leticl::internal-real-time-ms) :heard nil)))
+        (is (search "waiting for it to go" (row)) "the wait is still said")
+        (is (not (search "background job" (row)))
+            "**but no list of zero** — a sentence about nothing is worse than a shorter one"))
+      ;; --- and with no stop pending there is no row at all
+      (let ((leticl::*stop-request* nil))
+        (is (null (row)) "nothing pending, no row")))))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of
