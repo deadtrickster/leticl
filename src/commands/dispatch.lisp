@@ -332,7 +332,7 @@ on ClientFrame::Slash)."
        ;; with `Peeked`, and `%handle-frame` opens the pane from that. The screen
        ;; existed and was unreachable — nothing sent the frame that fills it.
        (if (plusp (length rest))
-           (%send head (make-peek rest))
+           (ask-peek head rest)
            (say head "usage: /peek SESSION-ID")))
       ((string= verb "resync")
        ;; Throw this head's state away and take a fresh snapshot. The frame was

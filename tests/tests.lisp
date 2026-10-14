@@ -6800,11 +6800,17 @@ rows were not reachable. Measured after the field was added: `items: 26, events:
       (leticl::tick-peek h)
       (is (null (%sent wire)) "a pane that closed stops asking")
       ;; **and a repeat reply leaves a scrolled reader where they were**
-      (setf (head-mode h) :peek leticl::*peeked-session* "s-child" leticl::*pane-scroll* 7)
+      ;; **THE ASK IS PART OF THE GESTURE NOW** (letibot `81463c0`): a `Peeked` frame opens the pane only
+      ;; for what the reader ASKED for, so a test that wants a reply to land has to have asked — which is
+      ;; what every real door does through `ask-peek`.
+      (setf (head-mode h) :peek leticl::*peeked-session* "s-child" leticl::*peek-want* "s-child"
+            leticl::*pane-scroll* 7)
       (leticl::%handle-frame h (list :frame "peeked" :session-id "s-child" :events nil :dropped 0))
       (is (= 7 leticl::*pane-scroll*) "**the second reply for the same child does not move the reader**")
-      ;; while the FIRST peek for a child still opens at its tail
-      (setf (head-mode h) :normal leticl::*peeked-session* nil leticl::*pane-scroll* 7)
+      ;; while the FIRST peek for a child still opens at its tail — and the ASK names the child for the
+      ;; same reason as above: what opens a pane is a reply to something the reader asked for
+      (setf (head-mode h) :normal leticl::*peeked-session* nil leticl::*peek-want* "s-other"
+            leticl::*pane-scroll* 7)
       (leticl::%handle-frame h (list :frame "peeked" :session-id "s-other" :events nil :dropped 0))
       (is (zerop leticl::*pane-scroll*) "and the first peek for a NEW child opens at its tail"))))
 
@@ -13176,6 +13182,31 @@ whatever the gate had to say.")
   ;; and a kind this build truly does not know is STILL said, which is the arm that was there before
   (is (search "does not know" (leticl::%todo-needs-said (list (list :kind "something-new"))))
       "while a kind nobody has taught it is still named, as the wire's own comment asks"))
+
+(def-test a-late-peeked-reply-is-not-opened (:suite leticl)
+  "**THE ASKER IS STATE** (letibot `81463c0`): a `Peeked` frame names a child and nothing else, so without
+  the ask written down the head cannot tell the answer to what the reader just asked from the answer to a
+  question whose pane they closed a minute ago. The reference's rule is that a late reply after the pane
+  that asked was closed is **not opened** — and *closed* is a FACT here (`shut-overlays` gives the want
+  up) rather than an inference from what happens to be on screen."
+  (let ((h (%on-head :cols 100 :rows 24))
+        (leticl::*peek-want* nil))
+    (setf (session-items (head-session h)) (leticl::%items-vector nil))
+    (is (null leticl::*peek-want*) "nothing has been asked for")
+    (leticl::%handle-frame h (list :frame "peeked" :session-id "s-late" :events nil :dropped 0))
+    (is (eq :normal (head-mode h))
+        "**a reply nobody asked for does not open the pane** — the reader never asked, or has closed it")
+    ;; --- and an ask makes the very same frame land
+    (setf leticl::*peek-want* "s-late")
+    (leticl::%handle-frame h (list :frame "peeked" :session-id "s-late" :events nil :dropped 0))
+    (is (eq :peek (head-mode h)) "while a reply to an ASK is drawn, as it always was")
+    ;; --- giving the overlay up gives the want up: closing is a fact
+    (setf (head-mode h) :normal)
+    (leticl::shut-overlays)
+    (is (null leticl::*peek-want*)
+        "**closing the overlay gives up the want** — so the next reply arrives late by definition")
+    (leticl::%handle-frame h (list :frame "peeked" :session-id "s-late" :events nil :dropped 0))
+    (is (eq :normal (head-mode h)) "and does not reopen it")))
 
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest

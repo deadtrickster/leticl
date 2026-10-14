@@ -1269,17 +1269,22 @@ empty pane on every attach, which is the defect the guard exists to prevent, inv
      ;; `tick-peek`, a reader who scrolled up to read a child's earlier output would be yanked back to
      ;; the tail once a second. The test is whether this reply is the pane's own, which is the same
      ;; question `*peeked-session*` answers for every other reader of it.
+     ;; **AND IT OPENS ONLY FOR WHAT WAS ASKED FOR** (letibot `81463c0`). A `Peeked` frame names a child
+     ;; and nothing else, so without the ASK written down the head cannot tell the answer to what the
+     ;; reader just asked from the answer to a question whose pane they closed a minute ago. The
+     ;; reference's rule is that a late reply is NOT opened — and `*peek-want*` is what makes it checkable.
      (let ((same (and (eq (head-mode head) :peek)
                       (equal *peeked-session* (getf frame :session-id)))))
-       (setf (head-peeked head) (getf frame :events)
-             *peeked-session* (getf frame :session-id)
-             *peeked-dropped* (or (getf frame :dropped) 0)
-             ;; **the rows, when the daemon sends them** — and NIL when it does not, so a later reply
-             ;; cannot inherit the previous child's snapshot. See `*peeked-snapshot*`.
-             *peeked-snapshot* (getf frame :snapshot)
-             (head-mode head) :peek
-             (head-dirty head) t)
-       (unless same (reset-pane-scroll)))
+       (when (equal *peek-want* (getf frame :session-id))
+         (setf (head-peeked head) (getf frame :events)
+               *peeked-session* (getf frame :session-id)
+               *peeked-dropped* (or (getf frame :dropped) 0)
+               ;; **the rows, when the daemon sends them** — and NIL when it does not, so a later reply
+               ;; cannot inherit the previous child's snapshot. See `*peeked-snapshot*`.
+               *peeked-snapshot* (getf frame :snapshot)
+               (head-mode head) :peek
+               (head-dirty head) t)
+         (unless same (reset-pane-scroll))))
      :control)
     ((string= (frame-name frame) "bye")
      ;; **A BYE IS FINAL — UNLESS THIS HEAD ASKED FOR IT.** The daemon writes one

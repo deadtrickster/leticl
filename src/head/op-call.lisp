@@ -452,7 +452,7 @@ to be the bytes it was given."
              *peeked-session*
              (<= (+ *peek-asked-at* *peek-poll-ms*) *now-ms*))
     (setf *peek-asked-at* *now-ms*)
-    (%send head (make-peek *peeked-session*))))
+    (ask-peek head *peeked-session*)))
 
 (defvar *tick-failures* nil
   "The ticks that have signalled in this head's life — an alist of `(NAME . COUNT)`.

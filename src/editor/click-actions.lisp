@@ -356,7 +356,7 @@ than from the click."
                                      (string= want (subseq id (- (length id) (length want)))))
                             (setf child r))))
                       (if child
-                          (progn (%send head (make-peek (getf child :session-id))) t)
+                          (progn (ask-peek head (getf child :session-id)) t)
                           (progn (say head (format nil "~a is not a subagent this session knows" want))
                                  t)))))
                  (let ((sel (click-row->sel head (head-mode head) line)))

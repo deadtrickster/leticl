@@ -15,6 +15,26 @@
   "The subagent whose scrollback `head-peeked` holds — for the title. A defvar
 beside the slot rather than a second slot: a struct layout change is a restart.")
 
+(defvar *peek-want* nil
+  "The session id the reader last ASKED to peek at, or NIL — what a reply is allowed to open for.
+
+ **THE ASKER IS STATE, AND WITHOUT IT A REPLY OPENS FOR NOBODY** (letibot `81463c0`): the `Peeked`
+ frame carries the child's id and nothing else, so the head cannot tell *the answer to what I just asked*
+ from *an answer to a question whose pane the reader closed a minute ago*. The reference's rule is that a
+ late reply after the pane that asked was closed is NOT opened — and the way to know is to have written
+ down who asked.
+
+ Cleared wherever the pane is given up (`shut-overlays`), so *closed* is a fact rather than an inference.")
+
+(defun ask-peek (head session-id)
+  "Ask the daemon for SESSION-ID's output, and REMEMBER that this is what was asked for.
+
+ One door, because there are FIVE askers (`/peek`, the panes' key, the click, the operator call and the
+ re-ask) and a reply can only be judged against a want: a second spelling of *send a peek* is a second
+ chance to forget to record it, which is exactly how the frame came to open for nobody."
+  (setf *peek-want* session-id)
+  (%send head (make-peek session-id)))
+
 (defvar *peeked-dropped* 0
   "How many of that subagent's events fell off the daemon's ring before the read.")
 

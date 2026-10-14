@@ -139,7 +139,7 @@ two sides in circles."
   ;; not in this case at all. A running subagent has new output, which is the
   ;; whole reason to press it again (app.rs:3272-3277).
   (awhen *peeked-session*
-	 (%send head (make-peek it))
+	 (ask-peek head it)
 	 (say head (format nil "re-reading ~a…" it))))
 
 (defmethod pane-enter ((pane merge-queue-pane) head)
@@ -438,6 +438,11 @@ makes it, and the two keys that call this want different places."
   ;; the read overlay is the third — a row kept open over a list that has closed would be drawn
   ;; again the next time that pane opened, over whatever row the cursor then sat on
   (setf *read-overlay* nil)
+  ;; **AND THE PEEK'S ASK IS THE FOURTH** (letibot `81463c0`): a `Peeked` reply opens the pane ONLY for
+  ;; what the reader asked for, and *closed* has to be a fact rather than an inference — so giving the
+  ;; overlay up gives up the want with it. A late reply then arrives with nothing to open for, which is
+  ;; the reference's own rule rather than a side effect.
+  (setf *peek-want* nil)
   t)
 
 (defun %pane-key (head key type)
@@ -748,7 +753,7 @@ one thing this head must not need."
                             (t (let ((id (getf row :session-id)))
                                  (when id
                                    (setf *peek-prompt-only* t)
-                                   (%send head (make-peek id))
+                                   (ask-peek head id)
                                    (say head (format nil "reading ~a's prompt…" id))))))))
                    ;; the operator's own ask: the job row links to its dashboard
                    ((and (eql ch #\d) (eq mode :jobs))
