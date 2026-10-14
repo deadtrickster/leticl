@@ -548,6 +548,50 @@ error."
   (let ((n (length id)))
     (if (<= n 10) id (format nil "…~a" (subseq id (- n 8))))))
 
+(defun %operator-ask (row)
+  "The `operator` edge ROW waits on — or NIL.
+
+ **A WAIT ON A PERSON AND NOT ON A CLOCK**, which is why it is asked separately: `TodoNeed::Operator`
+ carries the question the model put to the operator and the options it offered, and the sentence a row
+ draws (`%todo-needs-said`) is *waits on you* — but a row is a row, and the operator's own ask was that
+ the head SAY SO where they are looking rather than only where the plan is: *\"the heads show loud
+ notification that im waited\"*."
+  (find-if (lambda (n) (equal (getf n :kind) "operator"))
+           (getf row :needs)))
+
+(defun waiting-on-you-line (head cols)
+  "The resident line while the model is waiting on a PERSON — or NIL.
+
+ **RESIDENT, NOT A NOTICE**: a `say` rides the status row for a few seconds and then goes, and this is a
+ fact that does not go until the operator moves it — so it takes the row above the composer and STAYS
+ there, exactly as the stale-prompt strip does (R89) and for the same reason.
+
+ **The row's CONTENT leads and the question follows**, because the two answer different halves of the
+ reader's question: *which piece of work* is stuck on them, and *what they are being asked*. The first
+ is the row's own words and the second is the model's, and neither is a paraphrase.
+
+ It reads the BOARD the head already holds. **Nothing new is remembered**, so a question the model takes
+ back takes the line with it: the board simply comes back without that edge (letibot `c224585`), and
+ both this and the card go — which is what that commit's test pins."
+  (declare (ignore head))
+  (let ((row (find-if (lambda (r)
+                        (and (equal (getf r :status) "open")
+                             (%operator-ask r)))
+                      *operator-todos*)))
+    (when row
+      (let* ((ask (%operator-ask row))
+             (said (or (getf row :content) ""))
+             (q (or (getf ask :question) ""))
+             (choices (getf ask :options))
+             (room (max 24 (- cols 30)))
+             (cut (lambda (s) (if (> (length s) room)
+                                  (format nil "~a…" (subseq s 0 room))
+                                  s))))
+        (format nil "WAITING ON YOU — ~a · ~a~@[ · ~d option~:p~]"
+                (funcall cut said)
+                (funcall cut q)
+                (and (listp choices) (plusp (length choices)) (length choices)))))))
+
 (defun %todo-needs-said (needs)
   "A row's `needs` EDGES as one sentence — *what the row waits on before it can start*.
 

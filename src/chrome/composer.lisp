@@ -509,6 +509,10 @@ it is a typing aid, not a message. What changed is only where the row lands."
                     ;; ABOVE the turn's clock, because a prompt this session will never speak is the more
                     ;; important fact about the screen.
                     (let ((stale (reseat-strip-line head cols))) (and stale stale))
+                    ;; **AND THE MODEL WAITING ON A PERSON** (letibot `c224585`): resident for the same
+                    ;; reason the strip is — it does not go until the operator moves it — and read off
+                    ;; the BOARD, so a question the model takes back takes the line with it.
+                    (let ((yours (waiting-on-you-line head cols))) (and yours yours))
                     (turn-report-row head cols))
                 (list (composer-box-top head cols))
                 (composer-box-body head cols max-rows)

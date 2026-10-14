@@ -13728,6 +13728,41 @@ test/random and test/index, and it is one of three such families.~%options offer
             "and an operator row after an ordinary one gets none — a `re:` under every reply would be a
   second transcript of the conversation")))))
 
+(def-test a-row-waiting-on-you-says-so-above-the-composer (:suite leticl)
+  "**THE OPERATOR'S OWN ASK IS A HEAD THAT SAYS IT LOUDLY**: *\"the heads show loud notification that
+  im waited\"*. The row's own sentence (`waits on you`) is on the row — where a reader looking at the
+  pane sees it, and nobody else does.
+
+  So the head carries a RESIDENT line while the model is waiting on a person: it takes the row above the
+  composer and STAYS, because a wait on somebody is not a notice that expires. And **it reads the board
+  and remembers nothing** — which is what makes a retraction work: a question the model takes back takes
+  the line with it (letibot `c224585`, whose test pins exactly that)."
+  (let ((h (%on-head :cols 120 :rows 30))
+        (leticl::*operator-todos* nil))
+    (is (null (leticl::waiting-on-you-line h 120)) "nobody is waiting to begin with")
+    ;; --- a row with an `operator` edge, and a question on it
+    (setf leticl::*operator-todos*
+          (list (list :id "t1" :content "land the surface stack" :status "open"
+                      :needs (list (list :kind "operator"
+                                         :question "which repository should it land in?"
+                                         :options (list "the main tree" "a worktree"))))))
+    (let ((line (leticl::waiting-on-you-line h 120)))
+      (is (search "WAITING ON YOU" line) "**the head says it is waiting on a person** — loudly")
+      (is (search "land the surface stack" line) "**naming the work that is stuck** — the row's own words")
+      (is (search "which repository" line) "**and the question being asked** — the model's own words")
+      (is (search "2 options" line) "with how many ways out there are"))
+    ;; --- **AND IT QUESTIONS NOTHING BUT A PERSON**: a row that waits on a clock, a child or a job is
+    ;; not a wait on the reader, and a line saying so would be the loudest thing on the screen and wrong.
+    (setf leticl::*operator-todos*
+          (list (list :id "t2" :content "the fold" :status "open" :when (list :handle "j97"))))
+    (is (null (leticl::waiting-on-you-line h 120)) "a row waiting on a JOB is not waiting on me")
+    ;; --- and a row that is DONE is not waiting on anybody either
+    (setf leticl::*operator-todos*
+          (list (list :id "t3" :content "the fold" :status "done"
+                      :needs (list (list :kind "operator" :question "was it good?")))))
+    (is (null (leticl::waiting-on-you-line h 120))
+        "**a CLOSED row is not a wait** — the board coming back without the edge takes the line with it")))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of
