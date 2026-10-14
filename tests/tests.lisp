@@ -13969,15 +13969,23 @@ test/random, and it is one of three.~%options offered:~%- in scope~%- out of sco
   (let ((h (%on-head :cols 100 :rows 30))
         (leticl::*hidden-run-open* nil)
         (leticl::*hist-cache* nil))
-    ;; the cache's SIXTH element is the seats — the walk's own row→run map
-    (setf leticl::*hist-cache* (list nil nil nil nil nil (list (cons "i7" "leticl-run-i5"))))
-    (is (leticl::marker-run-open (list :item-id "i7" :kind "tool_result"))
+    ;; the cache's SIXTH element is the seats — the walk's own row→run map, each carrying the column
+    ;; the counts begin at
+    (setf leticl::*hist-cache* (list nil nil nil nil nil (list (cons "i7" (cons "leticl-run-i5" 40)))))
+    (is (leticl::marker-run-open (list :item-id "i7" :kind "tool_result") 44)
         "**a marker's row opens ITS run** — the seat the walk recorded")
     (is (equal "leticl-run-i5" leticl::*hidden-run-open*)
         "and it is the run the seat named, not the newest")
+    ;; --- **AND A PRESS IN THE PROSE ABOVE THE COUNTS IS NOT THE MARKER'S**
+    (setf leticl::*hidden-run-open* nil)
+    (is (null (leticl::marker-run-open (list :item-id "i7" :kind "tool_result") 12))
+        "**a press at column 12 is in the sentence**, so it is the row's press and opens nothing")
+    (is (null leticl::*hidden-run-open*) "and no run was opened by reading the prose")
+    (is (leticl::marker-run-open (list :item-id "i7" :kind "tool_result") 40)
+        "while the counts' own first column is the marker's — the boundary is the seat's")
     ;; --- and a row with no marker is not a hit region
     (setf leticl::*hidden-run-open* nil)
-    (is (null (leticl::marker-run-open (list :item-id "i9" :kind "assistant")))
+    (is (null (leticl::marker-run-open (list :item-id "i9" :kind "assistant") 44))
         "**a row with no seat opens nothing** — the map is the whole test, not a guess at the row")
     (is (null leticl::*hidden-run-open*) "and nothing was opened")))
 

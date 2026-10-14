@@ -546,7 +546,19 @@ thirty rows appended, and the view jumped to `row-62`."
                      ;; **THE MARKER WENT ONTO THIS ITEM'S LINE** — so a click on this row opens THIS
                      ;; run, which is `7eab116`'s headline: every marker, not only the newest.
                      (when (and marker-items glued)
-                       (push (cons (getf item :item-id) (%hidden-run-id marker-items)) seats))
+                       ;; **AND WHERE THE MARKER STARTS** (letibot `7eab116`): it is a SUFFIX of a line the
+                      ;; reader also reads as prose, so a hit test that only knew the row would light the
+                      ;; sentence too. The join appends it after ONE SPACE, so its column is the width of
+                      ;; that line BEFORE the join — and `item-lines` is memoised per frame, so asking a
+                      ;; second time costs a lookup rather than a render.
+                      ;;
+                      ;; **`%segs-width`, NOT `string-width`**: a rendered line is SEGMENTS (`(text .
+                      ;; style)`), and measuring one as a string is a `TYPE-ERROR` on a cons — measured,
+                      ;; fifteen suites' worth of it.
+                      (push (cons (getf item :item-id)
+                                  (cons (%hidden-run-id marker-items)
+                                        (1+ (%segs-width (car (last (item-lines item cols (head-prefs head))))))))
+                            seats))
                       ;; **an OPEN run draws its rows between this row and the newer one** — this
                       ;; row is prepended after them, so they land in the gap the counts would have
                       ;; filled. They are real lines now, and the anchor may name them.

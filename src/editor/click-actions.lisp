@@ -398,8 +398,9 @@ than from the click."
              (%show-edit-change head item))
            ;; **AND A RUN'S MARKER OPENS THAT RUN** (letibot `7eab116`): every marker on the screen, not
            ;; only the newest — which is what `ctrl-t` can reach. The seat is the walk's own reading
-           ;; (`marker-run-open`), so a click and the paint cannot disagree about which run a row is in.
-           (when (and item (marker-run-open item))
+           ;; (`marker-run-open`), and it carries the column the counts begin at, so a press in the
+           ;; sentence a run hangs off is the ROW's press and not the marker's.
+           (when (and item (marker-run-open item (getf key :x)))
              t)
            ;; **AND A NOTICE ROW OPENS ITS WHOLE TEXT** (letibot `161b34d`/`f076792`, the sweep's batch
            ;; A): the row carries the target and the reason, or the branch and the verdict, and the
