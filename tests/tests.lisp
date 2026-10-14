@@ -13639,6 +13639,51 @@ whatever the gate had to say.")
   bound is a stack Esc cannot get out of")
     (is (eq :todos (head-mode h)) "and it is the one drawn")))
 
+(def-test a-stale-prompt-asks-and-keeps-asking (:suite leticl)
+  "**A SESSION'S MESSAGE 0 IS FIXED WHEN IT IS CREATED** (protocol §14), so a build that has since
+  changed the system instructions, the tool schemas or the seat hands that session a prompt it will
+  never speak — and nothing said so on any screen. The daemon says `prefix_stale`; the remedy is the
+  reader's own.
+
+  **The operator's own ask is the shape of this**, and it is why abstaining PINS rather than closes:
+  *\"show me \"select\" with one option - reseat and abstain and then when on abstain keep reseat
+  select open… it stares at me yet can continue at my risk.\"*"
+  (let ((h (%on-head :cols 100 :rows 30))
+        (leticl::*reseat-said* nil)
+        (leticl::*reseat-card-open* nil))
+    (flet ((said () (format nil "~{~a~^~%~}"
+                            (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l)))
+                                    (leticl::reseat-card-lines h 100)))))
+      ;; --- nothing to begin with
+      (is (null (leticl::reseat-strip-line h 100)) "nothing is stale to begin with")
+      (is (not (leticl::reseat-card-p h)) "and there is no card")
+      ;; --- the daemon says it: this is the door `state.lisp` folds a `prefix_stale` warning through
+      (leticl::reseat-note "the prompt this session was seated on is stale — 3 tools have changed")
+      (is (leticl::reseat-card-p h) "**the card OPENS on the daemon's word**")
+      (is (search "/reseat" (said)) "**and its first row is the reseat itself** — the remedy, not a report")
+      (is (search "Not now" (said)) "with the abstain under it")
+      ;; --- **ABSTAINING PINS**: the card becomes the strip
+      (leticl::%handle-key h (list :type :char :ch #\2))
+      (is (not (leticl::reseat-card-p h)) "**`Not now` puts the card away**")
+      (is (search "PROMPT IS STALE" (leticl::reseat-strip-line h 100))
+          "**and it STAYS as the strip** — abstaining never dismisses it")
+      (is (search "alt-p shows the card" (leticl::reseat-strip-line h 100)) "naming the way back")
+      ;; --- `alt-p` brings it back, and Esc is the same abstain
+      (leticl::%handle-key h (list :type :alt :ch #\p))
+      (is (leticl::reseat-card-p h) "**`alt-p` shows the card again**")
+      (leticl::%handle-key h (list :type :esc))
+      (is (not (leticl::reseat-card-p h)) "and Esc is the same abstain, not a dismissal")
+      ;; --- **AND A READER MID-SENTENCE GETS THE STRIP**, which takes no keys at all
+      (leticl::%handle-key h (list :type :alt :ch #\p))
+      (setf (composer-buffer (head-composer h)) "a half-written line")
+      (is (not (leticl::reseat-card-p h))
+          "**the card never stands between the operator and the line they started**")
+      (setf (composer-buffer (head-composer h)) "")
+      ;; --- and only the DAEMON takes it down
+      (leticl::reseat-note nil)
+      (is (not (leticl::reseat-card-p h)) "**the daemon's clearing takes the card down**")
+      (is (null (leticl::reseat-strip-line h 100)) "and the strip with it — the head never decides this"))))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of

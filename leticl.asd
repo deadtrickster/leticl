@@ -125,6 +125,9 @@ through an eval socket and see the change on the next frame."
                (:file "src/cards/tool-result-card")
                (:file "src/cards/item-lines")
                (:file "src/cards/turn")
+               ;; **THE RESEAT CARD** (R89): a session whose prompt is stale asks the operator, and
+               ;; keeps asking — it after `turn` because it mirrors the quit card's shape.
+               (:file "src/cards/reseat-card")
                               (:file "src/chrome/counters")
                (:file "src/chrome/border")
                (:file "src/chrome/git")

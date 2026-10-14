@@ -168,6 +168,12 @@ for the lists)."
       ((%decision-key head key type))
       ;; **AND THE WAY OUT, UNDER IT** — see the note where this arm used to live, above.
       ((head-quit-open head) (%quit-card-key head key type))
+      ;; **AND THE RESEAT CARD, WHICH OWNS ITS KEYS WHILE IT IS OPEN** (R89). It sits BELOW the quit
+      ;; card and the decision for the reason it sits low in the draw chain: it is not an ask the daemon
+      ;; made, and a card that took a key from one of those would be a picture of a key that does not
+      ;; work. Asked only while it IS open — the strip takes no keys but `alt-p`, which is a chord and
+      ;; is handled above this ladder.
+      ((reseat-card-p head) (%reseat-card-key head key type))
       ;; **THE OPERATOR-CALL COMPOSER** (R24 part two), after an open ask and before every
       ;; list. After the ask because a card nobody asked for outranks a card the operator
       ;; opened; before the lists because the field it fills IS the composer, so anything it

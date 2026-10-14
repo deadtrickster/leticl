@@ -399,7 +399,19 @@ thing that knows whether this is the same conversation (app.rs:1897-1934)."
         (if (note-compaction session w)
             (setf (session-warnings session)
                   (remove w (session-warnings session)))
-            (note-warning session w)))))
+            (progn
+              ;; **AND THE STALE PROMPT IS A CARD, NOT A NOTE** (letibot R89, `0e6004c`):
+              ;; `prefix_stale` says the session's message 0 no longer matches the build, and the remedy
+              ;; is the reader's own — so it opens the reseat card. `prefix_current` is the daemon saying
+              ;; the sentence was CLEARED (a reseat, or a fork onto the seated prompt), and that takes the
+              ;; card down; `reseated` is the broadcast form of the same news, so a reseat chosen on one
+              ;; head clears the card on every one of them.
+              (let ((code (getf w :code)))
+                (cond ((equal code "prefix_stale")
+                       (reseat-note (or (getf w :detail) (getf w :message) (getf w :text))))
+                      ((member code '("prefix_current" "reseated") :test #'string=)
+                       (reseat-note nil))))
+              (note-warning session w))))))
   session)
 
 (defvar *scrubbed-total* 0

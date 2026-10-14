@@ -502,6 +502,13 @@ it is a typing aid, not a message. What changed is only where the row lands."
                 ;; who pressed a key needs the answer more than the clock.
                 (or (let ((stall (stall-row head cols))) (and stall stall))
                     (let ((notice (notice-line head cols))) (and notice notice))
+                    ;; **AND THE STALE-PROMPT STRIP, WHICH IS PINNED RATHER THAN TRANSIENT** (letibot
+                    ;; R89). It takes this row — the one that is always there — while the daemon says the
+                    ;; prompt is stale and the reader has put the card away; `alt-p` brings the card back.
+                    ;; It sits BELOW a `say`, because a notice is the operator's own act arriving, and
+                    ;; ABOVE the turn's clock, because a prompt this session will never speak is the more
+                    ;; important fact about the screen.
+                    (let ((stale (reseat-strip-line head cols))) (and stale stale))
                     (turn-report-row head cols))
                 (list (composer-box-top head cols))
                 (composer-box-body head cols max-rows)

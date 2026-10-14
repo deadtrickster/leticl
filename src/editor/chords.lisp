@@ -140,7 +140,7 @@ Esc was a second thing to remember per pane."
             ;; here by this head's own reader, so it cannot be confused with `ctrl-r`, which
             ;; IS a control byte and flips the thinking fold. Handling it above the `:ctrl`
             ;; guard is what keeps the two apart: both arrive as `#\r` and differ only in type.
-            (and (eq (getf key :type) :alt) (member (getf key :ch) '(#\r #\g #\b #\a #\n) :test #'eql)))
+            (and (eq (getf key :type) :alt) (member (getf key :ch) '(#\r #\g #\b #\a #\n #\p) :test #'eql)))
     (if (eq (getf key :type) :alt)
         ;; **THE ALT CHORDS, EACH IN ITS OWN WORD.** `alt-r` opens the operator-call draft; `alt-g` and
         ;; `alt-b` MARK THE TURN (letibot R81) — *good* and *bad*, and a second press inside five seconds
@@ -177,7 +177,18 @@ Esc was a second thing to remember per pane."
                                      (ignore-errors (%notice-kind (item-display-text i))))
                                    (session-items (head-session head))
                                    :from-end t)))
-                 (if item (progn (%show-notice head item) t) nil))))
+                 (if item (progn (%show-notice head item) t) nil)))
+          ;; **AND `alt-p` SHOWS THE RESEAT CARD** (letibot R89, `crates/tui/src/app/reseat.rs`): the
+          ;; card and its strip are two states of one thing — the card open, or the line that says the
+          ;; prompt is stale and offers the card. **`alt-p` is the SECOND half of that pair** and the
+          ;; reference binds it there; this head's `alt-r` was already the operator-call draft, so the
+          ;; reference's own `alt-r reseats now` collides here and is left to the operator rather than
+          ;; taken — the card's first ROW does the reseat, and Enter takes it.
+          ;;
+          ;; NIL when nothing is stale: a key that did nothing would be a key this head has to explain.
+          (#\p (if *reseat-said*
+                   (progn (setf *reseat-card-open* t (head-dirty head) t) t)
+                   nil)))
     (flet ((pane (mode verb)
              (if (eq (head-mode head) mode)
                  (setf (head-mode head) :normal (head-dirty head) t)

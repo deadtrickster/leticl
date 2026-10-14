@@ -1444,6 +1444,11 @@ scrolls the transcript by a row every keystroke.
                (permission-card-lines head cols))))
           ((head-quit-open head)
            (setf card-lines (quit-card-lines head cols)))
+          ;; **AND THE RESEAT CARD** (R89) — LAST of the asks, because it is not one: it is the head
+          ;; telling the reader what it knows about their own prompt, and a card that outranked a
+          ;; question the daemon is waiting on would be the wrong thing to answer first.
+          ((reseat-card-p head)
+           (setf card-lines (reseat-card-lines head cols)))
           ;; **the operator-call composer, between the way out and a picker.** The order is
           ;; the keyboard's: the quit card and an open ask are asked for keys before this
           ;; one (`%handle-key`), so they are drawn before it — a card drawn above
