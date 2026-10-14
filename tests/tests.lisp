@@ -13388,6 +13388,33 @@ whatever the gate had to say.")
         (paint)
         (is (null leticl::*pointer-hand*) "and a frame that changes nothing tells the terminal nothing")))))
 
+(def-test a-readers-scroll-owes-a-frame-while-the-view-is-held (:suite leticl)
+  "**A READER'S KEY DRAWS THE HELD VIEW ONCE MORE** (letibot `1f8664f`). Freezing stops the head drawing,
+  which is right for a spinner and a clock — *one written cell is one lost selection* — and wrong for
+  the reader: PgDn moved `*pane-scroll*` and nothing was drawn, so the key looked broken for as long as
+  the view was held.
+
+  The debt is the frame the FREEZE already owes (`*frozen-frame*`), which the paint spends. Asserted as
+  the debt rather than as pixels, because what a test can see here is the flag the loop reads."
+  (let ((h (%on-head :cols 100 :rows 24))
+        (leticl::*frozen* t)
+        (leticl::*frozen-frame* nil)
+        ;; the room the scroll clamps against — without it `pane-scroll-max` is 0 and NOTHING moves
+        (leticl::*pane-lines* 10)
+        (leticl::*pane-room* 4)
+        (leticl::*pane-scroll* 0))
+    (setf (session-items (head-session h)) (leticl::%items-vector nil))
+    (leticl::pane-scroll-by 1)
+    (is (= 1 leticl::*pane-scroll*) "the scroll moved, as it always did")
+    (is (not (null leticl::*frozen-frame*))
+        "**and it OWED a frame** — otherwise the reader presses a key and nothing appears to happen")
+    ;; --- and out of the freeze nothing is owed, because `head-dirty` is enough
+    (let ((leticl::*frozen* nil)
+          (leticl::*frozen-frame* nil))
+      (leticl::pane-scroll-by 1)
+      (is (null leticl::*frozen-frame*)
+          "while an unfrozen head owes nothing special — the ordinary path draws it"))))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of

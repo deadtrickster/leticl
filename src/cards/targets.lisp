@@ -526,8 +526,22 @@ handler can clamp without re-rendering, and `*pane-room*` is how many of them fi
   (max 0 (- *pane-lines* *pane-room*)))
 
 (defun pane-scroll-by (n)
-  "Move the pane by N rows, clamped to its content."
-  (setf *pane-scroll* (max 0 (min (pane-scroll-max) (+ *pane-scroll* n)))))
+  "Move the pane by N rows, clamped to its content.
+
+ **AND A READER'S SCROLL OWES A FRAME WHILE THE VIEW IS HELD** (letibot `1f8664f`). Freezing stops the
+ head drawing, which is right for a spinner and a clock and wrong for the READER: PgDn moved
+ `*pane-scroll*` and nothing was drawn, so the key looked broken for as long as the view was held.
+ The debt is `*frozen-frame*` — the same one the freeze itself owes — and the paint spends it.
+
+ This is the right place for it because it is the ONE door every reader's scroll goes through: the
+ panes', the decision card's page keys and wheel, the read overlay's, and the job window's. A second
+ spelling would be a key that moved the view and did not owe a frame, which is the defect itself.
+
+ **The POINTER is not this** — a drag never takes a hold here, so the other half of the reference's
+ rule has no subject."
+  (setf *pane-scroll* (max 0 (min (pane-scroll-max) (+ *pane-scroll* n))))
+  (when *frozen*
+    (setf *frozen-frame* t)))
 
 (defun reset-pane-scroll ()
   "A newly opened pane starts at its top."
