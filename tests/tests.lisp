@@ -13490,7 +13490,15 @@ whatever the gate had to say.")
                "**the repository the newest edit is in is the one it answers**")
            ;; --- and the two cases that already worked read exactly as before
            (is (equal (namestring alpha) (leticl::%project-dir (namestring alpha) h))
-               "a workspace that IS a repository is unchanged"))
+               "a workspace that IS a repository is unchanged")
+           ;; --- **AND THE NESTED BRANCH**: a workspace that HOLDS one repository answers it, which is
+           ;; the operator's own layout (*Projects/letibot/letibot with the session in Projects/letibot*)
+           ;; and had no test of its own — the fixture only ever made a workspace that IS a repository.
+           (let* ((solo (merge-pathnames "solo/" root))
+                  (only (merge-pathnames "only/" solo)))
+             (ensure-directories-exist (merge-pathnames ".git/" only))
+             (is (equal (namestring only) (leticl::%project-dir (namestring solo) h))
+                 "**a workspace that holds ONE repository answers that one** — the nested layout")))
       (ignore-errors (uiop:delete-directory-tree root :validate t)))))
 
 (def-test a-restart-notice-is-one-row-with-its-children-counted (:suite leticl)
@@ -13564,6 +13572,23 @@ whatever the gate had to say.")
     (is (zerop (length (%sent wire))) "a daemon that cannot be told is not sent the frame at all")
     (is (search "not sent" (head-status-note h))
         "**and the head SAYS so** — a silent mark is worse than a key that does nothing")))
+
+(def-test a-click-on-a-key-hint-is-that-key (:suite leticl)
+  "**EVERY KEY HINT IS A BUTTON THAT TYPES ITS KEY** (letibot `5296c6e`) — the bar is a list of buttons,
+  and `%hint-click` is what makes the word under the pointer act. The survey found this had NO test: the
+  two halves of one rule (the light asks `%hint-key-at`, the click asks `%hint-click`) could have drifted
+  apart with nothing to notice."
+  (let ((h (%on-head :cols 120 :rows 30)))
+    (setf (session-items (head-session h)) (leticl::%items-vector nil))
+    (let ((leticl::*stdout* (make-string-output-stream)))
+      (leticl::%render-and-paint h))
+    (let ((x (loop for c from 0 below 118 when (leticl::%hint-key-at h c) return c)))
+      (is (not (null x)) "the bar has a key on it to click")
+      (is (leticl::%hint-click h x)
+          "**the click is claimed by the bar and the key is sent** — the word is a button")
+      ;; and a word the table does not know is NOT a button: column 0 is the row's own left edge
+      (is (null (leticl::%hint-click h 0))
+          "while a column of the row that names no key falls through — a hint that types nothing is not a hint"))))
 
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest

@@ -62,3 +62,25 @@ around.
 Steps 1 and 2 are mechanical but large, and steps 3–5 are what actually change behaviour — with 18
 sites and 20 files, an interrupted migration leaves the head in the state the reference spent a review
 finding. **This is a session's work, not a round's.**
+
+## The strongest reason, found 2026-10-14 by reading the code I would be editing
+
+`%open-pane` (`src/commands/the-operator-todos.lisp:987`) does not merely lack a stack — **it documents
+the one-slot model as deliberate, and explains why sharing state is honest under it**:
+
+> The panes share ONE cursor (`head-picker-sel`) and one scroll offset, **because only one is open at a
+> time** — so a position left by the last pane means nothing to the next, and opening on it put the
+> todos cursor three items down because the picker had been there. **The reference keeps a cursor per
+> pane**; with one, the top is the only honest place to start.
+
+So R69's "kept per entry" is **per-pane cursor AND per-pane scroll**, and this head shares both *as a
+consequence of the model it is being asked to replace*. A stack added without that half would carry a
+rule it does not implement: the surface would be right and the reader's place in it wrong — the
+reference's own defect class (*"a cursor moving in a hidden one"*), reached from the other side.
+
+**And a correction to my own first measurement**: the 18 `(setf (head-mode …))` sites are not 18
+migrations. Most are `:normal` writes that mean *a command finished* (`submit.lisp`), or `:slash`
+(the COMPOSER's own mode, not a surface), so they need no change at all. The sites that actually move
+are the opens (`%open-pane`, `:term`, `:job-out`, the pane-specific ones) and the Esc path — perhaps
+six. **The size of this job is not the call sites; it is `head-picker-sel` and `*pane-scroll*` becoming
+per-entry**, which is step 2 below and cannot be skipped.
