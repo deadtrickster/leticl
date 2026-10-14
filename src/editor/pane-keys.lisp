@@ -182,7 +182,10 @@ so the view draws what the head holds rather than asking the daemon for what it 
            ;; comes back to that list rather than to the conversation.
            (%push-surface head :job-out)
            (setf (head-mode head) :job-out)
-           (%send head (make-read-job-output it 0)))))
+           ;; **THROUGH THE ONE SENDER** (R93): the first read and every refresh ask the same way, so
+           ;; the page a reader lands on and the page the tick keeps fresh cannot disagree about which
+           ;; one this window is showing.
+           (ask-job-window head))))
 
 (defmethod pane-enter ((pane job-out-pane) head)
   ;; Enter takes the next page, or re-reads the last one when the end is

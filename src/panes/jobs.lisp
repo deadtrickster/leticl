@@ -50,6 +50,53 @@ asks regardless, which is what recovers an ask the socket lost.")
   "How often an OPEN pane asks for a fresh snapshot — the reference's `REFRESH_MS`: *the heartbeats
 move without an event*, so a pane that waited for `QueueMoved` would draw a lease as alive for ever.")
 
+(defparameter +job-refresh-ms+ 1000
+  "How often an OPEN job window re-reads while its job is STILL RUNNING.
+
+ **ONE SECOND, AND IT IS THE REFERENCE'S NUMBER** (`516c5a4` says it in passing — *the jobs pane
+ started re-reading its window once a second*): a running job's output is a LIVE view and a head that
+ read it once at Enter showed the program's first page for as long as it stayed open. **A SETTLED JOB
+ IS NOT RE-READ**: its output is final, and asking again for ever would be a loop that could only
+ return what it already has.")
+
+(defvar *job-asked-ms* 0
+  "When the job window was last asked — the clock `tick-job-window` measures its second against.")
+
+(defun ask-job-window (head)
+  "Re-read the OPEN job window at the page it is showing — the ONE sender.
+
+ **THE PAGE AND NOT THE FIRST PAGE**: a refresh that asked for offset 0 would drag a reader on page
+ three back to the start every second, which is worse than a window that never follows. `:next` is the
+ offset the view is showing (`(or :next at)` is how the paging code reads it) and 0 is the first page."
+  (let ((job (getf *job-out* :job)))
+    (when job
+      (setf *job-asked-ms* (internal-real-time-ms))
+      (%send head (make-read-job-output job (or (getf *job-out* :next) 0))))))
+
+(defun %window-job-running-p (head)
+  "Is the job the open window belongs to still running? NIL for one the table no longer lists.
+
+ A job the head cannot find is not re-read: there is nothing to follow, and asking about a handle the
+ board has dropped would be a window inventing work."
+  (let* ((id (getf *job-out* :job))
+         (job (and id (find id (head-jobs head)
+                            :key (lambda (j) (getf j :id)) :test #'equal))))
+    (and job (getf job :running))))
+
+(defun tick-job-window (head)
+  "The window's re-read: while a RUNNING job's window is open, ask again every `+job-refresh-ms+`.
+
+ Called from the loop's tick beside `tick-queues`, and for its reason — the two are the same shape:
+ a pane that only ever heard about its subject through an event would draw a live thing as a still
+ one. **This is the head's own number and not the daemon's**: the daemon answers a read with whatever
+ the job has written by then, so the interval is how often the reader looks, not how often it changes."
+  (when (and (eq (head-mode head) :job-out)
+             (head-connected head)
+             (not *replaying*)
+             (%window-job-running-p head)
+             (>= (- (internal-real-time-ms) *job-asked-ms*) +job-refresh-ms+))
+    (ask-job-window head)))
+
 (defparameter +lease-stale-ms+ 90000
   "A heartbeat older than this is drawn STALE — the daemon's own lease lifetime
 (`mergequeue::lease::LEASE_TTL_MS`, the reference's `LEASE_STALE_MS`), so the pane's word and the

@@ -1368,5 +1368,10 @@ and a reader looking for who asks the daemon for the queues every five seconds f
       (screen-resize (head-prev-screen head) cols rows)
       (setf (head-full-repaint head) t
             (head-dirty head) t)))
-  (tick-queues head))
+  (tick-queues head)
+  ;; **AND THE RUNNING JOB'S WINDOW** (letibot `516c5a4`): the same shape one pane over — a live thing is
+  ;; re-read, not remembered. Here rather than in the tick list for the reason above: this is the one
+  ;; function the loop calls every round, and a reader looking for who asks the daemon for a running
+  ;; job's output every second finds it by name.
+  (tick-job-window head))
 

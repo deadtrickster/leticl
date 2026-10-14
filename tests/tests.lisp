@@ -13802,6 +13802,56 @@ test/random and test/index, and it is one of three such families.~%options offer
     (is (null (leticl::operator-card-p h))
         "**a row that no longer waits on me has no question to show** — the card goes with the ask")))
 
+(def-test a-running-jobs-window-follows-its-output (:suite leticl)
+  "**ONE READ AT ENTER AND NEVER REFRESHED** — the reference's own words for what this fixes
+  (`516c5a4` says *the jobs pane started re-reading its window once a second*): a running job's output
+  is a LIVE view, and a head that asked once showed the program's first page for as long as the window
+  stayed open.
+
+  **Two halves that matter as much as the refresh**: a SETTLED job is not re-read (its output is final,
+  and asking for ever could only return what the head already has), and the refresh asks for the PAGE
+  THE READER IS ON — offset 0 every second would drag them back to the start, which is worse than a
+  window that never follows."
+  (let* ((h (%on-head :cols 100 :rows 30))
+         (wire (%wire h))
+         (leticl::*job-out* nil)
+         (leticl::*job-asked-ms* 0)
+         (leticl::*replaying* nil))
+    ;; the window opens on a job the board says is running
+    (setf (head-jobs h) (list (list :id "j12" :name "release-build" :running t
+                                    :command "cargo build --release")))
+    (setf leticl::*job-out* (list :job "j12" :loading nil))
+    (setf (head-mode h) :job-out)
+    ;; --- the tick re-reads it once the second is up
+    (is (zerop (length (%sent wire))) "nothing has been asked yet")
+    (leticl::tick-job-window h)
+    ;; **THE FRAME IS TAKEN ONCE**, because `%sent` DRAINS: asking it twice in one assertion pair — as
+    ;; this test first did — makes the second read an empty list and the failure say `got NIL`.
+    (let ((asked (find "read_job_output" (%sent wire) :key #'frame-name :test #'string=)))
+      (is (not (null asked)) "**the tick asks again** — the window is a live view")
+      (is (equal 0 (getf asked :offset))
+          (format nil "at the page the reader is on, which is the first one here — got ~s" asked)))
+    ;; --- and NOT again inside the same second
+    (is (zerop (length (%sent wire))) "**the second ask waits for the second** — a tick is not a spin")
+    ;; --- **THE PAGE THE READER IS ON**, not the first
+    (setf (getf leticl::*job-out* :next) 4096)
+    (setf leticl::*job-asked-ms* 0)
+    (leticl::tick-job-window h)
+    (is (equal 4096 (getf (find "read_job_output" (%sent wire) :key #'frame-name :test #'string=) :offset))
+        "**the refresh asks for the page being read** — offset 0 would drag the reader back every second")
+    ;; --- and a SETTLED job is left alone
+    (setf (getf (first (head-jobs h)) :running) nil
+          leticl::*job-asked-ms* 0)
+    (leticl::tick-job-window h)
+    (is (zerop (length (%sent wire)))
+        "**a job that has settled is not re-read** — its output is final, and the ask could only return what we have")
+    ;; --- and a closed window is not re-read either
+    (setf (getf (first (head-jobs h)) :running) t
+          leticl::*job-asked-ms* 0
+          (head-mode h) :jobs)
+    (leticl::tick-job-window h)
+    (is (zerop (length (%sent wire))) "and neither is one whose window is shut")))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of
