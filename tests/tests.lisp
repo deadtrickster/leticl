@@ -13208,6 +13208,28 @@ whatever the gate had to say.")
     (leticl::%handle-frame h (list :frame "peeked" :session-id "s-late" :events nil :dropped 0))
     (is (eq :normal (head-mode h)) "and does not reopen it")))
 
+(def-test a-secrets-bar-describes-the-secret-not-the-card-under-it (:suite leticl)
+  "**THE BAR'S ORDER IS THE LADDER'S ORDER** (letibot `fe3c131`, the sweep's R90). `%handle-key` asks the
+  SECRET first (`dispatch.lisp:38`), then the quit card (`:98`), then the decision. The bar had the secret
+  near the bottom and the decision ABOVE it — so a password card's own row described the card underneath,
+  naming keys the secret was eating.
+
+  **That reads as a live lie**, which is why it is worth a test: the reader presses the key the bottom row
+  named and a different card answers. A bar that lies about who owns the keyboard is the defect the card
+  arms exist to prevent."
+  (let ((h (%on-head :cols 140 :rows 30)))
+    (flet ((bar () (format nil "~{~a~}" (mapcar #'car (hint-bar h 140)))))
+      ;; --- a decision alone: the card describes itself, as it must
+      (setf (session-open-decisions (head-session h))
+            (list (list :req-id "q1" :kind "question" :choices (list "a" "b"))))
+      (is (search "a row number answers" (bar)) "a card alone is described by the CARD")
+      ;; --- and a SECRET over it wins, because the ladder asks the secret first
+      (setf (head-secret-req h) (list :req-id "s1" :prompt "password?"))
+      (is (search "esc refuses the password" (bar))
+          "**a password card's bar describes the PASSWORD**, not the card it is standing over")
+      (is (not (search "a row number answers" (bar)))
+          "and nothing of the card underneath — the row must not name a key the secret is eating"))))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of

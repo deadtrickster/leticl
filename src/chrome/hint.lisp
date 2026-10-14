@@ -50,12 +50,25 @@ the transcript's own rows use, so the ellipsis is the head's usual one rather th
                    (cons "ctrl+c again to exit" '(:bold t :fg :yellow)))
                   (t nil)))
          (tail (cond
+                 ;; **THE ORDER HERE IS THE LADDER'S ORDER, and that is a rule rather than a tidiness**
+                 ;; (letibot `fe3c131`, the sweep's R90). `%handle-key` asks the SECRET first (`dispatch.lisp:38`),
+                 ;; then the quit card (`:98`), then the decision; this `cond` had the secret near the BOTTOM
+                 ;; and the decision above it — so a password card's own bar described the DECISION, naming
+                 ;; keys the secret card was eating. A bottom row that lies about who owns the keyboard is
+                 ;; the defect the card arms exist to prevent, and it reads as a live lie because the reader
+                 ;; presses the key and the other card answers.
+                 ((head-secret-req head) "enter submits · esc refuses the password")
+                 ;; **the operator-call composer** (R24 part two) — next, because it owns the keyboard the
+                 ;; same way: the two keys it owns are said in the register the secret card's own row uses,
+                 ;; and this arm is what makes the card's promise checkable from the bottom row.
+                 ((op-call-draft-open-p) "the tool's own JSON, then enter asks the daemon to admit it as your act · esc cancels")
                  ((head-quit-open head) "1/2 or ↑↓ then enter · esc stays")
                  ;; **ONE ARM FOR EVERY PANE** — the words are the pane's own now (`pane-hint`),
                   ;; so a pane that names a key it does not have cannot describe itself
-                  ;; that way. The bar's own order around them is unchanged: the quit
-                  ;; prompt above outranks any hint, and `*pick-open*` below keeps its
-                  ;; place after the modes.
+                  ;; that way. The bar's arms are in the LADDER'S order (`%handle-key`), which is what
+                  ;; the secret and the operator-call moved up for: a card that owns the keyboard is
+                  ;; described before anything it is standing over, and `*pick-open*` keeps its place
+                  ;; after the cards for its own reason — see the arm below.
                  ;; **A LIST THE PICKER PUT UP IS NOT A MODE, and its PRECEDENCE is kept** —
                  ;; the old `cond` had this arm after `:slash` and `:picker` and before every
                  ;; other pane, so a pick's keys won over the pane you were in — except in the
@@ -75,11 +88,6 @@ the transcript's own rows use, so the ellipsis is the head's usual one rather th
                  ;; INSIDE it; this is the BAR, and it is the one a reader who scrolled the box owns.
                  ((read-overlay-open-p head) "esc closes · ↑↓ page and wheel scroll · the row under it says where you were")
                  ((pane-hint (current-pane head) head))
-                 ((head-secret-req head) "enter submits · esc refuses the password")
-                 ;; **the operator-call composer** (R24 part two). The two keys it owns,
-                 ;; said in the register the secret card's own row uses — and this arm is
-                 ;; what makes the card's promise checkable from the bottom row.
-                 ((op-call-draft-open-p) "the tool's own JSON, then enter asks the daemon to admit it as your act · esc cancels")
                  ;; **`ctrl-n` IS SECOND, AND THE PLACEMENT IS A MEASUREMENT** (R22).
                  ;; This bar is 136 characters — the same 136 as letibot's, item for
                  ;; item — and at the usual 80 columns everything past column 80 is off
