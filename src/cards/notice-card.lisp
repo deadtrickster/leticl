@@ -43,7 +43,28 @@ the daemon's, the same discipline as the other two: the text is what says what i
         ((and (stringp text)
               (or (uiop:string-prefix-p "The reviewer of " text)
                   (uiop:string-prefix-p "The review of " text))) :review)
+        ;; **AND A RESTART** (letibot `89958ba`): the daemon's `[restart] ` heading over the children it
+        ;; handed over (*restarted · down 2s · click for details*) and, after a blank line, the `[task] `
+        ;; group its own deliveries made. Without the kind the WHOLE row was drawn as prose — the header
+        ;; AND every child as its own line.
+        ((and (stringp text) (uiop:string-prefix-p "[restart] " text)) :restart)
         (t nil)))
+
+(defun %restart-restored-count (text)
+  "How many children a restart notice handed over — the bullets of its `[task] ` groups.
+
+ **THE `[task] ` GROUP AFTER A RESTART *IS* THE RESTART** (letibot `89958ba`): it is the children the
+ restart's own deliveries finished, which the warning beside them already counts. So `%notice-card-lines`
+ does not split them into an `Agent …` row each — which is what made the row prose — and counts them
+ here instead.
+
+ A `[job] ` heading ends the count, so a job group after the restart is still drawn as its jobs."
+  (let ((in-task nil) (n 0))
+    (dolist (l (uiop:split-string text :separator '(#\newline)))
+      (cond ((uiop:string-prefix-p "[task] " l) (setf in-task t))
+            ((uiop:string-prefix-p "[job] " l) (setf in-task nil))
+            ((and in-task (uiop:string-prefix-p "- " (string-left-trim " " l))) (incf n))))
+    n))
 
 (defun %notice-folds-p (text)
   "Is TEXT drawn as a card rather than as prose?
@@ -163,7 +184,11 @@ subagent's into ONE row, so each fact is labelled by the heading it sits under.
 asked — so it is looked up from the subagent row (`:prompt`, the same string the subagents pane draws
 as its title). A head that cannot see the child falls back to the id, since a headline with nothing in
 it is worse than a key."
-  (let ((out nil) (kind nil))
+  (let ((out nil) (kind nil)
+        ;; **THE CHILDREN A RESTART CARRIED ARE NOT ROWS OF THEIR OWN** (letibot `89958ba`) — see
+        ;; `%restart-restored-count`. The fact arm below pushes for every `- ` line it meets, so this
+        ;; is the flag that tells it the group belongs to the restart's own row.
+        (carried nil))
     (dolist (line (uiop:split-string text :separator '(#\newline)))
       (cond
         ((uiop:string-prefix-p "[job] " line) (setf kind :job))
@@ -195,6 +220,18 @@ it is worse than a key."
                      (and one one))
                    line)
                out))
+        ;; **AND A RESTART IS ONE ROW, WITH THE CHILDREN IT HANDED OVER COUNTED IN IT** (letibot
+        ;; `89958ba`). The daemon already says `down 2s`; what it leaves to the reader is how much came
+        ;; back, and its own `[task] ` group is the answer — `restarted · down 2s · restored: 12
+        ;; subagents`, the same line as the hub warning beside it.
+        ((uiop:string-prefix-p "[restart] " line)
+         (let* ((said (subseq line (length "[restart] ")))
+                (restored (%restart-restored-count text)))
+           (push (if (plusp restored)
+                     (format nil "Restarted: ~a · restored: ~d subagent~:p" said restored)
+                     (format nil "Restarted: ~a" said))
+                 out)
+           (setf carried t kind nil)))
         ((uiop:string-prefix-p "- " (string-left-trim " " line))
          (let* ((task-p (eq kind :task))
                 (fact (string-trim " " (remove #\` (string-trim " -" line))))
@@ -205,12 +242,13 @@ it is worse than a key."
                 (report (string-left-trim
                          " " (subseq head (min (length head) (1+ (length id))))))
                 (task (and task-p (%notice-agent-task-for id))))
-           (push (format nil "~a~a" (if task-p "Agent " "Job ")
-                         (if task-p (or task id) (or tail report)))
-                 out)
-           (push (format nil "    result  ~a"
-                         (if task-p (format nil "~a~@[: ~a~]" report tail) report))
-                 out)))))
+           (unless carried
+             (push (format nil "~a~a" (if task-p "Agent " "Job ")
+                           (if task-p (or task id) (or tail report)))
+                   out)
+             (push (format nil "    result  ~a"
+                           (if task-p (format nil "~a~@[: ~a~]" report tail) report))
+                   out))))))
     (nreverse out)))
 
 (defun %notice-agent-task-for (id)

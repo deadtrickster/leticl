@@ -367,9 +367,22 @@ on ClientFrame::Slash)."
                            ;; NIL as `null`, which is not a bool and would be
                            ;; refused by the parser rather than defaulted
                            :summarise (if summarise t :false)))
-         (say head (if summarise
-                       "re-seating: summarising, so the summary replaces the conversation…"
-                       "re-seating: carrying the conversation across as it is. The next turn re-sends all of it once."))))
+         (let* ((turn (session-turn (head-session head)))
+               ;; **THE DAEMON RE-SEATS ON ITS QUEUE, BETWEEN TURNS AND NEVER INSIDE ONE** (letibot
+               ;; `8df4aa1`): a reseat chosen while a turn runs WAITS for that turn, and both sentences
+               ;; say so now. Before, they said *re-seating…* with a turn running — so the operator
+               ;; watched a line that did not move and was left guessing why, which is the same defect
+               ;; as a bar naming a key the card is eating.
+               (queued (and turn (turn-busy-p turn))))
+           (say head (cond
+                       ((and queued summarise)
+                        "re-seating when this turn ends: queued, and it will summarise")
+                       (queued
+                        "re-seating when this turn ends: queued, and the conversation carries across as it is")
+                       (summarise
+                        "re-seating: summarising, so the summary replaces the conversation…")
+                       (t
+                        "re-seating: carrying the conversation across as it is. The next turn re-sends all of it once."))))))
       ((string= verb "promote")
        ;; Move the running COMMAND to the background. The fact to guard is a
        ;; command running, and the daemon honours this inside bash's own wait

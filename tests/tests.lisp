@@ -13493,6 +13493,38 @@ whatever the gate had to say.")
                "a workspace that IS a repository is unchanged"))
       (ignore-errors (uiop:delete-directory-tree root :validate t)))))
 
+(def-test a-restart-notice-is-one-row-with-its-children-counted (:suite leticl)
+  "**A RESTART AND THE CHILDREN IT HANDED OVER ARE ONE LINE** (letibot `89958ba`). The daemon draws
+  `[restart] restarted · down 2s · click for details` and then, after a blank line, a `[task] ` group —
+  one bullet per child its own deliveries finished. **Those groups ARE the restart**: they are what it
+  handed over, and the warning beside them already counts them. So they are not split into an `Agent …`
+  row each, which is what made the whole row prose."
+  (let ((text (format nil "[restart] restarted · down 2s · click for details~%~%[task] 2 subagents you started have finished~%~%- `s-1` done: ready~%- `s-2` done: yes")))
+    (is (eq :restart (leticl::%notice-kind text))
+        "**the row is a notice kind of its own** — it folded as prose before")
+    (is (= 2 (leticl::%restart-restored-count text)) "and its carried group is counted")
+    (let ((rows (leticl::%notice-card-lines text)))
+      (is (= 1 (length rows)) "**ONE row** — the children are not rows of their own")
+      (is (search "restored: 2 subagents" (first rows)) "and it says how much came back: ~s"
+          (first rows)))))
+
+(def-test a-reseat-during-a-turn-says-when-it-runs (:suite leticl)
+  "**THE DAEMON RE-SEATS ON ITS QUEUE, BETWEEN TURNS AND NEVER INSIDE ONE** (letibot `8df4aa1`) — so a
+  reseat chosen while a turn runs WAITS for that turn, and the sentence has to say so. Before, it said
+  *re-seating…* with a turn running, and the operator watched a line that did not move and was left
+  guessing why."
+  (let ((h (%on-head :cols 80 :rows 24)))
+    (setf (session-turn (head-session h))
+          (list :turn-id "t1" :model "a-model" :state (list :state "running")))
+    (leticl::%command h "reseat")
+    (is (search "when this turn ends" (head-status-note h))
+        "**the sentence says the reseat is QUEUED** — a line that stays still is a line that must say why")
+    ;; --- and between turns it reads as it always did
+    (setf (session-turn (head-session h)) nil)
+    (leticl::%command h "reseat")
+    (is (search "re-seating: carrying" (head-status-note h))
+        "while between turns the sentence is the one it always was")))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of
