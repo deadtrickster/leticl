@@ -1463,7 +1463,7 @@ nothing is worse than a shorter hint."
 
 (defmethod pane-hint ((pane peek-pane) head)
   (declare (ignore head))
-  "tails live · arrows scroll · esc back")
+  (format nil "tails live · arrows scroll · ~a" (pane-escape-said :peek)))
 
 (defmethod pane-hint ((pane job-out-pane) head)
   (declare (ignore head))
@@ -1475,6 +1475,7 @@ nothing is worse than a shorter hint."
   ;; `(format nil "|~@[A~]~@[B~]|" 1 nil)` answers `"|AB|"`, so the compressed spelling
   ;; would promise the very keys this exists to drop.
   (let ((pages (job-out-pages)))
-    (format nil "↑↓ scroll~a~a · enter re-reads · esc back to jobs"
+    (format nil "↑↓ scroll~a~a · enter re-reads · ~a"
             (if (getf pages :next) " · → next page" "")
-            (if (getf pages :back) " · ← back" ""))))
+            (if (getf pages :back) " · ← back" "")
+            (pane-escape-said :job-out))))

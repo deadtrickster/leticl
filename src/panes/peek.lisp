@@ -229,6 +229,24 @@ The key itself is dispatched in `src/editor/answer.lisp:157`, which sends every 
 `:normal`; this is the fact that arm needs and the one line it is missing."
   (pane-esc-target (pane-for mode)))
 
+(defun pane-escape-said (mode)
+  "Where Esc goes from pane MODE, in WORDS — the surface `pane-escape-target` names.
+
+ **THE SENTENCE IS DERIVED FROM THE TARGET AND NOT TYPED BESIDE IT** (letibot `7a493c3`, R90.11). The
+ peek's hint said `esc back` and the job-output's `esc back to jobs`, and both were TRUE — which is
+ exactly why they were worth fixing: a pane whose target changes must say so in the same edit, and
+ nothing made that true before this. One map, and the mode is the only input.
+
+ The `t` arm is the conversation because `:normal` is what every pane without a place to go back to
+ answers — see `pane-esc-target`'s own default."
+  (case (pane-escape-target mode)
+    ;; **THE SAME WORDS THE TWO HINTS ALREADY HAD**, because the defect was never the phrasing: it was
+    ;; that the phrase was TYPED beside the destination instead of read from it.
+    (:subagents "esc back")
+    (:jobs "esc back to jobs")
+    (:queue "esc back to the queue")
+    (t "esc back")))
+
 
 (defvar *peek-prompt-only* nil
   "Did the reader press `p` — the child's PROMPT rather than its conversation?
