@@ -13928,6 +13928,36 @@ test/random and test/index, and it is one of three such families.~%options offer
       (let ((leticl::*stop-request* nil))
         (is (null (row)) "nothing pending, no row")))))
 
+(def-test an-asked-question-is-one-row (:suite leticl)
+  "**A QUESTION THE MODEL ASKED A PERSON, DRAWN AS ONE LINE** (letibot `asked_card.rs`, R90). The daemon
+  writes `asked: QUESTION` and, when it offered any, its `options offered:` — either the one-line
+  `A | B | C` shape or the `- OPTION` list — and **without the kind the WHOLE paragraph was drawn as
+  prose**: a question the operator has already answered in a selector, costing the transcript a
+  screenful.
+
+  Its summary is the question's FIRST SENTENCE, and a click opens the question whole, options included —
+  so the transcript's copy only has to be findable afterwards."
+  (let ((text (format nil "asked: Row 4: DuckDB's generated slt_good_* family is 605 files under ~
+test/random, and it is one of three.~%options offered:~%- in scope~%- out of scope")))
+    (is (eq :asked (leticl::%notice-kind text))
+        "**the row is a kind of its own** — it drew as prose before")
+    (is (= 2 (leticl::%asked-options-count text)) "**and its options are COUNTED** — the list shape")
+    (let ((rows (leticl::%notice-card-lines text)))
+      (is (= 1 (length rows)) "**ONE row** — the paragraph is the click's")
+      (is (search "asked · Row 4" (first rows))
+          (format nil "with the question's own first sentence: ~s" (first rows)))
+      (is (search "2 options" (first rows)) "and how many ways out there are")
+      (is (not (search "in scope" (first rows))) "**and the options themselves are the click's**"))
+    ;; --- the one-line shape the wire carried before R90.24
+    (is (= 3 (leticl::%asked-options-count (format nil "asked: q~%options offered: A | B | C")))
+        "**the one-line `A | B | C` shape counts too** — both are the daemon's, and a row that read one
+  would be wrong about every question asked before the wire changed")
+    ;; --- and a question that offered NOTHING says nothing about a menu
+    (is (null (leticl::%asked-options-count "asked: q with no menu"))
+        "a question that offered nothing has no count — not a zero")
+    (is (not (search "option" (first (leticl::%notice-card-lines "asked: q with no menu"))))
+        "and its row says nothing about one")))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of

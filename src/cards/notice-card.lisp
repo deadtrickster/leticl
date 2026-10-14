@@ -48,6 +48,10 @@ the daemon's, the same discipline as the other two: the text is what says what i
         ;; group its own deliveries made. Without the kind the WHOLE row was drawn as prose — the header
         ;; AND every child as its own line.
         ((and (stringp text) (uiop:string-prefix-p "[restart] " text)) :restart)
+        ;; **AND A QUESTION THE MODEL ASKED A PERSON** (letibot `asked_card.rs`, R90): `asked: QUESTION`
+        ;; and, when it offered any, its `options offered:`. Without the kind the WHOLE question was
+        ;; drawn as prose — a paragraph the operator has already answered in a selector.
+        ((and (stringp text) (uiop:string-prefix-p "asked: " text)) :asked)
         (t nil)))
 
 (defun %restart-restored-count (text)
@@ -232,6 +236,27 @@ it is worse than a key."
                      (format nil "Restarted: ~a" said))
                  out)
            (setf carried t kind nil)))
+        ;; **AND AN ASKED QUESTION IS ONE ROW** (letibot `asked_card.rs`): its summary is the question's
+        ;; first sentence, and a click opens the question WHOLE, options included — the copy the
+        ;; operator already answered in a selector only has to be findable afterwards.
+        ;;
+        ;; **The WIDTH is this function's own and not the frame's**: `%notice-card-lines` is handed TEXT
+        ;; and no rectangle — every other arm here builds lines without one, and the painter truncates
+        ;; at the draw. A summary that reserved `cols` would be the only arm that needed a frame to be
+        ;; read at all, which is what `COLS` being unbound said when it was tried.
+        ((uiop:string-prefix-p "asked: " line)
+         (let* ((ask (strip-asked-options (subseq line (length "asked: "))))
+                ;; **THE COUNT SCANS THE WHOLE ROW, NOT THIS LINE**: `options offered:` is a LINE OF ITS
+                ;; OWN under the question, so counting on `line` found a menu on the one-line shape and
+                ;; nothing on the list shape — measured, with the row saying no options for a question
+                ;; that offered two.
+                (choices (%asked-options-count text)))
+           (push (format nil "asked · ~a~@[ · ~d option~:p~] · click for details"
+                         (%asked-summary ask 120) choices)
+                 out)
+           ;; the options are the CLICK's, like every notice's closing paragraph — and so is the rest
+           ;; of the question, which is what makes this a summary rather than a copy
+           (setf carried t)))
         ((uiop:string-prefix-p "- " (string-left-trim " " line))
          (let* ((task-p (eq kind :task))
                 (fact (string-trim " " (remove #\` (string-trim " -" line))))

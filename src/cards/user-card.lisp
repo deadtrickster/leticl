@@ -90,6 +90,26 @@ the operator has read both and prefers the quiet one.
 A `defparameter` so the choice is one edit and a live push, and named for what it is rather than
 inlined at the draw site, because a register that lives in two places is two registers.")
 
+(defun %asked-options-count (text)
+  "How many options the daemon offered under `options offered:` — or NIL when it offered none.
+
+ **BOTH SHAPES** (letibot `asked_card.rs`): the one-line `options offered: A | B | C`, and the list the
+ wire has carried since R90.24, `options offered:` then one `- OPTION` line each. NIL rather than 0 for
+ *offered none*, because the row says nothing about a menu that does not exist."
+  (let* ((at (search (format nil "~%options offered:") text))
+         (tail (and at (subseq text (+ at (length (format nil "~%options offered:")))))))
+    (when tail
+      (let* ((flat (string-trim " \n" tail))
+             (lines (remove-if (lambda (s) (zerop (length (string-trim " " s))))
+                               (uiop:split-string flat :separator '(#\newline)))))
+        (cond
+          ;; the list shape: one `- OPTION` per line
+          ((and lines (uiop:string-prefix-p "- " (string-left-trim " " (first lines))))
+           (count-if (lambda (s) (uiop:string-prefix-p "- " (string-left-trim " " s))) lines))
+          ;; the one-line shape: `A | B | C`
+          ((plusp (length flat)) (1+ (count #\| flat)))
+          (t nil))))))
+
 (defun %asked-row-question (item)
   "The daemon's question text when ITEM is the row it writes for `ask_user_question` — else NIL.
 
