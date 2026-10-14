@@ -2695,6 +2695,10 @@ than a binding in each of the nine tests that touch a decision, and it is what e
 means by *a head like a fresh one*."
   (let ((h (%make-head)))
     (setf leticl::*decisions-away* nil
+          ;; **AND THE ANSWER IN FLIGHT**, which is a defvar for the same reason and one more: an ask
+          ;; this head answered and has not heard about belongs to ONE test's connection, and a refusal
+          ;; in the next test would reopen a card it never sent (R90.29).
+          leticl::*decision-in-flight* nil
           leticl::*line-when-card-arrived* nil
           ;; **AND THE SELECTION, for the third time and the same reason**: `*selection*` is a defvar,
           ;; and a test that drags across a row leaves it set — so the NEXT test's light is NIL for a
@@ -14182,6 +14186,36 @@ test/random, and it is one of three.~%options offered:~%- in scope~%- out of sco
                        :item (list :type "assistant" :text "the second")))))
     (is (equal "the second" (leticl::%copy-text h))
         "**the NEWEST reply, not the oldest** — a reader copying means the one they just read")))
+
+(def-test an-answered-ask-goes-away-at-once-and-a-refusal-puts-it-back (:suite leticl)
+  "**R90.29's two halves**, and the second is this head's honest approximation of it.
+
+  **The CLOSE**: an answer that is in flight must not be sendable twice, and the daemon's own open list
+  takes a round trip to come back — so the ask goes away on the send. A second Enter into a question
+  already answered is the defect; a card with one question and two answers is what it produces.
+
+  **The REOPEN**: a refusal means NOTHING WAS TAKEN, so the card comes back. The row's own measurement is
+  why this is an approximation: the refusal signal here is a SEQUENCE refusal, not a per-request one, so
+  the head cannot be told *your answer was refused* — it can only see that one arrived while an answer was
+  in flight, and the safe reading of that is the same."
+  (let ((h (%on-head :cols 100 :rows 30))
+        (leticl::*decisions-away* nil)
+        (leticl::*decision-in-flight* nil))
+    ;; --- an ask the reader put away THEMSELVES, and one this head has just answered
+    (setf leticl::*decisions-away* (list "q0")
+          leticl::*decision-in-flight* "q1"
+          leticl::*decisions-away* (list "q0" "q1"))
+    (is (leticl::%reopen-decision h)
+        "**a refusal with an answer in flight puts the card back** — nothing was taken")
+    (is (null leticl::*decision-in-flight*) "and the flight is over")
+    (is (equal (list "q0") leticl::*decisions-away*)
+        "**and the ask the reader put away THEMSELVES stays away** — a refusal reopens what this head
+  sent, never what they hid. That is the whole reason the in-flight ask is remembered separately:
+  reopening *the first entry* of the away list would undo their Esc")
+    ;; --- and a refusal with nothing in flight
+    (is (null (leticl::%reopen-decision h))
+        "**a refusal with no answer in flight reopens nothing** — which is every other refusal")
+    (is (equal (list "q0") leticl::*decisions-away*) "and leaves the away list alone")))
 
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest

@@ -302,5 +302,39 @@ offered (app.rs:3934-3940)."
                                        (or option-id (format nil "~d" idx))))))
         (setf (head-decision-sel head) 0
               (head-dirty head) t)
+        ;; **AND THE CARD CLOSES AT ONCE** (letibot R90.29): an answer that is IN FLIGHT must not be
+        ;; sendable twice, and the daemon's own open list takes a round trip to come back — so the ask
+        ;; goes away on the SAME list Esc puts it on. That is what makes a second Enter a no-op rather
+        ;; than a second answer to a question already answered.
+        ;;
+        ;; **AND IT IS REMEMBERED SEPARATELY, WHICH IS NOT BOOKKEEPING FOR ITS OWN SAKE**: the away list
+        ;; also holds asks the reader put away ON PURPOSE, so a refusal that reopened *the first entry*
+        ;; would undo their Esc. `*decision-in-flight*` is the ask this head is waiting on an answer to
+        ;; and nothing else.
+        (setf *decision-in-flight* (getf d :req-id))
+        (pushnew (getf d :req-id) *decisions-away* :test #'equal)
         t))))
+
+(defvar *decision-in-flight* nil
+  "The ask this head has answered and not yet heard about — or NIL.
+
+**THE DISTINCTION `%reopen-decision` NEEDS**: `*decisions-away*` holds every ask the reader is not looking
+at, and most of those they put away themselves. Only the one ANSWERED is one a refusal may put back.")
+
+(defun %reopen-decision (head)
+  "Put back the ask this head answered and has not heard about. T when there was one.
+
+ **THE OTHER HALF OF R90.29, IN THE HONEST SHAPE THIS HEAD CAN REACH** — the row's own measurement: the
+ refusal signal here is a SEQUENCE refusal (`rejected` carries `:reason :expected-seq :actual-seq`), not a
+ per-request one, so the head cannot be told *your answer was refused*. What it CAN see is that a refusal
+ arrived while an answer was in flight, and the only safe reading of that is *nothing was taken, put the
+ card back*: a card left shut over a question the daemon is still waiting on is a question the reader can
+ no longer see."
+  (let ((id *decision-in-flight*))
+    (when id
+      (setf *decisions-away* (remove id *decisions-away* :test #'equal)
+            *decision-in-flight* nil
+            (head-dirty head) t)
+      (say head "the answer was not taken — the card is back")
+      t)))
 

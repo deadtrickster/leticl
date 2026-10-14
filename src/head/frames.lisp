@@ -1030,6 +1030,14 @@ empty pane on every attach, which is the defect the guard exists to prevent, inv
          (say head (format nil "rejected: ~a (expected seq ~a, daemon at ~a)"
                            (getf frame :reason) (getf frame :expected-seq)
                            (getf frame :actual-seq))))
+     ;; **AND AN ANSWER IN FLIGHT COMES BACK** (letibot R90.29): the card was closed when the answer went
+     ;; out, and a refusal means NOTHING WAS TAKEN — so leaving it shut would hide a question the daemon
+     ;; is still waiting on. `%reopen-decision` says its own sentence and does nothing when no answer was
+     ;; in flight, which is every other refusal this head sees.
+     ;;
+     ;; **AFTER the `if`, not inside it**: this is not a third branch of the op-call question, it applies
+     ;; to the refusal whatever it was about — and as an `if` branch it read as one arm too many.
+     (%reopen-decision head)
      :control)
     ((string= (frame-name frame) "diagnostic")
      ;; **R11's answer, and only the reader who ASKED takes it.** The frame is a read and
