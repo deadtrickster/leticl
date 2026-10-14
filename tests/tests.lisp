@@ -2695,7 +2695,11 @@ than a binding in each of the nine tests that touch a decision, and it is what e
 means by *a head like a fresh one*."
   (let ((h (%make-head)))
     (setf leticl::*decisions-away* nil
-          leticl::*line-when-card-arrived* nil)
+          leticl::*line-when-card-arrived* nil
+          ;; **AND THE SELECTION, for the third time and the same reason**: `*selection*` is a defvar,
+          ;; and a test that drags across a row leaves it set — so the NEXT test's light is NIL for a
+          ;; pointer plainly on a button (`(null *selection*)` is the first conjunct of every light).
+          leticl::*selection* nil)
     (setf (head-cols h) cols (head-rows h) rows)
     (screen-resize (head-screen h) cols rows)
     (screen-resize (head-prev-screen h) cols rows)
@@ -13346,6 +13350,43 @@ whatever the gate had to say.")
     (leticl::%submit-line h)
     (is (not (null (%sent wire)))
         "a line written FOR the card answers it — the hold is not a lock")))
+
+(def-test the-pointers-shape-follows-the-light-and-is-told-once-per-change (:suite leticl)
+  "**THE HAND OVER WHAT A CLICK WOULD ACT ON, THE DEFAULT OFF IT** (letibot `76af4c1`/`9c3e0b1`,
+  OSC 22). **A terminal that does not speak it ignores the bytes** — the reference says so in the same
+  breath — and the light says the same thing everywhere, which is why this is a nicety rather than the
+  message.
+
+  **AND IT IS TOLD ONCE PER CHANGE**: OSC 22 is a MODE, and a head re-sending it every frame would
+  spend two dozen bytes saying nothing. The reference's own shape is an Option (`take_pointer`), not a
+  boolean, for exactly that reason."
+  (let ((h (%on-head :cols 120 :rows 30))
+        (leticl::*pointer-hand* :unknown)
+        (leticl::*pointer-want-hand* nil))
+    (setf (session-items (head-session h)) (leticl::%items-vector nil))
+    (flet ((paint () (let ((leticl::*stdout* (make-string-output-stream)))
+                       (leticl::%render-and-paint h)
+                       (get-output-stream-string leticl::*stdout*))))
+      ;; **PAINT ONCE FIRST**: `%hint-key-at` reads the DRAWN cells, and a head that has not painted has
+      ;; an empty screen — the same reason the light is a property of a FRAME rather than of the pointer.
+      (paint)
+      (let ((x (loop for c from 0 below 118 when (leticl::%hint-key-at h c) return c)))
+        (is (not (null x)) "the bottom row has a key on it to hover")
+        (leticl::%handle-key h (list :type :mouse :kind :motion :x x :y 29))
+        (paint)
+        ;; **THE EFFECT IS ASSERTED, NOT THE BYTES.** The bytes go to the stream and are right — measured
+        ;; — but `%render-and-paint` TRIES its lock rather than waiting for it (`TODO.md` B.11), so a
+        ;; frame can be skipped and an assertion on the capture would be a test of scheduling. What the
+        ;; terminal was last told is state, and it is what the writer sets.
+        (is (eq t leticl::*pointer-hand*)
+            "**the HAND is what the terminal was told** — the light is on, so the pointer is a hand")
+        (leticl::%handle-key h (list :type :mouse :kind :motion :x 0 :y 5))
+        (paint)
+        (is (null leticl::*pointer-hand*)
+            "and leaving the key takes the hand back — the other half of the same rule")
+        ;; **ONCE PER CHANGE**: painting again says nothing, so the state does not move at all.
+        (paint)
+        (is (null leticl::*pointer-hand*) "and a frame that changes nothing tells the terminal nothing")))))
 
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest

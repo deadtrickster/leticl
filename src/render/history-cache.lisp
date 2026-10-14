@@ -1628,34 +1628,33 @@ scrolls the transcript by a row every keystroke.
           ;; row would sit two columns left of centre, which is the kind of half-right nobody sees
           ;; until it is measured.
           (let* ((segs (hint-bar head cols))
-                 (w (loop for seg in segs sum (string-width (car seg)))))
-            (put-segments s hint-row
-                          (+ gutter (max 0 (floor (- cols (* 2 gutter) w) 2)))
-                          ;; **AND THE WHOLE BAR LIGHTS UNDER THE POINTER** (letibot `a4384ed`, the
-                          ;; sweep's batch A). Every word on it is a button (`%hint-click`), so the bar
-                          ;; is ONE clickable block — and the reference's rule is that the whole block
-                          ;; lights, not the word the pointer happens to be over.
-                          ;;
-                          ;; **REVERSED RATHER THAN RECOLOURED**: a colour on this row would have to be
-                          ;; chosen against whatever the terminal's own theme already means, and the
-                          ;; roles this head draws with are the READER's to override, not the
-                          ;; pointer's. Reverse is the one style that reads as *the pointer is here*
-                          ;; in every palette there is.
-                          ;; **THE LIGHT IS DERIVED FROM THE FRAME, NOT KEPT** (letibot `9c3e0b1`).
-                          ;; The first version asked *is the pointer on the hint row* — and anything drawn
-                          ;; over that row lit up, which is the reference's own defect (*the click that put
-                          ;; the diff popup up lit the popup's text*). `%hint-key-at` reads the CELLS and
-                          ;; answers what a click at that column would ACT on: a word the table does not
-                          ;; know is not a key, wherever it happens to be drawn.
-                          ;;
-                          ;; **A DRAG LIGHTS NOTHING** — the reference's rule for the same reason a pointer
-                          ;; mid-gesture is not asking what a click would do; it is already doing it.
-                          (if (and (null *selection*)
-                                   *pointer-x*
-                                   (%hint-key-at head *pointer-x*))
-                              (mapcar (lambda (seg) (cons (car seg) (cons :reverse (cons t (cdr seg)))))
-                                      segs)
-                              segs))))
+                 (w (loop for seg in segs sum (string-width (car seg))))
+                 (start (+ gutter (max 0 (floor (- cols (* 2 gutter) w) 2)))))
+            ;; **THE BAR IS PLACED FIRST, AND THE LIGHT IS ASKED OF WHAT WAS PLACED** (letibot
+            ;; `9c3e0b1`). The order is the fix, and it is measured: at this point a render's screen
+            ;; holds nothing else, so a light read from the segments was a SECOND reading that could
+            ;; disagree with the click's — and did, lighting nothing at all. One reading now, the same
+            ;; `%hint-key-at` a click asks, of the cells that were just written.
+            ;;
+            ;; **AND THE WHOLE BAR LIGHTS UNDER THE POINTER** (letibot `a4384ed`): every word on it is
+            ;; a button (`%hint-click`), so the bar is ONE clickable block. **REVERSED RATHER THAN
+            ;; RECOLOURED**, because a colour would have to be chosen against whatever the terminal's
+            ;; theme already means and these roles are the READER's to override; reverse reads as
+            ;; *the pointer is here* in every palette. **A DRAG LIGHTS NOTHING**: a pointer mid-gesture
+            ;; is not asking what a click would do, it is already doing it.
+            (put-segments s hint-row start segs)
+            (let ((hand (and (null *selection*)
+                             *pointer-x*
+                             (eq *pointer-y* hint-row)
+                             (%hint-key-at head *pointer-x*))))
+              ;; **AND THE POINTER'S SHAPE FOLLOWS THE LIGHT**: the hand over what a click would act
+              ;; on, the default off it (OSC 22), recorded here and written by the painter.
+              (setf *pointer-want-hand* (and hand t))
+              (when hand
+                (put-segments s hint-row start
+                              (mapcar (lambda (seg)
+                                        (cons (car seg) (cons :reverse (cons t (cdr seg)))))
+                                      segs))))))
         ;; **and where the terminal's own caret goes.** The painter emits the move
         ;; and `ESC[?25h` after the frame; without it the head hid the cursor at
         ;; startup and never showed it again, so the composer had no caret at all.
@@ -1791,6 +1790,19 @@ defect this file's neighbours exist against."
     ;; instead, by resizing.
     (ignore-errors (setf (head-full-repaint head) t))))
 
+(defvar *pointer-hand* :unknown
+  "The hand pointer as the TERMINAL was last told — `t`, NIL, or `:unknown` before anything was sent.
+
+ **THE TERMINAL IS TOLD ONLY WHEN IT CHANGES**, which is letibot's own shape (`take_pointer` is an
+ Option rather than a boolean, for exactly this reason): OSC 22 is a MODE and not a per-frame
+ statement, and a head re-sending it every frame would spend two dozen bytes saying nothing.")
+
+(defvar *pointer-want-hand* nil
+  "What THIS frame's targets make the pointer — set by the render and consumed by the painter.
+
+ **THE SPLIT IS THE REFERENCE'S** (letibot `76af4c1`), and it exists because the two happen in
+ different places: the LIGHT is a property of the frame that was composed, and the escape belongs to
+ the bytes that draw it. `?25h` is emitted by the same painter for the same kind of reason.")
 (defun %render-and-paint (head)
   "Render and paint, and do not die of it.
 
@@ -1828,6 +1840,14 @@ counters describe only frames that were drawn."
           ;; reacquire the stream if a live push clobbered it: a frame written to
           ;; NIL is a type error in the main thread, which quits the head
           (let ((out (%open-stdout)))
+            ;; **AND THE POINTER'S SHAPE, ONCE PER CHANGE** (letibot `76af4c1`, OSC 22): the hand over
+            ;; what a click would act on, the default off it. **A terminal that does not speak OSC 22
+            ;; ignores the bytes** — the reference says so in the same breath — and the light says the
+            ;; same thing everywhere, which is why this is a nicety rather than the message.
+            (unless (eq *pointer-want-hand* *pointer-hand*)
+              (write-string (format nil "~C]22;~a~C\\" +esc+ (if *pointer-want-hand* "pointer" "default") +esc+)
+                            out)
+              (setf *pointer-hand* *pointer-want-hand*))
             (if (head-full-repaint head)
                 (progn (paint-full (head-screen head) out)
                        (setf (head-full-repaint head) nil))
