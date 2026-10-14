@@ -13852,6 +13852,47 @@ test/random and test/index, and it is one of three such families.~%options offer
     (leticl::tick-job-window h)
     (is (zerop (length (%sent wire))) "and neither is one whose window is shut")))
 
+(def-test a-nag-pause-is-loud-and-ends-out-loud (:suite leticl)
+  "**THE OPERATOR'S OWN ASK**: *\"and i need a way to stop todo nags\"*, then *\"or rather - pause and
+  the pause must be LOUD\"* (letibot R83, `d1cd8d8`).
+
+  This head's idle nag is the DAEMON'S — it pushes its rows so that nag can see them — so a pause is
+  told to the daemon as a slash line and this head keeps its own copy for the screen. **Two halves of
+  `loud`**: the pause says so while it is up, and **the END of it says so too** — a pause that lapsed
+  silently would leave the reader believing the head had stopped reminding them for good."
+  (let* ((h (%on-head :cols 100 :rows 30))
+         (wire (%wire h))
+         (leticl::*nags-paused-until* nil))
+    (is (null (leticl::nag-state-line h 100)) "nothing is paused to begin with")
+    ;; --- the reference's own spellings
+    (is (multiple-value-bind (ms ok) (leticl::%nag-duration-ms "30m") (and ok (= ms 1800000)))
+        "**`30m` is half an hour**")
+    (is (multiple-value-bind (ms ok) (leticl::%nag-duration-ms "2h") (and ok (= ms 7200000)))
+        "and `2h` is two")
+    (is (multiple-value-bind (ms ok) (leticl::%nag-duration-ms "1h30m") (and ok (= ms 5400000)))
+        "**and the compound spelling the reference uses** — `1h30m`")
+    (is (null (multiple-value-bind (ms ok) (leticl::%nag-duration-ms "soon") (and ok ms)))
+        "**a word that is not a length is REFUSED**, not defaulted — a default would stop the nag for a
+  length nobody asked for")
+    ;; --- pause: loud, and told to the daemon
+    (leticl::nag-command h "pause 30m")
+    (is (search "NAGS PAUSED" (leticl::nag-state-line h 100))
+        "**the pause is LOUD** — it takes the resident row")
+    (is (search "/nag resume" (leticl::nag-state-line h 100)) "and names the way back")
+    (is (find "slash" (%sent wire) :key #'frame-name :test #'string=)
+        "**and the daemon is TOLD** — the nag is its, so a pause kept here alone would leave it reminding")
+    ;; --- the state, and resume
+    (leticl::nag-command h "")
+    (is (search "paused" (head-status-note h)) "`/nag` with no word is the STATE")
+    (leticl::nag-command h "resume")
+    (is (null (leticl::nag-state-line h 100)) "**`/nag resume` lifts it**")
+    ;; --- **AND A PAUSE WHOSE TIME IS UP IS ENDED, AND SAID**
+    (setf leticl::*nags-paused-until* (- (leticl::internal-real-time-ms) 1))
+    (leticl::tick-nag-pause h)
+    (is (null leticl::*nags-paused-until*) "the lapsed pause is over")
+    (is (search "nags resumed" (head-status-note h))
+        "**and the head SAYS so** — a lapse nobody hears reads as *it will never remind me again*")))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of

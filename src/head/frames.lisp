@@ -1373,5 +1373,8 @@ and a reader looking for who asks the daemon for the queues every five seconds f
   ;; re-read, not remembered. Here rather than in the tick list for the reason above: this is the one
   ;; function the loop calls every round, and a reader looking for who asks the daemon for a running
   ;; job's output every second finds it by name.
-  (tick-job-window head))
+  (tick-job-window head)
+  ;; **AND A NAG PAUSE WHOSE TIME IS UP** (R83): ended here and SAID, because a pause that ended
+  ;; silently would leave the reader believing the head had stopped reminding them for good.
+  (tick-nag-pause head))
 

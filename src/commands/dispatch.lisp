@@ -354,6 +354,10 @@ on ClientFrame::Slash)."
        (%send head (list :frame "compact_session"
                          :client-request-id (next-request-id)
                          :expected-seq (session-expected-seq (head-session head)))))
+      ((string= verb "nag")
+       ;; `/nag` (the state), `/nag pause [30m|2h|1h30m]`, `/nag resume` — the operator's own ask:
+       ;; *"i need a way to stop todo nags"*, then *"or rather - pause and the pause must be LOUD"*.
+       (nag-command head rest))
       ((string= verb "reseat")
        ;; `/reseat summarise` asks for the LOSSY kind by name and got the other
        ;; one, with no word either way: the argument was parsed off and dropped,

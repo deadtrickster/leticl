@@ -420,6 +420,115 @@ and so the identity is minted in the one place that owns the list, not by whoeve
         ;; ever be about something the MODEL wrote. `push-operator-todos` is the one sender.
         (push-operator-todos head)
         item))))
+;;;; ---------------------------------------------------- the nag's pause (R83) ;;;;
+
+(defvar *nags-paused-until* nil
+  "When this head's nagging resumes — NIL when it is not paused. The operator's own ask: *\"and i need
+ a way to stop todo nags\"*, then *\"or rather - pause and the pause must be LOUD\"*.
+
+ **THE NAG ITSELF IS THE DAEMON'S**, which is what makes this a verb rather than a filter: the head
+ pushes its rows so the daemon's idle nag can see them, and the daemon is what decides to remind. So a
+ pause is TOLD to it (a slash line, the door `%send-slash` already keeps) and this variable is the
+ head's own copy — what it says on the screen and what it uses to end the pause out loud.
+
+ A `defvar` and not a head slot, for the reason the other clocks are: a slot is a struct change and a
+ struct change is a restart.")
+
+(defun %nag-duration-ms (text)
+  "`30m`, `2h`, `1h30m`, `90` — the reference's own spellings — in milliseconds, or NIL.
+
+ **A WORD IT CANNOT READ ANSWERS NIL**, and the caller says so rather than picking a default: a pause
+ for a length nobody asked for is a nag that stops when the operator did not say it could."
+  (when (and (stringp text) (plusp (length text)))
+    (let ((total 0) (num 0) (saw-num nil))
+      (dolist (ch (coerce text 'list))
+        (cond ((digit-char-p ch) (setf num (+ (* num 10) (digit-char-p ch)) saw-num t))
+              ((member ch '(#\m #\h #\s) :test #'char-equal)
+               (incf total (* num (case (char-downcase ch) (#\h 3600000) (#\m 60000) (t 1000))))
+               (setf num 0 saw-num nil))
+              (t (return-from %nag-duration-ms nil))))
+      ;; a bare number is MINUTES, which is the unit the reference's own examples are in — and the TOTAL
+      ;; is the answer whichever way it was spelled: a `when` around the `incf` alone would answer NIL
+      ;; for `30m` (the unit already added it), which is what a `TYPE-ERROR datum: NIL` one line later
+      ;; measured.
+      (when saw-num (incf total (* num 60000)))
+      (values (and (plusp total) total) (plusp total)))))
+
+(defun nag-state-line (head cols)
+  "The loud line while the nag is paused — or NIL.
+
+ **LOUD BECAUSE THE OPERATOR ASKED FOR LOUD**: *\"or rather - pause and the pause must be LOUD\"*. A
+ pause nobody can see is a head that has quietly stopped reminding about a plan, which is the one thing
+ this head must never do by accident — so it takes the resident row, says when it ends, and names the
+ way back."
+  (declare (ignore head))
+  (when (and *nags-paused-until* (> *nags-paused-until* (internal-real-time-ms)))
+    (format nil "NAGS PAUSED — until ~a · /nag resume"
+            (let* ((left (- *nags-paused-until* (internal-real-time-ms)))
+                   (mins (max 1 (round left 60000))))
+              (if (>= mins 60)
+                  (format nil "~dh~2,'0dm" (floor mins 60) (mod mins 60))
+                  (format nil "~dm" mins))))))
+
+(defun tick-nag-pause (head)
+  "End a pause whose time is up — and SAY so, which is the half of 'loud' that is easy to forget.
+
+ Called from the loop's tick beside `tick-job-window`. A pause that ended silently would leave the
+ reader believing the head had stopped reminding them for good."
+  (when (and *nags-paused-until* (<= *nags-paused-until* (internal-real-time-ms)))
+    (setf *nags-paused-until* nil)
+    (say head "nags resumed — the pause you set has ended")
+    (setf (head-dirty head) t)))
+
+(defun nag-command (head rest)
+  "`/nag`, `/nag pause [30m|2h|1h30m]`, `/nag resume` — T when the line was taken.
+
+ **THE STATE IS TOLD TO THE DAEMON TOO**, because the nag is ITS: the line goes out the way every
+ other daemon-side verb does (`%send-slash`), and this head keeps its own copy for the screen. `off`
+ and `on` are the aliases the reference keeps.
+
+ `/nag` with no word is the STATE — the one verb in this head whose bare form is a question."
+  (let* ((parts (uiop:split-string (string-trim " " (or rest "")) :separator '(#\space)))
+         ;; **THE WORD IS THE FIRST TOKEN, NOT THE WHOLE LINE**: `member` compares elements, so
+         ;; `(member "pause 30m" '("pause" "off"))` is NIL and the verb would be read as a stranger —
+         ;; measured, with the failure being a `TYPE-ERROR datum: NIL` one line later.
+         (verb-word (string-downcase (or (first parts) "")))
+         (arg (string-trim " " (or (second parts) "")))
+         (pause (member verb-word '("pause" "off") :test #'string=))
+         (resume (member verb-word '("resume" "on") :test #'string=)))
+    (cond
+      ;; --- the state
+      ((zerop (length verb-word))
+       (say head (if (and *nags-paused-until* (> *nags-paused-until* (internal-real-time-ms)))
+                     (format nil "the nags are paused — /nag resume lifts it (~a)"
+                             (nag-state-line head 200))
+                     "the nags are running — /nag pause [30m|2h|1h30m] stops them for a while"))
+       t)
+      ;; --- resume
+      (resume
+       (setf *nags-paused-until* nil)
+       ;; **AND THE DAEMON IS TOLD** — the nag is its, so a pause this head kept to itself would leave
+       ;; the daemon reminding through it.
+       (%send-slash head "nag resume")
+       (say head "nags resumed")
+       (setf (head-dirty head) t)
+       t)
+      ;; --- pause, with the reference's own spellings
+      (pause
+       (multiple-value-bind (ms ok) (%nag-duration-ms arg)
+         (if ok
+             (progn
+               (setf *nags-paused-until* (+ (internal-real-time-ms) ms))
+               (%send-slash head (format nil "nag pause ~a" arg))
+               (say head (format nil "nags paused — ~a" (nag-state-line head 200)))
+               (setf (head-dirty head) t)
+               t)
+             (progn
+               (say head (format nil "~s is not a length — try `30m`, `2h` or `1h30m`" arg))
+               t))))
+      (t (say head (format nil "`~a` is not a /nag word — pause, resume, or the state alone" verb-word))
+         t))))
+
 (defun todo-postpone-command (head rest)
   "`/todo postpone N`, `/todo resume N`, and `/todo when N JOB` — the three typed verbs over
 the OPERATOR's rows, by the numbers the pane prints on them. T when the line was taken.

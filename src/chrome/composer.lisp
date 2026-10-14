@@ -513,6 +513,10 @@ it is a typing aid, not a message. What changed is only where the row lands."
                     ;; reason the strip is — it does not go until the operator moves it — and read off
                     ;; the BOARD, so a question the model takes back takes the line with it.
                     (let ((yours (waiting-on-you-line head cols))) (and yours yours))
+                    ;; **AND THE PAUSED NAG, WHICH THE OPERATOR ASKED TO BE LOUD** (R83): a head that had
+                    ;; quietly stopped reminding about a plan is the one thing this must never do by
+                    ;; accident, so the pause takes this row and says when it ends.
+                    (let ((paused (nag-state-line head cols))) (and paused paused))
                     (turn-report-row head cols))
                 (list (composer-box-top head cols))
                 (composer-box-body head cols max-rows)

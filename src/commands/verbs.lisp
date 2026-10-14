@@ -106,6 +106,12 @@
     ("compact" . "summarise this session and fork it")
     ("reseat" . "rebuild the prompt from the tools seated now, carrying the conversation")
     ("reseat summarise" . "…and summarise the conversation instead of carrying it")
+    ;; **AND THE NAG'S PAUSE** (R83) — the operator's own ask: *"i need a way to stop todo nags"*,
+    ;; then *"or rather - pause and the pause must be LOUD"*. **Found by the guard below**, which is
+    ;; what it is for: the verb was dispatched and nothing offered it, so a person could not reach it.
+    ("nag" . "the plan-checks' state — `pause [30m|2h|1h30m]` stops them, `resume` starts them again")
+    ("nag pause" . "30m | 2h | 1h30m — stop the plan checks for a while, and say so loudly")
+    ("nag resume" . "start them again")
     ("promote" . "move the RUNNING COMMAND to the background (ctrl-o)")
     ("interrupt" . "stop the running turn")
     ;; the door and the oracle
