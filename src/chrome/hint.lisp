@@ -62,6 +62,14 @@ the transcript's own rows use, so the ellipsis is the head's usual one rather th
                  ;; same way: the two keys it owns are said in the register the secret card's own row uses,
                  ;; and this arm is what makes the card's promise checkable from the bottom row.
                  ((op-call-draft-open-p) "the tool's own JSON, then enter asks the daemon to admit it as your act · esc cancels")
+                 ;; **THE `allow-all` QUESTION IS ASKED AT `:87`, above the quit card** — so its own words come
+                 ;; here, between the operator-call and the quit. `mode-confirm-key`'s docstring is the card's
+                 ;; whole vocabulary: *[y] or [enter] send the mode with consent; any other key cancels*.
+                 ;;
+                 ;; **AND IT NAMED NOTHING BEFORE THIS.** With the card up but no arm, the bar fell through to
+                 ;; the chords — `ctrl-s sessions · ctrl-n notes…` — every one of which the card swallows,
+                 ;; which is the same lie the order fix above is about one arm over.
+                 (*mode-confirm* "y or enter takes it · anything else cancels")
                  ((head-quit-open head) "1/2 or ↑↓ then enter · esc stays")
                  ;; **ONE ARM FOR EVERY PANE** — the words are the pane's own now (`pane-hint`),
                   ;; so a pane that names a key it does not have cannot describe itself
@@ -82,6 +90,12 @@ the transcript's own rows use, so the ellipsis is the head's usual one rather th
                  ;; eating. `pane-hint` is still one arm down for the opposite case: a pane is described
                  ;; by its own words exactly when nothing that owns the keyboard is over it.
                  ((%open-decision head) "a row number answers · ↑↓ then enter · or type an option · /help")
+                 ;; **THE TWO DRAFTS THE LADDER ASKS AT `:176`/`:180`, below the decision** — so they sit here,
+                 ;; and each says what its own key function says it keeps. Both take EVERY printable key (the
+                 ;; text being typed is the value), which is exactly why a bar that fell through to the
+                 ;; chords was worst here: it advertised `ctrl-s` and `ctrl-n` to a reader typing a title.
+                 (*key-draft* "type the key · enter submits · esc loses it · arrows and backspace edit")
+                 (*todo-draft* "type the title and description · enter adds · tab moves the field · esc cancels")
                  ;; **AND THE READ OVERLAY IS A SURFACE WITH KEYS OF ITS OWN** — the third thing this
                  ;; bar could not say, because the overlay was drawn only over panes and the pane's
                  ;; words were asked first. `esc returns to the list, on the row you chose` is the row

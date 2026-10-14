@@ -13228,7 +13228,22 @@ whatever the gate had to say.")
       (is (search "esc refuses the password" (bar))
           "**a password card's bar describes the PASSWORD**, not the card it is standing over")
       (is (not (search "a row number answers" (bar)))
-          "and nothing of the card underneath — the row must not name a key the secret is eating"))))
+          "and nothing of the card underneath — the row must not name a key the secret is eating")
+      ;; --- **AND THE THREE CARDS THAT NAMED NOTHING AT ALL** (`fe3c131`): with the card up but no arm, the
+      ;; bar fell through to the chords — `ctrl-s sessions · ctrl-n notes…` — every one of which the card
+      ;; swallows. **The cards set above must stand down first**: the secret outranks everything and the
+      ;; decision outranks these two, so leaving either up would test the wrong arm.
+      (setf (head-secret-req h) nil
+            (session-open-decisions (head-session h)) nil)
+      (let ((leticl::*mode-confirm* (list :verb "allow-all")))
+        (is (search "y or enter takes it" (bar))
+            "**the `allow-all` question is described by ITSELF** — not by the chords it swallows"))
+      (let ((leticl::*key-draft* t))
+        (is (search "type the key" (bar))
+            "and the API-key card, which takes every printable key as the field's"))
+      (let ((leticl::*todo-draft* t))
+        (is (search "type the title" (bar))
+            "and the new-todo card, which does too — the worst case for a chord a typing reader cannot press")))))
 
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
