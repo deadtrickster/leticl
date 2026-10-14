@@ -186,6 +186,12 @@ Esc was a second thing to remember per pane."
           ;; taken — the card's first ROW does the reseat, and Enter takes it.
           ;;
           ;; NIL when nothing is stale: a key that did nothing would be a key this head has to explain.
+          ;;
+          ;; **AND THE `alt-r` COLLISION IS SETTLED, the way it was raised.** The reference's `alt-r` is
+          ;; *reseat now* and this head's is the operator-call draft, so the reseat card's own first ROW
+          ;; does the reseat and Enter takes it rather than taking the chord. **Put to the operator and
+          ;; left as it stands** — nothing is lost either way, and the alternative (reseat takes `alt-r`
+          ;; and the draft moves) is one edit if they ever want it.
           (#\p (if *reseat-said*
                    (progn (setf *reseat-card-open* t (head-dirty head) t) t)
                    nil))
