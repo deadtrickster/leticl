@@ -511,7 +511,17 @@ its end, and a token count is not recoverable from anywhere else on the screen."
           (setf left (append left (list (cons " (" '(:dim t))))
                 left (append left fit)
                 left (append left (list (cons ")" '(:dim t)))))
-          (incf left-cols (+ 3 (loop for piece in fit sum (string-width (car piece)))))))
+          (incf left-cols (+ 3 (loop for piece in fit sum (string-width (car piece))))))
+        ;; **AND WHEN THERE IS NOTHING TO FOLLOW YET, HOW MANY THERE ARE** (letibot `e207349`): a
+        ;; workspace of several with no work in it yet is a REAL state, and the alternative — naming one
+        ;; of them — is the guess this resolver exists to refuse. It stands where the branch would, in the
+        ;; same faint, so the row still says what this session's workspace IS.
+        (unless fit
+          (let ((repos (ignore-errors (%workspace-repos (getf (session-wiring s) :workspace)))))
+            (when (and (rest repos) (> (- cols left-cols tail-cols 2) 16))
+              (let ((text (format nil " (~d repositories)" (length repos))))
+                (setf left (append left (list (cons text '(:dim t)))))
+                (incf left-cols (string-width text)))))))
       (let* ((pad (max 0 (- cols left-cols tail-reserved)))
              ;; **AND THE RESERVED BUT UNUSED COLUMNS AFTER THE TAIL.** The block the fields sit in
              ;; is `tail-reserved` wide whatever happens to be in it, so `2/2` stands where `2/2`

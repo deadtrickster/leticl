@@ -13469,6 +13469,16 @@ whatever the gate had to say.")
            (is (null (leticl::%project-dir (namestring root) h))
                "**and with nothing done yet it answers NIL** — the header says how many there are rather
   than naming one of them")
+           ;; --- **AND THE HEADER SAYS HOW MANY** (letibot `e207349`): a workspace of several with no
+           ;; work in it yet is a real state, and a row that said nothing at all would be a session the
+           ;; header cannot describe.
+           (setf (getf (session-wiring (head-session h)) :workspace) (namestring root))
+           ;; **AT 200 COLUMNS, because the header drops what does not fit** — the same fit-or-drop the
+           ;; branch obeys (`%git-fit`), and at 120 the reserved tail leaves about eleven columns.
+           (is (search "2 repositories"
+                       (format nil "~{~a~}" (mapcar #'car (leticl::top-border h 200))))
+               (format nil "**the header names the COUNT** where the branch would stand — got ~s"
+                       (format nil "~{~a~}" (mapcar #'car (leticl::top-border h 200)))))
            ;; --- the newest edit's path decides
            (setf (session-items (head-session h))
                  (leticl::%items-vector
