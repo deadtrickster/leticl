@@ -738,7 +738,48 @@ thirty rows appended, and the view jumped to `row-62`."
     (setf *hist-cache* (list key lines next-i class-above bounds seats))
     (values lines bounds))))
 
+(defun %marker-seat-at (line)
+  "The marker's seat when LINE is a line a marker rides — `(RUN-ID . COLUMN)` — or NIL.
+
+ **THE ROW THE POINTER IS ON IS A LINE FIRST**, which is the arithmetic `%click` already does for its
+ own rows: `*hist-bounds*` is `(ITEM-ID START END)` per item and the seat map is keyed by ITEM, so the
+ two are asked in that order rather than by guessing a run from an offset.
+
+ This is the LIGHT's reading of the same seat the CLICK opens from, so a thing that lights up is exactly
+ a thing a press acts on — the one rule a pointer has to keep."
+  (let* ((bound (and *hist-bounds*
+                     (find-if (lambda (b)
+                                (and (<= (second b) line) (< line (third b))))
+                              *hist-bounds*)))
+         (seat (and bound *hist-cache*
+                    (assoc (first bound) (sixth *hist-cache*) :test #'string=))))
+    (and seat (cdr seat))))
+
+(defun %lit-marker-tail (line col)
+  "LINE with everything from COL on REVERSED — the light the bar's own keys already use.
+
+ **REVERSED RATHER THAN COLOURED**, which is the same choice the hint bar's hover makes and for the same
+ reason: it reads as *the pointer is here* in every palette. The column is the seat's, so what lights is
+ the marker and never the sentence it was appended to."
+  (loop for seg in line
+        for before = 0 then (+ before (string-width (car seg)))
+        collect (if (>= before col)
+                    ;; **A SEGMENT IS `(cons text style)` — THE STYLE IS THE `cdr`.** `(second seg)` is the
+                    ;; style's FIRST KEYWORD, so building from it dropped every attribute the line
+                    ;; already carried and would have read as a malformed plist.
+                    (cons (car seg) (cons :reverse (cons t (cdr seg))))
+                    seg)))
+
+(defun %marker-lit-col (r x)
+  "The COLUMN the marker on screen row R begins at, when the pointer at X is on it — else NIL.
+
+ One function rather than two so the *is it lit* question and the *where does it start* answer cannot
+ disagree, and so `row` asks the seat once."
+  (let ((seat (and *view-start* *hist-bounds*
+                   (%marker-seat-at (+ *view-start* (1- r))))))
+    (and seat x (>= x (cdr seat)) (cdr seat))))
 (defun %window-of (hist tail start end)
+
   "Elements START..END of the conceptual list `hist` + a blank + `tail`.
 
 Walks the three pieces and copies only the WINDOW, which is the point: `(append
@@ -1651,7 +1692,16 @@ scrolls the transcript by a row every keystroke.
           ;; at, after the notice and stall rows have had theirs, which is exactly what `%pick-card-top`
           ;; could not work out (letibot `9e82bdb`). Set beside `*pane-top*` for the same reason.
           (setf *card-top* r)
-          (flet ((row (line) (put-segments s r gutter line) (incf r)))
+          (flet ((row (line)
+                   ;; **AND THE MARKER LIGHTS WHEN THE POINTER IS ON IT** (letibot `7eab116`, *hover
+                   ;; lights the clause alone*). The same derivation the hint bar's own keys use — this
+                   ;; head's light is `:reverse` and is worked out from the pointer against the frame
+                   ;; being drawn, never kept from an earlier one — so a thing that lights up is exactly a
+                   ;; thing a press acts on. **`r` is the screen row**, which is why this is here and not
+                   ;; in the walk: the walk builds lines and only the painter knows where they land.
+                   (let ((col (and *pointer-x* (%marker-lit-col r *pointer-x*))))
+                     (put-segments s r gutter (if col (%lit-marker-tail line col) line)))
+                   (incf r)))
             (dolist (line content) (row line))
             (dolist (line card-ladder) (row line))
             ;; **THE NOTE AND THE STALL ARE NOT DRAWN HERE ANY MORE** — they ride the row above the

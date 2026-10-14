@@ -14008,6 +14008,40 @@ test/random, and it is one of three.~%options offered:~%- in scope~%- out of sco
     (is (not (null (leticl::%handle-key h (list :type :esc))))
         "a second Esc still reaches the ladder below — nothing was left claimed")))
 
+(def-test hovering-a-run-marker-lights-it (:suite leticl)
+  "**HOVER LIGHTS THE MARKER AND NOT THE SENTENCE IT RIDES** (letibot `7eab116`: *hover lights the
+  clause alone*). This head's light is `:reverse` — the same choice the hint bar's own keys make, and for
+  the same reason, that it reads as *the pointer is here* in every palette.
+
+  **It is a column question, not a row one**, because the marker is a SUFFIX of a line the reader also
+  reads as prose: a light that knew only the row would light the narration a run hangs off.
+
+  And it is worked out from the pointer against the frame being DRAWN, never kept from an earlier one —
+  which is what makes *a run opened by a click* light too: after the press the pointer is still on the
+  marker, so the next frame derives it again."
+  (let ((h (%on-head :cols 100 :rows 30))
+        (leticl::*pointer-x* nil))
+    (setf leticl::*hist-cache* (list nil nil nil nil nil (list (cons "i7" (cons "leticl-run-i5" 8))))
+          leticl::*hist-bounds* (list (list "i7" 0 4))
+          leticl::*view-start* 0)
+    ;; --- the pointer ON the counts
+    (is (= 8 (leticl::%marker-lit-col 1 9))
+        "**the pointer on the marker lights it** — at the column the seat recorded")
+    (is (= 8 (leticl::%marker-lit-col 1 8)) "and at the counts' own first column")
+    ;; --- and the pointer in the prose above them
+    (is (null (leticl::%marker-lit-col 1 4))
+        "**the pointer in the sentence does not** — the light is the marker's, not the row's")
+    ;; --- and a row outside the item's own lines never lights
+    (is (null (leticl::%marker-lit-col 6 9))
+        "**a row no marker rides lights nothing** — row 6 is line 5, past the item's own 0..4")
+    ;; --- the restyle itself
+    (let* ((line (list (cons "a sentence" nil) (cons " [1 tool call]" (list :dim t))))
+           (lit (leticl::%lit-marker-tail line 11)))
+      (is (equal nil (cdr (first lit))) "**the sentence keeps its own style**")
+      (is (equal (list :reverse t :dim t) (cdr (second lit)))
+          "**and the marker is REVERSED, carrying what it already had**: a light that dropped the
+  marker's own attributes would be a different marker, not a lit one"))))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of
