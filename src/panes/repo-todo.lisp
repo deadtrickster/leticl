@@ -587,7 +587,7 @@ error."
              (cut (lambda (s) (if (> (length s) room)
                                   (format nil "~a…" (subseq s 0 room))
                                   s))))
-        (format nil "WAITING ON YOU — ~a · ~a~@[ · ~d option~:p~]"
+        (format nil "WAITING ON YOU — ~a · ~a~@[ · ~d option~:p~] · alt-o shows it"
                 (funcall cut said)
                 (funcall cut q)
                 (and (listp choices) (plusp (length choices)) (length choices)))))))

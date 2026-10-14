@@ -128,6 +128,9 @@ through an eval socket and see the change on the next frame."
                ;; **THE RESEAT CARD** (R89): a session whose prompt is stale asks the operator, and
                ;; keeps asking — it after `turn` because it mirrors the quit card's shape.
                (:file "src/cards/reseat-card")
+               ;; **THE OPERATOR-ASK CARD** (R91): the question a todo row is waiting on a PERSON for,
+               ;; whole — a reader of the resident line and not an answer, deliberately.
+               (:file "src/cards/operator-card")
                               (:file "src/chrome/counters")
                (:file "src/chrome/border")
                (:file "src/chrome/git")

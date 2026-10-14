@@ -174,6 +174,10 @@ for the lists)."
       ;; work. Asked only while it IS open — the strip takes no keys but `alt-p`, which is a chord and
       ;; is handled above this ladder.
       ((reseat-card-p head) (%reseat-card-key head key type))
+      ;; **AND THE OPERATOR-ASK CARD, LAST OF ALL** (R91) — the same low place it has in the draw
+      ;; chain, and for the same reason: it is not an ask the daemon made, so a decision or a quit card
+      ;; keeps every key it already owns.
+      ((operator-card-p head) (%operator-card-key head key type))
       ;; **THE OPERATOR-CALL COMPOSER** (R24 part two), after an open ask and before every
       ;; list. After the ask because a card nobody asked for outranks a card the operator
       ;; opened; before the lists because the field it fills IS the composer, so anything it

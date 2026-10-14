@@ -140,7 +140,7 @@ Esc was a second thing to remember per pane."
             ;; here by this head's own reader, so it cannot be confused with `ctrl-r`, which
             ;; IS a control byte and flips the thinking fold. Handling it above the `:ctrl`
             ;; guard is what keeps the two apart: both arrive as `#\r` and differ only in type.
-            (and (eq (getf key :type) :alt) (member (getf key :ch) '(#\r #\g #\b #\a #\n #\p) :test #'eql)))
+            (and (eq (getf key :type) :alt) (member (getf key :ch) '(#\r #\g #\b #\a #\n #\p #\o) :test #'eql)))
     (if (eq (getf key :type) :alt)
         ;; **THE ALT CHORDS, EACH IN ITS OWN WORD.** `alt-r` opens the operator-call draft; `alt-g` and
         ;; `alt-b` MARK THE TURN (letibot R81) — *good* and *bad*, and a second press inside five seconds
@@ -188,6 +188,18 @@ Esc was a second thing to remember per pane."
           ;; NIL when nothing is stale: a key that did nothing would be a key this head has to explain.
           (#\p (if *reseat-said*
                    (progn (setf *reseat-card-open* t (head-dirty head) t) t)
+                   nil))
+          ;; **AND `alt-o` SHOWS THE QUESTION A ROW IS WAITING ON THE OPERATOR FOR** (R91). The
+          ;; resident line above the composer names it (see `waiting-on-you-line`), which is the same
+          ;; shape the stale-prompt strip keeps for `alt-p` — the line says which key opens it, so a
+          ;; reader who sees the line knows the one thing to press.
+          ;;
+          ;; **IT IS NOT AN ANSWER**: the card reads the model's question and its options, and how an
+          ;; answer travels back is its own piece of work — a key that looked like it answered and did
+          ;; not would be worse than no key at all. NIL when nothing is waiting, so the key falls
+          ;; through to whatever else it might mean.
+          (#\o (if (waiting-on-you-line head 200)
+                   (progn (setf *operator-card-open* t (head-dirty head) t) t)
                    nil)))
     (flet ((pane (mode verb)
              (if (eq (head-mode head) mode)

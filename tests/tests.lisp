@@ -13763,6 +13763,45 @@ test/random and test/index, and it is one of three such families.~%options offer
     (is (null (leticl::waiting-on-you-line h 120))
         "**a CLOSED row is not a wait** — the board coming back without the edge takes the line with it")))
 
+(def-test the-operator-ask-card-shows-the-question-whole (:suite leticl)
+  "**THE RESIDENT LINE SAYS SOMEBODY IS WAITING; THE CARD IS THE QUESTION ITSELF** (R91, `c224585`).
+  A row draws `waits on you`, which is a sentence a reader meets while scanning a plan — and the thing
+  they have to actually answer is what the model asked, with the options it offered.
+
+  **`alt-o` opens it, and the line names that key**, which is the shape the stale-prompt strip keeps for
+  `alt-p`: a reader who sees the line knows the one thing to press. **And it is a READER, not an
+  answer** — Esc puts it away, and that is the whole of what the card decides."
+  (let* ((h (%on-head :cols 100 :rows 30))
+         (leticl::*operator-todos*
+          (list (list :id "t1" :content "land the surface stack" :status "open"
+                      :needs (list (list :kind "operator"
+                                         :question "which repository should it land in?"
+                                         :options (list "the main tree" "a worktree"))))))
+         (leticl::*operator-card-open* nil))
+    (flet ((said ()
+             (format nil "~{~a~^~%~}"
+                     (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l)))
+                             (leticl::operator-card-lines h 100)))))
+      (is (not (leticl::operator-card-p h)) "the card is shut to begin with")
+      ;; --- `alt-o` opens it
+      (leticl::%handle-key h (list :type :alt :ch #\o))
+      (is (leticl::operator-card-p h) "**`alt-o` opens the card** — the key the line names")
+      (is (search "waiting on you" (said)) "**and it says who is waiting**")
+      (is (search "which repository" (said)) "**and the model's own question**")
+      (is (search "the main tree" (said)) "**with its own options**, in the order it offered them")
+      (is (search "a worktree" (said)) "both of them")
+      ;; --- Esc puts it away, and answers nothing
+      (leticl::%handle-key h (list :type :esc))
+      (is (not (leticl::operator-card-p h)) "**Esc puts the card away** — and answers nothing, deliberately")
+      (is (search "land the surface stack" (leticl::waiting-on-you-line h 100))
+          "with the resident line still saying the model is waiting — putting the card away is not an answer"))
+    ;; --- **AND A QUESTION TAKE-BACK TAKES THE CARD WITH IT** (letibot `c224585`'s own test): the board
+    ;; comes back without the edge and there is nothing to draw — the card reads the board every frame
+    ;; rather than remembering what it was opened for.
+    (setf (getf (first leticl::*operator-todos*) :needs) nil)
+    (is (null (leticl::operator-card-p h))
+        "**a row that no longer waits on me has no question to show** — the card goes with the ask")))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of
