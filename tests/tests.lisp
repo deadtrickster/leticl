@@ -13525,6 +13525,46 @@ whatever the gate had to say.")
     (is (search "re-seating: carrying" (head-status-note h))
         "while between turns the sentence is the one it always was")))
 
+(def-test a-mark-is-sent-said-and-said-when-it-cannot-be (:suite leticl)
+  "**`/fb`, `alt-g` and `alt-b` — the operator's mark** (letibot `01fb144`, R81): *`alt-g` marks the
+  current turn GOOD and `alt-b` BAD; a SECOND press within five seconds opens the note*.
+
+  **The whole feature was written and had NO TEST** — the survey found it, and it is the one hole a
+  suite cannot report about itself: nothing in the suite was failing, because nothing in the suite was
+  asking."
+  (let* ((h (%on-head :cols 100 :rows 24))
+         (wire (%wire h))
+         (leticl::*daemon-protocol* 45)
+         (leticl::*last-mark* nil)
+         (leticl::*scroll-anchor* nil))
+    ;; --- `alt-g` marks GOOD, and SAYS so
+    (leticl::%handle-key h (list :type :alt :ch #\g))
+    (let ((f (first (%sent wire))))
+      (is (and f (equal "feedback" (frame-name f)))
+          "**`alt-g` sends the mark** — protocol 45's frame")
+      (is (and f (search "good" (format nil "~s" f)))
+          "with the polarity the key means: ~s" (and f (format nil "~s" f))))
+    (is (search "marked good" (head-status-note h))
+        "and it is SAID — a mark nobody is told about is a judgement believed recorded")
+    ;; --- a SECOND press inside the window opens the composer, and does NOT re-send
+    (leticl::%handle-key h (list :type :alt :ch #\g))
+    (is (zerop (length (%sent wire)))
+        "**the second press sends NO second mark** — the mark is already made")
+    (is (plusp (length (composer-buffer (head-composer h))))
+        "and it FILLS THE COMPOSER with the verb the operator could have typed: ~s"
+        (composer-buffer (head-composer h)))
+    ;; --- a daemon older than the frame is TOLD, rather than marking silently
+    ;; **THE COMPOSER IS EMPTIED FIRST**: the second press above filled it, and `alt-b` keeps readline's
+    ;; word-left wherever there is a line to move over — so a press with that line still in the box is
+    ;; the COMPOSER's and never reaches the mark at all.
+    (setf (composer-buffer (head-composer h)) ""
+          leticl::*daemon-protocol* 44
+          leticl::*last-mark* nil)
+    (leticl::%handle-key h (list :type :alt :ch #\b))
+    (is (zerop (length (%sent wire))) "a daemon that cannot be told is not sent the frame at all")
+    (is (search "not sent" (head-status-note h))
+        "**and the head SAYS so** — a silent mark is worse than a key that does nothing")))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of
