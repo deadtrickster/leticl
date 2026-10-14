@@ -552,6 +552,15 @@ the screen, and a count of what is hidden is the one count that may not be wrong
     ;; session's folder can reach. Named here so a frame this head reads and acts
     ;; on is not reported as one it has never heard of.
     :operator-call-allowed
+    ;; **`HeldResults`** (the reference's `SessionEvent::HeldResults`, `event.rs:2212`) — the daemon's count
+    ;; of results it is holding while a turn runs. The reference's own view folds it to NOTHING
+    ;; (`view.rs:964`), because the count is not transcript content: it rides the responding row.
+    ;;
+    ;; **AND THIS HEAD FILED IT AS AN UNKNOWN EVENT**: every one bumped `*unreadable-total*` and drew
+    ;; `⚠ unreadable`, so a head reading the frame perfectly well was alarming about it. Exactly the
+    ;; defect the two comments above describe for `:prompt-requested` and `QueueMoved` — which is why
+    ;; the list is named for what the HEAD reads rather than for what the folder folds.
+    :held-results
     ;; **`QueueMoved` (protocol 43) is folded by the head's frame hook**, because what it moves
     ;; lives on the HEAD — `head-merge-queue` and `*queues*` are daemon-level and not session
     ;; state — and the folder has no head. It is broadcast to EVERY session's log (the queues

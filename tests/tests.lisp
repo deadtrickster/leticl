@@ -13288,6 +13288,19 @@ whatever the gate had to say.")
       (is (not (search "more waiting" (card)))
           "and a card alone says nothing at all — no `+0 more` nobody asked for"))))
 
+(def-test a-held-results-frame-is-read-and-not-alarmed-about (:suite leticl)
+  "**THE HEAD READS IT, SO IT MUST NOT BE REPORTED AS ONE IT HAS NEVER HEARD OF** (letibot's
+  `SessionEvent::HeldResults`, `event.rs:2212`; its `view.rs:964` folds it to NOTHING because the count
+  rides the responding row rather than the transcript).
+
+  **This head had no arm for it**, so `%note-unknown-event` treated every one as a tag from a daemon a
+  version ahead: an *unknown event* row filed and `⚠ unreadable` bumped, on a head reading the frame
+  perfectly well. That is exactly the defect `+events-not-folded-here+` exists for, and its own comments
+  say so twice — for `:prompt-requested` and for `QueueMoved`."
+  (is (member :held-results leticl::+events-not-folded-here+)
+      "**the tag is in the list that decides** — the list is named for what the HEAD reads, not for what
+  the folder folds, which is why an event folded to nothing still belongs in it"))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of
