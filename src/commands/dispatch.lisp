@@ -202,6 +202,9 @@ on ClientFrame::Slash)."
           (%send head (make-term-close))
           (say head "ending the terminal — the program and everything it started go with it"))
          ((and (head-term head) (zerop (length rest)))
+          ;; **A TERMINAL GOES ON THE STACK TOO** (R69): it is opened from wherever the reader was, and
+          ;; Esc in it should come back there — the pane is a surface like any other.
+          (%push-surface head :term)
           (setf (head-mode head) :term (head-dirty head) t))
          (t
           (multiple-value-bind (cols rows) (%term-rectangle head)

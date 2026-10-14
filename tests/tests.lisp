@@ -2699,7 +2699,12 @@ means by *a head like a fresh one*."
           ;; **AND THE SELECTION, for the third time and the same reason**: `*selection*` is a defvar,
           ;; and a test that drags across a row leaves it set — so the NEXT test's light is NIL for a
           ;; pointer plainly on a button (`(null *selection*)` is the first conjunct of every light).
-          leticl::*selection* nil)
+          leticl::*selection* nil
+          ;; **AND THE SURFACE STACK** (R69) — the fourth of these, and the one that taught the rule:
+          ;; a test that opens a pane pushes it, and the next test's Esc or `q` then pops to a surface
+          ;; THAT test never opened. Measured: three suites failed that way, in files that touch no
+          ;; surface at all, because a global leaked out of one that does.
+          leticl::*surfaces* nil)
     (setf (head-cols h) cols (head-rows h) rows)
     (screen-resize (head-screen h) cols rows)
     (screen-resize (head-prev-screen h) cols rows)
@@ -11988,6 +11993,10 @@ answered. The daemon's own `secret_late` warning, which would explain it, is a
   wired. The assertion that would have caught it was withdrawn rather than weakened until the arm
   was fixed; that is what a test is for."
   (let* ((h (%make-head))
+         ;; **THE STACK IS BOUND TOO** (R69): clearing the MODE is not clearing where the reader has
+         ;; been, and this is the second test tonight that failed because a leaked entry popped `q`
+         ;; into a surface it never opened.
+         (leticl::*surfaces* nil)
          (wire (%wire h)))
     (setf (head-mode h) :normal)
     (leticl::%command h "standing")
@@ -12061,6 +12070,11 @@ worked for the merge queue.
   for a statement*, and the form is the difference between the note itself and an index entry for
   it."
   (let* ((h (%make-head))
+         ;; **THE STACK IS BOUND, NOT INHERITED** (R69): it is a global, and a test that opens a pane and
+         ;; walks away leaves an entry behind — so a test that presses `q` or Esc here would pop to a
+         ;; surface THIS test never opened. Measured: that is exactly how these failed, and the mode one
+         ;; of them popped to was `:term`, left by a terminal test three files away.
+         (leticl::*surfaces* nil)
          (text (lambda () (format nil "~{~a~^~%~}"
                                   (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l)))
                                           (standing-notes-lines h 100))))))
@@ -13590,6 +13604,41 @@ whatever the gate had to say.")
       (is (null (leticl::%hint-click h 0))
           "while a column of the row that names no key falls through — a hint that types nothing is not a hint"))))
 
+(def-test esc-returns-to-the-pane-below-not-the-conversation (:suite leticl)
+  "**A SECOND PANE USED TO REPLACE THE FIRST** (letibot `app/surface.rs`, R69). One slot and no stack:
+  opening `/jobs` while `/todos` was up lost the todos, and **Esc had nowhere to go back to but the
+  conversation**. R69's rule: *opening pushes* (or brings an open one to the top), *Esc pops*, and the
+  surface below is what Esc returns to.
+
+  **The position is not kept per entry**, and that is this head's model rather than a missing half:
+  `%open-pane` shares ONE cursor and one scroll *because only one is open at a time*, and `shut` resets
+  the scroll on the way out — so returning resets exactly as opening does, and the top is the honest
+  place to start in both directions."
+  (let ((h (%on-head :cols 100 :rows 30)))
+    (is (null leticl::*surfaces*) "nothing is open to begin with")
+    (leticl::%open-pane h :todos)
+    (is (equal '(:todos) leticl::*surfaces*) "**opening PUSHES**")
+    (leticl::%open-pane h :jobs)
+    (is (equal '(:todos :jobs) leticl::*surfaces*)
+        "**and a second one goes ON TOP** — the first is REMEMBERED rather than replaced")
+    ;; --- Esc returns to the pane BELOW, which is the whole of the rule
+    (leticl::%handle-key h (list :type :esc))
+    (is (eq :todos (head-mode h))
+        "**Esc in the second pane returns to the FIRST** — not to the conversation")
+    (is (equal '(:todos) leticl::*surfaces*) "and the stack is one shallower")
+    ;; --- and from the last one it is the conversation, as it always was
+    (leticl::%handle-key h (list :type :esc))
+    (is (eq :normal (head-mode h)) "and from the last surface, Esc is the conversation")
+    (is (null leticl::*surfaces*) "with nothing left behind it")
+    ;; --- **AND A CHORD BRINGS A COVERED PANE FORWARD** (R69's other half of *opening pushes*)
+    (leticl::%open-pane h :todos)
+    (leticl::%open-pane h :jobs)
+    (leticl::%open-pane h :todos)
+    (is (equal '(:jobs :todos) leticl::*surfaces*)
+        "**an open pane is brought to the TOP, not pushed twice** — a stack a chord could grow without
+  bound is a stack Esc cannot get out of")
+    (is (eq :todos (head-mode h)) "and it is the one drawn")))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of
@@ -14127,6 +14176,11 @@ a b c
   conflict are Failure, waiting and stale are Pending, and a state this build has never met is
   drawn PLAIN rather than guessed at."
   (let* ((h (%make-head))
+         ;; **THE STACK IS BOUND, NOT INHERITED** (R69): it is a global, and a test that opens a pane and
+         ;; walks away leaves an entry behind — so a test that presses `q` or Esc here would pop to a
+         ;; surface THIS test never opened. Measured: that is exactly how these failed, and the mode one
+         ;; of them popped to was `:term`, left by a terminal test three files away.
+         (leticl::*surfaces* nil)
          (text (lambda () (format nil "~{~a~^~%~}"
                                   (mapcar (lambda (l) (format nil "~{~a~}" (mapcar #'car l)))
                                           (merge-queue-lines h 100))))))

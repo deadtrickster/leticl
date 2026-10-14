@@ -84,3 +84,25 @@ migrations. Most are `:normal` writes that mean *a command finished* (`submit.li
 are the opens (`%open-pane`, `:term`, `:job-out`, the pane-specific ones) and the Esc path — perhaps
 six. **The size of this job is not the call sites; it is `head-picker-sel` and `*pane-scroll*` becoming
 per-entry**, which is step 2 below and cannot be skipped.
+
+## An attempt, 2026-10-14 — and the assumption it falsified
+
+I built it after all, on the theory that it could arrive **safely, one open at a time**: a
+`*surfaces*` list, `%push-surface` in `%open-pane` and at the two opens that bypass it (`:term`,
+`:job-out`), and at the Esc door a **guarded pop** — one that only fires when the front IS the mode
+being left, so a path that never pushed falls back to `pane-escape-target` and is exactly as correct
+as before.
+
+**The theory is wrong, and the suite said so in one run**: `8689/8692`, three failures in three
+unrelated suites — `the-job-output-window-fills-the-overlay-and-it-pages` (*"esc goes back to jobs,
+not out of everything"*), `the-merge-queue-draws-its-states-and-why-each-one-is-that-state` (*"`q`
+closes the pane, as every pane's own hint says"*), and the standing pane's. Nothing about `q` or the
+standing pane should be touched by a push at the `:job-out` open, which means **the interaction is not
+local and my model of it is missing something.**
+
+I tried one correction — `%pop-surface` answering NIL rather than `:normal` when the stack empties, so
+the fallback is the old rule — and the same three failed, which rules out the explanation I had.
+
+**So the state persists**: reverted, tree green at `8692/8692`. **The three tests above are the
+starting point for the next attempt** — they are the measurement, and they failed for a reason that is
+not yet understood. Do not start from the rule again; start from why `q` changed.

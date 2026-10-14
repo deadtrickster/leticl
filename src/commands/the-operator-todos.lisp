@@ -984,6 +984,40 @@ because a pane going away has nothing to ask for."
       (progn (when ask (funcall ask))
              (%open-pane head mode))))
 
+;;; --------------------------------------------------------- the surface stack ;;;
+
+(defvar *surfaces* nil
+  "The panes on the screen, the one in FRONT last — R69's stack (letibot `app/surface.rs`).
+
+ **WHAT IT ANSWERS IS *WHAT IS UNDER THIS ONE*.** In the reference each pane was its own flag and the
+ three orders that decided what that meant disagreed, which cost them *Enter switched session into a
+ row nobody saw*. Here there is one slot, so the missing half is a different one: **a second pane
+ REPLACED the first**, and Esc had nowhere to go back to but the conversation.
+
+ **THE POSITION IS NOT KEPT PER ENTRY, and that is this head's model rather than an omission.**
+ `%open-pane` says why in its own docstring — one cursor and one scroll are shared *because only one is
+ open at a time*, so *the top is the only honest place to start* — and `shut` already resets the scroll
+ on the way out. So returning resets exactly as opening does. Per-entry cursor and scroll are a further
+ step, and step 2 of the note `the-surface-stack-r69`.")
+
+(defun %push-surface (head mode)
+  "Bring MODE to the front — R69's *opening pushes, or brings an open one to the top*."
+  (setf *surfaces* (append (remove mode *surfaces*) (list mode)))
+  mode)
+
+(defun %pop-surface (head mode)
+  "Pop MODE off the stack and answer the mode BELOW it — or NIL, which means *the stack was not holding
+ this one*.
+
+ **THE GUARD IS WHAT LETS THIS ARRIVE ONE OPEN AT A TIME.** A caller that opens a surface without
+ pushing leaves the stack stale, and a pop that trusted it would send Esc to a mode nobody opened. So
+ the pop only fires when the front IS the mode being left, and NIL tells the caller to fall back to
+ `pane-escape-target`, which is what every pane did before. A path that has not been converted is
+ therefore exactly as correct as it was, and never worse."
+  (when (and *surfaces* (equal (car (last *surfaces*)) mode))
+    (setf *surfaces* (butlast *surfaces*))
+    (car (last *surfaces*))))
+
 (defun %open-pane (head mode)
   "Open the full-body screen MODE with its cursor at the top and nothing scrolled.
 
@@ -1005,6 +1039,9 @@ only honest place to start."
   ;; same numbers that were acknowledged — a resync arriving between the two would otherwise be
   ;; acknowledged without ever having been on the screen.
   (when (eq mode :status) (acknowledge-alarms head))
+  ;; **AND IT GOES ON THE STACK** (letibot `app/surface.rs`, R69) — so Esc in it comes back to whatever
+  ;; the reader opened it from, rather than dropping to the conversation.
+  (%push-surface head mode)
   (setf (head-mode head) mode
         ;; the session picker opens ON THE SESSION YOU ARE IN — `ctrl-s` then
         ;; enter moved you off your own session, which is the shape of mistake

@@ -178,6 +178,9 @@ so the view draws what the head holds rather than asking the daemon for what it 
            ;; opened BEFORE the send: `apply-event` folds a window only into an
            ;; overlay already open for that job
            (open-job-out it)
+           ;; **AND THE WINDOW GOES ON THE STACK** (R69): it is opened OVER the jobs list, so Esc in it
+           ;; comes back to that list rather than to the conversation.
+           (%push-surface head :job-out)
            (setf (head-mode head) :job-out)
            (%send head (make-read-job-output it 0)))))
 
@@ -443,6 +446,13 @@ makes it, and the two keys that call this want different places."
   ;; overlay up gives up the want with it. A late reply then arrives with nothing to open for, which is
   ;; the reference's own rule rather than a side effect.
   (setf *peek-want* nil)
+  ;; **AND THE SURFACE STACK IS *NOT* CLEARED HERE**, though it looks like the same kind of state.
+  ;; `shut-overlays` is the OVERLAYS — a peek window, a read overlay, an open picker — and the surfaces
+  ;; are the PANES. Clearing this here would wipe the very entry `shut` has just popped back to: measured,
+  ;; the pop returned to `:todos` and the clear then erased it, so the next Esc left the panes entirely.
+  ;; A stale entry cannot do harm instead: `%pop-surface` only fires when the front IS the mode being
+  ;; left, and `%push-surface` REMOVES a duplicate before appending — so a pane opened again takes its
+  ;; old place back rather than stacking twice.
   t)
 
 (defun %pane-key (head key type)
@@ -478,7 +488,8 @@ one thing this head must not need."
            ;; everything — the reference's `sub_out` arm sits ahead of the
            ;; generic Esc for exactly that (app.rs:3251-3262). Everywhere else
            ;; it is `:normal`.
-           (shut () (setf (head-mode head) (pane-escape-target (head-mode head))
+           (shut () (setf (head-mode head) (or (%pop-surface head (head-mode head))
+                                              (pane-escape-target (head-mode head)))
                           (head-dirty head) t)
              ;; the overlay goes with the key that leaves it: a window kept open
              ;; after Esc would quietly take the answer to a read nobody is
