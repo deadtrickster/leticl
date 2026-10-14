@@ -625,6 +625,26 @@ makes a row ring a bell.*"
         name
         (or (and job (getf job :command)) ""))))
 
+(defun %queue-scope (head)
+  "The repository the EDGE counts, or NIL when this head cannot name one.
+
+ **THE EDGE ALWAYS COUNTS THIS SESSION'S REPOSITORY ONLY, whatever the pane shows** (letibot
+ `031239d`, R92.5): the queues are DAEMON-level, so one snapshot holds every repository's rows, and an
+ unscoped edge counted another tree's red target as this session's emergency.
+
+ The answer is the SAME RESOLVER the git field uses (`%project-dir`, with its follow-the-work case),
+ so the two cannot disagree about which repository this session is in. Both sides are trimmed of a
+ trailing slash: a directory name has one and the wire's `repository` does not."
+  (let ((dir (and head (%project-dir (getf (session-wiring (head-session head)) :workspace) head))))
+    (and dir (string-right-trim "/" (namestring dir)))))
+
+(defun %queue-row-here-p (row scope)
+  "Is ROW's repository SCOPE's? **TRUE when SCOPE is NIL** — a head that cannot name its repository
+ counts everything rather than nothing, which is every head with no workspace, and the behaviour this
+ had before it was scoped."
+  (or (null scope)
+      (equal scope (string-right-trim "/" (or (getf row :repository) "")))))
+
 (defun queue-standings (head)
   "The queues' standings for the edge and the tab strip — `(:review N :merging N :parked N :red N)`,
 the reference's `Standings` (`ui/panes/queue.rs:queue_standings`): in review (`waiting`/`reviewing`),
@@ -636,17 +656,31 @@ Read from the snapshot when there is one; a head holding rows with no snapshot (
 daemon older than 43) is counted by the v23 words it has — `waiting`, `taken`, and the four parked
 states — so the edge never goes blank over rows it can see."
   (if *queues*
-      (let ((review 0) (merging 0) (parked 0))
+      (let ((review 0) (merging 0) (parked 0)
+            ;; **THE SCOPE THE EDGE COUNTS IN** (letibot `031239d`): this session's repository, from
+            ;; the same resolver the git field uses. NIL means *cannot say*, and counts everything.
+            (scope (%queue-scope head)))
         (dolist (r (getf *queues* :reviews))
           (let ((s (or (getf r :state) "")))
-            (cond ((member s '("waiting" "reviewing") :test #'string=) (incf review))
-                  ((member s '("blocked" "rejected" "cannot_decide") :test #'string=) (incf parked)))))
+            (when (%queue-row-here-p r scope)
+              (cond ((member s '("waiting" "reviewing") :test #'string=) (incf review))
+                    ((member s '("blocked" "rejected" "cannot_decide") :test #'string=) (incf parked))))))
         (dolist (m (getf *queues* :merges))
           (let ((s (or (getf m :state) "")))
-            (cond ((member s '("queued" "gating") :test #'string=) (incf merging))
-                  ((member s '("blocked" "failed" "timed_out" "conflict") :test #'string=) (incf parked)))))
+            (when (%queue-row-here-p m scope)
+              (cond ((member s '("queued" "gating") :test #'string=) (incf merging))
+                    ((member s '("blocked" "failed" "timed_out" "conflict") :test #'string=) (incf parked))))))
         (list :review review :merging merging :parked parked
-              :red (count "red" (getf *queues* :targets) :key (lambda (tg) (getf tg :state)) :test #'equal)))
+              :red (count-if (lambda (tg) (and (%queue-row-here-p tg scope)
+                                               (equal "red" (getf tg :state))))
+                             (getf *queues* :targets))
+              ;; **AND THE TARGETS A PERSON HAS NOT JUDGED** (letibot `031239d`): `timed_out` and
+              ;; `blocked` are the states where the queue waits on a HUMAN, so they belong on the edge
+              ;; as alarms rather than in a pane nobody has open.
+              :unjudged (count-if (lambda (tg) (and (%queue-row-here-p tg scope)
+                                                    (member (getf tg :state) '("timed_out" "blocked")
+                                                            :test #'string=)))
+                                  (getf *queues* :targets))))
       (let ((entries (head-merge-queue head)))
         (list :review (count-if (lambda (e) (member (getf e :state) '("waiting" "reviewing") :test #'string-equal)) entries)
               :merging (count-if (lambda (e) (member (getf e :state) '("taken" "queued" "gating") :test #'string-equal)) entries)
@@ -672,10 +706,16 @@ stand, **all three counts are drawn, zeroes included**, because a count that van
 though the queue had forgotten it."
   (let* ((s (queue-standings head))
          (review (getf s :review)) (merging (getf s :merging)) (parked (getf s :parked))
-         (red (or (getf s :red) 0)))
-    (when (plusp (+ review merging parked red))
-      (format nil "~d in review · ~d being merged · ~d parked~a" review merging parked
-              (if (plusp red) (format nil " · ~d RED target~:p" red) "")))))
+         (red (or (getf s :red) 0))
+         (unjudged (or (getf s :unjudged) 0)))
+    (when (plusp (+ review merging parked red unjudged))
+      (format nil "~d in review · ~d being merged · ~d parked~a~a" review merging parked
+              (if (plusp red) (format nil " · ~d RED target~:p" red) "")
+              ;; **AND THE TARGETS NOBODY HAS JUDGED** (letibot `031239d`): a `timed_out` or `blocked`
+              ;; target is one where the queue is waiting on a PERSON, so it is the second thing this
+              ;; row says whenever it is not zero — a count, not an alarm, was the reference's whole
+              ;; complaint about the pane being the only place it showed.
+              (if (plusp unjudged) (format nil " · ⚠ ~d target~:p unjudged" unjudged) "")))))
 
 (defun jobs-lines (head cols)
   "The background jobs, the reference's `jobs_lines` (app.rs:6039):

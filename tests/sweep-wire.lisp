@@ -457,3 +457,36 @@ the enum (`crates/transcript/src/lib.rs`) and check each payload variant is eith
     (is (= 1 (count "list_merge_queue" (%sent wire) :key #'frame-name :test #'string=))
         "**seating asks for the queue standing** — the edge is drawn on every head, not only at the pane")
     (%sw-reset-queues)))
+
+(def-test the-edge-counts-this-sessions-repository-only (:suite leticl)
+  "**THE QUEUES ARE DAEMON-LEVEL, SO ONE SNAPSHOT HOLDS EVERY REPOSITORY'S ROWS** (letibot `031239d`,
+  R92.5) — and an edge that counted them all called another tree's red target this session's
+  emergency. It counts this session's repository only, from **the same resolver the git field uses**, so
+  the two cannot disagree about which repository the session is in — and it names the targets a person
+  has not judged (`timed_out`/`blocked`), which is the count that is an alarm rather than a statistic."
+  (%sw-reset-queues)
+  (let* ((h (%make-head))
+         (root (uiop:ensure-directory-pathname (format nil "/tmp/leticl-edge-~a/" (random 1000000))))
+         (here (string-right-trim "/" (namestring root))))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist (merge-pathnames ".git/" root))
+           (setf (getf (session-wiring (head-session h)) :workspace) (namestring root))
+           ;; a snapshot naming two repositories; only one of them is this session's
+           (setf leticl::*queues*
+                 (list :reviews (list (list :id "mine" :repository here :state "waiting")
+                                      (list :id "theirs" :repository "/w/other" :state "waiting"))
+                       :merges nil
+                       :targets (list (list :repository here :state "red")
+                                      (list :repository here :state "timed_out")
+                                      (list :repository "/w/other" :state "red"))))
+           (let ((s (leticl::queue-standings h)))
+             (is (= 1 (getf s :review))
+                 "**only THIS repository's review is counted** — the other is another tree's")
+             (is (= 1 (getf s :red)) "and only its RED target")
+             (is (= 1 (getf s :unjudged))
+                 "**and the target nobody has judged is counted as an alarm**"))
+           (is (search "unjudged" (leticl::merge-standings-line h))
+               "which the EDGE says — the pane is not the only place it shows"))
+      (ignore-errors (uiop:delete-directory-tree root :validate t)))
+    (%sw-reset-queues)))
