@@ -691,8 +691,15 @@ one thing this head must not need."
                              (:tab (string #\tab))
                              (t (string (code-char 127)))))
               t)
+             ;; **A PICKER'S ENTER BELONGS TO THE COMPOSER, AND THAT IS NOT A BUG** (letibot `7a493c3`,
+             ;; R90.17 — and this arm is why the sweep's batch A read it as one). `nil` means *not
+             ;; mine*, and the key falls through to the composer's own Enter, which runs a COMMAND
+             ;; (`/new notes` under the picker) or reads a ROW NUMBER. **The comment above used to say
+             ;; the fall-through would send the line to the MODEL**, which is the defect this arm was
+             ;; said to exist for — and the five tests that failed the moment I believed it are the
+             ;; measurement: the line was a command, it carried a title, and a typed number switched.
              ((and (eq mode :picker) (not empty)) nil)
-                 (t (%pane-enter head) t)))
+             (t (%pane-enter head) t)))
           ;; **SPACE MARKS A TODO, AND IT OWNS THE KEY WHILE THE PANE IS UP** — the same rule delete
           ;; and enter keep beside it. The operator asked for the key by naming the convention (*"space
           ;; for marking todo?"*), and it is free in this pane: a space was previously a `:char` that
