@@ -14277,6 +14277,32 @@ test/random, and it is one of three.~%options offered:~%- in scope~%- out of sco
     (is (null leticl::*repo-card-open*)
         "and neither does one on another ROW: the field is on the header's row and nowhere else")))
 
+(def-test the-picker-marks-the-session-that-waits-on-you (:suite leticl)
+  "**THE PICKER CAN ONLY KNOW ITS OWN, AND THAT IS THE USEFUL HALF.** `SessionBrief`
+  (`registry.rs:299`) — the row a picker is handed — carries `session_id`, `title`, `created_ms`,
+  `status`, `wiring`, `live`, `stored_items`, `parent_session_id`, `context_tokens`, `context_cached`,
+  and **nothing about a session's board**; `SessionStatus` (`hub.rs:564`) carries `seq`, `items`, `heads`,
+  `running`, `model`, `last_ms` and nothing either. So no head can know which OTHER sessions wait on the
+  reader — but **the one it is attached to**, it knows exactly, and a reader about to switch away from a
+  question waiting on them is who most needs to see it."
+  (let* ((h (%on-head :cols 120 :rows 30))
+         (s (head-session h))
+         (leticl::*operator-todos* nil)
+         (leticl::*payload-head* h)
+         (me (list :session-id (session-session-id s))))
+    (is (null (leticl::picker-waiting-p me))
+        "a session whose board asks nothing is not marked")
+    (setf leticl::*operator-todos*
+          (list (list :id "t1" :content "the work" :status "open"
+                      :needs (list (list :kind "operator" :question "which way?")))))
+    (is (not (null (leticl::picker-waiting-p me)))
+        "**the session this head is IN is marked when its board asks the operator** — the switch-away case")
+    ;; --- **AND NO OTHER SESSION CAN BE**, which is the measurement and not a shrug
+    (is (null (leticl::picker-waiting-p (list :session-id "s-somebody-else")))
+        "**and another session cannot be marked**: the daemon's row for one carries no board, so this is
+  the only half a head can do — the other half needs a field on `SessionBrief` and the publish behind it,
+  which is letibot's tree")))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of

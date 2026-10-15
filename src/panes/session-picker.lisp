@@ -54,6 +54,19 @@ however many children they have."
         (push b out)))
     (nreverse out)))
 
+(defun picker-waiting-p (s)
+  "Is S the session THIS HEAD is attached to, with a board that asks the operator?
+
+ **ONLY THE ATTACHED ONE CAN BE ANSWERED**, which is the whole of this function's shape and the reason
+ it is not a field on the row: `SessionBrief` (`registry.rs:299`) carries `session_id`, `title`,
+ `created_ms`, `status`, `wiring`, `live`, `stored_items`, `parent_session_id`, `context_tokens`,
+ `context_cached` — and **nothing about a session's board**, so a head cannot know which OTHER sessions
+ wait on the reader. What it can know is its own, and marking that one is the useful half: a reader about
+ to switch away from a question that is waiting on them is exactly who needs to see it."
+  (and *payload-head*
+       (equal (getf s :session-id) (session-session-id (head-session *payload-head*)))
+       (waiting-on-you-line *payload-head* 200)))
+
 (defun picker-lines (session sel cols)
   "The session picker, row for row the reference's `picker_lines`:
 
@@ -163,8 +176,10 @@ Second value is the cursor's LINE: two lines per session, after a two-line heade
                                                  (picked '(:reverse t))
                                                  (here '(:bold t))
                                                  (t nil)))))
-                    (right (list (cons (format nil "~{~a~^ · ~}" facts)
-                                       (if running '(:fg :yellow) '(:dim t))))))
+                    (right (list (cons (format nil "~@[waiting on you · ~]~{~a~^ · ~}"
+                                                (picker-waiting-p s)
+                                                facts)
+                                       (if (or running (picker-waiting-p s)) '(:fg :yellow) '(:dim t))))))
                (push (split-row left right w) lines)
                (push (list (cons (if (plusp (length workspace))
                                      (format nil "      ~a  ~a" (getf s :session-id)
