@@ -14039,8 +14039,13 @@ test/random, and it is one of three.~%options offered:~%- in scope~%- out of sco
     (is (null (leticl::%marker-lit-col 6 9))
         "**a row no marker rides lights nothing** — row 6 is line 5, past the item's own 0..4")
     ;; --- the restyle itself
+    ;;
+    ;; **COLUMN 10, WHICH IS WHERE THE MARKER ACTUALLY BEGINS** — `"a sentence"` is ten wide. This
+    ;; assertion read 11 for a day and passed, **and that was the bug**: the walk said the marker started
+    ;; at 13 (`then (+ at (width seg))` adding a segment's width before judging it), so a column inside
+    ;; the marker lit it by accident. A fixture can be the only measurement that sees an off-by-a-segment.
     (let* ((line (list (cons "a sentence" nil) (cons " [1 tool call]" (list :dim t))))
-           (lit (leticl::%lit-marker-tail line 11)))
+           (lit (leticl::%lit-marker-tail line 10)))
       (is (equal nil (cdr (first lit))) "**the sentence keeps its own style**")
       (is (equal (list :reverse t :dim t) (cdr (second lit)))
           "**and the marker is REVERSED, carrying what it already had**: a light that dropped the
@@ -14238,14 +14243,37 @@ test/random, and it is one of three.~%options offered:~%- in scope~%- out of sco
   (is (null leticl::*hidden-run-kind*)
       "**and closing CLEARS it**: a `:calls` left behind would narrow the NEXT run the reader opened,
   which is a fold they never asked for")
-  ;; --- **AND THE LIGHT IS THE WHOLE MARKER**, which is 7eab116's smaller half; the HIT above is the one
-  ;; that is exact. `x` is accepted so the call site does not change when the clause grain lands.
-  (let ((line (list (cons "prose " nil)
-                    (cons "[7 tool calls, 3 thinking lines]" (list :dim t)))))
-    (is (equal (list :reverse t :dim t) (cdr (second (leticl::%lit-marker-tail line 6))))
+  ;; --- **AND THE LIGHT, WITH THE WALK FIXED**: everything from the marker's column on, and not the
+  ;; sentence before it.
+  (let ((two (list (cons "prose " nil)
+                   (cons "[7 tool calls, 3 thinking lines]" (list :dim t))))
+        (one (list (cons "prose " nil)
+                   (cons "[7 tool calls" (list :dim t))
+                   (cons ", " nil)
+                   (cons "3 thinking lines]" (list :dim t)))))
+    (is (equal (list :reverse t :dim t) (cdr (second (leticl::%lit-marker-tail two 6))))
         "the marker lights, carrying the style it already had")
-    (is (null (cdr (first (leticl::%lit-marker-tail line 6))))
-        "and the sentence it was appended to does not — the seat's column is what tells them apart")))
+    (is (null (cdr (first (leticl::%lit-marker-tail two 6))))
+        "**and the sentence it was appended to does not** — the seat's column tells them apart")
+    ;; **AND A COLUMN INSIDE THE MARKER LIGHTS IT** — with the marker's OWN shape, which is small: the
+    ;; counts are built one number and one word at a time (`%hidden-run-counts-segs`), so a segment start
+    ;; and a column are never far apart. A thirteen-wide segment would be a fixture this screen never draws,
+    ;; and asking a start-anchored walk to light the middle of one is asking the wrong question.
+    (let ((fine (list (cons "prose " nil)
+                      (cons "[" (list :dim t))
+                      (cons "7" (list :dim t))
+                      (cons " tool calls" (list :dim t)))))
+      (is (equal (list :reverse t :dim t) (cdr (third (leticl::%lit-marker-tail fine 7))))
+          "**a column inside the marker lights the segment it falls in** — the old walk put `7` at 19"))
+    ;; and the same holds however the marker is split into segments, which is what the walk is for
+    (is (equal (list :reverse t :dim t)
+               (cdr (second (leticl::%lit-marker-tail one 6))))
+        "a marker split across segments lights by its text, not by its first segment")
+    (is (equal (list :reverse t :dim t)
+               (cdr (fourth (leticl::%lit-marker-tail one 6))))
+        "and every segment of it does")
+    (is (null (cdr (first (leticl::%lit-marker-tail one 6))))
+        "while the sentence stays plain in that shape too")))
 
 (def-test a-click-on-the-git-field-opens-the-repo-card (:suite leticl)
   "**`e207349`'s own *or***: *a click on the field, or `/repo`, opens a card listing following the work

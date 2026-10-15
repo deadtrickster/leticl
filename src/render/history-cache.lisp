@@ -756,26 +756,26 @@ thirty rows appended, and the view jumped to `row-62`."
     (and seat (cdr seat))))
 
 (defun %lit-marker-tail (line col &optional x)
-  "LINE with the marker's REVERSED — the light the bar's own keys already use.
+  "LINE with the marker REVERSED — the light the bar's own keys already use.
 
- **REVERSED RATHER THAN COLOURED**, which is the same choice the hint bar's hover makes and for the same
- reason: it reads as *the pointer is here* in every palette. The column is the seat's, so what lights is
- the marker and never the sentence it was appended to.
+ **REVERSED RATHER THAN COLOURED**, the same choice the hint bar's hover makes and for the same reason: it
+ reads as *the pointer is here* in every palette. The column is the seat's, so what lights is the marker
+ and never the sentence it was appended to.
 
- **THE WHOLE MARKER, THOUGH `7eab116` LIGHTS THE CLAUSE ALONE.** The per-clause boundary was written and
- it fought its own test for several runs — the two clauses agreeing about the comma in the drawn line and
- disagreeing in the assertion — and the HIT is what this row is about: a press now opens the run on the
- clause it was aimed at, and that is exact. A light that shows one clause when the whole marker is
- equally pressable is the smaller half of the same idea, and it is filed rather than left half-working.
-
- X is accepted and unused so the call site does not change when it lands."
-  (declare (ignore x))
+ **THE WHOLE MARKER, AND ONE GRAIN SHORT OF `7eab116`.** The clause boundary is written elsewhere in this
+ file (`marker-clause-at`, for the press) and it does not light here: five runs went into a boundary whose
+ two clauses lit one segment too far, and the honest thing is to stop with the half that is exact rather
+ than ship one that is nearly."
   (loop for seg in line
-        for at = 0 then (+ at (string-width (car seg)))
+        ;; **`next`, AND NOT `then (+ at (string-width (car seg)))`.** That form reads the CURRENT binding,
+        ;; so it adds THIS segment's width before this segment is judged: measured, the running start came
+        ;; out `0 13 15 32` where it should be `0 6 19 21`. **It hid for a day behind its only caller**: the
+        ;; light's column is the marker's start, and a light that begins too far right looks perfect until
+        ;; something sits to its left. The test's own fixture had it — an assertion reading column 11 over a
+        ;; marker starting at 10, which passed only because the walk said 13.
+        for at = 0 then next
+        for next = (+ at (string-width (car seg)))
         collect (if (>= at col)
-                    ;; **A SEGMENT IS `(cons text style)` — THE STYLE IS THE `cdr`.** `(second seg)` is the
-                    ;; style's FIRST KEYWORD, so building from it dropped every attribute the line
-                    ;; already carried and would have read as a malformed plist.
                     (cons (car seg) (cons :reverse (cons t (cdr seg))))
                     seg)))
 
