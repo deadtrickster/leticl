@@ -14247,6 +14247,36 @@ test/random, and it is one of three.~%options offered:~%- in scope~%- out of sco
     (is (null (cdr (first (leticl::%lit-marker-tail line 6))))
         "and the sentence it was appended to does not — the seat's column is what tells them apart")))
 
+(def-test a-click-on-the-git-field-opens-the-repo-card (:suite leticl)
+  "**`e207349`'s own *or***: *a click on the field, or `/repo`, opens a card listing following the work
+  and each repository with its branch*. The verb is in (`5c09324`); this is the other half.
+
+  **It asks the PAINT where the field is** (`*git-field-span*`) rather than re-deriving a layout that three
+  things move — the title's width, what the workspace shortened to, how much of the tail fitted — which is
+  the rule `*card-top*` records one surface over: a hit region the click cannot compute is one the paint
+  must record."
+  (let ((h (%on-head :cols 120 :rows 30))
+        (leticl::*repo-card-open* nil)
+        (leticl::*git-field-span* nil))
+    ;; --- **A FRAME THAT DREW NO FIELD LEAVES ROW 0 ALONE**: a short terminal draws no header at all, and
+    ;; row 0 there is the transcript — a span left over from the last tall frame would make it a button
+    ;; nobody can see.
+    (leticl::%click h (list :type :press :y 0 :x 10))
+    (is (not leticl::*repo-card-open*) "**a frame that painted no field has no button on row 0**")
+    ;; --- and with one painted
+    (setf leticl::*git-field-span* (cons 20 40))
+    (leticl::%click h (list :type :press :y 0 :x 30))
+    (is (not (null leticl::*repo-card-open*))
+        "**a press inside the field opens the `/repo` card** — the or's second half")
+    ;; --- and the span is what decides, not the row alone
+    (setf leticl::*repo-card-open* nil)
+    (leticl::%click h (list :type :press :y 0 :x 10))
+    (is (null leticl::*repo-card-open*)
+        "**and a press on row 0 OUTSIDE the field does not** — the title beside it is not the field")
+    (leticl::%click h (list :type :press :y 3 :x 30))
+    (is (null leticl::*repo-card-open*)
+        "and neither does one on another ROW: the field is on the header's row and nowhere else")))
+
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest
   one, opens rano on that file\"*), and **NOT `ctrl-e`**, which this head's composer owns as *end of

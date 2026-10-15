@@ -498,6 +498,18 @@ the paint reads whatever the last one left."
         (unless (equal dir *git-dir*) (setf *git-dir* dir)))
       (git-start))))
 
+(defvar *git-field-span* nil
+  "The COLUMNS the header's git field occupies on row 0 — `(START . END)` — or NIL.
+
+ **THE PAINT RECORDS IT BECAUSE THE CLICK CANNOT COMPUTE IT** (letibot `e207349`: *a click on the field,
+ or `/repo`*). The field's place depends on the title's width, what the workspace was shortened to and how
+ much of the tail fits — three things only the frame knows, and a click that re-derived them would be a
+ second answer to *where the field is*, which is the drift this tree keeps naming. The same shape and the
+ same reason as `*card-top*`.
+
+ **NIL when the frame drew none**: a header suppressed on a short terminal, or a field with no room. A
+ state the render never produced is a screen the reader never saw.")
+
 (defun top-border (head cols)
   "The header: what this session IS on the left, what it is COSTING on the right.
 
@@ -595,6 +607,10 @@ its end, and a token count is not recoverable from anywhere else on the screen."
                                (%project-dir (getf (session-wiring s) :workspace) head))
                        (%git-fit pieces room))))
         (when fit
+          ;; **AND WHERE IT LANDED** — see `*git-field-span*`. The `2` is the `" ("` the field is wrapped
+          ;; in and the `1` is its closing paren, so the span is everything a reader would call the
+          ;; field; the row is 0, which the click knows already (the header is the only row at 0).
+          (setf *git-field-span* (cons left-cols (+ left-cols 2 (%segs-width fit) 1)))
           (setf left (append left (list (cons " (" '(:dim t))))
                 left (append left fit)
                 left (append left (list (cons ")" '(:dim t)))))

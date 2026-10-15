@@ -1626,6 +1626,11 @@ scrolls the transcript by a row every keystroke.
              (header-p (>= rows 6))
              (body-top (if header-p 1 0))
              (body-bottom (max body-top chrome-top)))
+        ;; **AND THE GIT FIELD'S SPAN IS CLEARED WITH THE FRAME** (letibot `e207349`): a click on row 0
+        ;; opens the `/repo` card only when the paint PUT a field there. A five-row frame draws no header
+        ;; at all and row 0 is the transcript — a span left over from the last tall frame would make that
+        ;; row a button nobody can see, which is the defect `*card-top*` records one surface over.
+        (setf *git-field-span* nil)
         (when header-p
           (put-segments s 0 gutter (top-border head cols)))
         (cond

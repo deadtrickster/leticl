@@ -289,9 +289,21 @@ see, which is why the pane records its room and offset from the last paint rathe
 than from the click."
   (let ((row (getf key :y)))
     (cond
-      ;; **THE COMPOSER EDGE'S COUNT LABELS ARE BUTTONS** (`9ac7dad`), and they are checked FIRST
-      ;; because they are not in a list and not a pane: a click on `2 subagents running` opens the
-      ;; subagents pane, and on `1 job running` the jobs pane. The targets come from the PAINTED
+      ;; **AND THE HEADER'S GIT FIELD** (letibot `e207349`: *a click on the field, or `/repo`*) — the
+      ;; other half of the verb. It asks the PAINT where the field is (`*git-field-span*`) rather than
+      ;; re-deriving a layout three things move: the title's width, what the workspace shortened to, and
+      ;; how much of the tail fitted. Row 0 is the header's own row, and the span is NIL on any frame
+      ;; that drew none — which is what keeps a short terminal's row 0 from being a button.
+      ((and (eql row 0) *git-field-span*
+            (>= (getf key :x) (car *git-field-span*))
+            (< (getf key :x) (cdr *git-field-span*)))
+       (setf *repo-card-open* t (head-dirty head) t)
+       t)
+      ;; **THE COMPOSER EDGE'S COUNT LABELS ARE BUTTONS** (`9ac7dad`), and they are checked before the
+      ;; lists because they are not in a list and not a pane: a click on `2 subagents running` opens the
+      ;; subagents pane, and on `1 job running` the jobs pane. **THE HEADER ABOVE IS CHECKED FIRST**, and
+      ;; the two cannot collide — row 0 is the header and the labels sit on the composer's edge. The
+      ;; targets come from the PAINTED
       ;; row (`%composer-edge-buttons`), so this cannot disagree with what the reader sees.
       ((%composer-edge-click head key) t)
       ;; **AND THE HINT BAR IS A LIST OF BUTTONS TOO** (letibot `5296c6e`) — read from the cells, so a bar
