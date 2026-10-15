@@ -13976,20 +13976,20 @@ test/random, and it is one of three.~%options offered:~%- in scope~%- out of sco
     ;; the cache's SIXTH element is the seats — the walk's own row→run map, each carrying the column
     ;; the counts begin at
     (setf leticl::*hist-cache* (list nil nil nil nil nil (list (cons "i7" (cons "leticl-run-i5" 40)))))
-    (is (leticl::marker-run-open (list :item-id "i7" :kind "tool_result") 44)
+    (is (leticl::marker-run-open (list :item-id "i7" :kind "tool_result") h 44)
         "**a marker's row opens ITS run** — the seat the walk recorded")
     (is (equal "leticl-run-i5" leticl::*hidden-run-open*)
         "and it is the run the seat named, not the newest")
     ;; --- **AND A PRESS IN THE PROSE ABOVE THE COUNTS IS NOT THE MARKER'S**
     (setf leticl::*hidden-run-open* nil)
-    (is (null (leticl::marker-run-open (list :item-id "i7" :kind "tool_result") 12))
+    (is (null (leticl::marker-run-open (list :item-id "i7" :kind "tool_result") h 12))
         "**a press at column 12 is in the sentence**, so it is the row's press and opens nothing")
     (is (null leticl::*hidden-run-open*) "and no run was opened by reading the prose")
-    (is (leticl::marker-run-open (list :item-id "i7" :kind "tool_result") 40)
+    (is (leticl::marker-run-open (list :item-id "i7" :kind "tool_result") h 40)
         "while the counts' own first column is the marker's — the boundary is the seat's")
     ;; --- and a row with no marker is not a hit region
     (setf leticl::*hidden-run-open* nil)
-    (is (null (leticl::marker-run-open (list :item-id "i9" :kind "assistant") 44))
+    (is (null (leticl::marker-run-open (list :item-id "i9" :kind "assistant") h 44))
         "**a row with no seat opens nothing** — the map is the whole test, not a guess at the row")
     (is (null leticl::*hidden-run-open*) "and nothing was opened")))
 
@@ -14216,6 +14216,36 @@ test/random, and it is one of three.~%options offered:~%- in scope~%- out of sco
     (is (null (leticl::%reopen-decision h))
         "**a refusal with no answer in flight reopens nothing** — which is every other refusal")
     (is (equal (list "q0") leticl::*decisions-away*) "and leaves the away list alone")))
+
+(def-test a-run-opens-on-the-clause-that-was-pressed (:suite leticl)
+  "**THE MARKER PRINTS TWO COUNTS AND A READER PRESSES ONE OF THEM** (letibot `7eab116`): *the calls
+  clause opens that run with its tool rows, the thinking clause opens it with its reasoning unfolded, each
+  without the other*. The marker already draws them as two clauses joined by `, ` — this is the run
+  honouring which one was asked for."
+  ;; --- the two kinds, told apart by the count's own definition
+  (let ((work (list :item-id "r1" :kind "reasoning" :ts 1))
+        (call (list :item-id "r2" :kind "tool_result" :ts 2)))
+    (is (leticl::%run-item-kind-p work :thinking) "**a reasoning row belongs to the THINKING clause**")
+    (is (not (leticl::%run-item-kind-p work :calls)) "and not to the calls'")
+    (is (leticl::%run-item-kind-p call :calls) "**and a tool row to the CALLS'**")
+    (is (not (leticl::%run-item-kind-p call :thinking)) "and not to the thinking's")
+    (is (leticl::%run-item-kind-p work nil)
+        "**and no kind at all is the WHOLE run** — which is what every caller before this asked for"))
+  ;; --- and the kind belongs to the OPEN state, so closing clears it
+  (leticl::%set-hidden-run-open "leticl-run-x" :calls)
+  (is (eq :calls leticl::*hidden-run-kind*) "**the kind rides the run that was opened**")
+  (leticl::%set-hidden-run-open nil)
+  (is (null leticl::*hidden-run-kind*)
+      "**and closing CLEARS it**: a `:calls` left behind would narrow the NEXT run the reader opened,
+  which is a fold they never asked for")
+  ;; --- **AND THE LIGHT IS THE WHOLE MARKER**, which is 7eab116's smaller half; the HIT above is the one
+  ;; that is exact. `x` is accepted so the call site does not change when the clause grain lands.
+  (let ((line (list (cons "prose " nil)
+                    (cons "[7 tool calls, 3 thinking lines]" (list :dim t)))))
+    (is (equal (list :reverse t :dim t) (cdr (second (leticl::%lit-marker-tail line 6))))
+        "the marker lights, carrying the style it already had")
+    (is (null (cdr (first (leticl::%lit-marker-tail line 6))))
+        "and the sentence it was appended to does not — the seat's column is what tells them apart")))
 
 (def-test ctrl-bracket-opens-rano-on-the-newest-changed-file (:suite leticl)
   "**`ctrl-]` is the reference's key for the editor** (`app/editor.rs`: *\"…or `ctrl-]` for the newest

@@ -665,7 +665,27 @@ line, and that is a line that was already full of the sentence."
         ;; counts is the defect this value exists to end.
         (if (> (length out) (length il)) (values il nil) (values out t))))))
 
-(defun hidden-run-lines (items cols)
+(defvar *hidden-run-kind* nil
+  "Which KIND of row an OPEN run shows — NIL for all of them, `:calls` or `:thinking` for one.
+
+ **THE MARKER PRINTS TWO COUNTS, AND A READER PRESSES ONE OF THEM** (letibot `7eab116`): *the calls
+ clause opens that run with its tool rows, the thinking clause opens it with its reasoning unfolded, each
+ without the other*. So the open run has a kind, and this is it — a defvar, and cleared whenever the run
+ is closed, because a kind outliving its run would narrow the NEXT one.")
+
+(defun %run-item-kind-p (item kind)
+  "Is ITEM one of KIND's rows? — the two counts the marker prints, told apart.
+
+ **`:calls` IS EVERY ROW THAT IS NOT REASONING**, which is the count's own definition rather than a list:
+ the work a run hides is the model's working-out and the calls it made, and `tool calls` counts the
+ second. A list of kinds here would be a second place for *what a call row is* to be written, and the
+ marker's number is what has to agree with the rows drawn under it."
+  (case kind
+    (:thinking (equal (or (item-kind item) "") "reasoning"))
+    (:calls (not (equal (or (item-kind item) "") "reasoning")))
+    (t t)))
+
+(defun hidden-run-lines (items cols &optional kind)
   "The ROWS a run stands for, for when it is OPEN — the rung lifted for these rows and no others.
 
 **Opening is not a second rendering.** What this rung hides is exactly what `:terse` draws, so
@@ -677,15 +697,36 @@ make. The seam under them says how to fold it back.
 sentence that points at it (`%marker-onto-last-line`), because a marker drawn as its own row is
 exactly what the operator's final reading rejects. The one exception is a run with no visible row
 older than it, which has no sentence to continue and stands on its own line (`%history-until`)."
-  (let ((faint (role-look :faint)))
+  (let ((faint (role-look :faint))
+        ;; **AND ONE KIND MAY BE ASKED FOR ON ITS OWN** (letibot `7eab116`): see `%run-item-kind-p`. NIL
+        ;; is the whole run, which is what every caller before this asked for.
+        (shown (if kind (remove-if-not (lambda (i) (%run-item-kind-p i kind)) items) items)))
     (append
      (let ((*verbosity* :terse))
-       (loop for item in items
+       (loop for item in shown
              append (item-lines item cols (head-prefs *hidden-run-head*))))
-     (list (list (cons (format nil "  … /t folds this back into ~d line~:p" (length items))
+     ;; **THE SEAM COUNTS WHAT WAS DRAWN**, not the whole run: a folded kind that said *12 lines* over
+     ;; four rows would be the marker's own number contradicting the screen under it.
+     (list (list (cons (format nil "  … /t folds this back into ~d line~:p" (length shown))
                        faint))))))
 
-(defun marker-run-open (item &optional x)
+(defun marker-clause-at (item head at x)
+  "Which of the marker's TWO CLAUSES column X is on — `:calls` or `:thinking` — or NIL.
+
+ **READ OFF THE LINE THE READER SEES**, not off the counts recomputed: `%hidden-run-counts-segs` puts
+ `, ` BETWEEN the two clauses, so the first comma after the marker's own column is the boundary between
+ them — and asking the drawn text is the same rule this file keeps for the seat (a second reading of *what
+ is on the screen* is how a light and a press come to disagree).
+
+ NIL when X is before the marker at all, which the caller checks too: this answers the finer question."
+  (let* ((cols (head-cols head))
+         (line (car (last (item-lines item cols (head-prefs head)))))
+         (said (format nil "~{~a~}" (mapcar (lambda (s) (if (consp s) (car s) s)) line)))
+         (comma (and (> (length said) at) (position #\, said :start at))))
+    (when comma
+      (if (> x comma) :thinking :calls))))
+
+(defun marker-run-open (item head &optional x)
   "Open the run whose marker rides ITEM's line — T when there was one.
 
  **THE SEAT IS COLLECTED BY THE WALK THAT DRAWS THE MARKER** (see `%viewport-lines`' `seats`), so this
@@ -705,10 +746,10 @@ older than it, which has no sentence to continue and stands on its own line (`%h
          (run (and seat (cadr seat)))
          (at (and seat (cddr seat))))
     (when (and run (or (null x) (>= x at)))
-      (%set-hidden-run-open run)
+      (%set-hidden-run-open run (and x (marker-clause-at item head at x)))
       t)))
 
-(defun %set-hidden-run-open (id)
+(defun %set-hidden-run-open (id &optional kind)
   "The ONE writer of `*hidden-run-open*`, and it invalidates the rendered history.
 
 **The same defect the payload window has, and the same fix**: whether a run is open changes what
@@ -716,7 +757,11 @@ those rows RENDER TO without moving the generation, the width or the items vecto
 without the bump the cache serves the previous state back and the key looks dead. This tree has now
 found that at six surfaces; the note here is that it is the price of a cached renderer, and the
 place to pay it is the writer."
-  (setf *hidden-run-open* id)
+  (setf *hidden-run-open* id
+        ;; **AND THE KIND IS PART OF WHAT IS OPEN** (letibot `7eab116`), so closing clears it: a `:calls`
+        ;; left behind would narrow the NEXT run the reader opened, and this writer is the one place that
+        ;; knows the difference between *nothing is open* and *a run is open with a kind*.
+        *hidden-run-kind* (and id kind))
   (incf *hist-generation*))
 
 ;;; ------------------- R37's OPEN QUESTION, AS A SWITCH: one prose or two messages? ----- ;;;

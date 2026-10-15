@@ -564,7 +564,7 @@ thirty rows appended, and the view jumped to `row-62`."
                       ;; filled. They are real lines now, and the anchor may name them.
                       (when (and run open)
                         (let ((rb (length lines)))
-                          (setf lines (append (hidden-run-lines run cols) lines))
+                          (setf lines (append (hidden-run-lines run cols *hidden-run-kind*) lines))
                           (dolist (it run)
                             (push (cons (getf it :item-id) (cons rb (length lines))) raw))))
                       ;; **a run that cannot glue stands on its own line, WITH THE BLANK
@@ -755,15 +755,24 @@ thirty rows appended, and the view jumped to `row-62`."
                     (assoc (first bound) (sixth *hist-cache*) :test #'string=))))
     (and seat (cdr seat))))
 
-(defun %lit-marker-tail (line col)
-  "LINE with everything from COL on REVERSED — the light the bar's own keys already use.
+(defun %lit-marker-tail (line col &optional x)
+  "LINE with the marker's REVERSED — the light the bar's own keys already use.
 
  **REVERSED RATHER THAN COLOURED**, which is the same choice the hint bar's hover makes and for the same
  reason: it reads as *the pointer is here* in every palette. The column is the seat's, so what lights is
- the marker and never the sentence it was appended to."
+ the marker and never the sentence it was appended to.
+
+ **THE WHOLE MARKER, THOUGH `7eab116` LIGHTS THE CLAUSE ALONE.** The per-clause boundary was written and
+ it fought its own test for several runs — the two clauses agreeing about the comma in the drawn line and
+ disagreeing in the assertion — and the HIT is what this row is about: a press now opens the run on the
+ clause it was aimed at, and that is exact. A light that shows one clause when the whole marker is
+ equally pressable is the smaller half of the same idea, and it is filed rather than left half-working.
+
+ X is accepted and unused so the call site does not change when it lands."
+  (declare (ignore x))
   (loop for seg in line
-        for before = 0 then (+ before (string-width (car seg)))
-        collect (if (>= before col)
+        for at = 0 then (+ at (string-width (car seg)))
+        collect (if (>= at col)
                     ;; **A SEGMENT IS `(cons text style)` — THE STYLE IS THE `cdr`.** `(second seg)` is the
                     ;; style's FIRST KEYWORD, so building from it dropped every attribute the line
                     ;; already carried and would have read as a malformed plist.
@@ -1705,7 +1714,8 @@ scrolls the transcript by a row every keystroke.
                    ;; thing a press acts on. **`r` is the screen row**, which is why this is here and not
                    ;; in the walk: the walk builds lines and only the painter knows where they land.
                    (let ((col (and *pointer-x* (%marker-lit-col r *pointer-x*))))
-                     (put-segments s r gutter (if col (%lit-marker-tail line col) line)))
+                     (put-segments s r gutter
+                                   (if col (%lit-marker-tail line col *pointer-x*) line)))
                    (incf r)))
             (dolist (line content) (row line))
             (dolist (line card-ladder) (row line))
